@@ -129,7 +129,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     const draft = await read<Draft>(`${SKILLS}${id}/draft/`);
     const responsePromise = page.waitForResponse(response => response.url().endsWith(`${SKILLS}${id}/draft/publish/`) &&
       response.request().method() === 'POST', { timeout: UI_READY });
-    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await dialog.getByRole('button', { name: production ? 'Publish and move production' : 'Publish', exact: true }).click();
     const response = await responsePromise;
     expect(response.status()).toBe(201);
     expect(response.request().postDataJSON().revision).toBe(draft.revision);
@@ -146,9 +146,11 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(initial.results).toEqual([]);
       expect(initial.stats.total).toBe(0);
       await page.goto(LIBRARY, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByRole('button', { name: 'Start from a template', exact: true })).toBeVisible({ timeout: UI_READY });
-      await page.getByRole('button', { name: /^Support policy/ }).click();
+      await expect(page.getByRole('button', { name: 'Create your first skill', exact: true })).toBeVisible({ timeout: UI_READY });
+      await page.getByRole('button', { name: 'Create your first skill', exact: true }).click();
       const dialog = page.getByRole('dialog');
+      await dialog.getByRole('combobox', { name: 'Start from', exact: true }).click();
+      await page.getByRole('option', { name: 'Support policy', exact: true }).click();
       await dialog.getByRole('textbox', { name: /^Name/ }).fill(name);
       await dialog.getByRole('textbox', { name: /^Description/ }).fill('Use when a customer asks about refunds, returns, or support-policy exceptions.');
       await expect(dialog.getByRole('combobox', { name: 'Start from' })).toHaveText('Support policy', { timeout: UI_READY });

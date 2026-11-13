@@ -1,10 +1,11 @@
+vi.mock('./useDraftChecks', () => ({ default: () => api.validation }));
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SkillEditorView from "./SkillEditorView";
 
-const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user" }));
+const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user", validation: null }));
 vi.mock("src/api/skills", () => ({
   useSkill: () => api.skill,
   useSkillDraft: () => ({ ...api.draft, refetch: api.refetch }),
@@ -44,6 +45,7 @@ const mount = (entry = "/dashboard/skills/skill-id/edit") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.validation = { current: true, pending: false, checks: { summary: { errors: 0, warnings: 0 }, items: [] } };
   api.assistEnabled = true; api.tests = null; api.assist = null; api.testSnapshot = null; api.scope = "org:ws:user";
   api.skill = { data: { id: "skill-id", name: "sample-skill", latestVersion: 1, permissions: { canRunTests: true } } };
   api.draft = { data: initial };
@@ -74,9 +76,11 @@ describe("skill editor", () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Source' }));
     const expected = '---\nname: sample-skill\ndescription: "Use when reviewing refunds."\nlicense: MIT\n---\nReviewed policy.\n';
     expect(screen.getByLabelText('File content')).toHaveValue(expected);
+    expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled(), { timeout: 2500 });
     fireEvent.click(screen.getByRole('button', { name: 'Publish', exact: true }));
     await screen.findByRole('dialog', { name: 'Publish review' });
-    expect(api.save).toHaveBeenCalledExactlyOnceWith({ ...initial, files: [{ path: 'SKILL.md', content: expected }] });
+    expect(api.save).toHaveBeenNthCalledWith(1, { ...initial, files: [{ path: 'SKILL.md', content: expected }] });
     expect(api.tests.draft.files[0].content).toBe(expected);
   });
 
@@ -119,10 +123,13 @@ describe("skill editor", () => {
   it("saves local edits before opening the publish review", async () => {
     mount();
     fireEvent.change(await screen.findByLabelText("File content"), { target: { value: "My edits" } });
+    expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled(), { timeout: 2500 });
     fireEvent.click(screen.getByRole("button", { name: "Publish", exact: true }));
     await screen.findByRole("dialog", { name: "Publish review" });
-    expect(api.save).toHaveBeenCalledExactlyOnceWith({ ...initial, files: [{ path: "SKILL.md", content: "My edits" }] });
-    expect(screen.getByRole("dialog", { name: "Publish review" })).toHaveTextContent('"revision":5');
+    expect(api.save).toHaveBeenNthCalledWith(1, { ...initial, files: [{ path: "SKILL.md", content: "My edits" }] });
+    expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 5, files: [{ path: "SKILL.md", content: "My edits" }] }));
+    expect(screen.getByRole("dialog", { name: "Publish review" })).toHaveTextContent('"revision":6');
     expect(screen.getByLabelText("File content")).toHaveAttribute("readonly");
   });
 
@@ -230,7 +237,7 @@ describe("skill editor", () => {
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Back to skill" }));
+    fireEvent.click(screen.getByRole("link", { name: "sample-skill" }));
     await screen.findByText("Leave with unsaved changes?");
     expect(screen.queryByText("Skill detail")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Leave without saving" }));
@@ -350,3 +357,19 @@ vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: 
    await waitFor(() => expect(screen.getByLabelText('File content')).toHaveValue('New workspace draft'));
    expect(api.tests.isDirty).toBe(false);
  });
+
+it('keeps publish entry closed until checks match the current files', async () => {
+  api.validation = { current: false, pending: true };
+  const view = mount();
+  await screen.findByLabelText('File content');
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+  expect(screen.getByText('Checking…')).toBeVisible();
+  api.validation = { current: true, pending: false };
+  view.refresh();
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled();
+  api.validation = { current: false, pending: false, error: new Error('offline') };
+  view.refresh();
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+  expect(screen.getByText('Retry checks to publish')).toBeVisible();
+  expect(api.save).not.toHaveBeenCalled();
+});

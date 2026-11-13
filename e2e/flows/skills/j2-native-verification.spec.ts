@@ -185,8 +185,8 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await shot('J2-native-preview');
     await page.getByRole('checkbox', { name: /I accept up to/ }).check();
     await page.getByRole('button', { name: 'Run on the application', exact: true }).click();
-    await expect(page.getByText(/Release-ready on the application|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
-    await expect(page.getByText('Release-ready on the application')).toBeVisible();
+    await expect(page.getByText(/Application checks passed for these cases|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
+    await expect(page.getByText('Application checks passed for these cases')).toBeVisible();
     await shot('J2-native-result');
 
     // Independent evidence.
@@ -219,7 +219,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(credentials[0].n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.
-    await page.getByRole('row', { name: /Original refund failure.*Recorded reference/ }).first().click();
+    await page.getByRole('row', { name: /Original refund failure.*Recorded v/ }).first().click();
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record review' }).click();

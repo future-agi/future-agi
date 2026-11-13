@@ -1,11 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Checkbox, FormControlLabel, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, TextField, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
+import StatusBadge from "src/components/status-badge";
+import EmptyState from "src/components/empty-state";
+import IdentityChip from "../components/IdentityChip";
+import TechnicalDetails from "../components/TechnicalDetails";
 import ChecksList from "../components/ChecksList";
 import { FileChanges } from "../editor/HotfixHeadReview";
-import { classifyMigrationItem } from "./migration-batch";
+import { classifyMigrationItem, importBlockerSummary } from "./migration-batch";
 import MigrationContextAssembly from "./MigrationContextAssembly";
 
 // Intent: one reviewed decision over every retained item, with each exception
@@ -26,18 +31,24 @@ const outcomeText = (outcome) => {
   return outcome.version ? `Published v${outcome.version}${replay}` : `Draft imported${replay}`;
 };
 
-export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublish, onPreserveDraft, onBusyChange, onCreateContext, contextProposal }) {
+export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublish, onPreserveDraft, onBusyChange, onCreateContext, contextProposal, footerTarget, onConsequenceChange, onClose }) {
   const formId = useId();
+  const reviewKey = plans.map((plan) => `${plan.id}:${plan.fingerprint}`).join("|");
   const [choices, setChoices] = useState({});
   const [publish, setPublish] = useState(true);
+  const [filter, setFilter] = useState("all");
   const [excludeAcknowledged, setExcludeAcknowledged] = useState(false);
   const [rights, setRights] = useState(false);
+  const [rightsKey, setRightsKey] = useState(null);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const [running, setRunning] = useState(false);
   const [outcomes, setOutcomes] = useState({});
   // One operation key per exact item decision, kept across replays and reruns.
   const keys = useRef(new Map());
   useEffect(() => { onBusyChange?.(running); }, [running, onBusyChange]);
+  useEffect(() => {
+    setRights(false); setExcludeAcknowledged(false); setWarningsAcknowledged(false); setChoices({});
+  }, [reviewKey]);
   const rows = plans.flatMap((plan) => plan.items.map((item) => ({ plan, item, key: rowKey(plan, item), ...classifyMigrationItem(item) })));
   const excluded = rows.filter((row) => row.kind === "excluded");
   const held = rows.filter((row) => row.kind === "held");
@@ -49,7 +60,15 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   // Publication warnings are exceptions found after import; each listed item is
   // published only after the owner explicitly acknowledges its warnings.
   const warningRows = pending.filter((row) => outcomes[row.key]?.warnings);
-  const ready = pending.length > 0 && !undecided.length && rights && (!excluded.length || excludeAcknowledged) && Boolean(onAccept) && (!keeps || Boolean(onKeep)) && (!publish || Boolean(onPublish)) && (!warningRows.length || warningsAcknowledged);
+  const ready = pending.length > 0 && !undecided.length && rights && rightsKey === reviewKey && (!excluded.length || excludeAcknowledged) && Boolean(onAccept) && (!keeps || Boolean(onKeep)) && (!publish || Boolean(onPublish)) && (!warningRows.length || warningsAcknowledged);
+  const importCount = pending.filter((row) => decisionOf(row) !== "keep").length;
+  const needsDecision = held.length + undecided.length;
+  const started = running || Object.keys(outcomes).length > 0;
+  const consequence = !importCount && needsDecision ? `${needsDecision} ${needsDecision === 1 ? 'item needs' : 'items need'} your decision before anything can be imported.` : publish
+    ? `Imports ${importCount} items as new published versions. Production labels don't change.`
+    : `Imports ${importCount} items as unpublished drafts.`;
+  useEffect(() => { onConsequenceChange?.(consequence); }, [consequence, onConsequenceChange]);
+  const visibleRows = rows.filter((row) => filter === 'all' || row.kind === filter);
   const operationKey = (row, decision) => {
     const id = `${row.plan.fingerprint}:${row.key}:${decision}`;
     if (!keys.current.has(id)) keys.current.set(id, crypto.randomUUID());
@@ -109,53 +128,67 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const warningsOnly = warningRows.length > 0 && warningRows.length === pending.length;
   const label = warningsOnly ? `Publish ${pending.length} ${pending.length === 1 ? "item" : "items"} with reviewed warnings`
     : failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`;
+  const disabledReason = !pending.length ? held.length ? 'Resolve the held items, then preview again' : 'No items ready to import' : undecided.length ? 'Choose keep or replace to continue' : excluded.length && !excludeAcknowledged ? 'Confirm the excluded items to continue' : !rights || rightsKey !== reviewKey ? 'Confirm your rights to continue' : warningRows.length && !warningsAcknowledged ? 'Review the publication warnings to continue' : !ready ? 'Import is unavailable for this selection' : '';
+  const footer = <Stack spacing={0.5} sx={{ borderTop: 1, borderColor: "divider", pt: 1.5, bgcolor: "background.paper" }}>
+    {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.item.name || row.item.root} can’t be imported: {importBlockerSummary(row.item)}.</Typography>)}
+    {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} blocked ${excluded.length === 1 ? "member" : "members"}. This is a supported-subset trial, not a complete migration.`} />}
+    {pending.length > 0 && <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />}
+    {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />}
+    {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
+    {!onConsequenceChange && <Typography variant="s1" role="status">{consequence}</Typography>}
+    <Stack direction="row" justifyContent="flex-end" useFlexGap flexWrap="wrap" spacing={1} alignItems="center">{!ready && <Typography variant="s3" color="text.secondary" role="status">{disabledReason}</Typography>}{onClose && <Button variant="outlined" disabled={running} onClick={onClose}>Cancel</Button>}{pending.length > 0 && <Button variant="contained" color="primary" disabled={!ready || running} onClick={apply}>{label}</Button>}</Stack>
+  </Stack>;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="m3" component="h2">Review all items</Typography>
-    <Typography variant="s1">One decision applies to every item listed with a decision. Exceptions stay visible and need your explicit choice. Source applications and production labels are never changed.</Typography>
+    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+      <Stack spacing={0.5}><Typography variant="m3" component="h2">Review all items</Typography><Typography variant="s3" color="text.secondary">{pending.length - undecided.length} ready · {excluded.length} blocked {excluded.length === 1 ? 'member' : 'members'} · {undecided.length} needs a decision · {held.length} held</Typography></Stack>
+      <TextField id={`${formId}-status`} SelectProps={{ SelectDisplayProps: { "aria-labelledby": `${formId}-status-label` } }} select size="small" label="Item status" value={filter} onChange={(event) => setFilter(event.target.value)} sx={{ minWidth: 180 }}>
+        <MenuItem value="all">All items ({rows.length})</MenuItem><MenuItem value="choice">Needs a decision ({choiceRows.length})</MenuItem><MenuItem value="held">Held ({held.length})</MenuItem><MenuItem value="excluded">Excluded ({excluded.length})</MenuItem>
+      </TextField>
+    </Stack>
     <TableContainer sx={{ maxWidth: "100%" }}>
-      <Table size="small" aria-label="Retained migration items">
+      <Table size="small" aria-label="Retained migration items" sx={{ "& td": { py: 0.5 } }}>
         <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-          <TableCell>Item and source identity</TableCell><TableCell>Destination</TableCell><TableCell>Files</TableCell><TableCell>Decision</TableCell><TableCell>Result</TableCell>
+          <TableCell>Item</TableCell><TableCell>Destination</TableCell><TableCell>Decision</TableCell><TableCell>Details</TableCell>{started && <TableCell>Result</TableCell>}
         </TableRow></TableHead>
-        <TableBody>{rows.map((row) => <TableRow hover key={row.key} sx={{ height: ROW_HEIGHT.default, verticalAlign: "top" }}>
+        <TableBody>{visibleRows.map((row) => <TableRow hover key={row.key} sx={{ height: ROW_HEIGHT.default, verticalAlign: "top" }}>
           <TableCell sx={{ overflowWrap: "anywhere" }}>
             <Typography variant="s1" display="block">{row.item.name || row.item.root}</Typography>
-            <Typography variant="s3" display="block" color="text.secondary">{[row.item.sourceOrigin, row.item.sourceProject, row.item.sourceResource, row.item.sourceRevision].filter(Boolean).join(" / ") || row.item.root}</Typography>
+            {row.item.root && row.item.root !== row.item.name && <Typography variant="s3" display="block" color="text.secondary">{row.item.root}</Typography>}
           </TableCell>
-          <TableCell sx={{ overflowWrap: "anywhere" }}><Typography variant="s3">{row.item.destinationId ? `${row.item.destinationId} · v${row.item.expectedHeadVersion ?? "—"}` : "New identity"}</Typography></TableCell>
-          <TableCell><Typography variant="s1" display="block">{row.item.fileCount ?? "—"}</Typography><Typography variant="s3" display="block">{row.item.totalBytes ?? "—"} bytes</Typography></TableCell>
+          <TableCell><Typography variant="s1">{row.item.destinationId ? `${row.item.destinationName || row.item.name || row.item.root} v${row.item.expectedHeadVersion ?? "—"}` : "New skill"}</Typography></TableCell>
           <TableCell sx={{ minWidth: 200 }}>
             {/* One click per exception; nothing is preselected for a diverged item. */}
             {row.kind === "choice" ? <RadioGroup id={`${formId}-${row.key}`} aria-label={`Decision for ${row.item.name || row.item.root}`} value={choices[row.key] || ""} onChange={(event) => setChoices((current) => ({ ...current, [row.key]: event.target.value }))}>
               {[["keep", "Keep Hub content"], ["replace", "Replace with reviewed source"]].map(([value, label]) => <FormControlLabel key={value} value={value} label={label} disabled={running || Boolean(outcomes[row.key]?.receipt)} control={<Radio size="small" />} />)}
-            </RadioGroup> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Left out" : "Held"}</Typography>}
+            </RadioGroup> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Excluded" : "Held"}</Typography>}
             {row.kind !== "default" && <Typography variant="s3" display="block" color="text.secondary">{row.note}</Typography>}
             {row.kind === "held" && row.item.hasDraft && onPreserveDraft && <Button size="small" disabled={running} onClick={() => onPreserveDraft(row.item)}>{`Preserve draft for ${row.item.name || row.item.root}`}</Button>}
-            {row.kind === "default" && Array.isArray(row.item.sourceHubChanges) && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect source files</Typography>
-              {row.item.destinationId ? <FileChanges files={row.item.sourceHubChanges} beforeTitle="Reviewed source" afterTitle="Current Hub" />
-                : <FileChanges files={row.item.sourceHubChanges.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.fromText }))} beforeTitle="Not in Hub yet" afterTitle="Reviewed source" />}
-            </Box>}
-            {row.kind === "choice" && <Box component="details" open><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Base, Source and Hub differences</Typography>
+            {row.kind === "choice" && <TechnicalDetails title="Review file differences" defaultOpen>
               {Array.isArray(row.item.sourceHubChanges) && <FileChanges files={row.item.sourceHubChanges} beforeTitle="New source" afterTitle="Current Hub" />}
               {row.item.basisPayloadAvailable === false ? <Typography variant="s3">No historical source text is available; only Source and Hub are compared.</Typography> : <>
                 <FileChanges files={row.item.sourceChanges} beforeTitle="Accepted source basis" afterTitle="New source" />
                 <FileChanges files={row.item.hubChanges} beforeTitle="Accepted source basis" afterTitle="Current Hub" />
               </>}
-            </Box>}
+            </TechnicalDetails>}
           </TableCell>
-          <TableCell><Typography variant="s3">{outcomeText(outcomes[row.key])}</Typography>
-            {outcomes[row.key]?.warnings && !outcomes[row.key]?.done && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect warnings</Typography><ChecksList checks={outcomes[row.key].warnings} dense /></Box>}
-          </TableCell>
-        </TableRow>)}</TableBody>
+          <TableCell><TechnicalDetails><Stack spacing={1}>
+            <Typography variant="s3">{row.item.fileCount ?? "—"} files · {row.item.totalBytes ?? "—"} bytes</Typography>
+            <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{[row.item.sourceOrigin, row.item.sourceProject, row.item.sourceResource, row.item.sourceRevision].filter(Boolean).join(' / ')}</Typography>
+            {row.kind === 'excluded' && <><StatusBadge status="blocked" label="Blocked member" /><Typography variant="s3">{row.note}</Typography></>}
+            {row.item.destinationId && <IdentityChip value={row.item.destinationId} kind="id" label="Destination" />}
+            <IdentityChip value={row.plan.fingerprint} label="Fingerprint" />
+            {row.item.expectedHeadDigest && <IdentityChip value={row.item.expectedHeadDigest} label="Digest" />}
+            {row.kind === "default" && Array.isArray(row.item.sourceHubChanges) && (row.item.destinationId ? <FileChanges files={row.item.sourceHubChanges} beforeTitle="Reviewed source" afterTitle="Current Hub" /> : <FileChanges files={row.item.sourceHubChanges.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.fromText }))} beforeTitle="Not in Hub yet" afterTitle="Reviewed source" />)}
+          </Stack></TechnicalDetails></TableCell>
+          {started && <TableCell><Typography variant="s3">{outcomeText(outcomes[row.key])}</Typography>
+            {outcomes[row.key]?.warnings && !outcomes[row.key]?.done && <TechnicalDetails title="Inspect warnings"><ChecksList checks={outcomes[row.key].warnings} dense /></TechnicalDetails>}
+          </TableCell>}
+        </TableRow>)}
+          {!visibleRows.length && <TableRow><TableCell colSpan={started ? 5 : 4}><EmptyState variant="no-results" title="No items match this status" onClearFilters={() => setFilter('all')} /></TableCell></TableRow>}
+        </TableBody>
       </Table>
     </TableContainer>
-    {held.length > 0 && <Alert severity="warning">{held.length} held {held.length === 1 ? "item is" : "items are"} not part of this decision. Resolve {held.length === 1 ? "it" : "them"}, then preview again.</Alert>}
-    {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} blocked ${excluded.length === 1 ? "member" : "members"}. This is a supported-subset trial, not a complete migration.`} />}
-    {undecided.length > 0 && <Alert severity="info">Choose keep or replace for {undecided.length} diverged {undecided.length === 1 ? "item" : "items"} to continue.</Alert>}
-    <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />
-    <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => setRights(event.target.checked)} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />
-    {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
-    <Box><Button variant="contained" disabled={!ready || running} onClick={apply}>{label}</Button></Box>
+    {footerTarget ? createPortal(footer, footerTarget) : footer}
     {published.length > 0 && !pending.length && <Alert severity="success" action={onCreateContext && !contextProposal && <Button disabled={running} onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}>
       {published.length} {published.length === 1 ? "version" : "versions"} published without labels. Production was not changed.
     </Alert>}
@@ -165,4 +198,4 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
       published={published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version }))} />}
   </Stack>;
 }
-MigrationBatchReview.propTypes = { contextProposal: PropTypes.shape({ name: PropTypes.string, description: PropTypes.string, agents: PropTypes.string }), plans: PropTypes.array.isRequired, onAccept: PropTypes.func, onKeep: PropTypes.func, onPublish: PropTypes.func, onPreserveDraft: PropTypes.func, onBusyChange: PropTypes.func, onCreateContext: PropTypes.func };
+MigrationBatchReview.propTypes = { onClose: PropTypes.func, footerTarget: PropTypes.any, onConsequenceChange: PropTypes.func, contextProposal: PropTypes.shape({ name: PropTypes.string, description: PropTypes.string, agents: PropTypes.string }), plans: PropTypes.array.isRequired, onAccept: PropTypes.func, onKeep: PropTypes.func, onPublish: PropTypes.func, onPreserveDraft: PropTypes.func, onBusyChange: PropTypes.func, onCreateContext: PropTypes.func };

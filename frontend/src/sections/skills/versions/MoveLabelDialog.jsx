@@ -111,7 +111,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         evidenceRunId,
         note,
       });
-      enqueueSnackbar(`${name} now points to v${target}.`, {
+      enqueueSnackbar(`${name.charAt(0).toUpperCase()}${name.slice(1)} now points to v${target}.`, {
         variant: "success",
       });
       onClose();

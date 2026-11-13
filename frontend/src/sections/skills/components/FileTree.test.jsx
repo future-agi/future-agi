@@ -10,14 +10,14 @@ vi.mock("src/components/custom-dialog", () => ({ ConfirmDialog: () => null }));
 const files = [{ path: "SKILL.md" }, { path: "references/policy.md" }];
 
 describe("FileTree file actions", () => {
-  it("renders four accessible, offline icon buttons in a non-wrapping row", async () => {
+  it("renders three accessible, offline icon buttons in a non-wrapping row", async () => {
     const user = userEvent.setup();
     render(<FileTree files={files} selectedPath="references/policy.md" onSelect={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} readOnly={false} />);
     const actions = screen.getByRole("group", { name: "File actions" });
     expect(actions).toHaveStyle({ flexWrap: "nowrap", flexDirection: "row" });
-    const names = ["New file", "New folder", "Rename", "Delete"];
-    const icons = ["solar:file-add-linear", "solar:folder-with-files-linear", "solar:pen-linear", "solar:trash-bin-trash-linear"];
-    expect(within(actions).getAllByRole("button")).toHaveLength(4);
+    const names = ["Add file", "Rename file", "Delete file"];
+    const icons = ["solar:file-add-linear", "solar:pen-linear", "solar:trash-bin-trash-linear"];
+    expect(within(actions).getAllByRole("button")).toHaveLength(3);
     for (const [index, name] of names.entries()) {
       const button = within(actions).getByRole("button", { name });
       expect(button).toHaveClass("MuiIconButton-root");
@@ -33,11 +33,11 @@ describe("FileTree file actions", () => {
   it("keeps protected-root and file-limit actions disabled with explanatory tooltips", async () => {
     const user = userEvent.setup();
     render(<FileTree files={Array.from({ length: LIMITS.MAX_FILES }, (_, index) => ({ path: index ? `file-${index}.md` : "SKILL.md" }))} selectedPath="SKILL.md" onSelect={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} readOnly={false} />);
-    const create = screen.getByRole("button", { name: "New file" });
+    const create = screen.getByRole("button", { name: "Add file" });
     expect(create).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New folder" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete file" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
     await user.hover(create.parentElement);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("File limit reached.");
   });
@@ -78,4 +78,15 @@ describe("FileTree keyboard activation", () => {
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
+});
+
+it('groups context files and reveals the selected linked file without changing its path', () => {
+  const contextFiles = [{ path: 'AGENTS.md', origin: { kind: 'owned' } }, { path: 'skills/policy/SKILL.md', origin: { kind: 'linked' } }, { path: '.futureagi/context.json', origin: { kind: 'generated' } }];
+  const select = vi.fn();
+  const { rerender } = render(<FileTree files={contextFiles} selectedPath="AGENTS.md" onSelect={select} />);
+  expect(screen.getByRole('treeitem', { name: 'Linked skills' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('treeitem', { name: 'SKILL.md' })).not.toBeInTheDocument();
+  rerender(<FileTree files={contextFiles} selectedPath="skills/policy/SKILL.md" onSelect={select} />);
+  expect(screen.getByRole('treeitem', { name: 'Linked skills' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('treeitem', { name: 'SKILL.md' })).toHaveAttribute('aria-selected', 'true');
 });

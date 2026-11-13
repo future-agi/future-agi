@@ -71,11 +71,11 @@ try {
         await page.goto(`${origin}/int-fe?theme=${theme}&scene=${scene}`);
         await page.getByText('Synthetic component fixture · no publication or installation').waitFor();
         if (scene === 'files') {
-          assert(await page.getByRole('button', { name: 'Delete', exact: true }).isDisabled());
+          assert(await page.getByRole('button', { name: 'Delete file', exact: true }).isDisabled());
           await page.getByRole('button', { name: 'Open retained policy' }).click();
           await page.getByText('Selected: references/policy.md').waitFor();
           await page.getByRole('treeitem', { name: 'SKILL.md', exact: true }).click();
-          assert(await page.getByRole('button', { name: 'Rename', exact: true }).isDisabled());
+          assert(await page.getByRole('button', { name: 'Rename file', exact: true }).isDisabled());
           assert.equal(await page.locator('img').count(), 0);
         }
         if (scene === 'diff' && width < 600) {

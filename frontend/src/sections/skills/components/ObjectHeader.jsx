@@ -4,7 +4,8 @@ import { Box, Breadcrumbs, Link, Stack, Typography } from '@mui/material';
 import PageHeader from 'src/components/page-header';
 
 export default function ObjectHeader({ crumbs = [], title, purpose, badge, identity, actions, tabs, sx }) {
-  return <Stack spacing={1.5} sx={{ minWidth: 0, ...sx }}>
+  // Flex gap keeps the compact header rhythm when mobile breadcrumbs are hidden.
+  return <Stack useFlexGap spacing={1.5} sx={{ minWidth: 0, ...sx }}>
     {crumbs.length > 0 && <Breadcrumbs aria-label="Breadcrumb" sx={{ typography: 's3', overflowWrap: 'anywhere' }}>
       {crumbs.map((crumb, index) => index < crumbs.length - 1 && crumb.to
         ? <Link key={`${crumb.to}-${index}`} component={RouterLink} to={crumb.to} color="inherit" underline="hover">{crumb.label}</Link>

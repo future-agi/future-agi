@@ -94,7 +94,7 @@ describe("publish review", () => {
     expect(api.compare).toHaveBeenCalledWith("skill-id", 1, "draft");
     expect(await screen.findByTestId("diff")).toHaveTextContent("Old policy → New policy");
     fireEvent.click(screen.getByText("SKILL.md"));
-    expect(screen.getByText("This file has no changes.")).toBeInTheDocument();
+    expect(screen.getByText(/has no changes\./)).toBeInTheDocument();
   });
 
   it("does not review or publish a cached comparison while the saved revision's refresh is pending", async () => {
@@ -103,7 +103,7 @@ describe("publish review", () => {
     const onClose = vi.fn();
     const first = { ...draft, baseVersion: 1 };
     const { rerender } = renderDialog({ draft: first, onClose });
-    await screen.findByText("This file has no changes.");
+    await screen.findByText("No file changes since v1");
     await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
     rerender(<PublishDialog open={false} onClose={onClose} skill={skill} draft={first} />);
 
@@ -116,7 +116,7 @@ describe("publish review", () => {
     expect(api.checks).toHaveBeenCalledTimes(2);
     const publish = screen.getByRole("button", { name: "Publish", exact: true });
     expect(publish).toBeDisabled();
-    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has no changes\./)).not.toBeInTheDocument();
     expect(screen.queryByTestId("diff")).not.toBeInTheDocument();
     fireEvent.click(publish);
     expect(api.publish).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe("publish review", () => {
     api.refreshCompare.mockResolvedValueOnce({ data: cached, isError: true });
     renderDialog({ draft: { ...draft, baseVersion: 1 } });
     await screen.findByText("Couldn't load file changes");
-    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has no changes\./)).not.toBeInTheDocument();
     const button = screen.getByRole("button", { name: "Publish", exact: true });
     expect(button).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -331,4 +331,25 @@ it('keeps summary generation disabled independently of text testing permission',
   renderDialog();
   expect(await screen.findByRole('button', { name: 'Summarize changes' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Use summary suggestion' })).not.toBeInTheDocument();
+});
+
+it('names each label move on the publish action and explains the production consequence', async () => {
+  renderDialog({ skill: { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 2, canMove: true }] } });
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Creates v3. Production stays on v2.');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move production' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Creates v3 and moves production from v2 to v3.');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'staging', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move labels' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move staging' })).toBeInTheDocument();
+});
+
+it('does not promise a new version when the reviewed bytes already match latest', async () => {
+  api.compare.mockReturnValue({ data: { files: [{ path: 'SKILL.md', status: 'unchanged', toSha256: createHash('sha256').update(draft.files[0].content).digest('hex') }] }, isError: false });
+  renderDialog({ skill: { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 1, canMove: true }] }, draft: { ...draft, baseVersion: 2 } });
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Reuses v2. Production stays on v1.'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('status')).toHaveTextContent('Reuses v2 and moves production from v1 to v2.');
 });

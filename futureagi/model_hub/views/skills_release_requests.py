@@ -120,6 +120,7 @@ class RequestDetailView(ReviewView):
         row, packet = service.get_release_request(
             principal=request.skill_principal, request_id=request_id
         )
+        decision = packet.hub_skill_decisions.select_related("actor").order_by("-created_at", "-pk").first()
         return self.output(
             request,
             s.RequestDetail,
@@ -128,6 +129,15 @@ class RequestDetailView(ReviewView):
                 "revision": row.revision,
                 "status": row.status,
                 "author_id": row.author_id,
+                "author_name": row.author.name or row.author.email,
+                "decided_by_name": (decision.actor.name or decision.actor.email) if decision else None,
+                "decision": decision.decision if decision else None,
+                "name": row.skill.name,
+                "updated_at": row.updated_at,
+                "recipients": [
+                    {"id": str(member.recipient_id), "name": member.recipient.name or member.recipient.email}
+                    for member in row.hub_skill_recipients.select_related("recipient")
+                ],
                 "subject_id": row.skill_id,
                 "packet": packet.packet,
                 "fingerprint": packet.fingerprint,

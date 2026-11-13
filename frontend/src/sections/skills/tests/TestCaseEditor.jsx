@@ -260,6 +260,7 @@ export default function TestCaseEditor({
   canSave = true,
   error,
   applicationBehavior = null,
+  subjectKind = "skill",
 }) {
   const [value, setValue] = useState(() =>
     initialCase
@@ -372,7 +373,7 @@ export default function TestCaseEditor({
             }
             onChange={(event) => edit({ prompt: event.target.value })}
           />
-          <TextField
+          {subjectKind !== "agent_context" && <TextField
             select
             label="Use this skill?"
             size="small"
@@ -393,7 +394,7 @@ export default function TestCaseEditor({
             <MenuItem value="true">Yes</MenuItem>
             <MenuItem value="false">No</MenuItem>
             <MenuItem value="either">Either</MenuItem>
-          </TextField>
+          </TextField>}
           {applicationBehavior && (
             <ApplicationBehaviorFields
               skills={applicationBehavior.skills}
@@ -573,6 +574,7 @@ TestCaseEditor.propTypes = {
   isSaving: PropTypes.bool,
   canSave: PropTypes.bool,
   error: PropTypes.string,
+  subjectKind: PropTypes.oneOf(["skill", "agent_context"]),
   applicationBehavior: PropTypes.shape({
     skills: PropTypes.arrayOf(
       PropTypes.shape({ id: PropTypes.string.isRequired, label: PropTypes.string.isRequired }),

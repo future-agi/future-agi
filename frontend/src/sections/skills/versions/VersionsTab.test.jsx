@@ -58,27 +58,29 @@ beforeEach(() => {
 describe("VersionsTab", () => {
   it("keeps unfiltered label history accessible after the last label is removed", () => {
     const view = renderWithRouter(<VersionsTab skill={skill} />);
-    expect(screen.getByRole("button", { name: "History for production" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for production" })).toBeInTheDocument();
     mocks.labels.mockReturnValue({ data: [] });
     view.rerender(<VersionsTab skill={skill} />);
-    expect(screen.queryByRole("button", { name: "History for production" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Label history" }));
+    expect(screen.queryByRole("button", { name: "Actions for production" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Label settings" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "History", exact: true }));
     expect(LabelHistoryDrawer).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, label: "", skill }), expect.anything());
   });
   it("only compares exactly two selected rows, ordered oldest first", () => {
     renderWithRouter(<VersionsTab skill={skill} />);
     expect(
-      screen.queryByRole("button", { name: "Compare" }),
+      screen.queryByRole("button", { name: /^Compare v/ }),
     ).not.toBeInTheDocument();
     checkRow(3);
-    expect(screen.getByRole("button", { name: "Compare" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Select two versions" })).toBeDisabled();
     checkRow(1);
-    fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    expect(screen.getByText("2 versions selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Compare v/ }));
     expect(mocks.push).toHaveBeenCalledWith(
       "/dashboard/skills/skill-1/compare?from=1&to=3",
     );
-    checkRow(2);
-    expect(screen.getByRole("button", { name: "Compare" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Select v2 for comparison" })).toBeDisabled();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
   });
 
   it("keeps selection attached to version identities when a publish refreshes the page", () => {
@@ -87,7 +89,7 @@ describe("VersionsTab", () => {
     checkRow(2);
     mocks.versions.mockReturnValue(result([row(4), row(3), row(2)]));
     rerender(<VersionsTab skill={{ ...skill, latestVersion: 4 }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Compare v/ }));
     expect(mocks.push).toHaveBeenCalledWith(
       "/dashboard/skills/skill-1/compare?from=2&to=3",
     );
@@ -99,7 +101,7 @@ describe("VersionsTab", () => {
     checkRow(2);
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(
-      screen.queryByRole("button", { name: "Compare" }),
+      screen.queryByRole("button", { name: /^Compare v/ }),
     ).not.toBeInTheDocument();
     expect(mocks.versions).toHaveBeenLastCalledWith(skill.id, {
       page: 2,

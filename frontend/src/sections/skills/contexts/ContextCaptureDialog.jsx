@@ -13,6 +13,10 @@ import {
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
 import CaseImportDialog from "../review/CaseImportDialog";
+import TechnicalDetails from '../components/TechnicalDetails';
+import IdentityChip from '../components/IdentityChip';
+
+const segmentLabel = (item) => item.kind === 'request' ? 'Customer request' : `Tool result${item.name ? ` · ${item.name}` : ''}`;
 import { IdentityValue, ReviewState } from "../review/ReleaseReviewBody";
 import {
   OperationFeedback,
@@ -77,11 +81,10 @@ function Capture({
           ) : (
             <>
               <Alert severity="info">
-                Every supported request and tool-result segment is selected;
-                deselect anything irrelevant. The next step is private
-                redaction and expectation review. This does not run a
-                model or copy hidden reasoning.
+                All request and tool-result text is selected. Untick anything you don’t need.
+                Next you’ll redact and set the expected result; nothing runs yet.
               </Alert>
+              <TechnicalDetails title="Source identity">
               <IdentityValue
                 label="Source project"
                 value={source.traceRef.projectId}
@@ -90,6 +93,8 @@ function Capture({
                 label="Physical span"
                 value={`${source.traceRef.traceId} / ${source.traceRef.spanId} / ${source.traceRef.startTime}`}
               />
+              {segments.map((item) => <IdentityChip key={item.id} value={item.id} label={segmentLabel(item)} />)}
+              </TechnicalDetails>
               {!segments.length && (
                 <Typography variant="s1">
                   No supported request or tool-result segments. Assistant
@@ -112,7 +117,7 @@ function Capture({
                         }
                       />
                     }
-                    label={`${item.kind === "request" ? "Request" : "Tool result"} · ${item.id}`}
+                    label={segmentLabel(item)}
                   />
                   <Typography
                     variant="s1"

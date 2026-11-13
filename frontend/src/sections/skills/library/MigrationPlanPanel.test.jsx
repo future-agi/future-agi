@@ -16,7 +16,7 @@ afterEach(cleanup);
 it('labels migration selects without a self-reference to their selected option', () => {
   render(<MigrationPlanPanel scopeKey="scope" plan={plan} onAccept={vi.fn()} />);
   consent();
-  for (const name of ['Review item', 'Source update decision', 'File semantics', 'Destination tags']) {
+  for (const name of ['Review item', 'Source update decision', 'Files to import', 'Destination tags']) {
     const select = screen.getByRole('combobox', { name, exact: true });
     const labelIds = select.getAttribute('aria-labelledby').split(' ');
     expect(labelIds).toHaveLength(1);
@@ -76,6 +76,8 @@ it('requires the HTTP contract rights acknowledgment for a keep decision too', a
   const keep = vi.fn(async () => ({ receiptId: 'keep-receipt' }));
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, requiresKeepRights: true }} onKeep={keep} />);
   choose('Review item', 'policy');
+  expect(screen.getByRole('combobox', { name: 'Source update decision' })).toHaveTextContent('Choose…');
+  choose('Source update decision', 'Keep Hub content');
   fireEvent.click(screen.getByRole('checkbox', { name: /Apply this exact decision/ }));
   expect(screen.getByRole('button', { name: 'Record keep decision' })).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: /reviewed source rights/ }));
@@ -88,5 +90,20 @@ it('blocks replacement when a personal draft exists even if exact comparisons lo
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, items: [{ ...item, hasDraft: true }] }} onAccept={vi.fn()} />);
   consent();
   expect(screen.getByRole('button', { name: 'Import reviewed item as draft' })).toBeDisabled();
-  expect(screen.getByText(/Your existing draft blocks replacement/)).toBeVisible();
+  expect(screen.getByText(/Preserve your draft before replacing it/)).toBeVisible();
+});
+
+it('starts without a decision and hides full plan identity behind Details', () => {
+  const keep = vi.fn();
+  const accept = vi.fn();
+  render(<MigrationPlanPanel scopeKey="scope" plan={plan} onKeep={keep} onAccept={accept} />);
+  expect(screen.queryByText(digest)).not.toBeInTheDocument();
+  expect(screen.getByText(/This review expires in/)).toBeVisible();
+  choose('Review item', 'policy');
+  fireEvent.click(screen.getByRole('checkbox', { name: /reviewed source rights/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Apply this exact decision/ }));
+  expect(screen.getByRole('combobox', { name: 'Source update decision' })).toHaveTextContent('Choose…');
+  expect(screen.getByRole('button', { name: 'Import reviewed item as draft' })).toBeDisabled();
+  expect(keep).not.toHaveBeenCalled();
+  expect(accept).not.toHaveBeenCalled();
 });

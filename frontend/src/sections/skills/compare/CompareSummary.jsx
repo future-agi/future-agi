@@ -14,7 +14,7 @@ export default function CompareSummary({ summary }) {
       spacing={2}
       aria-label="File changes"
     >
-      {STATUSES.map((status) => (
+      {STATUSES.filter((status) => summary[status] > 0).map((status) => (
         <Stack key={status} direction="row" alignItems="center" spacing={0.5}>
           <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {summary[status] ?? 0}

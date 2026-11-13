@@ -1,6 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import axios from 'src/utils/axios';
-import { deriveCandidates, loadClosureReview } from './j6-recovery';
+import { deriveCandidates, loadClosureReview, loadRecovery, usePreviewRecoveryRelease } from './j6-recovery';
+
+vi.mock('./testing', async (original) => ({ ...await original(), useSkillV11Mutation: (options) => options }));
 
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 const envelope = (result) => ({ data: { result } });
@@ -50,4 +52,17 @@ it('refuses a blocked release instead of reviewing a partial closure', async () 
     return value;
   });
   await expect(loadClosureReview({ contextId: 'ctx', candidate: { id: 'v1', number: 1 }, production: { id: 'v3', number: 3 } }, {})).rejects.toThrow('blocked');
+});
+
+it('preserves selected evidence identity, annotation revision and external evidence in the preview payload', async () => {
+  axios.post.mockResolvedValue(envelope({ packet: {}, fingerprint: 'fp' }));
+  const external = { report_url: 'https://example.invalid/review' };
+  await usePreviewRecoveryRelease().send({ contextId: 'ctx', candidateVersionId: 'v1', evidence: [{ source: 'skills_text', sourceId: 'run-1', annotationRevision: 7 }], external_pipeline: external }, {});
+  expect(axios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ candidate_version_id: 'v1', evidence: [{ source: 'skills_text', source_id: 'run-1', annotation_revision: 7 }], external_pipeline: external }), {});
+});
+
+it('fails closed without retrying a recovery inventory beyond the complete-review bound', async () => {
+  axios.get.mockImplementation(async (url) => envelope(url.includes('release-state') ? { labels: [] } : { results: [], total_pages: url.includes('/versions/') ? 2 : 1 }));
+  await expect(loadRecovery('ctx', {})).rejects.toMatchObject({ code: 'recovery_inventory_limit', message: "This context has more than 100 releases or consumers, which recovery can't review completely here." });
+  expect(axios.get).toHaveBeenCalledTimes(3);
 });

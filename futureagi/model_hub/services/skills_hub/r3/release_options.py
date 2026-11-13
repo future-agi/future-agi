@@ -135,6 +135,7 @@ def authored_requests(*, principal, page=1, page_size=25, status=None):
             "subject_kind": row.skill.kind,
             "name": row.skill.name,
             "author_id": row.author_id,
+            "updated_at": row.updated_at,
             "unread": False,
         }
         for row in rows[(page - 1) * page_size : page * page_size]

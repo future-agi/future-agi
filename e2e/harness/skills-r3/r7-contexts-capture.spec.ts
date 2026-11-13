@@ -26,7 +26,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   page.setDefaultTimeout(60_000);
   const output = `${process.cwd()}/r7-context-shots-critic-fix`;
   await mkdir(output, { recursive: true });
-  const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Incident and declared cohort', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
+  const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Verify consumers', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
   const overflows = [];
   const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Use', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Recovery' };
   await page.goto('/dashboard/skills/contexts');
