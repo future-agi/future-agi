@@ -27972,6 +27972,8 @@ export const ModelHubKbDownloadFileQueryParams = zod.object({
   file_id: zod.string().uuid(),
 });
 
+export const ModelHubKbDownloadFileResponse = zod.instanceof(File);
+
 export const ModelHubKnowledgeBaseListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({

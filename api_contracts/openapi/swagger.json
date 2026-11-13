@@ -39003,7 +39003,10 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "File attachment"
+                        "description": "File attachment",
+                        "schema": {
+                            "type": "file"
+                        }
                     },
                     "400": {
                         "description": "",

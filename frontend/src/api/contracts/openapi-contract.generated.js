@@ -21433,6 +21433,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         responses: {
+          200: {
+            type: "file",
+          },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },

@@ -45675,7 +45675,7 @@ export const modelHubKbDelete = async (
 };
 
 export type modelHubKbDownloadFileResponse200 = {
-  data: void;
+  data: Blob;
   status: 200;
 };
 

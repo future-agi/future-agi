@@ -19,6 +19,7 @@ function renderDownload() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("useDownloadKnowledgeBaseFile", () => {
@@ -51,4 +52,39 @@ describe("useDownloadKnowledgeBaseFile", () => {
     expect(result.current.isPending).toBe(false);
     expect(get).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["text/plain", "owned file bytes"],
+    ["application/pdf", "%PDF-1.4 synthetic"],
+  ])(
+    "returns a %s attachment through the response contract check in strict mode",
+    async (contentType, contents) => {
+      vi.stubEnv("VITE_API_CONTRACT_STRICT_RESPONSES", "true");
+      const blob = new Blob([contents], { type: contentType });
+      const adapter = vi.fn(async (config) => ({
+        data: blob,
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": contentType },
+        config,
+      }));
+      vi.spyOn(axios.defaults, "adapter", "get").mockReturnValue(adapter);
+      const { result } = renderDownload();
+      let received;
+      await act(async () => {
+        received = await result.current.mutateAsync({
+          kbId: "3f8b1c2e-7d4a-4e9b-9c1a-2b3c4d5e6f70",
+          fileId: "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+        });
+      });
+      expect(received).toBe(blob);
+      expect(adapter).toHaveBeenCalledTimes(1);
+      expect(adapter.mock.calls[0][0]).toMatchObject({
+        url: "/model-hub/kb/3f8b1c2e-7d4a-4e9b-9c1a-2b3c4d5e6f70/download-file/",
+        params: { file_id: "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d" },
+        responseType: "blob",
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    },
+  );
 });

@@ -4,6 +4,7 @@ import structlog
 from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import filters, viewsets
 from rest_framework.decorators import action
@@ -230,7 +231,13 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
             "403; a missing or deleted file is 404."
         ),
         operation_summary="Download a KB file.",
-        responses={200: "File attachment", **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: openapi.Response(
+                "File attachment",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     @action(detail=True, methods=["get"], url_path="download-file")
     def download_file(self, request: Request, pk: str = None):
