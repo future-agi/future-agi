@@ -41,6 +41,12 @@ services:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
+  # Not started by bin/e2e (--profile ml); if it is, it reads the checkout's
+  # .env, so keep its telemetry settings on loopback as well.
+  serving:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   postgres:
     ports:
       - "127.0.0.1:${PG_PORT:-25432}:5432"

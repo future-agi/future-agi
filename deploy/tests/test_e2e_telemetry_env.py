@@ -112,6 +112,27 @@ class E2ETelemetryEnvironmentTests(unittest.TestCase):
                 services = render(env_file, files, EXPORTED, all_profiles=True)
                 self.assert_loopback(telemetry_services(services["services"]), expected[stack])
 
+    def test_every_application_image_service_has_loopback_telemetry(self):
+        # Services running an application image, including one-shot jobs that
+        # do not take the shared backend environment.
+        images = ("futureagi/future-agi", "futureagi/serving", "futureagi/standalone")
+        for stack, (env_file, files) in STACKS.items():
+            with self.subTest(stack=stack):
+                services = render(env_file, files, EXPORTED, all_profiles=True)["services"]
+                selected = {
+                    name: (service.get("environment") or {})
+                    for name, service in services.items()
+                    if (service.get("image") or "").startswith(images)
+                }
+                self.assertTrue(selected)
+                for name, environment in selected.items():
+                    self.assertEqual(
+                        environment.get("FUTURE_AGI_TELEMETRY_URL"), LOOPBACK, name
+                    )
+                    self.assertEqual(
+                        environment.get("FUTURE_AGI_TELEMETRY_DISABLED"), "true", name
+                    )
+
     def test_bin_e2e_keeps_loopback_telemetry_when_host_exports_other_values(self):
         expected = {
             "distributed": ("backend", "worker", "worker-default", "postgres-schema-bootstrap"),

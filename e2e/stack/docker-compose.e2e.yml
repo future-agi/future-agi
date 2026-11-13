@@ -94,6 +94,8 @@ services:
     cpus: 0.5
     environment:
       FUTURE_AGI_E2E_FIXTURE: sql-workbench
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       CH_HOST: clickhouse
