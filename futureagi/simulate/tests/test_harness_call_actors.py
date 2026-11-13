@@ -761,6 +761,73 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
     )
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("path", ["hosted", "native", "bulk"])
+def test_every_rerun_path_snapshots_who_spoke_and_removes_the_actor_rows_with_the_transcripts(
+    organization, workspace, path, monkeypatch
+):
+    from simulate.models.test_execution import (
+        CallExecutionSnapshot,
+        CallTranscriptActor,
+    )
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.views import run_test
+
+    call = _ingest(
+        organization,
+        workspace,
+        f"rerun-{path}",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [
+                {
+                    "role": "actor",
+                    "actor": "friend",
+                    "name": "Rowan",
+                    "content": "Add a stop.",
+                }
+            ]
+        },
+        {},
+    )
+    assert CallTranscriptActor.objects.filter(transcript__call_execution=call).exists()
+
+    # Every path keeps the whole result, the same fields whichever endpoint reran it.
+    call.stereo_recording_url = "https://example.test/stereo.wav"
+    call.monitor_call_data = {"listen_url": "wss://example.test"}
+    call.save(update_fields=["stereo_recording_url", "monitor_call_data"])
+
+    if path == "hosted":
+        clear_call_for_rerun(call)
+    elif path == "native":
+        run_test.CallExecutionRerunView()._clear_call_execution_data(call)
+    else:
+        monkeypatch.setattr(
+            run_test, "_create_rerun_call_execution", lambda call_execution: None
+        )
+        done, failed = (
+            run_test.TestExecutionRerunView()._prepare_call_executions_for_rerun_bulk(
+                CallExecution.objects.filter(id=call.id), "call_and_eval"
+            )
+        )
+        assert (done, failed) == ([str(call.id)], [])
+
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    assert snapshot.stereo_recording_url == "https://example.test/stereo.wav"
+    assert snapshot.monitor_call_data == {"listen_url": "wss://example.test"}
+    [turn] = snapshot.transcripts
+    assert (turn["speaker_role"], turn["speaker_name"], turn["actor_id"]) == (
+        "actor",
+        "Rowan",
+        "friend",
+    )
+    assert not CallTranscriptActor.objects.filter(
+        transcript__call_execution=call
+    ).exists()
+    call.refresh_from_db()
+    assert call.status == CallExecution.CallStatus.PENDING
+
+
 def test_a_member_stored_before_the_new_fields_reads_unchanged_against_the_same_scenario_now():
     from simulate.services.harness_versioning.diffs import suite_diff
     from simulate.services.harness_versioning.versions import _member_content
