@@ -2485,6 +2485,8 @@ def _compile_membership_filter(
     filters: list[dict[str, Any]],
     observe_type: str,
     annotation_label_ids: tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     return compile_exact_graph_filter_predicates(
         filters,
@@ -2495,6 +2497,8 @@ def _compile_membership_filter(
             if annotation_label_ids is None
             else annotation_label_ids
         ),
+        window_start=window_start,
+        window_end=window_end,
     )
 
 
@@ -2724,12 +2728,16 @@ def read_exact_annotation_graph(
             filters=filters,
             observe_type="trace",
             annotation_label_ids=annotation_label_ids,
+            window_start=start_date,
+            window_end=end_date,
         )
         span_predicate, span_params = _compile_membership_filter(
             project_id=project_id,
             filters=filters,
             observe_type="span",
             annotation_label_ids=annotation_label_ids,
+            window_start=start_date,
+            window_end=end_date,
         )
     bucket_values: dict[datetime, list[float]] = defaultdict(list)
     query_count = 0
@@ -3142,6 +3150,8 @@ def _session_membership_plan(
     *,
     project_id: str,
     filters: list[dict[str, Any]],
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> _SessionMembershipPlan:
     """Compile independent trace leaves for session-level intersection.
 
@@ -3267,6 +3277,8 @@ def _session_membership_plan(
             [item],
             project_id=project_id,
             observe_type="span",
+            window_start=window_start,
+            window_end=window_end,
         )
         if not predicate:
             continue
@@ -3302,6 +3314,8 @@ def _session_membership_plan(
             project_id=project_id,
             observe_type="trace",
             annotation_label_ids=annotation_label_ids,
+            window_start=window_start,
+            window_end=window_end,
         )
         if not predicate:
             continue
@@ -3434,6 +3448,8 @@ def _session_aggregate_source_sql(
     membership_plan = _session_membership_plan(
         project_id=project_id,
         filters=span_filters,
+        window_start=start_date,
+        window_end=end_date,
     )
     resolved_session_id = (
         "if(ts_remap.survivor_id IS NULL OR "

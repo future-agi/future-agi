@@ -89,6 +89,8 @@ class EvalMetricsQueryBuilderV2(V2RewriteMixin, EvalMetricsQueryBuilder):
             project_id=str(self.project_id),
             observe_type=self.observe_type,
             annotation_label_ids=self.annotation_label_ids,
+            window_start=self.start_date,
+            window_end=self.end_date,
         )
         self.params.update(extra_params)
         if not extra_where:

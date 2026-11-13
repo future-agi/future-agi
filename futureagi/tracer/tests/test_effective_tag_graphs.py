@@ -238,7 +238,11 @@ def test_span_graph_counts_each_tagged_span(stores, column, operation, value, ex
 def membership_rows(stores, observe_type, item):
     """The eval/annotation graph membership statement (EvalMetricsQueryBuilderV2)."""
     clause, params = compile_exact_graph_filter_predicates(
-        [item], project_id=PROJECT, observe_type=observe_type
+        [item],
+        project_id=PROJECT,
+        observe_type=observe_type,
+        window_start=BEGIN,
+        window_end=END,
     )
     assert not any(isinstance(v, EffectiveTagRelation) for v in params.values())
     selected = "trace_id, id" if observe_type == "span" else "DISTINCT trace_id"
@@ -946,3 +950,99 @@ def test_graph_suppressions_ignore_curated_traces_outside_the_window(
         }
     else:
         assert counted(stores, "trace", item) == {"alpha"}
+
+
+def test_curated_window_roots_replay_only_identity_columns():
+    """Curated suppression must not decode source-tag JSON for every span."""
+    sql = effective_tags.legacy_trace_tags_sql("tag_suppress", live_roots=True)
+    root_scope = sql.split("AND (project_id, id) IN (", 1)[1].split("FROM spans", 1)[0]
+    assert (
+        "argMax(tuple(start_time, ifNull(parent_span_id, ''), is_deleted)" in root_scope
+    )
+    assert "tags, attrs_string" not in root_scope
+    assert "attributes_extra" not in root_scope
+
+
+def test_exact_membership_scopes_tag_assignments_to_snapshot(stores):
+    seed(stores, "alpha")
+    manual("alpha", ["wanted"])
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="trace",
+                trace_id=f"old-{index:05d}",
+                span_id="",
+                start_hour=TRACE_ASSIGNMENT_HOUR,
+                observation_type="",
+                service_name="",
+                manual_tags=[{"name": "wanted", "color": "#123456"}],
+            )
+            for index in range(LIFETIME_ASSIGNMENTS)
+        ]
+    )
+    item = leaf("tag", "wanted")
+    assert {row["trace_id"] for row in membership_rows(stores, "trace", item)} == {
+        "alpha"
+    }
+    from tracer.services.clickhouse import exact_graph_reads
+    from tracer.services.clickhouse.v2.query_builders.eval_metrics import (
+        EvalMetricsQueryBuilderV2,
+    )
+
+    assert exact_graph_reads._compile_membership_filter(
+        project_id=PROJECT,
+        filters=[item],
+        observe_type="trace",
+        window_start=BEGIN,
+        window_end=END,
+    )[0]
+    assert exact_graph_reads._session_membership_plan(
+        project_id=PROJECT,
+        filters=[item],
+        window_start=BEGIN,
+        window_end=END,
+    ).relational_predicates
+    session_sql, session_params = exact_graph_reads._session_aggregate_source_sql(
+        project_id=PROJECT,
+        filters=[item],
+        start_date=BEGIN,
+        end_date=END,
+        include_trace_ids=False,
+        candidate_trace_ids_param="candidate_trace_ids",
+    )
+    assert session_sql
+    assert session_params["session_relational_0_etag_graph_0_trace_keys"] == (
+        ("", ""),
+        (PROJECT, "alpha"),
+    )
+    builder = EvalMetricsQueryBuilderV2(
+        project_id=PROJECT,
+        custom_eval_config_id="33333333-3333-4333-8333-333333333333",
+        start_date=BEGIN,
+        end_date=END,
+        interval="hour",
+        filters=[item],
+    )
+    assert builder._filter_fragment()
+
+
+def test_window_overlay_walk_has_a_non_retryable_page_cap(stores, monkeypatch):
+    """Even dead assignments must not consume an unbounded windowed walk."""
+    for index in range(3):
+        manual(f"old-{index}", ["wanted"])
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
+    monkeypatch.setattr(effective_tags, "MAX_WINDOW_OVERLAY_PAGES", 1, raising=False)
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.read_tag_overlay(
+            project_ids=(PROJECT,),
+            trace_ids=None,
+            values=("wanted",),
+            deadline=ReadDeadline.start(10000),
+            window_start=BEGIN,
+            window_end=END,
+            execute=stores.analytics.execute_ch_query,
+        )
+    response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad"

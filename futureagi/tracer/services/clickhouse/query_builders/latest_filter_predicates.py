@@ -6,6 +6,7 @@ import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from functools import lru_cache
 from itertools import chain, product
 from typing import Any
@@ -1556,6 +1557,8 @@ def compile_exact_graph_filter_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Compile exact graph filters, including overflow JSON arrays/maps.
 
@@ -1670,7 +1673,10 @@ def compile_exact_graph_filter_predicates(
         params.update(row_params)
 
     tag_compiler = EffectiveTagGraphCompiler(
-        project_id=project_id, observe_type=normalized_observe_type
+        project_id=project_id,
+        observe_type=normalized_observe_type,
+        window_start=window_start,
+        window_end=window_end,
     )
     for index, column_id, config in tag_filters:
         row_clause, required, row_params = tag_compiler.requirement(

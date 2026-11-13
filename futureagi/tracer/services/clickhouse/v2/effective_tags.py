@@ -46,6 +46,8 @@ MAX_TAG_CANDIDATE_TRACES = 512
 # those traces have an assignment; above it the assignments are paged instead.
 MAX_CURATED_SUPPRESSION_CANDIDATES = MAX_TAG_OVERLAY_KEYS
 _ASSIGNMENT_PAGE_SIZE = 1000
+# A graph must not walk an entire project's lifetime of dead assignments.
+MAX_WINDOW_OVERLAY_PAGES = 8
 TAG_OVERLAY_SETTINGS = {
     "max_threads": 2,
     "read_overflow_mode": "throw",
@@ -153,6 +155,30 @@ def live_tag_source_sql(prefix: str) -> str:
     )"""
 
 
+def live_tag_roots_sql(prefix: str) -> str:
+    """Window-live roots without replaying source-tag columns or JSON."""
+    p = prefix
+    return f"""(
+        SELECT project_id, trace_id
+        FROM (
+            SELECT project_id, trace_id, id,
+                argMax(tuple(start_time, ifNull(parent_span_id, ''), is_deleted),
+                       _version) AS etag_root
+            FROM spans
+            PREWHERE project_id IN %({p}_projects)s
+              AND start_time >= %({p}_hour_start)s
+              AND start_time < %({p}_hour_end)s
+              AND (%({p}_scoped)s = 0 OR trace_id IN %({p}_traces)s)
+            GROUP BY project_id, observation_type, service_name,
+                     toStartOfHour(start_time), trace_id, id
+            HAVING etag_root.3 = 0
+               AND etag_root.1 >= %({p}_start)s
+               AND etag_root.1 < %({p}_end)s
+               AND etag_root.2 = ''
+        )
+    )"""
+
+
 def legacy_trace_tags_sql(prefix: str, *, live_roots: bool = False) -> str:
     """Unsuppressed latest curated ``traces.tags`` names in the leaf's scope.
 
@@ -167,10 +193,7 @@ def legacy_trace_tags_sql(prefix: str, *, live_roots: bool = False) -> str:
         f"AND (%({p}_scoped)s = 0 OR id IN %({p}_traces)s)"
     )
     if live_roots:
-        scope += f""" AND (project_id, id) IN (
-            SELECT project_id, trace_id
-            FROM {live_tag_source_sql(p)} WHERE is_root
-        )"""
+        scope += f" AND (project_id, id) IN {live_tag_roots_sql(p)}"
     names = source_names_sql(("etag_l.1",), ())
     return f"""(
         SELECT toString(project_id) AS legacy_project, toString(id) AS legacy_trace,
@@ -598,7 +621,11 @@ def read_tag_overlay(
         # A graph's trace witness needs a live root in the window. Span
         # assignments additionally need their exact latest physical identity.
         # Page PostgreSQL first; only live keys count against SQL bind limits.
-        for page in _assignment_pages(predicate, deadline=deadline):
+        for page_number, page in enumerate(
+            _assignment_pages(predicate, deadline=deadline), start=1
+        ):
+            if page_number > MAX_WINDOW_OVERLAY_PAGES:
+                raise TagReadUnavailable("tag_overlay_budget_exceeded")
             candidates = TagOverlay()
             for record in page:
                 candidates.add(record)
