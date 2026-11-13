@@ -214,8 +214,8 @@ changes none of them.
      is the history check's tree read and first range. Then the header's
      re-listing: every `v*` tag again, which must point at a commit on
      `main`, and the runs of the last 30 days on refs that a key or
-     approver environment admits, whose commits must match what was read or
-     whose runs are deleted;
+     approver environment admits, whose commits must match what was read,
+     or whose versions are read, or whose runs are deleted;
   6. the new key goes into the environments.
 
   Release jobs that use the key, the release autopilot's `merge` job
