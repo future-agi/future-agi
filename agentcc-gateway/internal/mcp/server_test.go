@@ -434,6 +434,10 @@ func TestServerToolCallWithMockUpstream(t *testing.T) {
 // --- Helpers ---
 
 func initializeSession(t *testing.T, s *Server) string {
+	return initializeSessionWithHeaders(t, s, nil)
+}
+
+func initializeSessionWithHeaders(t *testing.T, s *Server, headers map[string]string) string {
 	t.Helper()
 	params := InitializeParams{
 		ProtocolVersion: ProtocolVersion,
@@ -446,7 +450,7 @@ func initializeSession(t *testing.T, s *Server) string {
 		Method:  MethodInitialize,
 		Params:  paramsData,
 	}
-	w := postMCP(t, s, msg, nil)
+	w := postMCP(t, s, msg, headers)
 	sessionID := w.Header().Get("MCP-Session-Id")
 	if sessionID == "" {
 		t.Fatal("failed to initialize session")
@@ -662,7 +666,9 @@ func TestPerKeyToolFiltering_AllowedList(t *testing.T) {
 		},
 	})
 
-	sessionID := initializeSession(t, s)
+	sessionID := initializeSessionWithHeaders(t, s, map[string]string{
+		"Authorization": "Bearer key-readonly",
+	})
 
 	// List tools with the readonly key — should only see list_repos.
 	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: MethodToolsList}
@@ -706,7 +712,9 @@ func TestPerKeyToolFiltering_DeniedList(t *testing.T) {
 		},
 	})
 
-	sessionID := initializeSession(t, s)
+	sessionID := initializeSessionWithHeaders(t, s, map[string]string{
+		"Authorization": "Bearer key-safe",
+	})
 
 	// List tools with denied key — should not see delete_repo.
 	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: MethodToolsList}
@@ -764,7 +772,7 @@ func TestPerKeyToolFiltering_InvalidKeyRejected(t *testing.T) {
 	}
 }
 
-func TestPerKeyToolFiltering_NoKeyPassesThrough(t *testing.T) {
+func TestPerKeyToolFiltering_NoKeyRejected(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
 
@@ -782,21 +790,20 @@ func TestPerKeyToolFiltering_NoKeyPassesThrough(t *testing.T) {
 		},
 	})
 
-	sessionID := initializeSession(t, s)
-
-	// List tools WITHOUT an Authorization header — should see all tools (no filtering).
-	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: MethodToolsList}
-	w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+	params := InitializeParams{
+		ProtocolVersion: ProtocolVersion,
+		ClientInfo:      Implementation{Name: "test", Version: "1.0"},
+	}
+	paramsData, _ := json.Marshal(params)
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodInitialize, Params: paramsData}
+	w := postMCP(t, s, msg, nil)
 
 	resp := decodeResponse(t, w)
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
+	if resp.Error == nil {
+		t.Fatal("expected error for missing API key")
 	}
-
-	var result ListToolsResult
-	json.Unmarshal(resp.Result, &result)
-	if len(result.Tools) != 2 {
-		t.Fatalf("expected 2 tools with no auth header, got %d", len(result.Tools))
+	if resp.Error.Code != ErrCodeInvalidRequest {
+		t.Fatalf("expected code %d, got %d", ErrCodeInvalidRequest, resp.Error.Code)
 	}
 }
 
@@ -834,7 +841,9 @@ func TestPerKeyToolFiltering_ToolCallBlocked(t *testing.T) {
 		},
 	})
 
-	sessionID := initializeSession(t, s)
+	sessionID := initializeSessionWithHeaders(t, s, map[string]string{
+		"Authorization": "Bearer restricted",
+	})
 
 	// Try calling the denied tool.
 	params := ToolCallParams{Name: "srv_secret_tool", Arguments: map[string]interface{}{}}

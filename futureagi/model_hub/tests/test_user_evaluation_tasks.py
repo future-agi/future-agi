@@ -874,6 +874,58 @@ class TestErrorLocalizerGateE2E:
         assert task.selected_input_key == "q"
         mock_localizer.return_value.localize_errors.assert_called_once()
 
+    @pytest.mark.parametrize("typed", [False, True])
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.refund_cost_for_api_call")
+    @patch("model_hub.tasks.user_evaluation.logger")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_harness_failure_is_recorded_without_private_diagnostics(
+        self,
+        mock_cost,
+        mock_localizer,
+        mock_logger,
+        mock_refund,
+        _mock_close,
+        organization,
+        workspace,
+        typed,
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.services.localization_errors import (
+            LocalizationFailure,
+            LocalizationFailureCode,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = self._make_task(organization, workspace, template, eval_result="Failed")
+        mock_cost.return_value.status = APICallStatusChoices.PROCESSING.value
+        failure = (
+            LocalizationFailure(LocalizationFailureCode.MAX_TURNS)
+            if typed
+            else RuntimeError("private prompt, provider body and token")
+        )
+        mock_localizer.return_value.localize_errors.side_effect = failure
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        code = "max_turns" if typed else "unexpected_error"
+        assert task.status == ErrorLocalizerStatus.FAILED
+        assert task.error_message == f"Error localization failed ({code})."
+        assert not task.error_analysis
+        mock_logger.error.assert_called_once_with(
+            "error_localizer_failed",
+            task_id=str(task.id),
+            source_id=str(task.source_id),
+            failure_code=code,
+        )
+        assert "private" not in str(mock_logger.mock_calls)
+        mock_refund.assert_called_once_with(mock_cost.return_value)
+
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
     @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
@@ -1552,6 +1604,8 @@ class TestTriggerMetadataSnapshot:
         construct_kwargs = mock_task.call_args.kwargs
         assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
 
+    # The span trigger runs each attempt in its own transaction.
+    @pytest.mark.django_db
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
@@ -1568,11 +1622,21 @@ class TestTriggerMetadataSnapshot:
         eval_template = MagicMock()
         eval_template.config = {"rule_prompt": "r"}
         eval_logger = MagicMock()
+        span = MagicMock()
+        span.id = eval_logger.observation_span_id
+        span.trace_id = eval_logger.trace_id
+        span.project.id = eval_logger.custom_eval_config.project_id
+        span.project.workspace.organization_id = span.project.organization_id
+        span.project.workspace_id = span.project.workspace.id
+        eval_logger.custom_eval_config.project = span.project
+        eval_logger.eval_task_id = None
+        eval_logger.custom_eval_config.eval_template_id = eval_template.id
         eval_config = {"run_config": {"pass_threshold": 0.9}}
 
         trigger_error_localization_for_span(
             eval_template=eval_template,
             eval_logger=eval_logger,
+            observation_span=span,
             value="Failed",
             mapping={"q": "hi"},
             eval_explanation="",
