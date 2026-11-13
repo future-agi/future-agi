@@ -81,6 +81,9 @@ test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a
       environment_version: expect.objectContaining({ id: certified.environmentVersionId }),
       suite_version: expect.objectContaining({ id: certified.suiteVersionId }),
       evidence: 'pair_certificate',
+      // The seed stores no reading of the agent version's tools.
+      agent_tools: { read: false, count: 0 },
+      evidence_unreadable: false,
     });
     expect(report.validation.state).toBe('ready');
     expect(Object.fromEntries(report.rows.filter((row) => row.measured).map((row) => [row.id, row.status])))
