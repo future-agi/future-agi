@@ -839,6 +839,7 @@ def compile_exact_graph_row_predicates(
         raw_value = config.get("filter_value", config.get("filterValue"))
         structured_attribute = False
         relation_requirements: list[tuple[str, bool, dict[str, Any]]] | None = None
+        effective_tag_leaf = False
         normalized_col_type = str(col_type or "").strip().upper()
         # Explicit property provenance wins over legacy name aliases here,
         # before the native relation adapters bypass the shared compiler.
@@ -882,6 +883,7 @@ def compile_exact_graph_row_predicates(
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
         elif is_effective_tag_leaf(column_id, normalized_col_type):
+            effective_tag_leaf = True
             relation_requirements = [
                 tag_compiler.requirement(
                     column_id=column_id, config=config, filter_index=filter_index
@@ -918,7 +920,10 @@ def compile_exact_graph_row_predicates(
                 bound_params.update(predicate_params)
                 requirement_predicate_indexes.append(len(predicates))
                 predicates.append(predicate)
-                output_window_only.append(False)
+                # An effective Tag leaf is scoped to the requested event-time
+                # window, as the list's tag relation is; other relations keep
+                # the wider witness envelope.
+                output_window_only.append(effective_tag_leaf)
                 required_matches.append(required)
             annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (

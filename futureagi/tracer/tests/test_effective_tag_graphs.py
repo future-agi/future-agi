@@ -8,7 +8,7 @@ unless a saved trace assignment suppresses them. Real disposable ClickHouse
 """
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -664,3 +664,35 @@ def test_too_broad_tag_filter_is_a_clear_400_not_a_retry(
         "The graph cannot apply this Tag filter: too many traces and spans "
         "were tagged with it in the app. The list below is still filtered by it."
     )
+
+
+@pytest.mark.parametrize(
+    "operation,value,expected",
+    [("equals", "late", set()), ("not_equals", "late", {"alpha", "beta"})],
+)
+def test_trace_graph_tag_ignores_a_tagged_child_outside_the_window(
+    stores, operation, value, expected
+):
+    """The graph's Tag leaf reads the same event-time window as the list.
+
+    alpha's root is in the window; only its child, which starts after the
+    window, carries the SDK tag. The list does not match alpha on that tag, so
+    neither may the graph, positively or negatively.
+    """
+    for trace in ("alpha", "beta"):
+        seed(stores, trace, span="root", total_tokens=_tokens(trace, "root"))
+    seed(
+        stores,
+        "alpha",
+        span="child",
+        parent_span_id="root",
+        start_time=END + timedelta(minutes=30),
+        total_tokens=_tokens("alpha", "child"),
+        attrs_string={"tag.tags": '["late"]'},
+    )
+    item = leaf("tag", value, operation)
+    listed = {row["trace_id"] for row in classify(stores, item, ids=("alpha", "beta"))}
+    assert listed == expected
+    total = sum(int(row["total_tokens"]) for row in graph_rows(stores, "trace", item))
+    graphed = {t for t in ("alpha", "beta") if total & _tokens(t, "root")}
+    assert graphed == expected
