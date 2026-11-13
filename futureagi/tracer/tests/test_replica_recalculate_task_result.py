@@ -2530,3 +2530,206 @@ def test_untasked_put_back_is_decided_by_the_update_itself(
         landed["other"].pk
     ]
     assert _stored(previous.pk).deleted is True
+
+
+# -- round 10 review: a delete in flight while the previous result is put back --
+
+
+@pytest.fixture
+def other_writer():
+    """A second primary connection whose transaction stays open until the
+    test commits or rolls it back: a delete (or any write) in flight."""
+    import psycopg
+    from django.db import connections
+
+    conn = psycopg.connect(**connections["default"].get_connection_params())
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def _mark_deleted_uncommitted(conn, model, pk):
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE {model._meta.db_table} SET deleted = true, deleted_at = now() "
+            "WHERE id = %s",
+            [pk],
+        )
+
+
+def _commit_soon(conn, seconds=0.3):
+    import threading
+
+    timer = threading.Timer(seconds, conn.commit)
+    timer.start()
+    return timer
+
+
+def _target(span, config, which):
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.trace import Trace
+
+    return {
+        "trace": (Trace, span.trace_id),
+        "eval_config": (CustomEvalConfig, config.pk),
+    }[which]
+
+
+@pytest.mark.parametrize("deleted", ["trace", "eval_config"])
+def test_untasked_put_back_waits_for_a_delete_in_flight(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    other_writer,
+    deleted,
+):
+    """A delete of the trace or eval config has updated its row but not
+    committed when the request closes. The put-back must not decide on the
+    pre-delete state: it waits for the delete, sees it, and leaves the
+    previous result retired."""
+    from tracer.services.eval_tasks.recalculate import (
+        LEFT_RETIRED,
+        begin_untasked_recalculation,
+        close_untasked_recalculation,
+    )
+
+    previous, _feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    journal = begin_untasked_recalculation(previous)
+    _mark_deleted_uncommitted(
+        other_writer, *_target(observation_span, custom_eval_config, deleted)
+    )
+    timer = _commit_soon(other_writer)
+
+    outcome = close_untasked_recalculation(journal)
+    timer.join()
+
+    assert outcome == LEFT_RETIRED
+    assert _stored(previous.pk).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+@pytest.mark.parametrize("deleted", ["trace", "eval_config"])
+def test_task_put_back_waits_for_a_delete_in_flight(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    other_writer,
+    deleted,
+):
+    from tracer.services.eval_tasks.recalculate import (
+        LEFT_RETIRED,
+        abandon_recalculation,
+        begin_recalculation,
+    )
+
+    previous, _feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    entry = begin_recalculation(previous)
+    EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+        status=EvalEntryStatus.ERRORED
+    )
+    _mark_deleted_uncommitted(
+        other_writer, *_target(observation_span, custom_eval_config, deleted)
+    )
+    timer = _commit_soon(other_writer)
+
+    outcome = abandon_recalculation(entry, previous, left_as=EvalEntryStatus.ERRORED)
+    timer.join()
+
+    assert outcome == LEFT_RETIRED
+    assert _stored(previous.pk).deleted is True
+    assert _stored(entry.pk).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_put_back_left_to_the_sweep_while_the_trace_stays_locked(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    other_writer,
+    monkeypatch,
+):
+    """The trace stays locked by another write past the backoff: the request
+    changes nothing more, says so, and leaves the recalculation to the
+    sweep, which puts the result back once the write is gone."""
+    from tracer.models.trace import Trace
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.recalculate.LOCK_TARGET_BACKOFF", (0.01,)
+    )
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+
+    def _trace_written_meanwhile(*_args):
+        with other_writer.cursor() as cur:
+            cur.execute(
+                f"UPDATE {Trace._meta.db_table} SET name = name WHERE id = %s",
+                [observation_span.trace_id],
+            )
+        return False
+
+    _per_span_eval(monkeypatch, _trace_written_meanwhile)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "being changed right now" in str(response.data)
+    assert _stored(previous.pk).deleted is True
+    assert _recalculation_rows().count() == 1
+
+    other_writer.rollback()
+    _age_untasked(RECOVER_AFTER_SECONDS + 60)
+    counts = _sweep()
+
+    assert counts["restored"] == 1
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert not _recalculation_rows().exists()
+
+
+def test_sweep_counts_a_locked_target_as_busy(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    other_writer,
+    monkeypatch,
+):
+    from tracer.models.trace import Trace
+    from tracer.services.eval_tasks.recalculate import (
+        RECOVER_AFTER_SECONDS,
+        begin_untasked_recalculation,
+    )
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.recalculate.LOCK_TARGET_BACKOFF", (0.01,)
+    )
+    previous, _feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    begin_untasked_recalculation(previous)
+    _age_untasked(RECOVER_AFTER_SECONDS + 60)
+    with other_writer.cursor() as cur:
+        cur.execute(
+            f"UPDATE {Trace._meta.db_table} SET name = name WHERE id = %s",
+            [observation_span.trace_id],
+        )
+
+    counts = _sweep()
+
+    assert (counts["busy"], counts["restored"], counts["errors"]) == (1, 0, 0)
+    assert _stored(previous.pk).deleted is True
+    assert _recalculation_rows().count() == 1

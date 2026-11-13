@@ -46,10 +46,11 @@ final.
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 import structlog
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Q, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -114,6 +115,20 @@ NEVER_FINISHED = (
     "Resume or rerun the task, then recalculate."
 )
 CHANGED_MEANWHILE = "This result has changed. Refresh the page and try again."
+
+
+# How long a put-back waits for a concurrent writer of the previous result's
+# span, trace, session or eval config (``_lock_targets``), in seconds per
+# attempt. A delete of one of them is a short transaction; past the last
+# attempt the put-back gives up and the recalculation is left to the sweep.
+LOCK_TARGET_BACKOFF = (0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0)
+
+
+class RecalculationBusy(Exception):
+    """The previous result's span, trace, session or eval config stayed
+    locked by another writer (a delete in flight), so whether it may come
+    back cannot be decided now. Nothing was written; the recalculation stays
+    open, and a later close or the sweep finishes it."""
 
 
 class RecalculationRefused(Exception):
@@ -314,6 +329,79 @@ def _still_there(results):
     )
 
 
+def _target_rows(previous_id):
+    """The previous result's span, trace, session and eval config, as
+    (model, pk) for those it references."""
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+    from tracer.models.trace_session import TraceSession
+
+    ids = (
+        _rows()
+        .filter(pk=previous_id)
+        .values(
+            "observation_span_id",
+            "trace_id",
+            "trace_session_id",
+            "custom_eval_config_id",
+        )
+        .first()
+    )
+    if ids is None:
+        return []
+    pairs = (
+        (ObservationSpan, ids["observation_span_id"]),
+        (Trace, ids["trace_id"]),
+        (TraceSession, ids["trace_session_id"]),
+        (CustomEvalConfig, ids["custom_eval_config_id"]),
+    )
+    return [(model, pk) for model, pk in pairs if pk is not None]
+
+
+def _lock_targets(previous_id) -> None:
+    """Lock the previous result's span, trace, session and eval config rows
+    for the caller's transaction, before it decides whether the result comes
+    back (``_still_there``).
+
+    A delete of one of them that has not committed yet updates that row
+    first, so it holds the row: this waits it out, and the put-back then
+    sees it deleted. A delete that starts later waits for this transaction,
+    and then finds the restored result live and retires it. Without the
+    lock, a put-back that reads before such a delete commits brings the
+    result back for a deleted span, trace or config.
+
+    ``NOWAIT`` with a short backoff, never a blocking wait: the delete paths
+    lock these rows in different orders, so waiting on one while holding
+    another could deadlock. Call it first in the transaction, before any
+    eval-result or journal lock, so a delete never waits on this
+    transaction for a row it needs before its parent rows. ``FOR NO KEY
+    UPDATE``: it conflicts with the deletes' updates, not with inserts that
+    reference the rows. Raises ``RecalculationBusy`` once the backoff is
+    spent."""
+    targets = _target_rows(previous_id)
+    for delay in (*LOCK_TARGET_BACKOFF, None):
+        try:
+            with transaction.atomic(using="default"):
+                for model, pk in targets:
+                    list(
+                        model._base_manager.using("default")
+                        .select_for_update(nowait=True, no_key=True)
+                        .filter(pk=pk)
+                        .values_list("pk", flat=True)
+                    )
+            return
+        except DatabaseError:
+            if delay is None:
+                break
+            time.sleep(delay)
+    logger.warning(
+        "recalculate_targets_locked",
+        eval_logger_id=str(previous_id),
+    )
+    raise RecalculationBusy(str(previous_id))
+
+
 def _put_previous_back(journal: EvalRecalculation) -> bool:
     """Bring the previous result back once its replacement is retired.
 
@@ -397,6 +485,7 @@ def abandon_recalculation(
       engine's run has: retiring it here would discard the engine's work.
     """
     with transaction.atomic(using="default"):
+        _lock_targets(previous.pk)
         journal = _lock_journal(entry.pk)
         if journal is None:
             # The sweep or the reconciler finished this recalculation
@@ -453,6 +542,7 @@ def put_back_dropped_replacements(dropped_ids) -> int:
     )
     retired = 0
     for journal in journals:
+        _lock_targets(journal.previous_id)
         retired += soft_delete_eval_results(
             _rows().filter(pk=journal.replacement_id, deleted=False)
         )
@@ -584,6 +674,7 @@ def close_untasked_recalculation(journal: EvalRecalculation) -> str:
       result stayed retired.
     """
     with transaction.atomic(using="default"):
+        _lock_targets(journal.previous_id)
         locked = _journal().select_for_update().filter(pk=journal.pk).first()
         if locked is None:
             # The sweep finished it meanwhile: it took this request for dead
@@ -677,7 +768,9 @@ def recover_stale_recalculations(
     * ``waiting``: it changed while the tick read it; a later tick finishes
       it. A replacement the engine of a draining task holds, or one still
       within its bound, is not read at all;
-    * ``busy``: the request is finishing it right now.
+    * ``busy``: the request is finishing it right now, or a write to the
+      previous result's span, trace, session or eval config (a delete in
+      flight) kept them locked.
     """
     now = timezone.now()
     cutoff = now - timedelta(seconds=older_than_seconds)
@@ -709,6 +802,11 @@ def recover_stale_recalculations(
     for journal_id in journal_ids:
         try:
             outcome = _recover_one(journal_id, cutoff, answered_cutoff)
+        except RecalculationBusy:
+            # A delete of its span, trace or config is in flight; the next
+            # tick decides.
+            counts["busy"] += 1
+            continue
         except Exception:
             logger.exception("recalculate_recovery_failed", journal_id=journal_id)
             counts["errors"] += 1
@@ -718,7 +816,13 @@ def recover_stale_recalculations(
 
 
 def _recover_one(journal_id, cutoff, answered_cutoff) -> str:
+    previous_id = (
+        _journal().filter(pk=journal_id).values_list("previous_id", flat=True).first()
+    )
+    if previous_id is None:
+        return "busy"
     with transaction.atomic(using="default"):
+        _lock_targets(previous_id)
         journal = (
             _journal().select_for_update(skip_locked=True).filter(pk=journal_id).first()
         )
@@ -799,6 +903,7 @@ __all__ = [
     "RECOVER_AFTER_SECONDS",
     "RECOVER_ANSWERED_AFTER_SECONDS",
     "RESTORED",
+    "RecalculationBusy",
     "RecalculationRefused",
     "STILL_EVALUATING",
     "TERMINAL_STATUSES",
