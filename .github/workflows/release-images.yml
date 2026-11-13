@@ -51,11 +51,9 @@ name: release-images
 on:
   push:
     tags:
-      [
-        "v[0-9]+.[0-9]+.[0-9]+",
-        "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+",
-        "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+",
-      ]
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
   workflow_dispatch:
     inputs:
       version:
@@ -869,16 +867,14 @@ jobs:
   # tag's commit, whatever vouched for their digests).
   build-digests:
     needs:
-      [
-        guard,
-        approve,
-        build,
-        serving-gpu,
-        code-executor,
-        backend,
-        standalone,
-        simulation-runner,
-      ]
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - standalone
+      - simulation-runner
     if: ${{ !cancelled() && !failure() && needs.approve.result == 'success' && contains(needs.guard.outputs.components, '"update-manifest"') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1014,18 +1010,16 @@ jobs:
   # is the tag's commit.
   update-manifest:
     needs:
-      [
-        guard,
-        approve,
-        build,
-        serving-gpu,
-        code-executor,
-        backend,
-        standalone,
-        simulation-runner,
-        helm-chart,
-        build-digests,
-      ]
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - standalone
+      - simulation-runner
+      - helm-chart
+      - build-digests
     if: ${{ !cancelled() && !failure() && needs.approve.result == 'success' && contains(needs.guard.outputs.components, '"update-manifest"') }}
     permissions:
       contents: write # Release assets
@@ -1039,17 +1033,15 @@ jobs:
   # job never fails the release.
   size-report:
     needs:
-      [
-        guard,
-        approve,
-        build,
-        serving-gpu,
-        code-executor,
-        backend,
-        backend-slim,
-        standalone,
-        simulation-runner,
-      ]
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - backend-slim
+      - standalone
+      - simulation-runner
     if: always() && needs.approve.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
