@@ -414,6 +414,39 @@ def test_a_bucket_whose_policy_opens_later_is_refused_after_the_recheck(
     assert client.policy_reads == 3
 
 
+@pytest.mark.parametrize("backend", ["s3", "minio"])
+def test_a_slow_private_check_does_not_override_a_newer_refusal(
+    monkeypatch, settings, backend
+):
+    from tfc.utils.storage_client import PrivateBucketRefused, ensure_private_bucket
+
+    class _OpenedDuringCheckClient(_ReadsCountingClient):
+        """The first check reads a private policy; before it finishes, the
+        bucket is opened and a second check reads and refuses it."""
+
+        def get_bucket_policy(self, bucket):
+            if self.policy_reads == 0:
+                self.policy_reads += 1
+                self.policy = _PUBLIC_READ
+                with pytest.raises(PrivateBucketRefused):
+                    ensure_private_bucket(self, bucket)
+                error = Exception("no policy")
+                error.code = "NoSuchBucketPolicy"
+                raise error
+            return super().get_bucket_policy(bucket)
+
+    client = _OpenedDuringCheckClient(exists=True)
+    bucket = _use_creation_client(monkeypatch, settings, client, backend)
+
+    # The slow first check found the bucket private, but a newer check
+    # refused it meanwhile: the private verdict is not remembered.
+    ensure_private_bucket(client, bucket)
+    assert client.policy_reads == 2
+    with pytest.raises(PrivateBucketRefused):
+        ensure_private_bucket(client, bucket)
+    assert client.policy_reads == 3
+
+
 def test_gcs_refuses_a_missing_compare_bucket_with_a_clear_error(monkeypatch, settings):
     from model_hub.utils.compare_storage import write_compare_json
     from tfc.utils.storage_client import PrivateBucketRefused
