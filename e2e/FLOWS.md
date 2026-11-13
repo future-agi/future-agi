@@ -1441,7 +1441,7 @@
 
 **Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
 
-**Spec:** `flows/gateway/org-fail-open.spec.ts:21`
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
 
 **Tags:** —
 
