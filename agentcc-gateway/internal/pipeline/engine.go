@@ -288,3 +288,13 @@ func postPriority(p Plugin) int {
 func (e *Engine) PluginCount() int {
 	return len(e.plugins)
 }
+
+// Plugin returns a registered plugin for protocol adapters that must bind its policy.
+func (e *Engine) Plugin(name string) Plugin {
+	for _, p := range e.plugins {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
+}
