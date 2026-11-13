@@ -677,3 +677,65 @@ def test_simulation_socket_rechecks_membership_after_the_default_interval(
             await disconnect(own, socket)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("outcome", ["membership-kept", "membership-removed"])
+def test_graph_socket_answers_nothing_until_a_failed_check_succeeds(outcome):
+    from unittest.mock import patch
+
+    from django.db import OperationalError
+
+    from sockets.org_scope import organization_membership_is_active
+    from tracer.socket import GraphDataConsumer
+
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    database = {"available": True}
+
+    def membership_check(user_id, organization_id):
+        if not database["available"]:
+            raise OperationalError("synthetic database outage")
+        return organization_membership_is_active(user_id, organization_id)
+
+    async def answer_with_metrics(self):
+        # Stands in for the chart queries.
+        await self.send_json({"type": "metrics", "project": self.project_id})
+
+    async def run():
+        socket = WebsocketCommunicator(
+            GraphDataConsumer.as_asgi(), f"/ws/graphs/?organization_id={org.pk}"
+        )
+        socket.scope["user"] = member
+        connected, code = await socket.connect(timeout=10)
+        assert connected, code
+        try:
+            project_id = str(uuid4())
+            database["available"] = False
+            await notify_membership_changed(member, org)
+            assert await socket.receive_nothing(timeout=0.5)
+            await socket.send_json_to({"projectId": project_id, "graph": "charts"})
+            assert frames(await outputs(socket, settle=0.5)) == []
+
+            if outcome == "membership-removed":
+                await sync_to_async(deactivate_membership_rows)(member, org)
+            database["available"] = True
+            await socket.send_json_to({"projectId": project_id, "graph": "charts"})
+            events = await outputs(socket, settle=0.5)
+            if outcome == "membership-removed":
+                assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+            else:
+                assert (frames(events), closed(events)) == (
+                    [{"type": "metrics", "project": project_id}],
+                    [],
+                )
+        finally:
+            await socket.disconnect()
+
+    with (
+        patch(
+            "sockets.membership.organization_membership_is_active",
+            side_effect=membership_check,
+        ),
+        patch.object(GraphDataConsumer, "send_metrics_data", answer_with_metrics),
+    ):
+        asyncio.run(run())

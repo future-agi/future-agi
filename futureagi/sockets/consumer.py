@@ -58,11 +58,14 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4000)
 
     async def receive(self, text_data=None, bytes_data=None):
-        """Guard raw frames so subclasses cannot bypass SAML revalidation."""
+        """Guard raw frames so subclasses cannot bypass SAML or membership
+        revalidation before answering a client request."""
 
         if self._membership.closed:
             return
         if not await self._guard.ensure_live(inbound=True):
+            return
+        if not await self._membership.ensure_member():
             return
         await super().receive(text_data=text_data, bytes_data=bytes_data)
 
