@@ -13659,24 +13659,12 @@ export const EvalLogSourceNavigationApiStatus = {
   temporarily_unavailable: "temporarily_unavailable",
 } as const;
 
-export type EvalLogSourceNavigationApiKind =
-  (typeof EvalLogSourceNavigationApiKind)[keyof typeof EvalLogSourceNavigationApiKind];
-
-export const EvalLogSourceNavigationApiKind = {
-  trace: "trace",
-  voice_call: "voice_call",
-} as const;
-
 export interface EvalLogSourceNavigationApi {
   status: EvalLogSourceNavigationApiStatus;
-  kind: EvalLogSourceNavigationApiKind;
-  project_id: string;
-  trace_id: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  span_id: string;
+  kind: "trace" | "voice_call" | null;
+  project_id: string | null;
+  trace_id: string | null;
+  span_id: string | null;
   retryable: boolean;
 }
 

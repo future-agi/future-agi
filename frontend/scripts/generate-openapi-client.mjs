@@ -130,7 +130,9 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          name.startsWith("HostUpdateStatusResponse")
+          name.startsWith("HostUpdateStatusResponse") ||
+          // Every non-ready source state sends kind and the ids as explicit null.
+          name === "EvalLogSourceNavigation"
             ? normalizeHostStatusSchema(schema)
             : schema,
         ]),

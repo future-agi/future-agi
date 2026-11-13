@@ -27225,7 +27225,7 @@ export const ModelHubGetEvalLogsListQueryParams = zod.object({
   include_source_navigation: zod.enum(["true", "false"]).optional(),
 });
 
-export const modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdMax = 255;
+export const modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdOneMax = 255;
 
 export const ModelHubGetEvalLogsListResponse = zod.object({
   status: zod.boolean(),
@@ -27260,13 +27260,18 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
           "unavailable",
           "temporarily_unavailable",
         ]),
-        kind: zod.enum(["trace", "voice_call"]),
-        project_id: zod.string().uuid(),
-        trace_id: zod.string().uuid(),
-        span_id: zod
-          .string()
-          .min(1)
-          .max(modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdMax),
+        kind: zod.union([zod.enum(["trace", "voice_call"]), zod.null()]),
+        project_id: zod.union([zod.string().uuid(), zod.null()]),
+        trace_id: zod.union([zod.string().uuid(), zod.null()]),
+        span_id: zod.union([
+          zod
+            .string()
+            .min(1)
+            .max(
+              modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdOneMax,
+            ),
+          zod.null(),
+        ]),
         retryable: zod.boolean(),
       })
       .optional(),
