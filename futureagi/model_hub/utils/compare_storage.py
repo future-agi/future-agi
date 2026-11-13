@@ -11,10 +11,12 @@ A comparison expires ``COMPARE_MAX_AGE_SECONDS`` after it was created: its
 metadata is no longer served, and the scheduled cleanup removes its objects.
 """
 
+import functools
 import io
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -34,6 +36,8 @@ logger = structlog.get_logger(__name__)
 COMPARE_PREFIX = "compare/"
 COMPARE_METADATA_OBJECT = "metadata.json"
 COMPARE_MAX_AGE_SECONDS = 2 * 60 * 60
+# How often a process that builds comparisons sweeps its own local folders.
+LOCAL_SWEEP_INTERVAL_SECONDS = 10 * 60
 
 
 class CompareObjectUnavailable(ValueError):
@@ -181,6 +185,10 @@ def sweep_local_compare_root(now: float | None = None) -> None:
         folders = os.listdir(compare_root)
     except FileNotFoundError:
         return
+    except OSError:
+        # Logged, so that the caller's remote sweep still runs.
+        logger.exception("compare_root_unreadable", root=compare_root)
+        return
     now = time.time() if now is None else now
     for folder in folders:
         folder_path = os.path.join(compare_root, folder)
@@ -196,6 +204,55 @@ def sweep_local_compare_root(now: float | None = None) -> None:
         except Exception:
             # The folder stays, so the next sweep retries it.
             logger.exception("compare_folder_delete_failed", folder=folder)
+
+
+class _LocalSweeper:
+    """One thread per process that sweeps its local compare root periodically."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def ensure_running(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._run, name="compare-local-sweep", daemon=True
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._lock:
+            thread = self._thread
+        if thread is not None:
+            thread.join()
+
+    def _run(self) -> None:
+        while not self._stop.wait(LOCAL_SWEEP_INTERVAL_SECONDS):
+            try:
+                sweep_local_compare_root()
+            except Exception:
+                # Keep sweeping on the next interval.
+                logger.exception("compare_local_sweep_failed")
+
+
+@functools.cache
+def _local_sweeper() -> _LocalSweeper:
+    return _LocalSweeper()
+
+
+def start_local_sweeper() -> None:
+    """Keep this process sweeping the local comparison folders it writes.
+
+    Called wherever a comparison is built. The scheduled cleanup sweeps only
+    the local root of the worker it runs on, which in a distributed install
+    is not the root of the API replica that built the comparison.
+    """
+    _local_sweeper().ensure_running()
 
 
 def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> bool:

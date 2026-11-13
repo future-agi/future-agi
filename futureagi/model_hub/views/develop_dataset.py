@@ -270,6 +270,7 @@ from model_hub.utils.compare_storage import (
     is_expired,
     read_compare_json,
     remove_compare,
+    start_local_sweeper,
     write_compare_json,
 )
 from model_hub.utils.eval_reasons import (
@@ -725,6 +726,8 @@ def _prepare_compare_dataset_impl(
         main_ds_id = str(dataset_id)
         metadata_path = get_compare_metadata_path(compare_id)
         os.makedirs(get_compare_local_dir(compare_id), exist_ok=True)
+        # This process now holds a local folder: make sure it is swept.
+        start_local_sweeper()
         with open(metadata_path, "w") as f:
             json.dump(
                 {
