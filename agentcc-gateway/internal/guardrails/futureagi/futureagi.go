@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -173,15 +174,68 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	resp, err := g.callAPI(ctx, text)
-	if err != nil {
-		return guardrails.ExecutionFailure(fmt.Sprintf("futureagi evaluation failed: %v", err))
+	seen := make(map[string]bool, len(g.evalIDs))
+	for _, id := range g.evalIDs {
+		if seen[id] {
+			return guardrails.ExecutionFailure("duplicate requested evaluation identity")
+		}
+		seen[id] = true
 	}
 
-	if err := validateEvaluations(resp, g.evalIDs); err != nil {
-		return guardrails.ExecutionFailure(err.Error())
+	// The evaluation API runs one template per request, so each selected
+	// template gets its own request and its own validated verdict.
+	verdicts := make([]templateVerdict, len(g.evalIDs))
+	var wg sync.WaitGroup
+	for i, id := range g.evalIDs {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			verdicts[i] = g.evaluate(ctx, text, id)
+		}(i, id)
 	}
-	return parseResult(resp)
+	wg.Wait()
+	return combineVerdicts(verdicts)
+}
+
+// templateVerdict is the outcome of evaluating one template.
+type templateVerdict struct {
+	resp *evalResponse
+	err  error
+}
+
+func (g *FutureAGIGuardrail) evaluate(ctx context.Context, text, id string) templateVerdict {
+	resp, err := g.callAPI(ctx, text, id)
+	if err != nil {
+		return templateVerdict{err: fmt.Errorf("futureagi evaluation failed: %w", err)}
+	}
+	if err := validateEvaluations(resp, []string{id}); err != nil {
+		return templateVerdict{err: err}
+	}
+	return templateVerdict{resp: resp}
+}
+
+// combineVerdicts fails the check when any template reports Failed, even if
+// another template could not be evaluated. Otherwise an evaluation error is
+// reported as an execution failure, so the organization's fail_open setting
+// decides, and the check passes only when every template passed.
+func combineVerdicts(verdicts []templateVerdict) *guardrails.CheckResult {
+	for _, v := range verdicts {
+		if v.err != nil {
+			continue
+		}
+		if result := parseResult(v.resp); result.Err == nil && !result.Pass {
+			return result
+		}
+	}
+	for _, v := range verdicts {
+		if v.err != nil {
+			return guardrails.ExecutionFailure(v.err.Error())
+		}
+	}
+	if len(verdicts) == 0 {
+		return guardrails.ExecutionFailure("no evaluation results")
+	}
+	return parseResult(verdicts[0].resp)
 }
 
 // extractInputText concatenates all message contents from the request.
@@ -242,17 +296,13 @@ func extractContentText(raw json.RawMessage) string {
 	return ""
 }
 
-// callAPI sends the evaluation request to Future AGI.
-func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalResponse, error) {
-	configMap := make(map[string]evalConfig, len(g.evalIDs))
-	for _, id := range g.evalIDs {
-		configMap[id] = evalConfig{CallType: g.callType}
-	}
+// callAPI sends one template's evaluation request to Future AGI.
+func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text, evalID string) (*evalResponse, error) {
 	payload := evalRequest{
 		Inputs: []evalInput{
 			{Input: text, CallType: g.callType, MaxTokens: g.maxTokens},
 		},
-		Config: configMap,
+		Config: map[string]evalConfig{evalID: {CallType: g.callType}},
 	}
 
 	body, err := json.Marshal(payload)

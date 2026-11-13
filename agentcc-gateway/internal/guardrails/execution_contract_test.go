@@ -61,7 +61,8 @@ func TestExecutionEnvelopeHTTPContract(t *testing.T) {
 		{"evaluation-multi-missing-id", "futureagi", `{"result":[{"evaluations":[{"output":"Passed"},{"evalId":"b","output":"Passed"}]}]}`, "unavailable", 200, []string{"a", "b"}},
 		{"evaluation-duplicate-id", "futureagi", `{"result":[{"evaluations":[{"evalId":"a","output":"Passed"},{"evalId":"a","output":"Passed"}]}]}`, "unavailable", 200, []string{"a", "b"}},
 		{"evaluation-unexpected-id", "futureagi", `{"result":[{"evaluations":[{"evalId":"x","output":"Passed"}]}]}`, "unavailable", 200, []string{"a"}},
-		{"evaluation-multi-safe", "futureagi", `{"result":[{"evaluations":[{"evalId":"a","output":false},{"evalId":"b","output":"Passed"}]}]}`, "safe", 200, []string{"a", "b"}},
+		{"evaluation-multi-safe", "futureagi", `{"result":[{"evaluations":[{"output":"Passed"}]}]}`, "safe", 200, []string{"a", "b"}},
+		{"evaluation-multi-deny", "futureagi", `{"result":[{"evaluations":[{"output":"Failed"}]}]}`, "scored", 200, []string{"a", "b"}},
 	}
 	for _, tc := range cases {
 		for _, mode := range []string{"dynamic", "static"} {
