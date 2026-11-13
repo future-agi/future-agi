@@ -229,3 +229,82 @@ class TestLoginWith2FA:
         assert body["status"] is False
         assert body["code"] == "invalid"
         assert body["message"] == "Invalid or already used recovery code."
+
+
+@pytest.mark.django_db
+def test_totp_completion_accepts_pending_invite_from_another_org(user):
+    """2FA completion must accept a pending invite, not only password login.
+
+    A user with TOTP never reaches the password-login accept loop. The
+    session is issued by issue_tokens after /accounts/2fa/verify/totp/.
+    """
+    from accounts.models.organization import Organization
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    secret = TestLoginWith2FA()._setup_totp_for_user(user)
+    other = Organization.objects.create(name="Inviting Org")
+    other_ws = Workspace.objects.create(
+        name="Inviting Default",
+        organization=other,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=other,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=False,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=other_ws,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=False,
+    )
+    invite = OrganizationInvite.objects.create(
+        organization=other,
+        target_email=user.email,
+        status=InviteStatus.PENDING,
+        level=Level.MEMBER,
+        workspace_access=[
+            {"workspace_id": str(other_ws.id), "level": Level.WORKSPACE_MEMBER}
+        ],
+    )
+
+    client = APIClient()
+    login_resp = client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    )
+    assert login_resp.status_code == 200
+    assert login_resp.json()["requires_two_factor"] is True
+    membership.refresh_from_db()
+    assert membership.is_active is False
+
+    verify_resp = client.post(
+        "/accounts/2fa/verify/totp/",
+        {
+            "challenge_token": login_resp.json()["challenge_token"],
+            "code": pyotp.TOTP(secret).now(),
+        },
+        format="json",
+    )
+    assert verify_resp.status_code == 200
+    assert "access" in verify_resp.json()
+
+    membership.refresh_from_db()
+    invite.refresh_from_db()
+    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
+        user=user, workspace=other_ws
+    )
+    assert membership.is_active is True
+    assert workspace_membership.is_active is True
+    assert invite.status == InviteStatus.ACCEPTED

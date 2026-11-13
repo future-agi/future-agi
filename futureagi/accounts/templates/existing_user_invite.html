@@ -1,6 +1,6 @@
 {% extends "billing/base_billing.html" %}
-{% block title %}You've been added to {{ org_name }}{% endblock %}
-{% block preheader %}{{ invited_by }} added you to {{ org_name }} on Future AGI.{% endblock %}
+{% block title %}You've been invited to {{ org_name }}{% endblock %}
+{% block preheader %}{{ invited_by }} invited you to {{ org_name }} on Future AGI. Sign in to join.{% endblock %}
 {% block txid %}◦ WORKSPACE / JOINED{% endblock %}
 {% block content %}
   <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
@@ -8,15 +8,15 @@
   </span>
 
   <h1 class="hx" style="font-family:'Inter',sans-serif; font-size:28px; line-height:1.22; font-weight:600; color:#fafafa; letter-spacing:-0.015em; margin:16px 0 14px 0;">
-    You've joined {{ org_name }}
+    You've been invited to {{ org_name }}
   </h1>
 
   <p class="px" style="font-family:'Inter',sans-serif; font-size:16px; line-height:1.65; color:#d4d4d8; margin:0 0 24px 0;">
-    <strong style="color:#fafafa;">{{ invited_by }}</strong> added you to <strong style="color:#fafafa;">{{ org_name }}</strong>. Sign in with your existing Future AGI account — the new workspace is already waiting for you.
+    <strong style="color:#fafafa;">{{ invited_by }}</strong> invited you to <strong style="color:#fafafa;">{{ org_name }}</strong>. Sign in with your existing Future AGI account to join. Nothing is shared until you do.
   </p>
 
   <div style="margin: 28px 0 12px 0;">
-    {% include "billing/_button.html" with url=base_url|add:"/dashboard" text="Open workspace →" variant="primary" %}
+    {% include "billing/_button.html" with url=base_url|add:"/auth/jwt/login" text="Sign in to join →" variant="primary" %}
   </div>
 
   <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:28px 0 0 0;">
