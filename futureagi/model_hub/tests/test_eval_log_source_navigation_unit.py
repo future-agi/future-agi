@@ -84,7 +84,7 @@ def resolve(monkeypatch):
             request=request,
             log_row=log,
             config=parse_api_log_config(raw),
-            analytics=sentinel_analytics,
+            analytics=kwargs.pop("analytics", sentinel_analytics),
             read_detail=reader,
             **kwargs,
         )
@@ -393,6 +393,12 @@ def legacy(resolve, monkeypatch):
     )
     monkeypatch.setattr(CustomEvalConfig.all_objects, "filter", config_lookup)
     resolve.config_lookup = config_lookup
+    # By default the organization has no project outside the readable scope.
+    organization_projects = Mock(return_value=[PROJECT, ROOT])
+    monkeypatch.setattr(
+        navigation, "organization_source_project_ids", organization_projects
+    )
+    resolve.organization_projects = organization_projects
     return resolve
 
 
@@ -407,6 +413,62 @@ def test_u33_legacy_log_reads_the_scoped_projects_not_the_config(legacy):
 def test_u34_legacy_read_outside_the_scope_is_invalid(legacy):
     legacy.reader.return_value = _detail(_span(project_id=OTHER), project_id=OTHER)
     assert legacy(_config(project_id=None)).status == "invalid_reference"
+
+
+def _outside_analytics(present):
+    analytics = Mock()
+    analytics.execute_ch_query.return_value = SimpleNamespace(
+        data=[{"present": 1}] if present else []
+    )
+    return analytics
+
+
+def test_u36_legacy_trace_also_held_outside_the_scope_is_unavailable(legacy):
+    """A copy in a deleted or unreadable project: the readable copy may be a
+    replay, so the older log is not attributed to it and nothing is read."""
+    legacy.organization_projects.return_value = [PROJECT, ROOT, OTHER]
+    analytics = _outside_analytics(present=True)
+    result = legacy(_config(project_id=None), analytics=analytics)
+    assert result.as_dict() == {
+        "status": "unavailable",
+        "kind": None,
+        "project_id": None,
+        "trace_id": None,
+        "span_id": None,
+        "retryable": False,
+    }
+    legacy.reader.assert_not_called()
+    query, params = analytics.execute_ch_query.call_args.args
+    assert "PREWHERE project_id IN %(outside_project_ids)s" in query
+    assert "id = toUUID(%(trace_id)s)" in query
+    assert params == {"outside_project_ids": (OTHER,), "trace_id": TRACE}
+
+
+def test_u37_legacy_trace_only_in_readable_projects_still_resolves(legacy):
+    legacy.organization_projects.return_value = [PROJECT, ROOT, OTHER]
+    analytics = _outside_analytics(present=False)
+    result = legacy(_config(project_id=None), analytics=analytics)
+    assert result.status == "ready"
+    assert legacy.reader.call_args.kwargs["project_ids"] == [PROJECT, ROOT]
+
+
+def test_u38_legacy_log_past_the_organization_bound_fails_closed(legacy):
+    legacy.organization_projects.return_value = None
+    analytics = _outside_analytics(present=False)
+    assert legacy(_config(project_id=None), analytics=analytics).status == (
+        "unavailable"
+    )
+    analytics.execute_ch_query.assert_not_called()
+    legacy.reader.assert_not_called()
+
+
+def test_u39_recorded_project_never_reads_the_organization_scope(resolve, monkeypatch):
+    organization_projects = Mock(side_effect=AssertionError("not for recorded logs"))
+    monkeypatch.setattr(
+        navigation, "organization_source_project_ids", organization_projects
+    )
+    assert resolve(_config()).status == "ready"
+    organization_projects.assert_not_called()
 
 
 def test_u35_legacy_log_with_no_readable_project_is_unavailable(legacy):

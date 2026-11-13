@@ -525,6 +525,112 @@ def test_i10d_legacy_lookup_stays_in_the_log_workspace(
     assert str(project.id) in scope and str(elsewhere.id) not in scope
 
 
+def _seed_trace_rows(trace_id, *projects, is_deleted=0):
+    """The direct-write ``traces`` rows (ORDER BY project_id, id) of a trace."""
+    from tracer.tests._ch_seed import _get_ch_client
+
+    client = _get_ch_client()
+    try:
+        client.insert(
+            "traces",
+            [
+                [trace_id, str(project.id), is_deleted, "2026-01-01 00:00:00"]
+                for project in projects
+            ],
+            column_names=["id", "project_id", "is_deleted", "created_at"],
+        )
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("original", ["deleted", "other_workspace", "tombstoned"])
+def test_i10e_legacy_replay_of_an_unreadable_original_is_unavailable(
+    auth_client, log_factory, collector_tree, user, workspace, project, original
+):
+    """An older log whose trace is also held outside the readable projects.
+
+    The original project was deleted or is in a workspace the log cannot
+    read, and a readable project holds a replay of the same trace and span
+    ids. The replay is not the source the eval ran on: no link, and neither
+    project is named.
+    """
+    _, child = collector_tree
+    replay = _sibling_project(project, "Readable replay")
+    other_workspace = _workspace(user) if original == "other_workspace" else None
+    source = Project.no_workspace_objects.create(
+        name="Original source",
+        organization=project.organization,
+        workspace=other_workspace or project.workspace,
+        model_type=project.model_type,
+        trace_type=project.trace_type,
+    )
+    trace_id = str(uuid4())
+    _seed_copy(collector_tree, source, trace_id=trace_id)
+    _seed_copy(collector_tree, replay, trace_id=trace_id)
+    _seed_trace_rows(trace_id, source, replay)
+    if original == "tombstoned":
+        _seed_trace_rows(trace_id, source, is_deleted=1)
+    if original in ("deleted", "tombstoned"):
+        Project.no_workspace_objects.filter(id=source.id).update(deleted=True)
+    log = log_factory(stamp=False, extra={"trace_id": trace_id, "span_id": child["id"]})
+    response = _get(auth_client, log)
+    _nav(response, "unavailable")
+    body = response.content.decode()
+    assert str(source.id) not in body and str(replay.id) not in body
+    assert source.name not in body
+
+
+def test_i10f_legacy_copy_in_another_organization_changes_nothing(
+    auth_client, log_factory, collector_tree, project
+):
+    """The org-wide check is scoped to the log's organization."""
+    root, child = collector_tree
+    trace_id = str(uuid4())
+    foreign = Project.no_workspace_objects.create(
+        name="Other organization project",
+        organization=Organization.objects.create(name="Colliding organization"),
+        model_type=project.model_type,
+        trace_type=project.trace_type,
+    )
+    _seed_copy(collector_tree, project, trace_id=trace_id)
+    _seed_trace_rows(trace_id, project, foreign)
+    log = log_factory(stamp=False, extra={"trace_id": trace_id, "span_id": child["id"]})
+    nav = _nav(_get(auth_client, log))
+    assert (nav["project_id"], nav["trace_id"], nav["span_id"]) == (
+        str(project.id),
+        trace_id,
+        child["id"],
+    )
+
+
+def test_i10g_legacy_log_fails_closed_past_the_organization_project_bound(
+    auth_client, log_factory, collector_tree, user, project, monkeypatch
+):
+    """Past the project bound an older log cannot be attributed: unavailable."""
+    from model_hub.services import eval_log_source_navigation as navigation
+
+    _, child = collector_tree
+    elsewhere = _workspace(user)
+    for name in ("Other workspace A", "Other workspace B"):
+        Project.no_workspace_objects.create(
+            name=name,
+            organization=project.organization,
+            workspace=elsewhere,
+            model_type=project.model_type,
+            trace_type=project.trace_type,
+        )
+    trace_id = str(uuid4())
+    _seed_copy(collector_tree, project, trace_id=trace_id)
+    _seed_trace_rows(trace_id, project)
+    # The log's workspace holds one project; the organization holds three.
+    monkeypatch.setattr(navigation, "MAX_SOURCE_PROJECTS", 2)
+    log = log_factory(stamp=False, extra={"trace_id": trace_id, "span_id": child["id"]})
+    _nav(_get(auth_client, log), "unavailable")
+    # A recorded project is unchanged: it never needs the organization scope.
+    stamped = log_factory(extra={"trace_id": trace_id, "span_id": child["id"]})
+    _nav(_get(auth_client, stamped))
+
+
 def test_i11_soft_deleted_config_still_resolves_legacy_log(
     auth_client, log_factory, custom_eval_config, fake_reader
 ):
@@ -751,11 +857,14 @@ def test_i25_bounded_pg_and_ch_queries(
     log = _tree_log(log_factory, collector_tree, stamp=False)
     # Warm URL imports before measuring; the API fixture adds one workspace read.
     _get(auth_client, log, None)
-    with django_assert_num_queries(4), CaptureQueriesContext(connection) as pg:
+    with django_assert_num_queries(5), CaptureQueriesContext(connection) as pg:
         _nav(_get(auth_client, log))
-    # workspace injection + log + localizer + project scope; no eval config read
-    assert len(pg) == 4
+    # workspace injection + log + localizer + readable project scope + the
+    # organization's projects (for the outside-copy check); no eval config read
+    assert len(pg) == 5
     assert not any("tracer_custom_eval_config" in q["sql"] for q in pg.captured_queries)
+    # The organization has no project outside the readable scope, so there
+    # is no outside-copy read; test_i10e covers that bounded point read.
     assert query.call_count == 2
     assert all(
         "tracer_eval_logger" not in call.args[0]

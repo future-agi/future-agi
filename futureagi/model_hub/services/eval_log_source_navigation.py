@@ -166,6 +166,74 @@ def _resolve_project_scope(
     return project_ids, None
 
 
+def organization_source_project_ids(organization_id) -> list[str] | None:
+    """Every project of an organization, or None past the reader's bound.
+
+    Deleted and simulation projects are included: a copy of a trace in any of
+    them means a log that never recorded its project cannot be attributed to
+    one readable copy. Used only to decide "unavailable", never to read.
+    """
+    from tracer.models.project import Project
+
+    if organization_id in (None, ""):
+        return None
+    project_ids = [
+        str(project_id)
+        for project_id in Project.with_simulation.filter(
+            organization_id=organization_id
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[: MAX_SOURCE_PROJECTS + 1]
+    ]
+    return None if len(project_ids) > MAX_SOURCE_PROJECTS else project_ids
+
+
+# One pruned point read on the traces (project_id, id) key: any row, live or
+# tombstoned, of the trace in a project outside the caller's readable scope.
+_OUTSIDE_COPY_QUERY = """
+    SELECT 1 AS present
+    FROM traces
+    PREWHERE project_id IN %(outside_project_ids)s
+      AND id = toUUID(%(trace_id)s)
+    LIMIT 1
+"""
+_OUTSIDE_COPY_SETTINGS = {
+    "max_threads": 1,
+    "max_memory_usage": 512 * 1024 * 1024,
+    "max_bytes_to_read": 1024 * 1024 * 1024,
+    "read_overflow_mode": "throw",
+}
+_OUTSIDE_COPY_TIMEOUT_MS = 3_000
+
+
+def _legacy_trace_held_outside(
+    *, analytics, log_row, trace_id: str, readable_project_ids: list[str]
+) -> bool:
+    """Whether an older log's trace also exists outside the readable scope.
+
+    Such a log cannot be attributed: its original project may be the deleted
+    or unreadable one, and a readable copy (a replay or duplicate ingestion)
+    is not the source it ran on. The check is org-scoped; it fails closed past
+    the project bound and never names or counts the other project.
+    """
+    organization_projects = organization_source_project_ids(
+        getattr(log_row, "organization_id", None)
+    )
+    if organization_projects is None:
+        return True
+    readable = set(readable_project_ids)
+    outside = tuple(p for p in organization_projects if p not in readable)
+    if not outside:
+        return False
+    result = analytics.execute_ch_query(
+        _OUTSIDE_COPY_QUERY,
+        {"outside_project_ids": outside, "trace_id": trace_id},
+        timeout_ms=_OUTSIDE_COPY_TIMEOUT_MS,
+        settings=_OUTSIDE_COPY_SETTINGS,
+    )
+    return bool(getattr(result, "data", result))
+
+
 def _map_read_error(exc) -> SourceNavigation:
     if isinstance(exc, TraceDetailNotFound):
         return SourceNavigation("unavailable")
@@ -202,11 +270,21 @@ def resolve_eval_log_source_navigation(
             project_ids, scope_result = _resolve_project_scope(
                 request, log_row, candidate
             )
+            analytics = analytics or (
+                None if scope_result is not None else V2AnalyticsQueryService()
+            )
             if scope_result is not None:
                 result = scope_result
+            elif candidate.project_id is None and _legacy_trace_held_outside(
+                analytics=analytics,
+                log_row=log_row,
+                trace_id=candidate.trace_id,
+                readable_project_ids=project_ids,
+            ):
+                result = SourceNavigation("unavailable")
             else:
                 detail = (read_detail or read_trace_detail)(
-                    analytics=analytics or V2AnalyticsQueryService(),
+                    analytics=analytics,
                     project_ids=project_ids,
                     trace_id=candidate.trace_id,
                     eval_config_ids_resolver=None,

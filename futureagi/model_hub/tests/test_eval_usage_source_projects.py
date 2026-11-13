@@ -390,8 +390,10 @@ def test_past_the_project_bound_falls_back_to_projects_running_the_eval(
     organization, user, workspace, template, clickhouse_usage, monkeypatch
 ):
     """Past MAX_SOURCE_PROJECTS the scope narrows to the readable projects
-    that run this eval now: still never an unreadable project, and a log
-    whose trace lives only in another readable project is no longer listed."""
+    that run this eval now: still never an unreadable project. An older log,
+    which recorded no project, cannot be checked against the organization's
+    other projects there, so it fails closed and is not listed; a log that
+    recorded a readable project still is."""
 
     monkeypatch.setattr(eval_log_source_navigation, "MAX_SOURCE_PROJECTS", 1)
     warnings = []
@@ -414,7 +416,10 @@ def test_past_the_project_bound_falls_back_to_projects_running_the_eval(
     walled_config = _config(walled, template, "walled cfg")
     ledger = _Ledger(organization, workspace, template)
     trace_id, elsewhere_trace, walled_trace = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    log, row = ledger.row(trace_id=trace_id, config_id=config.id)
+    _, row = ledger.row(trace_id=trace_id, config_id=config.id)
+    stamped, stamped_row = ledger.row(
+        trace_id=trace_id, config_id=config.id, project_id=configured.id
+    )
     _, elsewhere_row = ledger.row(trace_id=elsewhere_trace, config_id=config.id)
     _, walled_row = ledger.row(trace_id=walled_trace, config_id=walled_config.id)
     clickhouse_usage(
@@ -423,12 +428,13 @@ def test_past_the_project_bound_falls_back_to_projects_running_the_eval(
             (elsewhere_trace, unconfigured.id, 0, 1),
             (walled_trace, walled.id, 0, 1),
         ],
-        logs=[row, elsewhere_row, walled_row],
+        logs=[row, stamped_row, elsewhere_row, walled_row],
     )
 
-    assert _listed(_usage(template, organization, workspace)) == {str(log)}
+    assert _listed(_usage(template, organization, workspace)) == {str(stamped)}
     assert [event for event, _ in warnings] == [
-        "eval_usage.source_project_scope_too_large"
+        "eval_usage.source_project_scope_too_large",
+        "eval_usage.organization_project_scope_too_large",
     ]
     assert warnings[0][1]["template_id"] == str(template.id)
 
@@ -534,13 +540,20 @@ def test_a_snapshot_listed_by_eval_config_is_never_served(
     assert result["stats"]["runs_period"] == 0
 
 
-@pytest.mark.parametrize("stamped", [False, True], ids=["older-worker", "current"])
+@pytest.mark.parametrize(
+    "stamp",
+    [None, "source_project", separate_evals.EVAL_USAGE_TRACE_LOGS_BY],
+    ids=["older-worker", "previous-rule", "current"],
+)
 def test_a_snapshot_an_older_worker_cached_under_the_new_identity_is_a_miss(
-    auth_client, organization, workspace, template, settings, monkeypatch, stamped
+    auth_client, organization, workspace, template, settings, monkeypatch, stamp
 ):
-    """During a rolling deploy a pre-TH-4804 worker can take a refresh job for
-    the current identity and cache a payload listed by eval config under it.
-    Only a payload that says it lists trace logs by their source is served."""
+    """During a rolling deploy an older worker can take a refresh job for the
+    current identity and cache a payload listed by eval config, or listed
+    before older logs had to be unique in the organization ("source_project",
+    which listed a readable replay of an unreadable source). Only a payload
+    that names the current listing rule is served."""
+    stamped = stamp == separate_evals.EVAL_USAGE_TRACE_LOGS_BY
 
     settings.EVAL_USAGE_CLICKHOUSE_ENABLED = True
     monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
@@ -554,7 +567,7 @@ def test_a_snapshot_an_older_worker_cached_under_the_new_identity_is_a_miss(
         "start_date": None,
         "end_date": None,
         "runs": "success",
-        "trace_logs_by": "source_project",
+        "trace_logs_by": separate_evals.EVAL_USAGE_TRACE_LOGS_BY,
     }
     payload = {
         "template_id": str(template.id),
@@ -563,8 +576,8 @@ def test_a_snapshot_an_older_worker_cached_under_the_new_identity_is_a_miss(
         "query_status": "complete",
         "query_sampled": False,
     }
-    if stamped:
-        payload["trace_logs_by"] = "source_project"
+    if stamp is not None:
+        payload["trace_logs_by"] = stamp
     publish_exact_snapshot("eval-usage", current_identity, payload)
     cache_only = exact_aggregation_cache.read_or_schedule_exact_snapshot
     monkeypatch.setattr(
@@ -597,5 +610,81 @@ def test_every_computed_usage_payload_names_its_listing_rule(
     organization, workspace, template, clickhouse_usage
 ):
     assert _usage(template, organization, workspace)["trace_logs_by"] == (
-        "source_project"
+        "source_project_unique_in_org"
     )
+
+
+def test_an_older_log_whose_trace_is_also_held_outside_the_readable_scope_is_not_listed(
+    organization, user, workspace, template, clickhouse_usage
+):
+    """A readable copy may be a replay of a source the caller cannot read.
+
+    An older log recorded no project. Its trace is live in a readable project
+    and also held (live or tombstoned) in a deleted project or in a project of
+    another workspace, so it cannot be attributed to the readable copy and is
+    not listed. A log that recorded the readable project is still listed, and
+    so is an older log whose trace is held only there.
+    """
+    replay = _project(organization, workspace, "Readable replay")
+    deleted = _project(organization, workspace, "Deleted original")
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=str(uuid.uuid4()),
+        organization=organization,
+        created_by=user,
+        is_default=False,
+        is_active=True,
+    )
+    walled = _project(organization, other_workspace, "Original elsewhere")
+    config = _config(replay, template, "cfg")
+    ledger = _Ledger(organization, workspace, template)
+    deleted_trace, walled_trace, tombstoned_trace, single_trace = (
+        uuid.uuid4() for _ in range(4)
+    )
+    _, deleted_row = ledger.row(trace_id=deleted_trace, config_id=config.id)
+    _, walled_row = ledger.row(trace_id=walled_trace, config_id=config.id)
+    _, tombstoned_row = ledger.row(trace_id=tombstoned_trace, config_id=config.id)
+    single, single_row = ledger.row(trace_id=single_trace, config_id=config.id)
+    stamped, stamped_row = ledger.row(
+        trace_id=deleted_trace, config_id=config.id, project_id=replay.id
+    )
+    clickhouse_usage(
+        traces=[
+            (deleted_trace, deleted.id, 0, 1),
+            (deleted_trace, replay.id, 0, 1),
+            (walled_trace, walled.id, 0, 1),
+            (walled_trace, replay.id, 0, 1),
+            (tombstoned_trace, walled.id, 0, 1),
+            (tombstoned_trace, walled.id, 1, 2),
+            (tombstoned_trace, replay.id, 0, 1),
+            (single_trace, replay.id, 0, 1),
+        ],
+        logs=[deleted_row, walled_row, tombstoned_row, single_row, stamped_row],
+    )
+    Project.no_workspace_objects.filter(id=deleted.id).update(deleted=True)
+
+    assert _listed(_usage(template, organization, workspace)) == {
+        str(single),
+        str(stamped),
+    }
+
+
+def test_a_trace_copy_in_another_organization_changes_nothing(
+    organization, workspace, template, clickhouse_usage
+):
+    """The check is scoped to the log's organization."""
+    source = _project(organization, workspace, "Source")
+    foreign = _project(
+        Organization.objects.create(name="Colliding organization"),
+        None,
+        "Other organization",
+    )
+    config = _config(source, template, "cfg")
+    ledger = _Ledger(organization, workspace, template)
+    trace_id = uuid.uuid4()
+    older, row = ledger.row(trace_id=trace_id, config_id=config.id)
+    clickhouse_usage(
+        traces=[(trace_id, source.id, 0, 1), (trace_id, foreign.id, 0, 1)],
+        logs=[row],
+    )
+
+    assert _listed(_usage(template, organization, workspace)) == {str(older)}

@@ -219,8 +219,12 @@ def _latest_usage_slice(
     # config (whose project can change, or which can be deleted, after the
     # run). ``project_ids`` are the projects the caller may read. A log that
     # recorded its project is listed only while that project is readable and
-    # holds the trace live; an older log is listed while a readable project
-    # holds its trace live.
+    # holds the trace live. An older log is listed while a readable project
+    # holds its trace live and no copy of the trace (live or tombstoned)
+    # exists in any other project of the organization, deleted or unreadable
+    # ones included: then the readable copy may be a replay, not the source
+    # it ran on. ``outside_project_ids`` are those other projects; past the
+    # project bound ``legacy_attributable`` is 0 and older logs are not listed.
     trace_candidates = f"""
         SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id
         FROM {_USAGE_TABLE}
@@ -228,7 +232,9 @@ def _latest_usage_slice(
         WHERE eval_trace_id != ''
     """
     trace_projects = live_trace_project_sets_sql(
-        candidate_trace_ids_sql=trace_candidates
+        candidate_trace_ids_sql=trace_candidates,
+        outside_project_ids_param="outside_project_ids",
+        scan_project_ids_param="trace_scan_project_ids",
     )
     return f"""
         SELECT current_usage.*
@@ -240,7 +246,9 @@ def _latest_usage_slice(
             current_usage.eval_trace_id = ''
             OR if(
                 current_usage.eval_source_project_id = '',
-                notEmpty(readable_trace_projects.live_project_ids),
+                %(legacy_attributable)s = 1
+                AND notEmpty(readable_trace_projects.live_project_ids)
+                AND readable_trace_projects.held_elsewhere = 0,
                 has(
                     readable_trace_projects.live_project_ids,
                     toUUIDOrZero(current_usage.eval_source_project_id)
@@ -273,6 +281,7 @@ def read_eval_usage(
     organization_id: str,
     workspace_id: str | None,
     project_ids: list[str] | tuple[str, ...],
+    outside_project_ids: list[str] | tuple[str, ...] | None,
     template_id: str,
     start_date: datetime,
     end_date: datetime,
@@ -305,6 +314,18 @@ def read_eval_usage(
             # Keep IN syntactically valid and fail closed for trace-attached
             # rows when the caller may read no project in the workspace.
             "project_ids": tuple(project_ids)
+            or ("00000000-0000-0000-0000-000000000000",),
+            # The organization's other projects (deleted and unreadable ones
+            # included). None: past the project bound, so an older log, which
+            # recorded no project, cannot be attributed and is not listed.
+            "outside_project_ids": tuple(outside_project_ids or ())
+            or ("00000000-0000-0000-0000-000000000000",),
+            "legacy_attributable": 0 if outside_project_ids is None else 1,
+            # One pruned traces scan answers both: the readable projects'
+            # live copies and any copy in the outside projects.
+            "trace_scan_project_ids": tuple(
+                sorted({*project_ids, *(outside_project_ids or ())})
+            )
             or ("00000000-0000-0000-0000-000000000000",),
             "start_date": _utc(start_date),
             # The public contract treats end_date as inclusive. ClickHouse

@@ -133,6 +133,7 @@ from model_hub.serializers.eval_runner import (
 from model_hub.services.eval_log_source_navigation import (
     MAX_SOURCE_PROJECTS,
     SourceNavigation,
+    organization_source_project_ids,
     readable_source_project_ids,
     readable_source_projects,
     resolve_eval_log_source_navigation,
@@ -5961,8 +5962,11 @@ def _pending_eval_usage_payload(template_id, page, page_size):
 # refresh job keyed by the new identity (it ignores ``trace_logs_by``) and cache
 # a payload listed by eval config under it; a payload without the marker is
 # therefore a cache miss, as the observe namespaces treat an unmarked latency
-# snapshot (graph_metric_statistic.snapshot_names_its_statistic).
-EVAL_USAGE_TRACE_LOGS_BY = "source_project"
+# snapshot (graph_metric_statistic.snapshot_names_its_statistic). The value
+# names the current rule: an older log is listed only when its trace is held
+# in one readable project and in no other project of the organization, so a
+# snapshot computed under the earlier "source_project" rule is never served.
+EVAL_USAGE_TRACE_LOGS_BY = "source_project_unique_in_org"
 
 
 def eval_usage_snapshot_lists_by_source(snapshot) -> bool:
@@ -6002,6 +6006,24 @@ def _eval_usage_source_project_ids(request, workspace, template_id) -> list[str]
         .order_by("id")
         .values_list("id", flat=True)[:MAX_SOURCE_PROJECTS]
     ]
+
+
+def _eval_usage_outside_project_ids(organization, project_ids) -> list[str] | None:
+    """The organization's projects outside the listable scope, or None.
+
+    Deleted and unreadable projects are included. An older log whose trace is
+    also held in one of them is not listed (its readable copy may be a
+    replay). None past the project bound: then no older log is listed.
+    """
+    organization_projects = organization_source_project_ids(organization.id)
+    if organization_projects is None:
+        logger.warning(
+            "eval_usage.organization_project_scope_too_large",
+            organization_id=str(organization.id),
+        )
+        return None
+    listable = set(project_ids)
+    return [p for p in organization_projects if p not in listable]
 
 
 class EvalUsageStatsView(APIView):
@@ -6183,6 +6205,9 @@ class EvalUsageStatsView(APIView):
                     organization_id=str(organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                     project_ids=project_ids,
+                    outside_project_ids=_eval_usage_outside_project_ids(
+                        organization, project_ids
+                    ),
                     template_id=str(template_id),
                     start_date=start_date,
                     end_date=end_date,

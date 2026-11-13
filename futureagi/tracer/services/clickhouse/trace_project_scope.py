@@ -100,6 +100,8 @@ def live_trace_project_sets_sql(
     *,
     candidate_trace_ids_sql: str,
     project_ids_param: str = "project_ids",
+    outside_project_ids_param: str | None = None,
+    scan_project_ids_param: str | None = None,
 ) -> str:
     """Return, per candidate trace, every requested project holding it live.
 
@@ -111,21 +113,46 @@ def live_trace_project_sets_sql(
     so a tombstone in one project cannot hide or resurrect another project's
     copy. The caller must provide a finite trace-ID candidate query.
 
+    With ``outside_project_ids_param`` the relation also returns
+    ``held_elsewhere``: 1 when any row of the trace, live or tombstoned, is in
+    one of those projects (ones the caller may not read). Those projects are
+    never in ``live_project_ids``. The scan then reads the projects bound to
+    ``scan_project_ids_param``, which must be both lists together, so one
+    pruned scan answers both questions.
+
     The candidate IDs are an ``IN`` set next to the project list, not a join:
     ClickHouse prunes the ``(project_id, id)`` primary key with both, so the
     scan reads the granules of the candidate traces only. A join reads every
     trace of every requested project, which grows with the workspace.
     """
 
-    if not _PARAM_NAME_RE.fullmatch(project_ids_param):
+    names = [project_ids_param, outside_project_ids_param, scan_project_ids_param]
+    if (outside_project_ids_param is None) != (scan_project_ids_param is None):
+        raise ValueError("Outside and scan project parameters go together")
+    if not all(_PARAM_NAME_RE.fullmatch(name) for name in names if name is not None):
         raise ValueError("Invalid ClickHouse parameter name")
     if not candidate_trace_ids_sql.strip():
         raise ValueError("A bounded trace-ID candidate query is required")
 
+    if outside_project_ids_param is None:
+        scanned = project_ids_param
+        live_projects = "groupUniqArray(project_id) AS live_project_ids"
+        live_filter = "WHERE latest_is_deleted = 0"
+    else:
+        scanned = scan_project_ids_param
+        live_projects = f"""groupUniqArrayIf(
+                project_id,
+                latest_is_deleted = 0
+                AND project_id IN %({project_ids_param})s
+            ) AS live_project_ids,
+            toUInt8(
+                countIf(project_id IN %({outside_project_ids_param})s) > 0
+            ) AS held_elsewhere"""
+        live_filter = ""
     return f"""
         SELECT
             trace_id,
-            groupUniqArray(project_id) AS live_project_ids
+            {live_projects}
         FROM (
             SELECT
                 trace_project_scan.id AS trace_id,
@@ -135,13 +162,13 @@ def live_trace_project_sets_sql(
                     trace_project_scan._version
                 ) AS latest_is_deleted
             FROM {_TRACE_TABLE} AS trace_project_scan
-            PREWHERE trace_project_scan.project_id IN %({project_ids_param})s
+            PREWHERE trace_project_scan.project_id IN %({scanned})s
               AND trace_project_scan.id IN (
                   SELECT trace_id FROM ({candidate_trace_ids_sql})
               )
             GROUP BY trace_project_scan.id, trace_project_scan.project_id
         ) AS trace_project_state
-        WHERE latest_is_deleted = 0
+        {live_filter}
         GROUP BY trace_id
     """
 
