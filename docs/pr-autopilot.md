@@ -1030,20 +1030,28 @@ change its result.
 A test reads every workflow file and fails if a `dev` push workflow that a
 LOW merge would start is neither dispatched under the same paths nor listed
 in `post_merge_not_dispatched` with a reason, or if a dispatch's inputs do
-not fit the workflow. It also fails if a LOW Python path falls outside a
-`tests/` directory, so a wider LOW allowlist forces a review of the Python
-types exemption, and if a listed workflow is no longer a `dev` push
-workflow. It counts every push trigger form that can run on `dev`, and reports
-`branches-ignore`, `paths-ignore` and negated branch patterns as not modelled.
+not fit the workflow. It also fails if a LOW path could be a Python file
+outside a `tests/` directory or another mypy input, so a wider LOW allowlist
+forces a review of the Python types exemption. The other mypy inputs it checks
+are `futureagi/mypy-baseline.txt`, `scripts/mypy_baseline.py`,
+`scripts/test_mypy_baseline.py`, and `futureagi/mypy.ini` and
+`futureagi/.mypy.ini`, which mypy reads before `pyproject.toml`. It fails if
+`[tool.mypy]` no longer excludes `tests/`, and if a listed workflow is no
+longer a `dev` push workflow. It counts every push trigger form that can run
+on `dev`, and reports `branches-ignore`, `paths-ignore` and negated branch patterns as not modelled.
 Widening the LOW allowlist can therefore require new entries. The test runs in
 the `policy-tests` job on every PR into `dev` that changes any workflow file
 or an autopilot file. A PR that changes a `dev` push filter or adds a `dev`
-push workflow may need a `post_merge_workflows` entry, and its `policy-tests`
-check fails until it has one. `policy-tests` is not a required check and must
+push workflow may need a `post_merge_workflows` entry, or, if the workflow
+has no `workflow_dispatch` and a LOW merge cannot change its result, a
+`post_merge_not_dispatched` entry with a reason; its `policy-tests` check
+fails until it has one. `policy-tests` is not a required check and must
 not become one, because a path-filtered required check leaves every other PR
 pending. So it shows the drift on the PR that causes it but does not block
 the merge. A workflow change that reaches `dev` another way, for
-example a merge from `main`, is caught only at the next such PR.
+example a merge from `main`, is caught only at the next such PR. A PR that
+changes only `futureagi/pyproject.toml` does not run the test, so dropping
+`tests/` from the mypy exclude is also caught only at the next such PR.
 
 Those workflows execute their own trusted post-merge code and use their own
 permissions/secrets. This lane adds no production credentials and does not

@@ -1136,6 +1136,15 @@ class EvidenceTests(unittest.TestCase):
         return {path.name: yaml.safe_load(path.read_text()) for path in sorted(directory.glob("*.y*ml"))}
 
     @staticmethod
+    def mypy_excludes_tests(pyproject_text):
+        """Whether [tool.mypy] still excludes tests/, which the python-types
+        exemption relies on."""
+        import tomllib
+
+        mypy = tomllib.loads(pyproject_text).get("tool", {}).get("mypy", {})
+        return "tests/" in mypy.get("exclude", [])
+
+    @staticmethod
     def post_merge_gaps(policy, workflows):
         """Dev push workflows a person's merge of a LOW file would start, but
         whose post-merge dispatch is missing, filtered differently or invalid."""
@@ -1147,6 +1156,13 @@ class EvidenceTests(unittest.TestCase):
             zero = "/".join(part for part in parts if part != "xx")
             return {one, zero}
 
+        # Inputs of python-types.yml's mypy run, other than Python files, that
+        # the policy does not already make HIGH: those its changes filter
+        # names, and the config files mypy reads before futureagi/pyproject.toml.
+        mypy_inputs = (
+            "futureagi/mypy-baseline.txt", "scripts/mypy_baseline.py", "scripts/test_mypy_baseline.py",
+            "futureagi/mypy.ini", "futureagi/.mypy.ini",
+        )
         low = set().union(*(samples(glob) for glob in policy["low_globs"]))
         gaps = [path for path in low if risk.classify([file(path)], policy)["tier"] != "low"]
         configured = {entry["workflow"]: entry for entry in policy["post_merge_workflows"]}
@@ -1181,15 +1197,26 @@ class EvidenceTests(unittest.TestCase):
                 reason = not_dispatched[name].get("reason")
                 if not isinstance(reason, str) or not reason.strip():
                     gaps.append(f"{name}: not-dispatched entry needs a reason")
-                # mypy excludes tests/, so a LOW Python file elsewhere could
-                # change the result of the run this exemption skips.
-                if name == "python-types.yml" and any(
-                    sample.endswith((".py", ".pyi")) and "tests" not in sample.split("/")
-                    for sample in low
-                ):
-                    gaps.append(
-                        "python-types.yml: LOW Python paths outside tests/ require reviewing the exemption"
-                    )
+                # mypy excludes tests/, so a LOW Python file elsewhere, or a
+                # LOW mypy input, could change the result of the run this
+                # exemption skips. A sample's last * became x, so also probe
+                # the Python files that wildcard could name.
+                if name == "python-types.yml":
+                    candidates = low | {
+                        sample + suffix for sample in low for suffix in (".py", ".pyi", "/x.py", "/x.pyi")
+                    }
+                    python = {
+                        path for path in candidates
+                        if path.endswith((".py", ".pyi")) and "tests" not in path.split("/")
+                    }
+                    if any(
+                        risk.classify([file(path)], policy)["tier"] == "low"
+                        for path in sorted(python) + list(mypy_inputs)
+                    ):
+                        gaps.append(
+                            "python-types.yml: a LOW path could be a mypy input outside tests/;"
+                            " review the exemption"
+                        )
                 continue
             if name not in configured:
                 if started:
@@ -1247,20 +1274,32 @@ class EvidenceTests(unittest.TestCase):
             self.post_merge_gaps(POLICY, no_dev_push),
         )
 
-        # A wider LOW allowlist must force a review of the mypy exemption,
-        # unless the new Python paths are under a tests/ directory.
+        # A wider LOW allowlist must force a review of the mypy exemption if
+        # a LOW path could be a Python file outside a tests/ directory, even
+        # through a trailing wildcard, or another mypy input.
         for glob, flagged in (
             ("futureagi/*.py", True),
             ("futureagi/**/*.pyi", True),
+            ("futureagi/model_hub/**", True),
+            ("futureagi/*.txt", True),  # futureagi/mypy-baseline.txt
+            ("futureagi/*.ini", True),  # a mypy.ini would replace [tool.mypy]
+            ("scripts/**", True),  # scripts/mypy_baseline.py
             ("futureagi/agentic_eval/tests/test_*.py", False),
+            ("futureagi/tracer/tests/**", False),
         ):
             wider = copy.deepcopy(POLICY)
             wider["low_globs"].append(glob)
             with self.subTest(glob=glob):
                 self.assertEqual(any(
-                    "python-types.yml: LOW Python paths outside tests/" in gap
+                    "python-types.yml: a LOW path could be a mypy input outside tests/" in gap
                     for gap in self.post_merge_gaps(wider, workflows)
                 ), flagged)
+
+        # The exemption also relies on [tool.mypy] excluding tests/.
+        pyproject = Path(__file__).resolve().parents[1] / "futureagi/pyproject.toml"
+        self.assertTrue(self.mypy_excludes_tests(pyproject.read_text()))
+        self.assertFalse(self.mypy_excludes_tests('[tool.mypy]\nexclude = ["migrations/"]\n'))
+        self.assertFalse(self.mypy_excludes_tests('[tool.ruff]\nexclude = ["tests/"]\n'))
 
         # An exemption without an explanation is not a valid policy entry.
         unexplained = copy.deepcopy(POLICY)
