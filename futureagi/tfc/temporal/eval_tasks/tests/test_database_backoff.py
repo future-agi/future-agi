@@ -18,6 +18,7 @@ from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 from tfc.temporal.eval_tasks import activities, get_activities, get_workflows
 from tfc.temporal.eval_tasks import workflows as wf
 from tfc.temporal.eval_tasks.db_errors import is_transient_database_error
+from tfc.temporal.eval_tasks.tests._refusing_postgres import RefusingPostgres
 from tfc.temporal.eval_tasks.tests.test_workflows import (
     _patch_completing_run_entry,
     _patch_noop_reconcile,
@@ -127,6 +128,101 @@ def test_protocol_violations_and_pooler_client_refusals_are_not_outages(message)
 def test_pooler_text_under_another_sqlstate_is_not_an_outage():
     raised = psycopg.errors.RaiseException('database "synthetic_db" is disabled')
     assert not is_transient_database_error(raised)
+
+
+# PostgreSQL's 57P03 login refusals while it starts up, shuts down, recovers
+# after a backend crash, or replays WAL before a standby is consistent.
+# PgBouncer 1.18 relays the same text to clients logging in while its pool is
+# cold. psycopg reports them, like any connect failure, with no SQLSTATE.
+_POSTGRES_NOT_READY = {
+    "starting-up": "the database system is starting up",
+    "shutting-down": "the database system is shutting down",
+    "recovery": "the database system is in recovery mode",
+    "not-consistent": "the database system is not yet accepting connections",
+}
+# Login refusals that no wait fixes: credentials, a missing database or role,
+# access rules, a malformed startup packet, a standby with hot_standby = off.
+_POSTGRES_LOGIN_FAILURES = {
+    "auth": ("28P01", 'password authentication failed for user "synthetic_user"'),
+    "missing-database": ("3D000", 'database "synthetic_db" does not exist'),
+    "missing-role": ("28000", 'role "synthetic_user" does not exist'),
+    "hba": (
+        "28000",
+        'no pg_hba.conf entry for host "127.0.0.1", user "synthetic_user",'
+        ' database "synthetic_db", no encryption',
+    ),
+    "protocol": (
+        "08P01",
+        "invalid startup packet layout: expected terminator as last byte",
+    ),
+    "hot-standby-off": ("57P03", "the database system is not accepting connections"),
+}
+
+
+def _connect_refusal(message, port):
+    # The text psycopg raised against postgres:16 and PgBouncer 1.18.
+    exc = OperationalError("writer unavailable")
+    exc.__cause__ = psycopg.OperationalError(
+        f'connection failed: connection to server at "127.0.0.1", port {port}'
+        f" failed: FATAL:  {message}"
+    )
+    return exc
+
+
+@pytest.mark.parametrize("port", [5432, 6432], ids=["direct", "via-pgbouncer"])
+@pytest.mark.parametrize(
+    "message", list(_POSTGRES_NOT_READY.values()), ids=list(_POSTGRES_NOT_READY)
+)
+def test_postgres_not_ready_refusals_at_connect_are_transient(message, port):
+    assert is_transient_database_error(_connect_refusal(message, port))
+
+
+@pytest.mark.parametrize(
+    "message",
+    [message for _, message in _POSTGRES_LOGIN_FAILURES.values()],
+    ids=list(_POSTGRES_LOGIN_FAILURES),
+)
+def test_postgres_login_failures_at_connect_are_not_outages(message):
+    assert not is_transient_database_error(_connect_refusal(message, 5432))
+
+
+def _refused_login(message, sqlstate) -> psycopg.OperationalError:
+    with (
+        RefusingPostgres(message, sqlstate=sqlstate) as server,
+        pytest.raises(psycopg.OperationalError) as caught,
+    ):
+        psycopg.connect(
+            host="127.0.0.1",
+            port=server.port,
+            dbname="synthetic_db",
+            user="synthetic_user",
+            connect_timeout=10,
+        )
+    return caught.value
+
+
+@pytest.mark.parametrize(
+    "message", list(_POSTGRES_NOT_READY.values()), ids=list(_POSTGRES_NOT_READY)
+)
+def test_real_driver_not_ready_refusal_is_transient(message):
+    refusal = _refused_login(message, "57P03")
+    shape = f"{type(refusal).__name__}[{refusal.sqlstate}] {refusal}"
+    assert message in str(refusal), shape
+    # The SQLSTATE the server sent does not reach the exception.
+    assert refusal.sqlstate in (None, "57P03"), shape
+    assert is_transient_database_error(refusal), shape
+
+
+@pytest.mark.parametrize(
+    "sqlstate,message",
+    list(_POSTGRES_LOGIN_FAILURES.values()),
+    ids=list(_POSTGRES_LOGIN_FAILURES),
+)
+def test_real_driver_login_failure_is_not_an_outage(sqlstate, message):
+    refusal = _refused_login(message, sqlstate)
+    shape = f"{type(refusal).__name__}[{refusal.sqlstate}] {refusal}"
+    assert message in str(refusal), shape
+    assert not is_transient_database_error(refusal), shape
 
 
 @pytest.mark.parametrize(

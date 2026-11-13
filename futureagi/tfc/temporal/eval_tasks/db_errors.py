@@ -44,6 +44,15 @@ _CONNECTION_MESSAGES = (
     "could not receive data from server",
     "could not send data to server",
     "consuming input failed",
+    # PostgreSQL's 57P03 refusals while it starts, stops or recovers. The
+    # 57P03 entry above does not catch them: psycopg attaches no SQLSTATE to
+    # a failed connect. PgBouncer relays the same texts to clients still
+    # logging in while its pool is cold. "not accepting connections" without
+    # "yet" (hot_standby = off) is configuration and stays a failure.
+    "the database system is starting up",
+    "the database system is shutting down",
+    "the database system is in recovery mode",
+    "the database system is not yet accepting connections",
 )
 # PgBouncer sends its own refusals as SQLSTATE 08P01, the code PostgreSQL uses
 # for real protocol violations, so only these texts mark an outage or
