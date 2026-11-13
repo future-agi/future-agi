@@ -12,7 +12,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
+from uuid import UUID
 
 from simulate.models import (
     HarnessAssembledBundle,
@@ -214,7 +215,10 @@ def selection_report(
         "selection": {
             **_scope(pairing, placement, keys),
             "requested": requested,
-            **{bucket: len(by_bucket[bucket]) for bucket in BUCKETS},
+            "eligible": len(by_bucket["eligible"]),
+            "blocked": len(by_bucket["blocked"]),
+            "stale": len(by_bucket["stale"]),
+            "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
             "dropped": placement.dropped,
             "grading": {
@@ -249,10 +253,7 @@ def _selected_answer(
     if not unused or found["kind"] != "blocked" or found["reason_code"] is not None:
         return found
     return answer(
-        [
-            {**row, "status": "supported"} if row["id"] in unused else row
-            for row in rows
-        ],
+        [_supported(row) if row["id"] in unused else row for row in rows],
         validating=False,
         failed=False,
         named=False,
@@ -422,14 +423,21 @@ def changed_since_last_run(
         return None, []
     since: ChangedSince = {
         "run_id": str(last.id),
-        "suite_version": version_refs(None, None, last.suite_version)["suite"],
+        "suite_version": cast(
+            "VersionRef | None", version_refs(None, None, last.suite_version)["suite"]
+        ),
     }
     before = _digests(last.suite_version_id, keys)
     now = _digests(pairing.suite_version.id, keys)
     return since, [key for key in keys if before.get(key) != now.get(key)]
 
 
-def _digests(suite_version_id: object, keys: list[str]) -> dict[str, str]:
+def _supported(row: SelectionRowView) -> SelectionRowView:
+    supported: SelectionRowView = {**row, "status": "supported"}
+    return supported
+
+
+def _digests(suite_version_id: UUID | None, keys: list[str]) -> dict[str, str]:
     return {
         key: canonical_digest(content)
         for key, content in HarnessSuiteMember.no_workspace_objects.filter(
@@ -569,8 +577,8 @@ def _voice(pairing: Pairing) -> bool:
 
 def _status_for(row: RowView, case: CaseNeeds) -> Status:
     """The row's status for this case: a tool row failing only on tools the case
-    does not need is Supported for it. An agent tool the world lacks may be called
-    in any case."""
+    does not need is Supported for it, unless its evidence is Stale or waits on its
+    gate. An agent tool the world lacks may be called in any case."""
     if (
         row["id"] in TOOL_ROWS
         and row["targets"]
@@ -579,7 +587,9 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        return "supported"
+        if row["stale_because"] == "built_with_unknown" or row["blocked_by"]:
+            return "untested"
+        return "stale" if row["stale_because"] else "supported"
     return row["status"]
 
 

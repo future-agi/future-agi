@@ -879,8 +879,10 @@ class _ReadinessPlan:
 
 
 def _pin_tuple(resolved: ResolvedPins | None) -> tuple[Any, Any, Any] | None:
-    if resolved is None:
-        return None
+    return None if resolved is None else _pins(resolved)
+
+
+def _pins(resolved: ResolvedPins) -> tuple[Any, Any, Any]:
     return (
         resolved.agent_version_id,
         getattr(resolved.environment_version, "id", None),
@@ -921,7 +923,7 @@ def _readiness_plan(
     except HostedHarnessError as exc:
         if exc.status_code != 400:
             raise
-        return _ReadinessPlan(pins=_pin_tuple(resolved), plan=None)
+        return _ReadinessPlan(pins=_pins(resolved), plan=None)
     except Exception as exc:
         logger.exception(
             "harness_run_readiness_unavailable", environment_id=str(environment.id)
@@ -933,7 +935,7 @@ def _readiness_plan(
             status_code=503,
             retryable=True,
         ) from exc
-    return _ReadinessPlan(pins=_pin_tuple(resolved), plan=plan)
+    return _ReadinessPlan(pins=_pins(resolved), plan=plan)
 
 
 def _held_back_checked(
@@ -952,7 +954,7 @@ def _held_back_checked(
     if planned is None and resolved is None:
         return list(scenario_keys)
     # Pins that appeared or moved after readiness was read were never checked.
-    if planned is None or planned.pins != _pin_tuple(resolved):
+    if planned is None or resolved is None or planned.pins != _pin_tuple(resolved):
         raise _readiness_moved()
     if planned.plan is None:
         return list(scenario_keys)

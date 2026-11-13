@@ -2764,7 +2764,7 @@
 
 **Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
 
-**Spec:** `flows/simulate/pairing-readiness.spec.ts:147`
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:150`
 
 **Tags:** —
 
