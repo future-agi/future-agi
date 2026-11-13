@@ -76,8 +76,7 @@ export const READY_TO_RUN_COPY = {
   notGradable: (n) =>
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
-  noVersions:
-    "Ready to run shows once this environment has a saved version.",
+  noVersions: "Ready to run starts once this environment has versions.",
   groups: {
     needs_you: "Needs you",
     builder: "Builder chat can fix",
@@ -137,7 +136,7 @@ export const RUN_PLAN_COPY = {
   scenarioCount: (n, all) => {
     if (!all) return plural(n, "selected scenario", "selected scenarios");
     if (n === null) return "All scenarios";
-    return `All ${plural(n, "scenario", "scenarios")}`;
+    return n === 1 ? "1 scenario" : `All ${n} scenarios`;
   },
   heldBack: ({ requested, blocked }, label) =>
     `${requested} selected · ${requested - blocked} will run · ${blocked} held back${

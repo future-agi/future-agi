@@ -447,7 +447,9 @@ export const RUN_DIALOG_COPY = {
   rerunAgentFallback:
     "That run's agent version can't run now; using the current default agent.",
   allScenarios: (n, suite) =>
-    `Runs all ${n} scenario${n === 1 ? "" : "s"} in ${suite}.`,
+    n === 1
+      ? `Runs the 1 scenario in ${suite}.`
+      : `Runs all ${n} scenarios in ${suite}.`,
   allCurrentScenarios: (suite) => `Runs all scenarios in ${suite}.`,
   emptySuite: (suite) => `${suite} has no scenarios to run.`,
   noneInSuite: (suite) => `None of the selected scenarios are in ${suite}.`,

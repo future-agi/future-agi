@@ -295,13 +295,20 @@ export default function CredentialsForm({
       {formError && (
         <Typography
           role="alert"
-          sx={{ typography: "s2", color: "status.danger.fg", mt: 1.5 }}
+          // Sits right under the fields it is about.
+          sx={{ typography: "s3", color: "status.danger.fg", mt: 0.75 }}
         >
           {formError}
         </Typography>
       )}
       {note && (
-        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 2 }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            mt: formError ? 1.5 : 2,
+          }}
+        >
           {note}
         </Typography>
       )}
