@@ -1124,6 +1124,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "assignments suppress a matching curated tag"
             ),
         ),
+        "legacy_trace_tags_sql": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "curated traces.tags of the leaf's authorized project set, "
+                "limited to traces with a live root in the requested window"
+            ),
+        ),
+        "read_tag_overlay": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "liveness in the graph window of the trace roots and span "
+                "identities the authorized project's assignments name"
+            ),
+        ),
         "_assignment_vocabulary": filed(
             PROJECT_SET,
             CHILDREN_ATTRIBUTE_PICKERS,
@@ -1229,9 +1245,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "status": _OUTBOX_BOOKKEEPING,
     },
     "tracer.services.clickhouse.query_builders.agent_graph": {
-        "AgentGraphQueryBuilder.build": filed(
+        "AgentGraphQueryBuilder.build.<locals>.physical_versions": filed(
             PROJECT_SET,
-            why="Agent Graph statement for the project ids the chart view passes in",
+            why=(
+                "Agent Graph statement's physical span read (one hour range of it "
+                "under a Tag filter) for the project ids the chart view passes in"
+            ),
         ),
     },
     "tracer.services.clickhouse.query_builders.annotation_graph": {
