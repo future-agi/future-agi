@@ -31,8 +31,10 @@ from model_hub.services import eval_log_source_navigation
 from model_hub.views import separate_evals
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
+from tracer.services import exact_aggregation_cache
 from tracer.services.clickhouse import trace_project_scope
 from tracer.services.clickhouse.client import ClickHouseClient
+from tracer.services.exact_aggregation_cache import publish_exact_snapshot
 
 pytest.importorskip("ee.usage.models.usage", reason="requires ee/")
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -361,3 +363,54 @@ def test_past_the_project_bound_falls_back_to_projects_running_the_eval(
     clickhouse_usage(traces=[(trace_id, configured.id, 0, 1)], logs=[row])
 
     assert _listed(_usage(template, organization, workspace)) == {str(log)}
+
+
+def test_a_snapshot_listed_by_eval_config_is_never_served(
+    auth_client, organization, workspace, template, settings, monkeypatch
+):
+    """A Usage snapshot cached under the config-based rule omits logs whose
+    config moved or was deleted; the current request identity must not
+    resolve to it."""
+
+    settings.EVAL_USAGE_CLICKHOUSE_ENABLED = True
+    monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
+    config_rule_identity = {
+        "organization_id": str(organization.id),
+        "workspace_id": str(workspace.id),
+        "template_id": str(template.id),
+        "page": 0,
+        "page_size": 25,
+        "period": "30d",
+        "start_date": None,
+        "end_date": None,
+        "runs": "success",
+    }
+    publish_exact_snapshot(
+        "eval-usage",
+        config_rule_identity,
+        {
+            "template_id": str(template.id),
+            "stats": {"runs_period": 7, "success_count": 7, "error_count": 0},
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        },
+    )
+    cache_only = exact_aggregation_cache.read_or_schedule_exact_snapshot
+    monkeypatch.setattr(
+        separate_evals,
+        "read_or_schedule_exact_snapshot",
+        lambda namespace, identity, **kwargs: cache_only(
+            namespace, identity, **{**kwargs, "schedule_on_miss": False}
+        ),
+    )
+
+    response = auth_client.get(
+        f"/model-hub/eval-templates/{template.id}/usage/",
+        {"page": 0, "page_size": 25, "period": "30d"},
+    )
+
+    assert response.status_code == 200, response.content
+    result = response.json()["result"]
+    assert result["query_status"] == "pending"
+    assert result["stats"]["runs_period"] == 0

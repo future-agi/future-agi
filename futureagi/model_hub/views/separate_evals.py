@@ -6110,6 +6110,10 @@ class EvalUsageStatsView(APIView):
                 # Snapshots computed before usage became successful runs only
                 # still count errors; a new identity never serves them.
                 "runs": APICallStatusChoices.SUCCESS.value,
+                # Snapshots computed before trace logs were listed by their
+                # source (TH-4804) dropped logs whose eval config had moved or
+                # been deleted; a new identity never serves them.
+                "trace_logs_by": "source_project",
             }
             clickhouse_usage_enabled = (
                 settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
