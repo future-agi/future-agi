@@ -2,6 +2,7 @@ package modeldb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -368,5 +369,60 @@ func TestSync_ExplicitFreeAndAbsentOptionalRatesAccepted(t *testing.T) {
 	}
 	if _, ok := ptr.Load().Get("fetched-7"); !ok {
 		t.Error("an entry with no optional rates was dropped")
+	}
+}
+
+// bundledFileWithout is the bundled catalogue file with the given keys removed.
+func bundledFileWithout(t *testing.T, keys ...string) string {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(liteLLMData, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		if _, ok := BundledModels[k]; !ok {
+			t.Fatalf("precondition: %q is not bundled", k)
+		}
+		delete(raw, k)
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// The bundled file without the seven models it gained since the previous
+// snapshot is a valid, older catalogue. Synced through the real entry floor,
+// it must keep those models and the decision models, also after a config reload.
+func TestSync_OlderBundledFileKeepsModelsAddedSince(t *testing.T) {
+	added := []string{
+		"perplexity/deepseek/deepseek-v4-flash-0731",
+		"perplexity/google/gemini-4-argon",
+		"perplexity/moonshot-ai/kimi-k2.7-code",
+		"perplexity/moonshot-ai/kimi-k3",
+		"perplexity/nvidia/nemotron-3-super-120b-a12b",
+		"perplexity/perplexity/nemotron-3.5-super-120b-a12b",
+		"vertex_ai/gemini-embedding-001",
+	}
+	f := newFakeCatalogue(t, bundledFileWithout(t, added...))
+	var ptr atomic.Pointer[ModelDB]
+	c := NewCatalogue(&ptr, nil)
+
+	NewSyncer(c, f.URL, time.Hour).syncOnce(context.Background(), 5*time.Second)
+
+	if info := c.Info(); info.Source != SourceFetched || info.Entries != len(BundledModels) {
+		t.Fatalf("info = %+v, want fetched with all %d bundled entries", info, len(BundledModels))
+	}
+	for step := 0; step < 2; step++ { // second pass: after a config reload
+		for _, id := range added {
+			if m, ok := ptr.Load().Get(id); !ok || m.ID != id {
+				t.Errorf("step %d: %q was dropped", step, id)
+			}
+		}
+		if _, ok := ptr.Load().DecisionPricing("jev-1.13.0"); !ok {
+			t.Errorf("step %d: a decision model was dropped", step)
+		}
+		c.SetOverrides(nil)
 	}
 }

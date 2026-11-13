@@ -2,8 +2,10 @@ package pricing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -130,14 +132,14 @@ func TestSync_RejectedFetchKeepsTableInUse(t *testing.T) {
 			if !priced(p, "fetched-149") {
 				t.Fatal("precondition: first sync did not load")
 			}
-			before := cost(p, "gpt-4o")
+			before, beforeFetched := cost(p, "gpt-4o"), cost(p, "fetched-149")
 
 			f.body.Store(tc.body)
 			f.code.Store(int32(tc.code))
 			s.syncOnce(context.Background(), time.Second)
 
-			if !priced(p, "fetched-149") {
-				t.Error("last good table was dropped")
+			if got := cost(p, "fetched-149"); got != beforeFetched {
+				t.Errorf("fetched-149 cost changed to %v from %v: the last good table was dropped", got, beforeFetched)
 			}
 			if cost(p, "gpt-4o") != before || before == 0 {
 				t.Errorf("gpt-4o cost changed to %v from %v", cost(p, "gpt-4o"), before)
@@ -158,6 +160,56 @@ func TestSync_WrongSchemaDoesNotZeroPrices(t *testing.T) {
 
 	if got := cost(p, "gpt-4o"); got != 0.0025 {
 		t.Errorf("gpt-4o cost = %v, want 0.0025", got)
+	}
+}
+
+// Every key of the embedded table served as an object with no price fields:
+// as many entries as the good table, none usable. It must be rejected and
+// gpt-4o keep its embedded price.
+func TestSync_WrongSchemaForEveryEmbeddedKeyKeepsTable(t *testing.T) {
+	base, err := LoadTable("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := make(map[string]json.RawMessage, base.Len())
+	for key := range base.prices {
+		wrong[key] = json.RawMessage(`{"description":"wrong schema: no price fields"}`)
+	}
+	body, err := json.Marshal(wrong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeCatalogue(t, string(body))
+	p := New(base, nil)
+	before, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000)
+	if !ok || math.Abs(before-0.0125) > 1e-12 {
+		t.Fatalf("precondition: gpt-4o = (%v, %v), want (0.0125, true)", before, ok)
+	}
+
+	NewSyncer(p, base, f.URL, time.Hour, slog.Default()).syncOnce(context.Background(), 5*time.Second)
+
+	if p.table.Load() != base {
+		t.Error("the wrong-schema download replaced the table in use")
+	}
+	if c, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000); !ok || c != before {
+		t.Errorf("gpt-4o = (%v, %v), want (%v, true)", c, ok, before)
+	}
+}
+
+// The embedded table, served as a download, clears the floors it is checked
+// against: the default catalogue URL serves the same file.
+func TestSync_EmbeddedTableIsAccepted(t *testing.T) {
+	base, err := LoadTable("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeCatalogue(t, string(embeddedPrices))
+	p := New(base, nil)
+
+	NewSyncer(p, base, f.URL, time.Hour, slog.Default()).syncOnce(context.Background(), 5*time.Second)
+
+	if got := p.table.Load(); got == base || got.Len() != base.Len() {
+		t.Errorf("table = %d entries (replaced: %v), want the %d embedded entries loaded", got.Len(), got != base, base.Len())
 	}
 }
 
