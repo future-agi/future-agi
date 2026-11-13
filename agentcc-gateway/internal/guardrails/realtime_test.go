@@ -86,3 +86,25 @@ func TestRealtimeMissingBlockingImplementation(t *testing.T) {
 		})
 	}
 }
+
+func TestRealtimePostStageTextIsOnlyTheResponse(t *testing.T) {
+	var seen *CheckInput
+	g := realtimeTestCheck{"observe", func(_ context.Context, in *CheckInput) *CheckResult {
+		seen = in
+		return &CheckResult{Pass: true}
+	}}
+	p := &RealtimePolicy{model: "session-model", metadata: map[string]string{"org_id": "org"}}
+	p.rules[StagePost] = []resolvedRule{{guardrail: g, action: ActionBlock, timeout: time.Second}}
+	if err := p.CheckModel(context.Background(), StagePost, "unit-model", "transcript"); err != nil {
+		t.Fatal(err)
+	}
+	if seen.Request == nil || seen.Request.Model != "unit-model" || len(seen.Request.Messages) != 0 {
+		t.Fatalf("post-stage request must keep the model without the text: %+v", seen.Request)
+	}
+	if seen.Response == nil || len(seen.Response.Choices) != 1 || string(seen.Response.Choices[0].Message.Content) != `"transcript"` {
+		t.Fatalf("post-stage response must carry the text once: %+v", seen.Response)
+	}
+	if seen.Metadata["org_id"] != "org" {
+		t.Fatalf("metadata=%v", seen.Metadata)
+	}
+}
