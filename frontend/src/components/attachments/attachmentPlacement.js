@@ -85,12 +85,72 @@ export function groupByPosition(items) {
   }));
 }
 
+// Message role strings as providers write them -> F01 Reference.role.
+const F01_ROLES = {
+  user: "user",
+  human: "user",
+  assistant: "assistant",
+  model: "assistant",
+  ai: "assistant",
+  tool: "tool",
+  function: "tool",
+  system: "system",
+  developer: "system",
+};
+
 /**
- * Chronological computer-use screenshots across a trace tree.
+ * Images that belong INSIDE one rendered chat message, in part order.
  *
- * Order: span start time, then message/part position, then capture order.
- * Distinct occurrences with identical pixels stay distinct frames; the same
- * occurrence listed twice on one span is shown once.
+ * Placement is taken only from the occurrence's own reference: same direction,
+ * same message_index and, when the reference names a role, the same role as
+ * the rendered message. The role check catches index skew between the SDK's
+ * message array and the messages the trace view parsed; anything that fails a
+ * check stays in the span's Attachments list, never on a wrong message.
+ * Screenshots stay in the filmstrip and `mixed` direction is never inlined.
+ */
+export function inlineImagesFor(items, { direction, messageIndex, role }) {
+  if (direction !== "input" && direction !== "output") return [];
+  if (!Number.isInteger(messageIndex) || messageIndex < 0) return [];
+  const messageRole =
+    typeof role === "string" ? F01_ROLES[role.toLowerCase()] : undefined;
+  return items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item: { reference } }) => {
+      if (attachmentKind(reference) !== "image") return false;
+      if (reference.direction !== direction) return false;
+      if (reference.message_index !== messageIndex) return false;
+      return reference.role === undefined || reference.role === messageRole;
+    })
+    .sort(
+      (a, b) =>
+        (a.item.reference.part_index ?? 65536) -
+          (b.item.reference.part_index ?? 65536) || a.index - b.index,
+    )
+    .map(({ item }) => item);
+}
+
+/**
+ * The step a screenshot belongs to: its conversation turn when the reference
+ * names both ids, else its own span. Message positions only mean something
+ * within one step, so they are never compared across steps.
+ */
+function stepKey(frame) {
+  const { conversation_id: conversation, turn_id: turn } =
+    frame.item.reference;
+  return conversation && turn
+    ? `turn:${conversation}:${turn}`
+    : `span:${frame.parent.span_id}`;
+}
+
+/**
+ * Causal computer-use screenshots across a trace tree.
+ *
+ * Steps (a conversation turn, else a span) run in the order they started;
+ * within a step frames follow their placement (input before output, then
+ * message and part), then span start time, then capture order. A tool span's
+ * screenshot that carries no message position is therefore never pushed
+ * behind later steps that do. Distinct occurrences with identical pixels stay
+ * distinct frames; the same occurrence listed twice on one span is shown once.
  */
 export function collectScreenshots(entries) {
   const frames = [];
@@ -121,15 +181,32 @@ export function collectScreenshots(entries) {
       for (let i = entry.children.length - 1; i >= 0; i -= 1)
         stack.push(entry.children[i]);
   }
-  return frames.sort(
-    (a, b) =>
-      a.startTime - b.startTime ||
+  const steps = new Map();
+  for (const frame of frames) {
+    const step = stepKey(frame);
+    const first = steps.get(step);
+    if (
+      !first ||
+      frame.startTime < first.startTime ||
+      (frame.startTime === first.startTime && frame.order < first.order)
+    )
+      steps.set(step, { startTime: frame.startTime, order: frame.order });
+  }
+  const stepOf = (frame) => steps.get(stepKey(frame));
+  return frames.sort((a, b) => {
+    const left = stepOf(a);
+    const right = stepOf(b);
+    return (
+      left.startTime - right.startTime ||
+      left.order - right.order ||
       compareOrder(
         positionOrder(a.item.reference),
         positionOrder(b.item.reference),
       ) ||
-      a.order - b.order,
-  );
+      a.startTime - b.startTime ||
+      a.order - b.order
+    );
+  });
 }
 
 /** Coarse, existence-safe text for an attachment that cannot be shown. */

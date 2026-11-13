@@ -5,6 +5,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
+import { MessageAttachments } from "src/components/attachments/SpanAttachments";
 import { normalizeMessageRole } from "src/utils/message-role";
 import { messageBlockText, serializeMessageValue } from "src/utils/message-text";
 
@@ -123,7 +124,7 @@ function normalizeMessage(msg) {
 }
 
 // ── Single Message Card ──
-const MessageCard = ({ message }) => {
+const MessageCard = ({ message, position }) => {
   const role = normalizeMessageRole(message.role, "user");
   const style = getRoleStyle(role);
   const content = message.content;
@@ -221,6 +222,16 @@ const MessageCard = ({ message }) => {
         )}
       </Box>
 
+      {/* The message's own image attachments, when the span view provides
+          them; nothing renders outside a SpanAttachmentsProvider. */}
+      {position && (
+        <MessageAttachments
+          direction={position.direction}
+          messageIndex={position.messageIndex}
+          role={role}
+        />
+      )}
+
       {/* Tool calls within this message */}
       {toolCalls?.length > 0 && (
         <Box sx={{ px: 1.5, pb: 1 }}>
@@ -239,7 +250,13 @@ const MessageCard = ({ message }) => {
   );
 };
 
-MessageCard.propTypes = { message: PropTypes.object.isRequired };
+MessageCard.propTypes = {
+  message: PropTypes.object.isRequired,
+  position: PropTypes.shape({
+    direction: PropTypes.oneOf(["input", "output"]).isRequired,
+    messageIndex: PropTypes.number.isRequired,
+  }),
+};
 
 // ── ChatMessageView ──
 const ChatMessageView = ({
@@ -305,8 +322,19 @@ const ChatMessageView = ({
     return [normalizeMessage({ role: "assistant", content: data })];
   }, [output, attrOutputMessages]);
 
+  // Each message keeps its position in its own list (input or output), which
+  // is what an attachment reference's message_index names.
   const allMessages = useMemo(
-    () => [...messages, ...outputMessages],
+    () => [
+      ...messages.map((message, messageIndex) => ({
+        message,
+        position: { direction: "input", messageIndex },
+      })),
+      ...outputMessages.map((message, messageIndex) => ({
+        message,
+        position: { direction: "output", messageIndex },
+      })),
+    ],
     [messages, outputMessages],
   );
 
@@ -408,7 +436,10 @@ const ChatMessageView = ({
       {/* Messages */}
       {shouldCollapse && (
         <>
-          <MessageCard message={visibleMessages[0]} />
+          <MessageCard
+            message={visibleMessages[0].message}
+            position={visibleMessages[0].position}
+          />
           <Button
             size="small"
             variant="text"
@@ -417,13 +448,23 @@ const ChatMessageView = ({
           >
             Show {hiddenCount} more message{hiddenCount > 1 ? "s" : ""}...
           </Button>
-          {visibleMessages.slice(1).map((msg, i) => (
-            <MessageCard key={i + 1} message={msg} />
+          {visibleMessages.slice(1).map((entry, i) => (
+            <MessageCard
+              key={i + 1}
+              message={entry.message}
+              position={entry.position}
+            />
           ))}
         </>
       )}
       {!shouldCollapse &&
-        allMessages.map((msg, i) => <MessageCard key={i} message={msg} />)}
+        allMessages.map((entry, i) => (
+          <MessageCard
+            key={i}
+            message={entry.message}
+            position={entry.position}
+          />
+        ))}
 
       {showAll && allMessages.length > COLLAPSE_THRESHOLD && (
         <Button

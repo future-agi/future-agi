@@ -8,6 +8,7 @@ import {
   attachmentKind,
   collectScreenshots,
   groupByPosition,
+  inlineImagesFor,
   positionLabel,
   readSpanAttachments,
   spanParent,
@@ -227,5 +228,131 @@ describe("computer-use filmstrip ordering", () => {
       spanEntry("1000000000000001", "2026-11-11T10:00:01Z", [shot(0), shot(0)]),
     ]);
     expect(frames).toHaveLength(1);
+  });
+});
+
+describe("in-message image placement", () => {
+  const at = (index, reference) => spanImage(index, { reference });
+  it("returns a message's own images in part order", () => {
+    const items = [
+      at(0, { message_index: 1, part_index: 2 }),
+      at(1, { message_index: 1, part_index: 0 }),
+      at(2, { message_index: 0 }),
+      at(3, { message_index: 1, direction: "output" }),
+    ];
+    expect(
+      inlineImagesFor(items, {
+        direction: "input",
+        messageIndex: 1,
+        role: "user",
+      }).map((item) => item.reference.occurrence_id.slice(-1)),
+    ).toEqual(["2", "1"]);
+    expect(
+      inlineImagesFor(items, { direction: "output", messageIndex: 1 }),
+    ).toEqual([items[3]]);
+  });
+  it("keeps an image whose role disagrees with the message out of it", () => {
+    const items = [at(0, { message_index: 0, role: "tool" })];
+    expect(
+      inlineImagesFor(items, {
+        direction: "input",
+        messageIndex: 0,
+        role: "user",
+      }),
+    ).toEqual([]);
+    expect(
+      inlineImagesFor(items, {
+        direction: "input",
+        messageIndex: 0,
+        role: "tool",
+      }),
+    ).toEqual(items);
+  });
+  it("maps provider role names onto F01 roles", () => {
+    const items = [at(0, { message_index: 0, role: "assistant" })];
+    for (const role of ["assistant", "model", "ai", "Assistant"])
+      expect(
+        inlineImagesFor(items, { direction: "input", messageIndex: 0, role }),
+      ).toEqual(items);
+    expect(
+      inlineImagesFor(items, {
+        direction: "input",
+        messageIndex: 0,
+        role: "user",
+      }),
+    ).toEqual([]);
+  });
+  it("never inlines screenshots, other media, mixed direction or unplaced images", () => {
+    const items = [
+      shot(0, { message_index: 0, direction: "input" }),
+      at(1, { message_index: 0, modality: "audio", mime_type: "audio/wav" }),
+      at(2, { message_index: 0, direction: "mixed" }),
+      at(3, { message_index: undefined }),
+    ];
+    for (const direction of ["input", "mixed"])
+      expect(
+        inlineImagesFor(items, { direction, messageIndex: 0, role: "user" }),
+      ).toEqual([]);
+    expect(
+      inlineImagesFor([at(0)], { direction: "input", messageIndex: -1 }),
+    ).toEqual([]);
+  });
+});
+
+describe("computer-use filmstrip ordering by step, placement, then time", () => {
+  const ids = (frames) =>
+    frames.map((frame) => frame.item.reference.occurrence_id.slice(-1));
+  it("keeps a tool span's unplaced screenshot between the steps around it", () => {
+    // LLM step 1 (placed), MCP screenshot tool (no position), LLM step 2.
+    const frames = collectScreenshots([
+      spanEntry("1000000000000001", "2026-11-11T10:00:01Z", [
+        shot(0, { message_index: 2, part_index: 0 }),
+      ]),
+      spanEntry("1000000000000002", "2026-11-11T10:00:02Z", [
+        shot(1, { message_index: undefined, part_index: undefined, role: "tool" }),
+      ]),
+      spanEntry("1000000000000003", "2026-11-11T10:00:03Z", [
+        shot(2, { message_index: 4, part_index: 0 }),
+      ]),
+    ]);
+    expect(ids(frames)).toEqual(["1", "2", "3"]);
+  });
+  it("orders one span's screenshots by message and part, not listing order", () => {
+    const frames = collectScreenshots([
+      spanEntry("1000000000000001", "2026-11-11T10:00:01Z", [
+        shot(0, { direction: "input", message_index: 5, part_index: 0 }),
+        shot(1, { direction: "input", message_index: 1, part_index: 1 }),
+        shot(2, { direction: "input", message_index: 1, part_index: 0 }),
+      ]),
+    ]);
+    expect(ids(frames)).toEqual(["3", "2", "1"]);
+  });
+  it("orders a conversation turn by placement across its spans, then the next turn", () => {
+    const turn = (id) => ({ conversation_id: "conv-1", turn_id: id });
+    const frames = collectScreenshots([
+      spanEntry("1000000000000001", "2026-11-11T10:00:01Z", [
+        shot(0, { ...turn("t1"), direction: "input", message_index: 3 }),
+      ]),
+      // Same turn, later span, earlier message position.
+      spanEntry("1000000000000002", "2026-11-11T10:00:02Z", [
+        shot(1, { ...turn("t1"), direction: "input", message_index: 1 }),
+      ]),
+      spanEntry("1000000000000003", "2026-11-11T10:00:03Z", [
+        shot(2, { ...turn("t2"), direction: "input", message_index: 0 }),
+      ]),
+    ]);
+    expect(ids(frames)).toEqual(["2", "1", "3"]);
+  });
+  it("never compares message positions across different steps", () => {
+    // A later span with a low message_index must not jump ahead in time.
+    const frames = collectScreenshots([
+      spanEntry("1000000000000001", "2026-11-11T10:00:01Z", [
+        shot(0, { message_index: 9 }),
+      ]),
+      spanEntry("1000000000000002", "2026-11-11T10:00:02Z", [
+        shot(1, { message_index: 0 }),
+      ]),
+    ]);
+    expect(ids(frames)).toEqual(["1", "2"]);
   });
 });

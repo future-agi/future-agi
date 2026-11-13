@@ -12,6 +12,7 @@ import {
   parent,
   stereoManifest,
 } from "./fixtures";
+import { validateContractedResponse } from "src/api/contracts/openapi-contract";
 
 describe("attachment read contract", () => {
   it("resolves an occurrence, not a blob or URL", () => {
@@ -80,5 +81,23 @@ describe("attachment read contract", () => {
       expect(
         manifestSchema.safeParse({ ...mixedManifest, ...patch }).success,
       ).toBe(false);
+  });
+});
+
+describe("media-session exchange response contract", () => {
+  // The exchange answers 204 with no body. Without a declared 204 the dev
+  // response check validated "" against the error default and warned on
+  // every exchange (one console warning per image batch / recording play).
+  it("accepts the bodiless 204 the session exchange returns", () => {
+    const result = validateContractedResponse({
+      config: { url: "/tracer/v1/attachment-media-sessions", method: "post" },
+      status: 204,
+      data: "",
+    });
+    expect(result.skipped).not.toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.endpoint.template).toBe(
+      "/tracer/v1/attachment-media-sessions",
+    );
   });
 });

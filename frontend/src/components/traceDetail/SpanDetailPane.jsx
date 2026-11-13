@@ -41,7 +41,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import SmartPreview from "./SmartPreview";
-import SpanAttachments from "src/components/attachments/SpanAttachments";
+import SpanAttachments, {
+  SpanAttachmentsProvider,
+} from "src/components/attachments/SpanAttachments";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
@@ -2076,32 +2078,39 @@ const SpanDetailPane = ({
               />
             </Stack>
 
-            <Box ref={previewContentRef}>
-              <SmartPreview
-                span={span}
-                input={input}
-                output={output}
-                attributes={attributes}
-                viewMode={viewMode}
-                searchQuery={deferredSearchQuery}
-                ContentCard={ContentCard}
-                AttributesCard={AttributesCard}
-                JsonPreviewBlock={JsonPreviewBlock}
-                drawerOpen={drawerOpen}
-              />
-              {/* Authorized attachment projection only; absent when the
-                  feature is off, so nothing renders for existing traces. */}
-              {!readOnly && (
-                <SpanAttachments
-                  projectId={projectId}
+            {/* Authorized attachment projection only; absent when the feature
+                is off, so nothing renders for existing traces. Chat messages
+                show their own images; the rest are listed after the preview. */}
+            <SpanAttachmentsProvider
+              projectId={projectId}
+              span={span}
+              enabled={!readOnly}
+            >
+              <Box ref={previewContentRef}>
+                <SmartPreview
                   span={span}
-                  allSpans={allSpans}
-                  isRootSpan={isRootSpan}
-                  traceStartTime={traceStartTime}
-                  onSelectSpan={onSelectSpan}
+                  input={input}
+                  output={output}
+                  attributes={attributes}
+                  viewMode={viewMode}
+                  searchQuery={deferredSearchQuery}
+                  ContentCard={ContentCard}
+                  AttributesCard={AttributesCard}
+                  JsonPreviewBlock={JsonPreviewBlock}
+                  drawerOpen={drawerOpen}
                 />
-              )}
-            </Box>
+                {!readOnly && (
+                  <SpanAttachments
+                    projectId={projectId}
+                    span={span}
+                    allSpans={allSpans}
+                    isRootSpan={isRootSpan}
+                    traceStartTime={traceStartTime}
+                    onSelectSpan={onSelectSpan}
+                  />
+                )}
+              </Box>
+            </SpanAttachmentsProvider>
           </Box>
         )}
 
