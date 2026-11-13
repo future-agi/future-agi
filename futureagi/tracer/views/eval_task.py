@@ -88,6 +88,7 @@ from tracer.services.eval_tasks.entries import (
     soft_delete_eval_results,
     soft_delete_live,
 )
+from tracer.services.eval_tasks.withdrawal import withdraw_tasks
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1950,17 +1951,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         that did reach Temporal fails at its first task read (reconcile or
         claim), which never returns a deleted row.
         """
-        now = timezone.now()
         try:
-            EvalTask.no_workspace_objects.filter(id=eval_task.id).update(
-                deleted=True, deleted_at=now, status=EvalTaskStatus.DELETED
-            )
-            EvalTaskLogger.objects.filter(eval_task_id=eval_task.id).update(
-                deleted=True, deleted_at=now
-            )
-            soft_delete_eval_results(
-                EvalLogger.objects.filter(eval_task_id=str(eval_task.id))
-            )
+            withdraw_tasks([eval_task.id])
         except Exception:
             logger.exception(
                 "eval_task.create_withdraw_failed", eval_task_id=str(eval_task.id)

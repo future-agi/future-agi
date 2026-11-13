@@ -7,19 +7,28 @@ workflow. These tests pin the recovery contract — what is swept, what is left
 alone, and the threshold that keeps the reap from racing a live worker.
 """
 
+import io
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 from django.core.cache import cache
+from django.core.management import call_command
 from django.utils import timezone
 
+from accounts.models.organization import Organization
 from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.temporal.eval_tasks import client as eval_task_client
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -1223,3 +1232,218 @@ class TestCreateDispatchFailure:
         assert [str(task.id) for task in live] == [retried]
         sweeper.sweep_stranded_eval_tasks._original_func()
         assert temporal["started"] == [(retried, _SWEEP_RESTART)]
+
+
+def _legacy_failed_create(make_task, *, age_minutes=120):
+    """A row a failed create left live before create withdrew its own row."""
+    task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+    EvalTask.all_objects.filter(id=task.id).update(
+        created_at=timezone.now() - timedelta(minutes=age_minutes)
+    )
+    task.refresh_from_db()
+    return task
+
+
+def _withdraw_command(*args):
+    out = io.StringIO()
+    call_command("withdraw_failed_create_eval_tasks", *args, stdout=out)
+    return out.getvalue()
+
+
+def _tally(output, label="total"):
+    [line] = [row for row in output.splitlines() if row.startswith(f"{label}: ")]
+    pairs = (pair.split("=") for pair in line.split(": ", 1)[1].split())
+    return {key: int(value) for key, value in pairs}
+
+
+@pytest.mark.django_db
+class TestWithdrawFailedCreateCommand:
+    """Rows dev left live after a failed create: continuous, PENDING, never
+    started, and their owner was told "Evaluation task could not be created".
+    The idle sweep would activate each from its creation time, so the rollout
+    withdraws them with this command before the sweep is enabled."""
+
+    def test_dry_run_counts_per_organization_and_writes_nothing(
+        self, make_task, temporal
+    ):
+        from tracer.selectors.eval_tasks.failed_creates import (
+            FAILED_CREATE_PREDICATE,
+        )
+
+        ghost = _legacy_failed_create(make_task)
+        other_org = Organization.objects.create(name="Synthetic other org")
+        other_project = Project.objects.create(
+            name="Synthetic other project",
+            organization=other_org,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="experiment",
+            config=[],
+        )
+        other = EvalTask.objects.create(
+            project=other_project,
+            name="synthetic other task",
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            row_type=RowType.SPANS,
+        )
+        EvalTask.all_objects.filter(id=other.id).update(
+            created_at=timezone.now() - timedelta(hours=3)
+        )
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        out = _withdraw_command()
+
+        assert f"Predicate: {FAILED_CREATE_PREDICATE}" in out
+        for organization_id in (ghost.project.organization_id, other_org.id):
+            tally = _tally(out, f"organization {organization_id}")
+            assert (tally["matched"], tally["would_withdraw"]) == (1, 1)
+        assert _tally(out) == {
+            "matched": 2,
+            "would_withdraw": 2,
+            "withdrawn": 0,
+            "workflow_on_record": 0,
+            "temporal_unreachable": 0,
+            "changed_since_read": 0,
+        }
+        assert "Dry run: nothing was written" in out
+        for name in (
+            ghost.name,
+            ghost.project.name,
+            ghost.project.organization.name,
+            other.name,
+            other_project.name,
+            other_org.name,
+        ):
+            assert name not in out
+        live = EvalTask.objects.filter(
+            id__in=[ghost.id, other.id], status=EvalTaskStatus.PENDING
+        )
+        assert live.count() == 2
+
+    def test_apply_withdraws_like_list_delete_and_a_rerun_matches_nothing(
+        self, make_task, temporal
+    ):
+        ghost = _legacy_failed_create(make_task)
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        out = _withdraw_command("--apply")
+
+        assert _tally(out)["withdrawn"] == 1
+        row = EvalTask.all_objects.get(id=ghost.id)
+        assert (row.deleted, row.status) == (True, EvalTaskStatus.DELETED)
+        assert row.deleted_at is not None
+        assert not EvalTask.objects.filter(id=ghost.id).exists()
+
+        again = _withdraw_command("--apply")
+
+        assert _tally(again)["matched"] == 0
+        assert EvalTask.all_objects.get(id=ghost.id).deleted_at == row.deleted_at
+
+    @pytest.mark.parametrize(
+        ("case", "skipped_as"),
+        [
+            ("start_time", None),
+            ("continuous_cursor", None),
+            ("end_time", None),
+            ("running", None),
+            ("paused", None),
+            ("historical", None),
+            ("completed_result", None),
+            ("soft_deleted_result", None),
+            ("task_logger", None),
+            ("created_moments_ago", None),
+            ("live_workflow", "workflow_on_record"),
+            ("closed_workflow", "workflow_on_record"),
+            ("temporal_unreachable", "temporal_unreachable"),
+        ],
+    )
+    def test_a_task_that_ever_started_or_may_still_start_is_never_touched(
+        self, make_task, make_entry, temporal, case, skipped_as
+    ):
+        task = _legacy_failed_create(make_task)
+        rows = EvalTask.all_objects.filter(id=task.id)
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+        entry = None
+        stamp = timezone.now() - timedelta(minutes=30)
+        if case in ("start_time", "continuous_cursor", "end_time"):
+            rows.update(**{case: stamp})
+        elif case == "running":
+            rows.update(status=EvalTaskStatus.RUNNING)
+        elif case == "paused":
+            rows.update(status=EvalTaskStatus.PAUSED)
+        elif case == "historical":
+            rows.update(run_type=RunType.HISTORICAL)
+        elif case == "completed_result":
+            entry = make_entry(task, status=EvalEntryStatus.COMPLETED)
+        elif case == "soft_deleted_result":
+            entry = make_entry(task, deleted=True)
+        elif case == "task_logger":
+            EvalTaskLogger.objects.create(eval_task=task, status=EvalTaskStatus.RUNNING)
+        elif case == "created_moments_ago":
+            rows.update(created_at=timezone.now())
+        elif case == "live_workflow":
+            temporal["verdict"] = eval_task_client.WF_PROGRESSING
+        elif case == "closed_workflow":
+            temporal["verdict"] = eval_task_client.WF_CLOSED
+        else:
+            temporal["verdict"] = RuntimeError("synthetic Temporal outage")
+        before = rows.values().get()
+        entry_before = (entry.deleted, entry.status) if entry else None
+
+        out = _withdraw_command("--apply")
+
+        tally = _tally(out)
+        assert tally["withdrawn"] == 0
+        if skipped_as:
+            assert (tally["matched"], tally[skipped_as]) == (1, 1)
+        else:
+            assert tally["matched"] == 0
+        assert rows.values().get() == before
+        if entry:
+            entry = EvalLogger.all_objects.get(id=entry.id)
+            assert (entry.deleted, entry.status) == entry_before
+
+    def test_a_row_started_after_the_describe_is_skipped(
+        self, make_task, temporal, monkeypatch
+    ):
+        """A sweep or edit that starts the row between the describe and the
+        write stamps it, and the locked re-read refuses it."""
+        task = _legacy_failed_create(make_task)
+
+        def describe_then_start(task_id):
+            EvalTask.no_workspace_objects.filter(id=task_id).update(
+                status=EvalTaskStatus.RUNNING, start_time=timezone.now()
+            )
+            return eval_task_client.WF_ABSENT
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe_then_start
+        )
+
+        out = _withdraw_command("--apply")
+
+        assert (_tally(out)["changed_since_read"], _tally(out)["withdrawn"]) == (1, 0)
+        task.refresh_from_db()
+        assert (task.deleted, task.status) == (False, EvalTaskStatus.RUNNING)
+
+    def test_the_sweep_does_not_activate_a_withdrawn_legacy_row(
+        self, make_task, temporal
+    ):
+        ghost = _legacy_failed_create(make_task)
+        started = make_task(status=EvalTaskStatus.RUNNING, run_type=RunType.CONTINUOUS)
+        EvalTask.all_objects.filter(id=started.id).update(
+            start_time=timezone.now() - timedelta(hours=1)
+        )
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        _withdraw_command("--apply")
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert result["idle_continuous_candidates"] == 1, result
+        assert temporal["started"] == [(str(started.id), _SWEEP_RESTART)]
+        row = EvalTask.all_objects.get(id=ghost.id)
+        assert (row.deleted, row.status, row.start_time) == (
+            True,
+            EvalTaskStatus.DELETED,
+            None,
+        )
