@@ -509,10 +509,11 @@ def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
             side_effect=[missing, seen, missing],
         ),
         patch.object(alk_sim.record_call_workers, "apply_async") as again,
+        patch("simulate.services.harness_workers.attempt_reset", return_value=None),
     ):
         # Called directly, an activity runs in process.
         alk_sim.record_call_workers("c1")
-        assert again.call_args.kwargs["kwargs"] == {"second_read": True}
+        assert again.call_args.kwargs["kwargs"] == {"second_read": True, "attempt": ""}
         again.reset_mock()
         alk_sim.record_call_workers("c1")
         alk_sim.record_call_workers("c1", second_read=True)
@@ -2754,15 +2755,20 @@ def test_a_read_that_was_not_whole_gets_one_more_read_later():
                 return_value=read,
             ),
             patch.object(alk_sim.record_call_workers, "apply_async") as again,
+            patch("simulate.services.harness_workers.attempt_reset", return_value=None),
         ):
             alk_sim.record_call_workers("c1")
-            assert again.call_args.kwargs["kwargs"] == {"second_read": True}
+            assert again.call_args.kwargs["kwargs"] == {
+                "second_read": True,
+                "attempt": "",
+            }
     with (
         patch(
             "simulate.services.harness_workers.record_call_workers",
             return_value={**seen, "tree_complete": True},
         ),
         patch.object(alk_sim.record_call_workers, "apply_async") as again,
+        patch("simulate.services.harness_workers.attempt_reset", return_value=None),
     ):
         alk_sim.record_call_workers("c1")
         assert not again.called
@@ -2777,3 +2783,156 @@ def test_a_trace_without_its_top_level_span_is_not_whole():
     assert not harness_workers._has_roots(
         [S(trace_id="t", parent_span_id="root"), S(trace_id="u", parent_span_id=None)]
     )
+
+
+def test_a_malformed_sealed_row_is_kept_and_never_stops_the_record():
+    from types import SimpleNamespace as S
+
+    rows = [
+        {"worker_id": "refund", "name": "pay", "runtime_ids": ["e1"], "at": 5.0},
+        {"worker_id": "refund", "name": "pay", "at": float("inf")},
+        {"worker_id": "refund", "name": "pay", "at": 6.0, "ended_at": 1e20},
+        {"worker_id": "refund", "name": "pay", "ended_at": float("nan")},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows)
+    assert [one["tool"] for one in timeline["events"]] == ["pay"] * 4
+    assert sorted(str(one["at"]) for one in timeline["events"]) == [
+        "1970-01-01T00:00:05",
+        "1970-01-01T00:00:06",
+        "None",
+        "None",
+    ]
+    # A tool call's clock that no date can hold is no clock: the call's own start is used instead.
+    sealed = [{"at": float("inf"), "start_time_ms": 0}]
+    assert harness_workers._clock_start(S(started_at=None), sealed) is None
+
+
+def test_a_cycle_in_the_recorded_parents_invents_no_worker():
+    spans = [
+        _span("a", "b", "agent", "coordinator", "t1", "t9"),
+        _span("b", "a", "agent", "researcher", "t2", "t8"),
+        _span("c", "b", "tool", "search", "t3", "t4"),
+    ]
+    assert worker_timeline(spans, [], run_key=RUN)["workers"] == []
+    alone = [_span("a", "a", "agent", "coordinator", "t1", "t9")]
+    alone.append(_span("c", "a", "tool", "search", "t3", "t4"))
+    assert worker_timeline(alone, [], run_key=RUN)["workers"] == []
+
+
+@pytest.mark.django_db
+def test_a_rerun_reads_only_the_traces_of_its_own_attempt(
+    user, workspace, storage, settings
+):
+    from datetime import UTC, timedelta
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.run_traces_v3 import RunTrace, RunTraces
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-rerun", storage), key="r")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    reset = CallExecutionSnapshot.objects.create(
+        call_execution=call,
+        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+    ).snapshot_timestamp
+    before = (reset - timedelta(minutes=5)).astimezone(UTC).replace(tzinfo=None)
+    after = (reset + timedelta(minutes=1)).astimezone(UTC).replace(tzinfo=None)
+
+    class _Timed(_Span):
+        def __init__(self, raw, start):
+            super().__init__(raw)
+            self.start_time = start
+
+    def team(trace, start, worker):
+        return [
+            _Timed(
+                _span(f"{trace}r", None, "agent", "coordinator", "t", trace_id=trace),
+                start,
+            ),
+            _Timed(
+                _span(f"{trace}l", f"{trace}r", "llm", "gen", "t", trace_id=trace),
+                start,
+            ),
+            _Timed(
+                _span(f"{trace}w", f"{trace}r", "agent", worker, "t", trace_id=trace),
+                start,
+            ),
+            _Timed(
+                _span(f"{trace}c", f"{trace}w", "tool", "pay", "t", trace_id=trace),
+                start,
+            ),
+        ]
+
+    # The earlier attempt's trace without its root (so its start is unknown to the trace list), and this attempt's.
+    spans = team("old", before, "auditor") + team("new", after, "refund")
+
+    class _Read(_Reader):
+        def list_by_trace_ids(self, trace_ids, **kwargs):
+            self.asked = trace_ids
+            return [one for one in spans if one.trace_id in trace_ids]
+
+    reader = _Read([])
+    traces = RunTraces(
+        project_id="p1",
+        traces=[
+            RunTrace("gone", "run", before, "OK", 1, None),
+            RunTrace("old", None, None, None, None, None),
+            RunTrace("new", "run", after, "OK", 1, None),
+        ],
+    )
+    with (
+        patch("simulate.services.run_traces_v3.list_run_traces", return_value=traces),
+        patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        patch.object(harness_workers, "declared_workers", return_value=[]),
+    ):
+        timeline = harness_workers.record_call_workers(str(call.id))
+    # A trace the list dates before the reset is not read; one it cannot date is read, then left out by its spans.
+    assert reader.asked == ["old", "new"]
+    assert [one["id"] for one in timeline["workers"]] == ["refund"]
+    assert {one["trace_id"] for one in timeline["events"]} == {"new"}
+
+
+@pytest.mark.django_db
+def test_a_later_read_scheduled_before_a_rerun_does_not_run():
+    from datetime import UTC, datetime
+    from unittest.mock import patch
+
+    from simulate.tasks import alk_sim
+
+    missing = {"workers": [{"observed": False}]}
+    first, second = (
+        datetime(2026, 11, 13, tzinfo=UTC),
+        datetime(2026, 11, 14, tzinfo=UTC),
+    )
+    with (
+        patch(
+            "simulate.services.harness_workers.record_call_workers",
+            return_value=missing,
+        ) as read,
+        patch.object(alk_sim.record_call_workers, "apply_async") as again,
+        patch("simulate.services.harness_workers.attempt_reset", return_value=first),
+    ):
+        alk_sim.record_call_workers("c1")
+        assert again.call_args.kwargs["kwargs"] == {
+            "second_read": True,
+            "attempt": first.isoformat(),
+        }
+        alk_sim.record_call_workers("c1", second_read=True, attempt=first.isoformat())
+        assert read.call_count == 2
+        # Reset again since the later read was scheduled: that read is the earlier attempt's, and it does not run.
+        alk_sim.record_call_workers("c1", second_read=True, attempt="")
+        assert read.call_count == 2
+    with (
+        patch(
+            "simulate.services.harness_workers.record_call_workers",
+            return_value=missing,
+        ) as read,
+        patch.object(alk_sim.record_call_workers, "apply_async"),
+        patch("simulate.services.harness_workers.attempt_reset", return_value=second),
+    ):
+        alk_sim.record_call_workers("c1", second_read=True, attempt=first.isoformat())
+        assert not read.called

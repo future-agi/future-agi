@@ -278,6 +278,19 @@ def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
     return kept, len(events) - len(kept)
 
 
+def _utc_iso(seconds: float) -> str | None:
+    """Epoch seconds as a naive UTC timestamp; None for a value no date can hold."""
+    try:
+        return datetime.fromtimestamp(seconds, tz=UTC).replace(tzinfo=None).isoformat()
+    except (OverflowError, ValueError, OSError):
+        return None
+
+
+def _runtime_ids(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    ids = row.get("runtime_ids")
+    return ids if isinstance(ids, Mapping) else {}
+
+
 def _status(span: Mapping[str, Any]) -> Literal["ok", "error"]:
     return "error" if str(span.get("status") or "").upper() == "ERROR" else "ok"
 
@@ -332,7 +345,11 @@ def worker_timeline(
                 declared_by_key[_slug(str(key))] = one
 
     def ancestors(span: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
-        seen, parent = set(), by_id.get(str(span.get("parent_span_id") or ""))
+        # A span is never its own ancestor, so a cycle in the recorded parents ends the walk.
+        seen, parent = (
+            {span["span_id"]},
+            by_id.get(str(span.get("parent_span_id") or "")),
+        )
         while parent is not None and parent["span_id"] not in seen:
             yield parent
             seen.add(parent["span_id"])
@@ -584,11 +601,9 @@ def worker_timeline(
         return f"{run_key}/{str(match['id']) if match is not None else _slug(by)}"
 
     def when(value: Any) -> str | None:
-        if isinstance(value, (int, float)) and value > 0:
-            return (
-                datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None).isoformat()
-            )
-        return None
+        return (
+            _utc_iso(value) if isinstance(value, (int, float)) and value > 0 else None
+        )
 
     def started(row: Mapping[str, Any]) -> str | None:
         # A row stamped after the call ended carries when it was written, not when the call began.
@@ -619,16 +634,14 @@ def worker_timeline(
             str(one)
             for one in (
                 row.get("span_id"),
-                (row.get("runtime_ids") or {}).get("event_id"),
+                _runtime_ids(row).get("event_id"),
             )
             if one
         }
 
     def own_id(row: Mapping[str, Any], index: int) -> str:
         return str(
-            row.get("span_id")
-            or (row.get("runtime_ids") or {}).get("event_id")
-            or f"traced-{index}"
+            row.get("span_id") or _runtime_ids(row).get("event_id") or f"traced-{index}"
         )
 
     # A sealed call or hand-off a span already showed is not repeated.
@@ -779,7 +792,7 @@ def worker_timeline(
         worker_id = (
             traced_worker(by, str(call.get("worker_label") or by)) if by else None
         )
-        runtime_ids = call.get("runtime_ids") or {}
+        runtime_ids = _runtime_ids(call)
         status: Literal["ok", "error"] = (
             "error" if call.get("ok") is False or call.get("refused") else "ok"
         )
@@ -1005,17 +1018,15 @@ def _clock_start(call: Any, sealed: list[dict[str, Any]]) -> float | None:
     for one in sealed:
         at, offset = one.get("at"), one.get("start_time_ms")
         if isinstance(at, (int, float)) and isinstance(offset, (int, float)):
-            return float(at) - offset / 1000
+            start = float(at) - offset / 1000
+            if _utc_iso(start) is not None:
+                return start
     return call.started_at.timestamp() if call.started_at else None
 
 
 def _call_start(call: Any, sealed: list[dict[str, Any]]) -> str | None:
     start = _clock_start(call, sealed)
-    return (
-        datetime.fromtimestamp(start, tz=UTC).replace(tzinfo=None).isoformat()
-        if start is not None
-        else None
-    )
+    return _utc_iso(start) if start is not None else None
 
 
 def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
@@ -1050,14 +1061,9 @@ def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
             if row.speaker_role in roles
         ]
     return [
-        {
-            "role": role,
-            "text": text,
-            "at": datetime.fromtimestamp(start + offset / 1000, tz=UTC)
-            .replace(tzinfo=None)
-            .isoformat(),
-        }
+        {"role": role, "text": text, "at": at}
         for offset, role, text in sorted(said, key=lambda one: one[0])
+        if (at := _utc_iso(start + offset / 1000)) is not None
     ]
 
 
@@ -1195,6 +1201,37 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
     )
 
 
+def attempt_reset(call_execution_id: Any) -> datetime | None:
+    """When the call was last reset for a rerun of the call itself; None when it never was."""
+    from simulate.models.test_execution import CallExecutionSnapshot
+
+    return (
+        CallExecutionSnapshot.objects.filter(
+            call_execution_id=call_execution_id,
+            rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        )
+        .order_by("-snapshot_timestamp")
+        .values_list("snapshot_timestamp", flat=True)
+        .first()
+    )
+
+
+def _epoch(at: datetime) -> float:
+    return (at if at.tzinfo else at.replace(tzinfo=UTC)).timestamp()
+
+
+def _begun_after(spans: list[Any], since: float) -> list[Any]:
+    """The spans of the traces whose first span began after `since`; a trace with no start time is kept."""
+    first: dict[str, float] = {}
+    for one in spans:
+        if one.start_time is not None:
+            trace, at = str(one.trace_id or ""), _epoch(one.start_time)
+            first[trace] = min(first.get(trace, at), at)
+    return [
+        one for one in spans if first.get(str(one.trace_id or ""), since + 1) > since
+    ]
+
+
 def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
     from django.utils import timezone
@@ -1233,12 +1270,22 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     if traces.project_id is None and not traced_calls and not declared:
         return None
     spans, partial, unavailable = [], False, False
+    # A rerun keeps the call's id, so the earlier attempt's traces are found with it: only those begun after the
+    # call was reset for this attempt are read.
+    reset = attempt_reset(call.id)
+    since = reset.timestamp() if reset is not None else None
     if traces.project_id is not None:
         with application_read_context(execution_cap_ms=SPAN_READ_CAP_MS):
             reader = get_reader()
             try:
                 spans = reader.list_by_trace_ids(
-                    [one.trace_id for one in traces.traces],
+                    [
+                        one.trace_id
+                        for one in traces.traces
+                        if since is None
+                        or one.start_time is None
+                        or _epoch(one.start_time) > since
+                    ],
                     project_id=traces.project_id,
                     include_heavy=False,
                     limit=MAX_SPANS + 1,
@@ -1254,6 +1301,8 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
                 unavailable = True
             finally:
                 reader.close()
+        if since is not None:
+            spans = _begun_after(spans, since)
         if len(spans) > MAX_SPANS:
             spans, partial = spans[:MAX_SPANS], True
     timeline: WorkerTimeline = {

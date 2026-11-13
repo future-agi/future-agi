@@ -40,14 +40,21 @@ _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 
 @temporal_activity(time_limit=120, max_retries=2, queue="tasks_s")
-def record_call_workers(call_execution_id: str, second_read: bool = False) -> None:
+def record_call_workers(
+    call_execution_id: str, second_read: bool = False, attempt: str | None = None
+) -> None:
     """Keep which worker did what in one call; read once more later when a declared worker was not seen yet or the
-    read was not whole."""
+    read was not whole. `attempt` is the call's last reset when the read was scheduled: a call rerun since then is
+    the new attempt's to read."""
     from datetime import timedelta
 
-    from simulate.services.harness_workers import SECOND_READ
+    from simulate.services.harness_workers import SECOND_READ, attempt_reset
     from simulate.services.harness_workers import record_call_workers as record
 
+    reset = attempt_reset(call_execution_id)
+    current = reset.isoformat() if reset is not None else ""
+    if attempt is not None and attempt != current:
+        return
     timeline = record(call_execution_id)
     # Read again when a declared worker was not seen yet, or when this read was not whole (spans still arriving, the
     # span read failed or hit its bound): the later read then replaces what an incomplete tree got wrong.
@@ -62,7 +69,7 @@ def record_call_workers(call_execution_id: str, second_read: bool = False) -> No
     ):
         record_call_workers.apply_async(
             args=(call_execution_id,),
-            kwargs={"second_read": True},
+            kwargs={"second_read": True, "attempt": current},
             start_delay=timedelta(seconds=SECOND_READ),
         )
 
