@@ -504,7 +504,7 @@ is unchanged by these realtime readiness checks.
 | Protocol | Inspectable direction and boundary |
 |---|---|
 | Deepgram `/v1/speak` | Pre-stage: buffer `Speak.text` messages until `Flush`; `Clear`/`Close` discard pending text |
-| Cartesia `/tts/websocket` | Pre-stage: accumulate `transcript` per `context_id` until `continue` is false (or omitted); checks see `request.model` as `cartesia/<model_id>` for each model the context's requests name (a request without `model_id` uses the last one named on the connection) |
+| Cartesia `/tts/websocket` | Pre-stage: accumulate `transcript` per `context_id` until `continue` is false (or omitted); checks see `request.model` as `cartesia/<model_id>` for each model the context's requests name (a request without `model_id` uses the last one named on the connection); a `cancel` without `transcript` discards only that context's pending text and is forwarded |
 | Deepgram `/v1/listen` | Post-stage: suppress interim hypotheses; accumulate final alternatives per channel until `speech_final` or canonical `UtteranceEnd.channel` |
 | Cartesia `/stt/websocket` | Post-stage: suppress interim hypotheses; inspect the complete `is_final` transcript |
 

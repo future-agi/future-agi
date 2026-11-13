@@ -69,10 +69,11 @@ func (g *SpeechGuardrails) hold(id, text string, frame Frame) error {
 	return nil
 }
 
-func (g *SpeechGuardrails) release(id string, stage guardrails.Stage) ([]Frame, error) {
+// take removes a pending unit and frees its share of the session bounds.
+func (g *SpeechGuardrails) take(id string) *speechText {
 	unit := g.pending[id]
 	if unit == nil {
-		return nil, nil
+		return nil
 	}
 	delete(g.pending, id)
 	g.bytes -= len(unit.text)
@@ -82,6 +83,14 @@ func (g *SpeechGuardrails) release(id string, stage guardrails.Stage) ([]Frame, 
 	for _, f := range unit.frames {
 		g.bytes -= len(f.Data)
 		g.frames--
+	}
+	return unit
+}
+
+func (g *SpeechGuardrails) release(id string, stage guardrails.Stage) ([]Frame, error) {
+	unit := g.take(id)
+	if unit == nil {
+		return nil, nil
 	}
 	texts := append(append(append([]string{}, unit.alternatives...), unit.segments...), unit.utterances...)
 	if unit.alternatives == nil {
@@ -140,6 +149,12 @@ func (g *SpeechGuardrails) Client(kind int, data []byte) ([]Frame, error) {
 	// against every model its requests name.
 	if event.ModelID != "" {
 		g.model = g.vendor + "/" + event.ModelID
+	}
+	// Cancelling a context discards its unchecked text and carries none itself;
+	// other contexts and the connection stay open. A cancel with text is refused.
+	if event.Cancel && event.Transcript == nil {
+		g.take(event.ContextID)
+		return []Frame{frame}, nil
 	}
 	if event.Transcript == nil || event.Cancel {
 		return nil, speechRefused()
