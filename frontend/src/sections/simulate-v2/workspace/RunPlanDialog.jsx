@@ -41,7 +41,11 @@ import {
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentEnvVersion } from "../_mock/versions";
-import ReadyToRun from "../compat/ReadyToRun";
+import ReadyToRun, { KnownLimits } from "../compat/ReadyToRun";
+import { StatusDot } from "../components/primitives";
+import { readinessOf } from "../_mock/readiness";
+import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
+import { ago } from "../agents/agentViewUtils";
 import { SHOW_RUN_COST } from "../_mock/costFlags";
 import { evalSlotsLeft } from "../_mock/evals";
 import { platformPreviewOf } from "../_mock/platformPreview";
@@ -273,9 +277,6 @@ export default function RunPlanDialog({
      button names the choice — "Run 6 of 10" — and the 4 left out are
      recorded on the run as not run (TH-8880). */
   const blockedN = compat?.scope?.blocked?.length || 0;
-  /* Eligible cases nothing has proved on this pair yet: they run, and the
-     button says Run anyway (the Re-check group lists them). */
-  const untestedN = compat?.scope?.untested?.length || 0;
   /* After a failed or timed-out check the whole pairing is refused. */
   const pairFailed = ["failed", "timed_out"].includes(
     compat?.validation?.state,
@@ -444,6 +445,128 @@ export default function RunPlanDialog({
   /* Nothing can run (the check failed, or every selected scenario waits on a
      fix): say why once, never "0 scenarios" or "pick a scenario". */
   const noRun = pairFailed || (!multi && allHeld);
+  /* The verdict (14 Nov information flow, Chintan's review): one line says
+     whether the run can start and how many scenarios run; the button
+     follows it and nothing else on the drawer repeats it. Stale and
+     excluded ride on the same line; why each part is left out is on hover. */
+  const fromSuite = suite ? null : bd;
+  const envLbl = pickedEnv || currentEnvLabel;
+  const outParts = [
+    blockedN > 0 && `${blockedN} blocked for this agent`,
+    fromSuite?.blocked > 0 && `${fromSuite.blocked} blocked on ${envLbl}`,
+    fromSuite?.excluded > 0 && `${fromSuite.excluded} excluded`,
+  ].filter(Boolean);
+  const staleN = fromSuite?.stale || 0;
+  const outTip = [
+    blockedN > 0 &&
+      `Blocked for this agent: held back and recorded as not run (${leftOut}).`,
+    fromSuite?.blocked > 0 &&
+      fromSuite.blockedWhy &&
+      `Blocked on ${envLbl}: ${fromSuite.blockedWhy}`,
+    fromSuite?.excluded > 0 &&
+      fromSuite.excludedWhy &&
+      `Excluded: ${fromSuite.excludedWhy}`,
+    staleN > 0 &&
+      `Stale: they run but count toward no decision until proved on ${envLbl}.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const totalN =
+    runCount +
+    blockedN +
+    (fromSuite?.blocked || 0) +
+    (fromSuite?.excluded || 0);
+  const tail = [...outParts, staleN > 0 && `${staleN} stale`].filter(Boolean);
+  const countText = [
+    outParts.length
+      ? `${runCount} of ${totalN} eligible`
+      : `All ${runCount} eligible`,
+    ...tail,
+  ].join(" · ");
+  const pairVal = compat?.validation;
+  const pairState = checkingCompat ? "validating" : pairVal?.state;
+  const areasNow = compat
+    ? readinessOf(compat, envState?.scenarios || [], (evals || []).length)
+    : [];
+  const anyBlocker = areasNow.some((a) => a.status === "blocked");
+  const anyUnchecked = areasNow.some((a) => a.status === "unchecked");
+  const agentVerLbl =
+    compat?.identity?.agentVersion ||
+    otherAgent?.version ||
+    versions[0] ||
+    "v1";
+  const sentence = (t) => String(t || "").replace(/^./, (c) => c.toLowerCase());
+  const verdict = !compat
+    ? null
+    : pairState === "validating"
+      ? {
+          dot: "running",
+          live: true,
+          title: `Checking agent ${agentVerLbl} on environment ${envLbl}`,
+          rest: `up to ${PAIR_CHECK_LIMIT_MIN} min`,
+        }
+      : pairFailed
+        ? {
+            dot: "failed",
+            title: "Can't start",
+            rest:
+              pairState === "timed_out"
+                ? `the check ran past ${PAIR_CHECK_LIMIT_MIN} min · ${ago(pairVal.at)}`
+                : `${sentence(
+                    String(
+                      areasNow.find((a) => a.status === "blocked")?.detail ||
+                        pairVal?.reason ||
+                        "the check failed",
+                    )
+                      .split(/\s+—\s+|(?<=\.)\s/)[0]
+                      .replace(/\.$/, ""),
+                  )} · checked ${ago(pairVal.at)}`,
+          }
+        : !multi && allHeld
+          ? {
+              dot: "failed",
+              title: "Can't start",
+              rest: `all ${totalN} scenarios are blocked`,
+            }
+          : pairState === "unavailable"
+            ? {
+                dot: "cancelled",
+                title: countText,
+                rest: "the check couldn't run on our side, so nothing is held",
+              }
+            : pairState === "stale"
+              ? {
+                  dot: "queued",
+                  hollow: true,
+                  title: compat.staleWhy,
+                  rest: countText,
+                }
+              : anyUnchecked && !anyBlocker && !pairVal
+                ? {
+                    dot: "queued",
+                    hollow: true,
+                    title: "Not checked for this agent yet",
+                    rest: countText,
+                  }
+                : outParts.length
+                  ? {
+                      dot: "flaky",
+                      title: `${runCount} of ${totalN} eligible`,
+                      rest: tail.join(" · "),
+                    }
+                  : {
+                      dot: "passed",
+                      title: `All ${runCount} eligible`,
+                      rest: staleN ? `${staleN} stale` : "",
+                    };
+  /* A first run of this agent version on this environment version prepares
+     the pair first. */
+  const ranBefore = (envState?.runs || []).some(
+    (r) =>
+      (r.envVersion || currentEnvLabel) === envLbl &&
+      (!r.agentKey || !pickedKey || r.agentKey === pickedKey) &&
+      (!r.agentVersion || r.agentVersion === agentVerLbl),
+  );
   /* The estimate can be over the admin's per-run limit however the limit is
      set — then the most attempts that fit is the useful suggestion. */
   const overPolicy =
@@ -735,6 +858,47 @@ export default function RunPlanDialog({
               </Stack>
             </Stack>
 
+            {/* ── can I start? one verdict line ── */}
+            {verdict && (
+              <Tooltip
+                arrow
+                placement="top-start"
+                title={
+                  outTip ? (
+                    <Box sx={{ whiteSpace: "pre-line" }}>{outTip}</Box>
+                  ) : (
+                    ""
+                  )
+                }
+              >
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="baseline"
+                  sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}
+                >
+                  <Box sx={{ display: "flex", transform: "translateY(-1px)" }}>
+                    <StatusDot
+                      status={verdict.dot}
+                      size={8}
+                      hollow={!!verdict.hollow}
+                      live={!!verdict.live}
+                    />
+                  </Box>
+                  <Typography sx={{ typography: "s1", minWidth: 0 }}>
+                    <Box component="span" sx={{ fontWeight: 600 }}>
+                      {verdict.title}
+                    </Box>
+                    {verdict.rest && (
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        {` · ${verdict.rest}`}
+                      </Box>
+                    )}
+                  </Typography>
+                </Stack>
+              </Tooltip>
+            )}
+
             {/* ── Ready to run (plan T06): this agent version on this
               environment, before anything starts — six areas, each blocker
               with its scenarios and fix ── */}
@@ -788,28 +952,75 @@ export default function RunPlanDialog({
                     : undefined
                 }
                 checking={checkingCompat}
-              >
-                {multi && allHeld && !pairFailed && (
-                  <Typography
-                    sx={{ typography: "s2", color: "text.secondary" }}
-                  >
-                    {`Every selected scenario waits on a fix (${leftOut}).`}
-                  </Typography>
-                )}
-              </ReadyToRun>
+              />
             )}
+
+            {/* ── how it runs: trials, evaluations, seed and limits ── */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}
+            >
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  width: 88,
+                  flexShrink: 0,
+                }}
+              >
+                Trials
+              </Typography>
+              {noRun ? (
+                <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                  —
+                </Typography>
+              ) : (
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  flexWrap="wrap"
+                  gap={1}
+                  sx={{ typography: "s2", color: "text.secondary" }}
+                >
+                  <Tooltip arrow title={scopeNote || ""}>
+                    <Box component="span" sx={{ color: "text.primary" }}>
+                      {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
+                    </Box>
+                  </Tooltip>
+                  <span>×</span>
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={attempts}
+                    onChange={(e) => setAttempts(e.target.value)}
+                    inputProps={{
+                      min: 1,
+                      max: 20,
+                      "aria-label": "Repeats per scenario",
+                      style: { textAlign: "right" },
+                    }}
+                    sx={{ width: 64, ...fieldSx }}
+                  />
+                  <span>{`repeat${Number(attempts) === 1 ? "" : "s"}`}</span>
+                  <Box
+                    component="span"
+                    sx={{
+                      color: "text.primary",
+                      fontWeight: 600,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
+                  </Box>
+                </Stack>
+              )}
+            </Stack>
 
             {/* ── who takes part and what scores the run ── */}
             {
-              <Box
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "8px",
-                  px: 1.5,
-                  py: 1,
-                }}
-              >
+              <Box sx={{ mt: -1 }}>
                 {[
                   ...(participants.length
                     ? [
@@ -979,178 +1190,6 @@ export default function RunPlanDialog({
                 ))}
               </Box>
             }
-
-            {/* ── what runs: one sentence, its numbers editable in place ── */}
-            {!noRun && (
-              <Stack
-                direction="row"
-                alignItems="center"
-                flexWrap="wrap"
-                gap={1}
-                sx={{ typography: "s1", color: "text.secondary" }}
-              >
-                <Tooltip arrow title={scopeNote || ""}>
-                  <Box component="span" sx={{ color: "text.primary" }}>
-                    {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
-                  </Box>
-                </Tooltip>
-                <span>×</span>
-                <TextField
-                  size="small"
-                  type="number"
-                  value={attempts}
-                  onChange={(e) => setAttempts(e.target.value)}
-                  inputProps={{
-                    min: 1,
-                    max: 20,
-                    "aria-label": "Repeats per scenario",
-                    style: { textAlign: "right" },
-                  }}
-                  sx={{ width: 64, ...fieldSx }}
-                />
-                <span>{`repeat${Number(attempts) === 1 ? "" : "s"}`}</span>
-                <Box
-                  component="span"
-                  sx={{
-                    color: "text.primary",
-                    fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
-                </Box>
-              </Stack>
-            )}
-
-            {/* ── what's in and out, in one line that adds up (12 Nov
-              review): will run of the total, then each group left out in
-              plain words; why each is left out on hover. Stale cases run,
-              so they're a note on the run count, not a group of their own. */}
-            {!pairFailed &&
-              !allHeld &&
-              (compat || bd) &&
-              (() => {
-                const fromSuite = suite ? null : bd;
-                const out = [
-                  blockedN > 0 && {
-                    n: blockedN,
-                    text: "blocked for this agent",
-                    why: `Held back and recorded as not run — ${leftOut}.`,
-                  },
-                  fromSuite?.blocked > 0 && {
-                    n: fromSuite.blocked,
-                    text: `blocked on ${pickedEnv || currentEnvLabel}`,
-                    why: fromSuite.blockedWhy || "",
-                  },
-                  fromSuite?.excluded > 0 && {
-                    n: fromSuite.excluded,
-                    text: "excluded",
-                    why: fromSuite.excludedWhy || "",
-                  },
-                ].filter(Boolean);
-                const total = runCount + out.reduce((t, o) => t + o.n, 0);
-                const stale = fromSuite?.stale || 0;
-                const line = [
-                  out.length
-                    ? `${runCount} of ${total} eligible`
-                    : `All ${runCount} eligible`,
-                  ...out.map((o) => `${o.n} ${o.text}`),
-                  stale ? `${stale} stale` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ");
-                const tip = [
-                  ...out.map(
-                    (o) => `${o.n} ${o.text}${o.why ? ` — ${o.why}` : ""}`,
-                  ),
-                  stale
-                    ? `${stale} stale — they run but count toward no decision.`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join("\n");
-                return (
-                  <Tooltip
-                    arrow
-                    placement="top-start"
-                    title={
-                      tip ? (
-                        <Box sx={{ whiteSpace: "pre-line" }}>{tip}</Box>
-                      ) : (
-                        ""
-                      )
-                    }
-                  >
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        mt: -1,
-                        fontVariantNumeric: "tabular-nums",
-                        alignSelf: "flex-start",
-                      }}
-                    >
-                      {line}
-                    </Typography>
-                  </Tooltip>
-                );
-              })()}
-
-            {/* ── what this run can't prove yet, said before it starts (14 Nov,
-              Nosang's run plan): scenarios not proved against this
-              environment version, and a first run of this agent version on
-              it, which prepares the pair first. ── */}
-            {!noRun &&
-              (() => {
-                const envLbl = pickedEnv || currentEnvLabel;
-                const staleN = (!suite && bd?.stale) || 0;
-                const agentVer = versions[0] || null;
-                const ranBefore = (envState?.runs || []).some(
-                  (r) =>
-                    (r.envVersion || currentEnvLabel) === envLbl &&
-                    (!r.agentKey || !pickedKey || r.agentKey === pickedKey) &&
-                    (!agentVer ||
-                      !r.agentVersion ||
-                      r.agentVersion === agentVer),
-                );
-                const notes = [
-                  staleN > 0 &&
-                    `${staleN} scenario${staleN === 1 ? " hasn't" : "s haven't"} been proved against environment ${envLbl} — ${staleN === 1 ? "it runs" : "they run"} but count${staleN === 1 ? "s" : ""} toward no decision`,
-                  !ranBefore &&
-                    `The first run of ${agentVer ? `agent ${agentVer}` : "this agent"} on environment ${envLbl} prepares the pair first, which takes several minutes`,
-                ].filter(Boolean);
-                return notes.length ? (
-                  <Stack spacing={0.75}>
-                    {notes.map((n) => (
-                      <Stack
-                        key={n}
-                        direction="row"
-                        spacing={1}
-                        alignItems="flex-start"
-                        sx={{
-                          border: "1px solid",
-                          borderColor: "status.warning.border",
-                          bgcolor: "status.warning.bg",
-                          borderRadius: "8px",
-                          px: 1.5,
-                          py: 0.875,
-                        }}
-                      >
-                        <Iconify
-                          icon="solar:danger-triangle-linear"
-                          width={16}
-                          sx={{
-                            color: "status.warning.fg",
-                            flexShrink: 0,
-                            mt: "2px",
-                          }}
-                        />
-                        <Typography sx={{ typography: "s2" }}>{n}</Typography>
-                      </Stack>
-                    ))}
-                  </Stack>
-                ) : null;
-              })()}
 
             {/* ── a platform agent: what runs for real during this run, named ── */}
             {(() => {
@@ -1325,6 +1364,35 @@ export default function RunPlanDialog({
                 </Box>
               </Collapse>
             </Box>
+
+            {compat && !noRun && !ranBefore && (
+              <Stack direction="row" spacing={1.5} alignItems="baseline">
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    width: 88,
+                    flexShrink: 0,
+                  }}
+                >
+                  First run
+                </Typography>
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {`prepares agent ${agentVerLbl} on environment ${envLbl} first, which takes several minutes`}
+                </Typography>
+              </Stack>
+            )}
+            {compat && (
+              <KnownLimits
+                report={compat}
+                scenarios={envState?.scenarios || []}
+                evalCount={(evals || []).length}
+                provider={
+                  fixKitOf?.(pickedKey)?.agent?.values?.provider ||
+                  envState?.agent?.values?.provider
+                }
+              />
+            )}
 
             {/* Simulation runs show no pre-run estimate or cap (clarified plan,
              30 Oct); improvements keep their limits. */}
@@ -1572,7 +1640,7 @@ export default function RunPlanDialog({
               </>
             )}
 
-            {(noRun ? [pairHold] : check.holds).length > 0 && (
+            {!pairHold && check.holds.length > 0 && (
               <Box
                 role="alert"
                 sx={{
@@ -1584,28 +1652,26 @@ export default function RunPlanDialog({
                   py: 1,
                 }}
               >
-                {(noRun ? [{ id: "pair", ...pairHold }] : check.holds).map(
-                  (h) => (
-                    <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
+                {check.holds.map((h) => (
+                  <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 600,
+                        color: "status.danger.fg",
+                      }}
+                    >
+                      {h.title}
+                    </Typography>
+                    {h.line && (
                       <Typography
-                        sx={{
-                          typography: "s2",
-                          fontWeight: 600,
-                          color: "status.danger.fg",
-                        }}
+                        sx={{ typography: "s3", color: "text.secondary" }}
                       >
-                        {h.title}
+                        {h.line}
                       </Typography>
-                      {h.line && (
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {h.line}
-                        </Typography>
-                      )}
-                    </Box>
-                  ),
-                )}
+                    )}
+                  </Box>
+                ))}
               </Box>
             )}
           </Stack>
@@ -1672,7 +1738,9 @@ export default function RunPlanDialog({
                 ? SHOW_RUN_COST
                   ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
                   : `${estimate.trials} ${unit}s`
-                : pairHold?.title || check.holds[0]?.title || ""
+                : (pairHold && verdict
+                    ? `${verdict.title}${verdict.rest ? ` · ${verdict.rest}` : ""}`
+                    : check.holds[0]?.title) || ""
             }
           >
             <span>
@@ -1740,10 +1808,7 @@ export default function RunPlanDialog({
                   ? "Starting…"
                   : submit === "rejected"
                     ? "Try again"
-                    : /* Something is still open: the label says so. */
-                      canStart && (blockedN > 0 || untestedN > 0)
-                      ? "Run anyway"
-                      : "Start run"}
+                    : "Start run"}
               </Button>
             </span>
           </Tooltip>

@@ -3,15 +3,13 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Checkbox,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import Iconify from "src/components/iconify";
 import { StatusDot } from "../components/primitives";
-import { READY_STATUS, readinessOf } from "../_mock/readiness";
+import { readinessOf } from "../_mock/readiness";
 import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
 import { ago } from "../agents/agentViewUtils";
 import { fieldFixOf, fixKindOf, fixLabelOf, shortFixLabel } from "./fixKinds";
@@ -21,12 +19,12 @@ import BuilderFixChat, { builderPromptFor } from "./BuilderFixChat";
   Ready to run (plan T06; runs.md step 1): the short panel in Run setup for
   this agent version on this environment. Not a report, no score, no cost.
 
-  Its rows are grouped by who can settle them (13 Nov, mixing a teammate's
-  run plan the manager liked with ours): Needs you — a value or a change on
-  the agent only the person can make; Builder chat can fix — environment-side
-  fixes, ticked and sent to the builder in one go; Re-check to confirm — rows
-  not checked yet, or checked on another version. One action per group, not
-  a Fix on every row; each row opens to say what its fix does.
+  14 Nov information flow (Chintan: "figure out the information flow"): the
+  run plan's verdict line says whether the run can start; this panel only
+  says what holds scenarios back. One line per problem with one action;
+  what the check saw opens on demand. Rows still to check fold into one
+  line; ready areas into another. Known limits of where the agent runs sit
+  under How it runs (KnownLimits below), not here.
 */
 const namesOf = (ids, titleOf) => {
   /* Two scenarios can share a title; name each title once. */
@@ -40,162 +38,34 @@ const firstSentence = (d) =>
   String(d || "")
     .split(/\s+—\s+|(?<=\.)\s/)[0]
     .replace(/\.$/, "");
+const lower = (s) => String(s || "").toLowerCase();
 const BUILDER = ["tools", "release", "rebuild"];
+/* A stated limit of where the agent runs: nothing to fix. */
+const isLimit = (a) =>
+  a.status === "partial" &&
+  ["tools", "reset", "cancel", "evidence"].includes(a.id);
 /* What changed since a stale row was checked, in a few words. */
 const staleReasonOf = (a) => {
   const d = String(a.staleRow?.detail || "");
-  if (/^Fix applied/.test(d)) return "Fix applied, not re-checked yet";
+  if (/^Fix applied/.test(d)) return "a fix was applied, not re-checked yet";
   return d
     .replace(/^Was Supported\.\s*/, "")
     .replace(/\s+—\s+re-check.*$/, "")
     .replace(/\.$/, "");
 };
-/* What each area's check proves, said on a row that still needs it. */
-const CHECKS = {
-  start: "The agent starts, answers a message and keeps the conversation.",
-  tools: "Every tool the scenarios need exists and lands in the test world.",
-  reset: "Each trial starts from a fresh world.",
-  cancel: "Stopping a run ends the agent's work.",
-  evidence: "The agent leaves the records the checks grade.",
+/* Short names for the areas, as the one-line summaries use them. */
+const SHORT = {
+  start: "start",
+  tools: "tools",
+  reset: "reset",
+  cancel: "stop",
+  evidence: "evidence",
+  grading: "grading",
 };
+const shortOf = (a) => SHORT[a.id] || lower(a.label);
 
-/* A group: its own box, so three groups on screen at once still read
-   apart (14 Nov, Nosang: the grouping she expected). */
-function Group({ children }) {
-  return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "6px",
-        overflow: "hidden",
-        "& > :first-of-type": { borderTop: "none" },
-      }}
-    >
-      {children}
-    </Box>
-  );
-}
-Group.propTypes = { children: PropTypes.node };
-
-/* A group's header: who settles these, how many, and its one action. */
-function GroupHead({ icon, title, sub, count, action, lead = null }) {
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1}
-      sx={{
-        px: 1.5,
-        py: 0.75,
-        borderTop: "1px solid",
-        borderColor: "divider",
-      }}
-    >
-      {lead || (
-        <Iconify
-          icon={icon}
-          width={16}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
-        />
-      )}
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {title}
-          <Box
-            component="span"
-            sx={{ color: "text.tertiary", fontWeight: 400 }}
-          >{` · ${count}`}</Box>
-        </Typography>
-        {sub && (
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {sub}
-          </Typography>
-        )}
-      </Box>
-      {action}
-    </Stack>
-  );
-}
-GroupHead.propTypes = {
-  icon: PropTypes.string,
-  title: PropTypes.string,
-  sub: PropTypes.string,
-  count: PropTypes.number,
-  action: PropTypes.node,
-  lead: PropTypes.node,
-};
-
-/* One row: its dot, area and reason in a line; it opens to its fix. */
-function Row({ area, open, onToggle, lead = null, end = null, children }) {
-  const st = READY_STATUS[area.status] || READY_STATUS.unchecked;
-  return (
-    <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        role="button"
-        tabIndex={0}
-        onClick={onToggle}
-        onKeyDown={(e) => e.key === "Enter" && onToggle()}
-        sx={{ px: 1.5, py: 0.625, cursor: "pointer" }}
-      >
-        {lead}
-        <StatusDot
-          status={area.staleRow ? "flaky" : st.dot}
-          size={6}
-          hollow={area.status === "unchecked" && !area.staleRow}
-        />
-        <Typography noWrap sx={{ typography: "s2", flexShrink: 0 }}>
-          {area.label}
-        </Typography>
-        <Typography
-          noWrap
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {area.staleRow
-            ? staleReasonOf(area)
-            : area.waits
-              ? `Waits on ${String(area.fixRow?.blockedBy || "starts and replies").toLowerCase()}`
-              : area.status === "unchecked" && !area.detail
-                ? "Not checked yet"
-                : firstSentence(area.detail)}
-        </Typography>
-        {end}
-        <Iconify
-          icon={
-            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
-          }
-          width={14}
-          sx={{ color: "text.disabled", flexShrink: 0 }}
-        />
-      </Stack>
-      {open && (
-        <Stack spacing={1} sx={{ px: 1.5, pb: 1.25, pl: 4.5 }}>
-          {children}
-        </Stack>
-      )}
-    </Box>
-  );
-}
-Row.propTypes = {
-  area: PropTypes.object.isRequired,
-  open: PropTypes.bool,
-  onToggle: PropTypes.func,
-  lead: PropTypes.node,
-  end: PropTypes.node,
-  children: PropTypes.node,
-};
-
-/* An opened row, as a short spec sheet: what the check saw, the fix, what
-   changes once it's made, and which scenarios wait on it (14 Nov, Nosang:
-   a one-line summary didn't show the real case). */
+/* An opened problem: what the check saw, the fix, what changes once fixed,
+   and the scenarios it blocks. */
 function Facts({ rows }) {
   const shown = rows.filter(([, v]) => v);
   return (
@@ -204,7 +74,7 @@ function Facts({ rows }) {
       sx={{
         m: 0,
         display: "grid",
-        gridTemplateColumns: "96px minmax(0, 1fr)",
+        gridTemplateColumns: "88px minmax(0, 1fr)",
         columnGap: 1.5,
         rowGap: 0.5,
       }}
@@ -227,6 +97,90 @@ function Facts({ rows }) {
 }
 Facts.propTypes = { rows: PropTypes.array.isRequired };
 
+/* A quiet one-line summary row (ready, waiting, not checked). */
+function Line({ dot, hollow = false, children, tip = "" }) {
+  return (
+    <Tooltip arrow placement="top-start" title={tip}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{
+          px: 1.5,
+          py: 0.875,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <StatusDot status={dot} size={6} hollow={hollow} />
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+        >
+          {children}
+        </Typography>
+      </Stack>
+    </Tooltip>
+  );
+}
+Line.propTypes = {
+  dot: PropTypes.string,
+  hollow: PropTypes.bool,
+  children: PropTypes.node,
+  tip: PropTypes.string,
+};
+
+/* Known limits of where the agent runs (14 Nov: they change how results
+   read, not whether the run starts, so they sit under How it runs). */
+export function KnownLimits({ report, scenarios, evalCount, provider }) {
+  const limitBy = provider
+    ? provider.charAt(0).toUpperCase() + provider.slice(1)
+    : "Hosting";
+  const limits = readinessOf(report, scenarios, evalCount).filter(isLimit);
+  const voiceReplies = (report.rows || []).find(
+    (r) => r.id === "message" && r.status === "unavailable",
+  );
+  const n = limits.length + (voiceReplies ? 1 : 0);
+  if (!n) return null;
+  const phrase = (a) => {
+    const d = String(a.detail || "");
+    if (a.id === "tools" && /^Tools run in your/.test(d))
+      return `tools act in your ${limitBy} account`;
+    if (a.id === "reset") return "the agent may remember earlier attempts";
+    if (a.id === "cancel")
+      return /nothing ends the/.test(d)
+        ? `a stop doesn't end the ${limitBy} call yet`
+        : "a stop may not end work already sent";
+    return lower(firstSentence(d));
+  };
+  return (
+    <Tooltip
+      arrow
+      placement="top-start"
+      title={
+        <Box sx={{ whiteSpace: "pre-line" }}>
+          {[
+            ...limits.map((a) => `${a.label}: ${phrase(a)}`),
+            ...(voiceReplies
+              ? [`${voiceReplies.label}: ${voiceReplies.detail}`]
+              : []),
+            "These come from where the agent runs, not your setup, so there's nothing to fix. Each run's results carry the same note.",
+          ].join("\n\n")}
+        </Box>
+      }
+    >
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        {`${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`} · ${n} known limit${n === 1 ? "" : "s"}`}
+      </Typography>
+    </Tooltip>
+  );
+}
+KnownLimits.propTypes = {
+  report: PropTypes.object.isRequired,
+  scenarios: PropTypes.array.isRequired,
+  evalCount: PropTypes.number,
+  provider: PropTypes.string,
+};
+
 export default function ReadyToRun({
   report,
   scenarios,
@@ -240,113 +194,39 @@ export default function ReadyToRun({
   /* Builder fixes go to the environment's builder chat (14 Nov); without
      it they run in the small chat inside this panel. */
   onFixInBuilder = null,
-  children,
 }) {
   const [openId, setOpenId] = useState(null);
   const [values, setValues] = useState({});
-  const [unticked, setUnticked] = useState([]);
   const [chatJobs, setChatJobs] = useState(null);
   const [fixed, setFixed] = useState([]);
   const toggle = (id) => setOpenId((cur) => (cur === id ? null : id));
 
-  /* Who a stated limit comes from: the platform the agent runs on, or
-     wherever it's hosted. */
-  const provider = fixKit?.agent?.values?.provider;
-  const limitBy = provider
-    ? provider.charAt(0).toUpperCase() + provider.slice(1)
-    : "Hosting";
   const areas = readinessOf(report, scenarios, evalCount);
   const titleOf = (id) => scenarios.find((s) => s.id === id)?.title || null;
   const blockedIds = new Set((report.scope?.blocked || []).map((b) => b.id));
   const blockedOf = (a) => a.affected.filter((id) => blockedIds.has(id));
-
-  /* A stated limit of where the agent runs (Partial on tools, reset, stop or
-     evidence) has nothing to fix: one quiet line, so results are read right. */
-  const isLimit = (a) =>
-    a.status === "partial" &&
-    ["tools", "reset", "cancel", "evidence"].includes(a.id);
-  const limits = areas.filter(isLimit);
-  const voiceReplies = (report.rows || []).find(
-    (r) => r.id === "message" && r.status === "unavailable",
-  );
-  /* A row keeps its group while a check runs; only its actions wait. */
   const kindOf = (a) =>
     a.fixRow ? fixKindOf(a.fixRow, fixKit) || "link" : null;
-  const blockers = areas.filter((a) => a.status === "blocked");
-  const fixing = new Set((chatJobs || []).map((j) => j.id));
-  const builderRows = blockers.filter(
-    (a) => BUILDER.includes(kindOf(a)) && !fixed.some((f) => f.id === a.id),
+  const blockers = areas.filter(
+    (a) => a.status === "blocked" && !fixed.some((f) => f.id === a.id),
   );
-  const youRows = blockers.filter((a) => !builderRows.includes(a));
-  const recheckRows = areas.filter((a) => a.status === "unchecked");
+  const unchecked = areas.filter((a) => a.status === "unchecked");
+  const waiting = unchecked.filter((a) => a.waits);
+  const stale = unchecked.filter((a) => !a.waits && a.staleRow);
+  const notYet = unchecked.filter((a) => !a.waits && !a.staleRow);
   const ready = areas.filter((a) => a.status === "ready" || isLimit(a));
-  const ticked = builderRows.filter((a) => !unticked.includes(a.id));
-  const picked = ticked.filter((a) => !fixing.has(a.id));
-
-  const limitPhrase = (a) => {
-    const d = String(a.detail || "");
-    if (a.id === "tools" && /^Tools run in your/.test(d))
-      return `tools act in your ${limitBy} account`;
-    if (a.id === "reset") return "the agent may remember earlier attempts";
-    if (a.id === "cancel")
-      return /nothing ends the/.test(d)
-        ? `a stop doesn't end the ${limitBy} call yet`
-        : "a stop may not end work already sent";
-    return firstSentence(d).replace(/^./, (c) => c.toLowerCase());
-  };
-
-  /* The pairing's check, said once above the groups. */
-  const pair = `agent ${report.identity?.agentVersion || "v1"} on environment ${report.identity?.worldVersion || "v1"}`;
   const val = report.validation;
-  const state = checking ? "validating" : val?.state;
-  const pairLine =
-    state === "validating"
-      ? {
-          dot: "running",
-          text: `Checking ${pair} · up to ${PAIR_CHECK_LIMIT_MIN} min`,
-        }
-      : state === "failed"
-        ? {
-            dot: "failed",
-            text: `Last check failed ${ago(val.at)}: ${val.reason}`,
-          }
-        : state === "timed_out"
-          ? {
-              dot: "failed",
-              text: `Last check timed out ${ago(val.at)} (over ${PAIR_CHECK_LIMIT_MIN} min)`,
-            }
-          : state === "unavailable"
-            ? {
-                dot: "cancelled",
-                text: `Check unavailable ${ago(val.at)} on our side · runs aren't held`,
-              }
-            : state === "stale"
-              ? { dot: "needs_input", text: `${report.staleWhy} · re-check` }
-              : null;
 
-  /* Builder fixes: ticked rows, or one row, sent to the builder chat. */
-  const startBuilder = (rows) => {
-    if (!rows.length || chatJobs) return;
+  /* Builder fixes: one row at a time, handed to the builder chat. */
+  const startBuilder = (a) => {
+    if (chatJobs) return;
     setOpenId(null);
+    const job = { id: a.id, label: a.label, kind: kindOf(a), row: a.fixRow };
     if (onFixInBuilder) {
-      onFixInBuilder(
-        rows.map((a) => ({
-          id: a.id,
-          label: a.label,
-          kind: kindOf(a),
-          row: a.fixRow,
-        })),
-      );
+      onFixInBuilder([job]);
       return;
     }
-    setChatJobs(
-      rows.map((a) => ({
-        id: a.id,
-        label: a.label,
-        kind: kindOf(a),
-        row: a.fixRow,
-      })),
-    );
+    setChatJobs([job]);
   };
   const builderDone = () => {
     const jobs = chatJobs || [];
@@ -359,46 +239,85 @@ export default function ReadyToRun({
     setFixed((f) => [...f, ...jobs.map((j) => ({ id: j.id, label: j.label }))]);
   };
 
-  const blockedNote = (a) => {
-    const n = blockedOf(a).length;
-    return n ? (
-      <Tooltip
-        arrow
-        title={`Blocked in this run: ${namesOf(blockedOf(a), titleOf)}`}
-      >
-        <Typography
-          sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-        >{`${n} blocked`}</Typography>
-      </Tooltip>
-    ) : null;
-  };
-  /* What the check saw, the fix, what changes once it's made, and what
-     waits on it. */
-  const factsOf = (a) => {
-    const r = a.fixRow || {};
-    /* The check's evidence only when it adds to the detail. */
-    const detail = r.detail || a.detail;
-    const said = String(r.evidence || "").replace(/^[^:]+:\s*/, "");
-    const saw =
-      said && !String(detail).includes(firstSentence(said))
-        ? `${detail} ${said}`
-        : detail;
-    const n = blockedOf(a).length;
+  const checkButton = onCheck && (
+    <Button
+      size="small"
+      variant="outlined"
+      disabled={checking}
+      onClick={onCheck}
+      sx={{ py: 0, flexShrink: 0 }}
+    >
+      {checking ? "Checking…" : val ? "Re-check" : "Run the check"}
+    </Button>
+  );
+
+  /* Nothing to do: the panel is one line. */
+  if (!blockers.length && !unchecked.length && !chatJobs && !fixed.length)
     return (
-      <Facts
-        rows={[
-          ["What we saw", saw],
-          ["Fix", fixLabelOf(r)],
-          ["Once fixed", r.fix?.would],
-          [
-            "Waits on it",
-            n
-              ? `${n} scenario${n === 1 ? "" : "s"}: ${namesOf(blockedOf(a), titleOf)}`
-              : null,
-          ],
-        ]}
-      />
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{
+          px: 1.5,
+          minHeight: 40,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+        }}
+      >
+        <StatusDot status="passed" size={6} />
+        <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+          <Box component="span" sx={{ fontWeight: 500 }}>
+            Ready to run
+          </Box>
+          <Box component="span" sx={{ color: "text.tertiary" }}>
+            {` · ${ready.map(shortOf).join(", ")}${val?.at ? ` · checked ${ago(val.at)}` : ""}`}
+          </Box>
+        </Typography>
+        {checkButton}
+      </Stack>
     );
+
+  const actionOf = (a) => {
+    const kind = kindOf(a);
+    const off = checking || !!chatJobs;
+    if (kind === "field")
+      return (
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={off}
+          onClick={() => toggle(a.id)}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          Add value
+        </Button>
+      );
+    if (BUILDER.includes(kind))
+      return (
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={off}
+          onClick={() => startBuilder(a)}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          Fix with builder chat
+        </Button>
+      );
+    if (kind === "link" && onFix)
+      return (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onFix(a.fixRow)}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          Open the agent
+        </Button>
+      );
+    return null;
   };
 
   return (
@@ -407,542 +326,226 @@ export default function ReadyToRun({
     >
       <Stack
         direction="row"
-        alignItems="baseline"
+        alignItems="center"
         spacing={1}
-        sx={{ px: 1.5, py: 1 }}
+        sx={{ px: 1.5, minHeight: 40 }}
       >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          Ready to run
+        <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+          <Box component="span" sx={{ fontWeight: 500 }}>
+            Ready to run
+          </Box>
+          <Box component="span" sx={{ color: "text.tertiary" }}>
+            {blockers.length
+              ? ` · ${blockers.length} to fix`
+              : unchecked.length
+                ? " · not checked"
+                : ""}
+          </Box>
         </Typography>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {/* Blockers only — how many scenarios run is said once, under the
-              repeats (12 Nov review: two counts disagreed). */}
-          {blockers.length
-            ? `${blockers.length} blocker${blockers.length === 1 ? "" : "s"} to fix`
-            : "No blocker"}
-        </Typography>
-        {(val || checking) && onCheck && !recheckRows.length && (
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={checking}
-            onClick={onCheck}
-            sx={{ py: 0, flexShrink: 0 }}
-          >
-            {checking ? "Checking…" : "Re-check"}
-          </Button>
-        )}
+        {checkButton}
       </Stack>
 
-      {pairLine && (
-        <Stack
-          direction="row"
-          alignItems="flex-start"
-          spacing={1}
-          sx={{
-            px: 1.5,
-            py: 0.75,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Box sx={{ pt: "6px", flexShrink: 0, display: "flex" }}>
-            <StatusDot
-              status={pairLine.dot}
-              size={6}
-              live={state === "validating"}
-            />
-          </Box>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {pairLine.text}
-          </Typography>
-        </Stack>
-      )}
-
-      {(youRows.length > 0 ||
-        builderRows.length > 0 ||
-        fixed.length > 0 ||
-        recheckRows.length > 0) && (
-        <Stack
-          spacing={1}
-          sx={{ p: 1, borderTop: "1px solid", borderColor: "divider" }}
-        >
-          {/* ── Needs you: a value, or a change on the agent ── */}
-          {youRows.length > 0 && (
-            <Group>
-              <GroupHead
-                icon="solar:user-linear"
-                title="Needs you"
-                sub="Only you can change these"
-                count={youRows.length}
-              />
-              {youRows.map((a) => {
-                const kind = kindOf(a);
-                const field =
-                  kind === "field" ? fieldFixOf(a.fixRow, fixKit) : null;
-                const value = values[a.id] ?? field?.value ?? "";
-                return (
-                  <Row
-                    key={a.id}
-                    area={a}
-                    open={openId === a.id}
-                    onToggle={() => toggle(a.id)}
-                    end={blockedNote(a)}
+      {/* One line per problem; its detail opens on demand. */}
+      {blockers.map((a) => {
+        const r = a.fixRow || {};
+        const kind = kindOf(a);
+        const open = openId === a.id;
+        const n = blockedOf(a).length;
+        const field = kind === "field" ? fieldFixOf(r, fixKit) : null;
+        const value = values[a.id] ?? field?.value ?? "";
+        const said = String(r.evidence || "").replace(/^[^:]+:\s*/, "");
+        const detail = r.detail || a.detail;
+        const saw =
+          said && !String(detail).includes(firstSentence(said))
+            ? `${detail} ${said}`
+            : detail;
+        return (
+          <Box
+            key={a.id}
+            sx={{
+              borderTop: "1px solid",
+              borderColor: "divider",
+              ...(open && { bgcolor: "background.neutral" }),
+            }}
+          >
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.25}
+              sx={{ px: 1.5, py: 1 }}
+            >
+              <StatusDot status="failed" size={6} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                  {a.label}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {lower(firstSentence(detail))}
+                  {n
+                    ? ` · blocks ${n === report.scope?.requested && n > 1 ? `all ${n}` : n}`
+                    : ""}
+                  {" · "}
+                  <Box
+                    component="button"
+                    type="button"
+                    onClick={() => toggle(a.id)}
+                    aria-expanded={open}
+                    sx={{
+                      p: 0,
+                      border: 0,
+                      bgcolor: "transparent",
+                      cursor: "pointer",
+                      typography: "s3",
+                      color: "primary.main",
+                    }}
                   >
-                    {factsOf(a)}
-                    {field && (
-                      <Box
-                        sx={{
-                          border: "1px solid",
-                          borderColor: "divider",
-                          borderRadius: "6px",
-                        }}
+                    {open ? "Hide details" : "Details"}
+                  </Box>
+                </Typography>
+              </Box>
+              {actionOf(a)}
+            </Stack>
+            {open && (
+              <Stack spacing={1.25} sx={{ px: 1.5, pb: 1.5, pl: 3.75 }}>
+                <Facts
+                  rows={[
+                    ["What we saw", saw],
+                    ["Fix", shortFixLabel(fixLabelOf(r))],
+                    ["Once fixed", r.fix?.would],
+                    [
+                      "Blocks",
+                      n
+                        ? `${n} scenario${n === 1 ? "" : "s"}: ${namesOf(blockedOf(a), titleOf)}`
+                        : null,
+                    ],
+                    [
+                      "Sends",
+                      BUILDER.includes(kind)
+                        ? `“${builderPromptFor(kind, r)}” to the builder chat`
+                        : null,
+                    ],
+                  ]}
+                />
+                {field && (
+                  <Box
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: "6px",
+                      bgcolor: "background.paper",
+                    }}
+                  >
+                    <Stack
+                      direction="row"
+                      spacing={1.5}
+                      alignItems="center"
+                      sx={{ px: 1.25, py: 0.75 }}
+                    >
+                      <Typography
+                        sx={{ typography: "s2", width: 120, flexShrink: 0 }}
                       >
-                        <Stack
-                          direction="row"
-                          spacing={1.5}
-                          sx={{
-                            px: 1.25,
-                            py: 0.5,
-                            borderBottom: "1px solid",
-                            borderColor: "divider",
-                          }}
-                        >
-                          {["Field", "Value"].map((h, i) => (
-                            <Typography
-                              key={h}
-                              sx={{
-                                typography: "s3",
-                                color: "text.tertiary",
-                                width: i ? "auto" : 120,
-                              }}
-                            >
-                              {h}
-                            </Typography>
-                          ))}
-                        </Stack>
-                        <Stack
-                          direction="row"
-                          spacing={1.5}
-                          alignItems="center"
-                          sx={{ px: 1.25, py: 0.75 }}
-                        >
-                          <Typography
-                            sx={{ typography: "s2", width: 120, flexShrink: 0 }}
-                          >
-                            {field.label}
-                          </Typography>
-                          <TextField
-                            size="small"
-                            value={value}
-                            onChange={(e) =>
-                              setValues((v) => ({
-                                ...v,
-                                [a.id]: e.target.value,
-                              }))
-                            }
-                            inputProps={{ "aria-label": field.label }}
-                            sx={{
-                              flex: 1,
-                              "& input": { typography: "s2", py: 0.625 },
-                            }}
-                          />
-                        </Stack>
-                        <Typography
-                          sx={{
-                            typography: "s3",
-                            color: "text.tertiary",
-                            px: 1.25,
-                            pb: 0.5,
-                          }}
-                        >
-                          Only this field changes; everything else on the
-                          agent&apos;s connection keeps its value. Saving checks
-                          the pair again.
-                        </Typography>
-                        {a.fixRow?.suggestion?.why && (
-                          <Typography
-                            sx={{
-                              typography: "s3",
-                              color: "text.tertiary",
-                              px: 1.25,
-                              pb: 0.5,
-                            }}
-                          >
-                            {a.fixRow.suggestion.why}
-                          </Typography>
-                        )}
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          justifyContent="flex-end"
-                          sx={{ px: 1.25, pb: 0.75 }}
-                        >
-                          <Button
-                            size="small"
-                            color="inherit"
-                            onClick={() => setOpenId(null)}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            disabled={!String(value).trim() || checking}
-                            onClick={() => {
-                              fixKit.applyRepair(a.fixRow.fixId, String(value));
-                              setOpenId(null);
-                            }}
-                          >
-                            Save and re-check
-                          </Button>
-                        </Stack>
-                      </Box>
-                    )}
-                    {kind === "link" && onFix && (
+                        {field.label}
+                      </Typography>
+                      <TextField
+                        size="small"
+                        value={value}
+                        onChange={(e) =>
+                          setValues((v) => ({ ...v, [a.id]: e.target.value }))
+                        }
+                        inputProps={{ "aria-label": field.label }}
+                        sx={{
+                          flex: 1,
+                          "& input": { typography: "s2", py: 0.625 },
+                        }}
+                      />
+                    </Stack>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        px: 1.25,
+                        pb: 0.5,
+                      }}
+                    >
+                      {r.suggestion?.why
+                        ? `${r.suggestion.why} Only this field changes; saving checks the pair again.`
+                        : "Only this field changes; saving checks the pair again."}
+                    </Typography>
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      justifyContent="flex-end"
+                      sx={{ px: 1.25, pb: 0.75 }}
+                    >
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={() => setOpenId(null)}
+                      >
+                        Cancel
+                      </Button>
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => onFix(a.fixRow)}
-                        endIcon={
-                          <Iconify icon="solar:arrow-right-linear" width={12} />
-                        }
-                        sx={{
-                          alignSelf: "flex-start",
-                          whiteSpace: "normal",
-                          textAlign: "left",
+                        disabled={!String(value).trim() || checking}
+                        onClick={() => {
+                          fixKit.applyRepair(r.fixId, String(value));
+                          setOpenId(null);
                         }}
                       >
-                        {shortFixLabel(fixLabelOf(a.fixRow)) ||
-                          "Open the connection"}
+                        Save and re-check
                       </Button>
-                    )}
-                  </Row>
-                );
-              })}
-            </Group>
-          )}
-
-          {/* ── Builder chat can fix: environment-side, ticked and sent at once ── */}
-          {(builderRows.length > 0 || fixed.length > 0) && (
-            <Group>
-              <GroupHead
-                title="Builder chat can fix"
-                sub="The builder chat can make these changes"
-                count={builderRows.length + fixed.length}
-                icon="solar:chat-round-dots-linear"
-                lead={
-                  builderRows.length > 0 ? (
-                    <Checkbox
-                      size="small"
-                      disabled={!!chatJobs}
-                      checked={ticked.length === builderRows.length}
-                      indeterminate={
-                        ticked.length > 0 && ticked.length < builderRows.length
-                      }
-                      onChange={(e) =>
-                        setUnticked(
-                          e.target.checked ? [] : builderRows.map((a) => a.id),
-                        )
-                      }
-                      inputProps={{ "aria-label": "Tick every builder fix" }}
-                      sx={{ p: 0.25, ml: -0.5 }}
-                    />
-                  ) : null
-                }
-                action={
-                  builderRows.length > 0 && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      disabled={!picked.length || !!chatJobs || checking}
-                      onClick={() => startBuilder(picked)}
-                      sx={{ py: 0, flexShrink: 0 }}
-                    >
-                      {chatJobs
-                        ? "Fixing…"
-                        : picked.length
-                          ? `Fix ${picked.length} with builder chat`
-                          : "Tick lines to fix"}
-                    </Button>
-                  )
-                }
-              />
-              {builderRows.map((a) => (
-                <Row
-                  key={a.id}
-                  area={a}
-                  open={openId === a.id}
-                  onToggle={() => toggle(a.id)}
-                  lead={
-                    <Checkbox
-                      size="small"
-                      disabled={!!chatJobs}
-                      checked={!unticked.includes(a.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) =>
-                        setUnticked((u) =>
-                          e.target.checked
-                            ? u.filter((x) => x !== a.id)
-                            : [...u, a.id],
-                        )
-                      }
-                      inputProps={{ "aria-label": `Fix ${a.label}` }}
-                      sx={{ p: 0.25, ml: -0.5 }}
-                    />
-                  }
-                  end={
-                    fixing.has(a.id) ? (
-                      <Typography
-                        sx={{
-                          typography: "s3",
-                          color: "primary.main",
-                          flexShrink: 0,
-                        }}
-                      >
-                        Fixing…
-                      </Typography>
-                    ) : (
-                      blockedNote(a)
-                    )
-                  }
-                >
-                  {factsOf(a)}
-                  <Box>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary", mb: 0.5 }}
-                    >
-                      Sends this to the builder chat
-                    </Typography>
-                    <Box
-                      sx={{
-                        px: 1.25,
-                        py: 0.75,
-                        borderRadius: "6px",
-                        bgcolor: "background.neutral",
-                        typography: "s2",
-                      }}
-                    >
-                      {builderPromptFor(kindOf(a), a.fixRow)}
-                    </Box>
+                    </Stack>
                   </Box>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={!!chatJobs || checking}
-                    onClick={() => startBuilder([a])}
-                    sx={{ alignSelf: "flex-start" }}
-                  >
-                    Fix just this one
-                  </Button>
-                </Row>
-              ))}
-              {fixed.map((f) => (
-                <Stack
-                  key={`fixed-${f.id}`}
-                  direction="row"
-                  alignItems="center"
-                  spacing={1}
-                  sx={{
-                    px: 1.5,
-                    py: 0.625,
-                    pl: 4.75,
-                    borderTop: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <StatusDot status="passed" size={6} />
-                  <Typography sx={{ typography: "s2", flex: 1 }}>
-                    {f.label}
-                  </Typography>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={0.5}
-                    sx={{
-                      px: 0.75,
-                      py: 0.125,
-                      borderRadius: "4px",
-                      bgcolor: "status.success.bg",
-                      color: "status.success.fg",
-                      typography: "s3",
-                      fontWeight: 500,
-                    }}
-                  >
-                    <StatusDot status="passed" size={5} />
-                    <span>Fixed</span>
-                  </Stack>
-                </Stack>
-              ))}
-              {chatJobs && (
-                <BuilderFixChat
-                  jobs={chatJobs}
-                  onDone={builderDone}
-                  onClose={() => setChatJobs(null)}
-                />
-              )}
-            </Group>
-          )}
+                )}
+              </Stack>
+            )}
+          </Box>
+        );
+      })}
 
-          {/* ── Re-check to confirm: not checked yet, or checked on another version ── */}
-          {recheckRows.length > 0 && (
-            <Group>
-              <GroupHead
-                icon="solar:refresh-linear"
-                title="Re-check to confirm"
-                sub="Checking again settles these"
-                count={recheckRows.length}
-                action={
-                  onCheck && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      disabled={checking}
-                      onClick={onCheck}
-                      sx={{ py: 0, flexShrink: 0 }}
-                    >
-                      {checking
-                        ? "Checking…"
-                        : val
-                          ? "Re-check"
-                          : "Run the check"}
-                    </Button>
-                  )
-                }
-              />
-              {recheckRows.map((a) => (
-                <Row
-                  key={a.id}
-                  area={a}
-                  open={openId === a.id}
-                  onToggle={() => toggle(a.id)}
-                >
-                  <Facts
-                    rows={[
-                      ["What it checks", CHECKS[a.id]],
-                      [
-                        "Last check",
-                        a.staleRow
-                          ? a.staleRow.was === "blocked"
-                            ? "Blocked, then a fix was applied"
-                            : `Passed${a.staleRow.checkedAt ? ` ${ago(a.staleRow.checkedAt)}` : ""}`
-                          : a.waits
-                            ? `Waits on ${String(a.fixRow?.blockedBy || "Starts and replies").toLowerCase()}`
-                            : val?.at
-                              ? `The last check (${ago(val.at)}) didn't cover it`
-                              : "Never checked for this agent",
-                      ],
-                      ["Since then", a.staleRow ? staleReasonOf(a) : null],
-                      [
-                        "Why again",
-                        a.waits
-                          ? "It settles once that check passes; nothing to do here."
-                          : a.staleRow
-                            ? "The result may differ now. Check again before trusting the scenarios that need it."
-                            : "Until it's checked, results that need it can't be trusted.",
-                      ],
-                      [
-                        "Waits on it",
-                        a.affected?.length
-                          ? namesOf(a.affected, titleOf)
-                          : null,
-                      ],
-                    ]}
-                  />
-                </Row>
-              ))}
-            </Group>
-          )}
-        </Stack>
+      {fixed.map((f) => (
+        <Line key={`fixed-${f.id}`} dot="passed">
+          {`${f.label} · fixed`}
+        </Line>
+      ))}
+      {chatJobs && (
+        <BuilderFixChat
+          jobs={chatJobs}
+          onDone={builderDone}
+          onClose={() => setChatJobs(null)}
+        />
       )}
 
+      {/* Rows still to check fold into one line each. */}
+      {/* Never checked: everything still to check is one line. */}
+      {!val && waiting.length + notYet.length > 0 && (
+        <Line dot="queued" hollow>
+          {`${[...notYet, ...waiting].map(shortOf).join(", ")} get checked together · up to ${PAIR_CHECK_LIMIT_MIN} min`.replace(
+            /^./,
+            (c) => c.toUpperCase(),
+          )}
+        </Line>
+      )}
+      {/* Checked on another version: the verdict says why; one line says
+         what to check again. */}
+      {val && stale.length > 0 && (
+        <Line dot="flaky" tip={staleReasonOf(stale[0])}>
+          {`Check again on this version: ${[...stale, ...waiting, ...notYet].map(shortOf).join(", ")}`}
+        </Line>
+      )}
+      {val && !stale.length && waiting.length > 0 && (
+        <Line dot="queued" hollow>
+          {`Waiting on ${lower(waiting[0].fixRow?.blockedBy || "starts and replies")}: ${waiting.map(shortOf).join(", ")}`}
+        </Line>
+      )}
+      {val && !stale.length && notYet.length > 0 && (
+        <Line dot="queued" hollow>
+          {`Not checked yet: ${notYet.map(shortOf).join(", ")}`}
+        </Line>
+      )}
       {ready.length > 0 && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            px: 1.5,
-            py: 0.625,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <StatusDot
-            status={checking ? "running" : "passed"}
-            size={6}
-            live={checking}
-          />
-          <Typography
-            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-          >
-            {`${blockers.length || recheckRows.length ? "Also ready" : "All ready"}: ${ready.map((a) => a.label).join(", ")}`}
-          </Typography>
-        </Stack>
-      )}
-
-      {(limits.length > 0 || voiceReplies) && !checking && (
-        <Tooltip
-          arrow
-          placement="top-start"
-          title={
-            <Box sx={{ whiteSpace: "pre-line" }}>
-              {[
-                ...limits.map((a) => `${a.label}: ${limitPhrase(a)}`),
-                ...(voiceReplies
-                  ? [`${voiceReplies.label}: ${voiceReplies.detail}`]
-                  : []),
-                "These come from where the agent runs, not from your setup — there's nothing to fix. Runs go ahead, and each run's results carry the same note.",
-              ].join("\n\n")}
-            </Box>
-          }
-        >
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{
-              px: 1.5,
-              py: 0.625,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Iconify
-              icon="solar:info-circle-linear"
-              width={14}
-              sx={{ color: "text.disabled", flexShrink: 0 }}
-            />
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              {(() => {
-                const n = limits.length + (voiceReplies ? 1 : 0);
-                return `${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`} · ${n} known limit${n === 1 ? "" : "s"}`;
-              })()}
-            </Typography>
-          </Stack>
-        </Tooltip>
-      )}
-
-      {children && (
-        <Box
-          sx={{
-            px: 1.5,
-            py: 1.25,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          {children}
-        </Box>
+        <Line dot="passed">{`Also ready: ${ready.map(shortOf).join(", ")}`}</Line>
       )}
     </Box>
   );
@@ -956,5 +559,4 @@ ReadyToRun.propTypes = {
   checking: PropTypes.bool,
   fixKit: PropTypes.object,
   onFixInBuilder: PropTypes.func,
-  children: PropTypes.node,
 };
