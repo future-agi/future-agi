@@ -32,8 +32,13 @@ const TagsCell = ({
   const targetSpanId = isSpanRow ? spanId : undefined;
 
   // Editable only when there is something to PATCH (a trace/span id) AND the
-  // role may edit tags. Otherwise the cell stays a passive display.
-  const editable = Boolean(targetTraceId || targetSpanId) && canEditTags;
+  // role may edit tags. A row whose tag_target is explicitly null (the backend
+  // could not decode all of its source tags) is shown but never saved from.
+  // Otherwise the cell stays a passive display.
+  const editable =
+    Boolean(targetTraceId || targetSpanId) &&
+    canEditTags &&
+    entity?.tag_target !== null;
 
   if (tags.length === 0 && !editable) return null;
 
