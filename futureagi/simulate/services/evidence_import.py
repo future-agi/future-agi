@@ -330,15 +330,18 @@ def _store_cases(
     of that case: the same source, or the same conversation (content digest), in
     an open or added case of another import, or earlier in this one. The case it
     repeats is proposed once and keeps it as one more source. A new case that
-    retries a blocked one (the same source or conversation, matched the same way)
-    supersedes it: the blocked case is discarded as retried, only once the new
-    case is saved. Run in the caller's transaction, under the environment's lock."""
+    retries a blocked one (the same source or conversation, matched the same way,
+    whatever the kind of either source) supersedes it: the blocked case is
+    discarded as retried, only once the new case is saved, and the cases that
+    repeated it repeat the new case instead. Run in the caller's transaction,
+    under the environment's lock."""
     readable = [
         case for case in cases if case.status == EvidenceImportCase.Status.PENDING
     ]
     repeated = _held(evidence_import, readable, _REPEATED_STATUSES)
     blocked = _held(evidence_import, readable, (EvidenceImportCase.Status.BLOCKED,))
-    retried: set = set()
+    # Each blocked case retried, and the new case that retries it.
+    retried: dict = {}
     for case in readable:
         if originals := repeated.of(evidence_import, case):
             case.status = EvidenceImportCase.Status.DUPLICATE
@@ -346,15 +349,24 @@ def _store_cases(
             continue
         if case.content_digest:
             repeated.by_digest[case.content_digest] = [case]
-        retried.update(one.id for one in blocked.of(evidence_import, case))
+        for old in blocked.of(evidence_import, case):
+            retried.setdefault(old.id, case.id)
     EvidenceImportCase.objects.bulk_create(cases)
-    if retried:
-        EvidenceImportCase.objects.filter(
-            id__in=retried, status=EvidenceImportCase.Status.BLOCKED
-        ).update(
-            status=EvidenceImportCase.Status.DISCARDED,
-            reason=RETRIED_LATER,
-            updated_at=timezone.now(),
+    if not retried:
+        return
+    now = timezone.now()
+    EvidenceImportCase.objects.filter(
+        id__in=retried, status=EvidenceImportCase.Status.BLOCKED
+    ).update(
+        status=EvidenceImportCase.Status.DISCARDED,
+        reason=RETRIED_LATER,
+        updated_at=now,
+    )
+    # "Already imported" never points at a discarded case: a case that repeated the
+    # blocked one now repeats its retry, and counts as one more source of it.
+    for old, new in retried.items():
+        EvidenceImportCase.objects.filter(duplicate_of_id=old).update(
+            duplicate_of_id=new, updated_at=now
         )
 
 

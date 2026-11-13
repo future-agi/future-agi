@@ -19,13 +19,14 @@ from simulate.services.evidence_import import (
     create_transcript_import,
     discard_evidence_import,
 )
+from tracer.selectors.observe_evidence import Turn
 
 from .test_evidence_datasets import CHAT, EXPECTED, _column, _mapping, _row
 from .test_evidence_datasets import _create as _create_rows
 from .test_evidence_datasets import _read as _read_rows
 from .test_evidence_datasets import columns as columns
 from .test_evidence_datasets import dataset as dataset
-from .test_evidence_import_api import ENVIRONMENTS, SESSION, _evidence, _observe
+from .test_evidence_import_api import ENVIRONMENTS, SESSION, T0, _evidence, _observe
 from .test_evidence_import_api import _create as _create_sessions
 from .test_evidence_import_api import client as client
 from .test_evidence_import_api import environment as environment
@@ -280,6 +281,82 @@ class TestRetry:
             EvidenceImport.no_workspace_objects.filter(environment=environment).count()
             == 1
         )
+
+    def test_a_retried_call_supersedes_its_blocked_case(
+        self, client, environment, project
+    ):
+        found = {SESSION: _evidence()}
+
+        def calls():
+            with _observe(found):
+                response = _create_sessions(
+                    client, environment, project, ids=[SESSION], source_kind="call"
+                )
+            assert response.status_code == status.HTTP_201_CREATED, response.data
+            return response.json()
+
+        first = calls()
+        _block(first)
+        again = calls()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_a_retried_dataset_row_supersedes_its_blocked_case(
+        self, client, environment, dataset, columns
+    ):
+        row = _row(dataset, 0, {columns["chat"]: CHAT, columns["expected"]: EXPECTED})
+        first = _create_rows(client, environment, dataset, [row], columns).json()
+        _block(first)
+
+        again = _create_rows(client, environment, dataset, [row], columns).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_the_cases_that_repeated_a_blocked_case_repeat_its_retry(
+        self, client, environment, project
+    ):
+        found = {SESSION: _evidence()}
+        first = _sessions(client, environment, project, found, [SESSION])
+        # Imported again while the first was still waiting: a duplicate of it.
+        repeat = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        retry = _sessions(client, environment, project, found, [SESSION])
+
+        [kept] = _stored(retry)
+        [repeated] = _stored(repeat)
+        assert (repeated.status, repeated.duplicate_of_id) == ("duplicate", kept.id)
+        [case] = _review(client, environment, retry, found)["cases"]
+        assert (case["status"], case["also_from"]) == ("pending", 1)
+
+    def test_a_transcript_of_the_same_conversation_retries_a_blocked_session(
+        self, client, environment, project
+    ):
+        # One key for repeats and retries: the source where one exists, else the
+        # conversation, whatever kind of source holds it.
+        turns = (
+            Turn("user", "Where is my parcel?", False, "t", T0),
+            Turn("agent", "It left the depot today.", False, "t", T0),
+        )
+        found = {SESSION: _evidence(turns=turns)}
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        again = _post_transcripts(
+            client,
+            environment,
+            _transcript(
+                text="User: Where is my parcel?\nAgent: It left the depot today."
+            ),
+        ).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
 
     def test_a_blocked_case_of_another_source_stays_blocked(
         self, client, environment, project
