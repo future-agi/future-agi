@@ -10,8 +10,8 @@ import "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
 import { safePdfDocumentOptions } from "./pdf-document-options.mjs";
 import "react-pdf/dist/Page/TextLayer.css";
 
-// The worker and renderer must come from the same pinned, patched PDF.js build.
-// Evaluation remains off as defense in depth, not as a dependency exception.
+// Keep the worker and renderer on the same pinned PDF.js version.
+// Disable PDF.js evaluation for this preview.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 const documentOptions = safePdfDocumentOptions({
   useSystemFonts: true,

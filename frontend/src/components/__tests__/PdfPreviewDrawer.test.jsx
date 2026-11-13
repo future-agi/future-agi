@@ -70,8 +70,8 @@ beforeEach(() => {
   );
 });
 
-describe("PDF preview document boundary", () => {
-  it("retains the legitimate preview and its matching local worker", () => {
+describe("PDF preview rendering", () => {
+  it("renders the document with its matching local worker", () => {
     render(<PdfPreviewDrawer />);
     expect(screen.getByTestId("pdf-rendered")).toHaveTextContent("PDF preview");
     expect(viewer.props.file).toBe(preview.url);
@@ -146,7 +146,7 @@ describe("PDF preview document boundary", () => {
     expect(viewer.props).toBeNull();
   });
 
-  it("fails closed when the document URL is missing", () => {
+  it("shows an error without rendering when the document URL is missing", () => {
     preview.url = undefined;
     render(<PdfPreviewDrawer />);
     expect(screen.getByText("Unable to preview this document")).toBeVisible();
