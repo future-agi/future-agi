@@ -368,7 +368,7 @@ const NewTaskDrawerV2 = ({
                 color="primary"
                 target="_blank"
                 rel="noopener noreferrer"
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Learn more
               </Link>
@@ -540,7 +540,7 @@ const NewTaskDrawerV2 = ({
                             <Typography
                               variant="body2"
                               color="text.disabled"
-                              sx={{ fontSize: "13px" }}
+                              sx={{ fontSize: "12px" }}
                             >
                               No evaluations added yet
                             </Typography>

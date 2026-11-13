@@ -103,7 +103,7 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
           mb={theme.spacing(1)}
           fontWeight={400}
           color="text.secondary"
-          fontSize={13}
+          fontSize={12}
         >
           Are you sure you want to delete the following run
           {runsToDelete.length !== 1 && "s"}?
@@ -139,7 +139,7 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
               p={theme.spacing(1.5)}
               borderRadius="8px"
             >
-              <Typography fontSize={13} fontWeight={500}>
+              <Typography fontSize={12} fontWeight={500}>
                 {run.runName}
               </Typography>
               <IconButton

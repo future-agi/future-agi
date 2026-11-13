@@ -2,14 +2,13 @@ import {
   Box,
   Button,
   CircularProgress,
-  MenuItem,
+  Link,
   NativeSelect,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { useState } from "react";
-import Iconify from "src/components/iconify";
+import { PickerRow, PickerSectionLabel } from "./ModelPickerParts";
 import {
   chooseDecisionConnection,
   decisionCompatibilityError,
@@ -39,42 +38,43 @@ export default function DecisionModelSection({
     selectedGroup && !visible.includes(selectedGroup)
       ? [...visible, selectedGroup]
       : visible;
-  if (!groups.length && !loading && !error) return null;
+  // A section with no matches disappears, but a catalog error stays visible
+  // (with Retry) even while searching.
+  if (!groups.length && !error && (search || !loading)) return null;
 
   return (
     <Box>
-      <Box
-        sx={{
-          px: 1.5,
-          pt: 1.5,
-          pb: 0.75,
-          display: "flex",
-          gap: 1,
-          alignItems: "center",
-        }}
+      <PickerSectionLabel
+        count={groups.length}
+        adornment={
+          loading ? (
+            <CircularProgress size={10} aria-label="Loading decision models" />
+          ) : null
+        }
       >
-        <Typography
-          variant="caption"
-          sx={{ fontWeight: 600, color: "text.secondary" }}
-        >
-          Decision models
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {groups.length > 0 ? groups.length : ""}
-        </Typography>
-        {loading && (
-          <CircularProgress size={12} aria-label="Loading decision models" />
-        )}
-      </Box>
+        Decision models
+      </PickerSectionLabel>
       {error && (
-        <Box sx={{ px: 1.5, pb: 1 }} role="status">
-          <Typography variant="caption" color="text.secondary">
-            Couldn’t load the decision catalog. Showing legacy native Jev
-            options.
+        <Box sx={{ px: 1.5, pb: 0.75 }} role="status">
+          <Typography
+            sx={{ fontSize: 11, lineHeight: "16px", color: "text.disabled" }}
+          >
+            Couldn’t load the catalog, showing built-in Jev models.{" "}
+            <Link
+              component="button"
+              aria-label="Retry catalog"
+              onClick={onRetry}
+              underline="always"
+              color="text.secondary"
+              sx={{
+                font: "inherit",
+                fontWeight: 500,
+                verticalAlign: "baseline",
+              }}
+            >
+              Retry
+            </Link>
           </Typography>
-          <Button size="small" onClick={onRetry}>
-            Retry catalog
-          </Button>
         </Box>
       )}
       {shown.map((group) => {
@@ -103,117 +103,76 @@ export default function DecisionModelSection({
             });
         };
         return (
-          <Box
-            key={group.model_name}
-            sx={{ mx: 0.5, mb: 0.5, borderRadius: "6px" }}
-          >
-            <Tooltip
-              title={disabledReason || group.notice || ""}
-              placement="right"
-              arrow
-            >
-              <span>
-                <MenuItem
-                  selected={selected}
-                  disabled={Boolean(disabledReason)}
-                  onClick={choose}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key !== "ArrowRight" ||
-                      group.connections.length < 2
-                    )
-                      return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.currentTarget.parentElement.parentElement
-                      .querySelector("select")
-                      ?.focus();
-                  }}
-                  aria-keyshortcuts={
-                    group.connections.length > 1 ? "ArrowRight" : undefined
-                  }
-                  sx={{
-                    borderRadius: "6px",
-                    py: 0.75,
-                    gap: 1,
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <Iconify
-                    icon="solar:checklist-minimalistic-linear"
-                    width={18}
-                    sx={{ color: "text.secondary", mt: 0.25 }}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Box
-                      sx={{
-                        display: "flex",
-                        alignItems: "baseline",
-                        gap: 0.75,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <Typography
-                        variant="body2"
-                        sx={{ fontSize: "13px", fontWeight: 500 }}
-                      >
-                        {group.label}
-                      </Typography>
-                      {group.version === "latest" && (
-                        <Typography variant="caption" color="text.secondary">
-                          Moving alias
-                        </Typography>
-                      )}
-                    </Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", fontSize: "12px" }}
-                    >
-                      {group.author} ·{" "}
-                      {group.question_types
-                        .map((type) => DECISION_OUTPUT_NAMES[type])
-                        .join(" / ")}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", fontSize: "12px" }}
-                    >
-                      {disabledReason ||
-                        (connection.is_available
-                          ? `via ${connection.label} · Key configured`
-                          : `Add your ${connection.label} API key`)}
-                    </Typography>
-                  </Box>
-                  <Iconify
-                    icon={
-                      disabledReason
-                        ? "solar:lock-linear"
-                        : selected
-                          ? "solar:check-linear"
-                          : connection.is_available
-                            ? "solar:alt-arrow-right-linear"
-                            : "solar:key-linear"
-                    }
-                    width={16}
-                    sx={{ color: "text.secondary", flexShrink: 0, mt: 0.25 }}
-                  />
-                </MenuItem>
-              </span>
-            </Tooltip>
+          <Box key={group.model_name} sx={{ mb: 0.25 }}>
+            <PickerRow
+              icon="solar:checklist-minimalistic-linear"
+              label={group.label}
+              badge={group.version === "latest" ? "Moving alias" : null}
+              meta={[
+                group.author,
+                group.question_types
+                  .map((type) => DECISION_OUTPUT_NAMES[type])
+                  .join(" / "),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              // Key and plan state get their own line so they never truncate.
+              status={
+                disabledReason ||
+                (!connection.is_available
+                  ? `Add your ${connection.label} API key`
+                  : connection.label === group.author
+                    ? "Key configured"
+                    : `via ${connection.label} · Key configured`)
+              }
+              selected={selected}
+              disabled={Boolean(disabledReason)}
+              tooltip={disabledReason || group.notice || ""}
+              trailing={
+                disabledReason
+                  ? "lock"
+                  : selected
+                    ? "check"
+                    : connection.is_available
+                      ? undefined
+                      : "key"
+              }
+              onClick={choose}
+              menuItemProps={{
+                onKeyDown: (event) => {
+                  if (
+                    event.key !== "ArrowRight" ||
+                    group.connections.length < 2
+                  )
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.parentElement.parentElement
+                    .querySelector("select")
+                    ?.focus();
+                },
+                "aria-keyshortcuts":
+                  group.connections.length > 1 ? "ArrowRight" : undefined,
+              }}
+            />
             {group.connections.length > 1 && (
               <Box
                 sx={{
-                  px: 1.5,
+                  pr: 1.5,
                   pb: 0.75,
-                  pl: 4.75,
+                  pl: 4.5,
                   display: "flex",
                   alignItems: "center",
                   gap: 1,
                 }}
               >
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  sx={{
+                    fontSize: 11,
+                    lineHeight: "16px",
+                    color: "text.disabled",
+                  }}
+                >
                   Connection
                 </Typography>
                 <NativeSelect
@@ -237,7 +196,7 @@ export default function DecisionModelSection({
                       });
                   }}
                   sx={{
-                    fontSize: "12px",
+                    fontSize: 11,
                     maxWidth: "100%",
                     "& select": { py: 0.25 },
                     "&::before": { borderColor: "divider" },
@@ -261,9 +220,15 @@ export default function DecisionModelSection({
             )}
             {selected && group.max_state_bytes && (
               <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: "block", px: 1.5, pl: 4.75, pb: 0.75 }}
+                sx={{
+                  display: "block",
+                  pl: 4.5,
+                  pr: 1.5,
+                  pb: 0.75,
+                  fontSize: 11,
+                  lineHeight: "16px",
+                  color: "text.disabled",
+                }}
               >
                 Text/JSON only · Input limit:{" "}
                 {group.max_state_bytes.toLocaleString()} UTF-8 bytes
@@ -271,9 +236,15 @@ export default function DecisionModelSection({
             )}
             {group.notice && group.notice !== "Text and JSON inputs only." && (
               <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: "block", px: 1.5, pl: 4.75, pb: 0.75 }}
+                sx={{
+                  display: "block",
+                  pl: 4.5,
+                  pr: 1.5,
+                  pb: 0.75,
+                  fontSize: 11,
+                  lineHeight: "16px",
+                  color: "text.disabled",
+                }}
               >
                 {group.notice}
               </Typography>
@@ -286,7 +257,7 @@ export default function DecisionModelSection({
           role="menuitem"
           size="small"
           onClick={() => setExpanded((value) => !value)}
-          sx={{ ml: 1.5, mb: 0.5 }}
+          sx={{ ml: 1, mb: 0.5, color: "text.secondary" }}
         >
           {expanded
             ? "Show fewer decision models"

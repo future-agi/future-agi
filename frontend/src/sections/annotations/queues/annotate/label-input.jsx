@@ -321,7 +321,7 @@ const DebouncedTextInput = forwardRef(function DebouncedTextInput(
       sx={{
         "& .MuiOutlinedInput-root": {
           bgcolor: "background.paper",
-          fontSize: 13,
+          fontSize: 12,
         },
       }}
     />
@@ -720,7 +720,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
           inputProps={{ min, max, step }}
           sx={{
             width: 96,
-            "& .MuiOutlinedInput-root": { fontSize: 13, color: "text.primary" },
+            "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
             "& input": { textAlign: "center", px: 0.5 },
           }}
         />
@@ -748,7 +748,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         inputProps={{ min, max, step }}
         sx={{
           width: 64,
-          "& .MuiOutlinedInput-root": { fontSize: 13, color: "text.primary" },
+          "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
           "& input": { textAlign: "center", px: 0.5 },
         }}
       />
