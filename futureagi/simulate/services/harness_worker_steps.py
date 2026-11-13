@@ -5,7 +5,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from simulate.types import (
     CallTurn,
@@ -122,11 +122,11 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
                 block.items.extend(waiting.pop(str(event["delegation_id"]), []))
                 block.items.extend(waiting_blocks.pop(str(event["delegation_id"]), []))
         elif event["type"] == "returned":
-            block = open_for(event)
-            if block is not None:
-                open_[block.worker_id].remove(block)
-                block.returned = event
-                block.reach(at)
+            closed = open_for(event)
+            if closed is not None:
+                open_[closed.worker_id].remove(closed)
+                closed.returned = event
+                closed.reach(at)
             else:
                 unknown.add(event.get("seq", len(blocks)))
                 orphan = _Block(event.get("seq", len(blocks)), worker, 1, at)
@@ -148,15 +148,15 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
                     waiting.setdefault(recorded, []).append(event)
                 continue
             # A call with no worker is the coordinator's own, even with control passed back to it.
-            block = open_for(event) if worker else None
+            running = open_for(event) if worker else None
             recorded_top = event.get("relationship") == "observed" and not event.get(
                 "delegation_id"
             )
-            if worker and block is None and open_.get(worker) and not recorded_top:
+            if worker and running is None and open_.get(worker) and not recorded_top:
                 unknown.add(event.get("seq", -1))
-            (block or root).items.append(event)
-            if block is not None:
-                block.reach(at)
+            (running or root).items.append(event)
+            if running is not None:
+                running.reach(at)
     _set_depths(root)
     return root, blocks, unknown
 
@@ -200,9 +200,11 @@ def _mark_parallel(node: _Block) -> bool:
     return unknown
 
 
-def _relationship(event: WorkerEvent | None, key: int, unknown: set[int]) -> str:
+def _relationship(
+    event: WorkerEvent | None, key: int, unknown: set[int]
+) -> Literal["observed", "unknown"]:
     """`unknown` when the record does not say where this step belongs; otherwise `observed`."""
-    if key in unknown or (event or {}).get("relationship") == "unknown":
+    if key in unknown or (event is not None and event.get("relationship") == "unknown"):
         return "unknown"
     return "observed"
 
@@ -219,7 +221,8 @@ def _flatten(
                     "parent": parent,
                     "depth": item.depth,
                     "worker_id": item.worker_id,
-                    "transfer": (item.handoff or {}).get("type") == "transferred",
+                    "transfer": item.handoff is not None
+                    and item.handoff.get("type") == "transferred",
                     "handoff": item.handoff,
                     "returned": item.returned,
                     "started_at": _iso(item.start),
@@ -248,7 +251,8 @@ def _flatten(
 def _step_time(step: WorkerStep) -> float | None:
     if step["kind"] == "handoff":
         return _seconds(step.get("started_at"))
-    return _seconds((step.get("call") or {}).get("at"))
+    call = step.get("call")
+    return _seconds(call.get("at")) if call is not None else None
 
 
 def _by_turn(

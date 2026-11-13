@@ -646,7 +646,8 @@ class CallWorkerStepSerializer(serializers.Serializer):
 
     kind = serializers.ChoiceField(choices=("handoff", "tool_call"))
     key = serializers.IntegerField()
-    parent = serializers.IntegerField(allow_null=True)
+    # A declared field, not DRF's `Field.parent`: the serializer's metaclass takes it off the class.
+    parent: Any = serializers.IntegerField(allow_null=True)
     depth = serializers.IntegerField()
     worker_id = serializers.CharField(allow_null=True)
     # Hand-off rows: the hand-off and its return (null when not seen), its span, and whether a sibling overlapped it.
@@ -1035,7 +1036,9 @@ class CallExecutionV3DetailView(APIView):
         return Response(build_call_execution_detail(call, request=request))
 
 
-def _call_for_request(request, call_execution_id, calls=None) -> CallExecution:
+def _call_for_request(
+    request, call_execution_id, calls: QuerySet[CallExecution] | None = None
+) -> CallExecution:
     """One call the requester's organization and workspace may read, or 404."""
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None

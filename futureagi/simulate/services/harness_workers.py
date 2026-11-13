@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import structlog
 
@@ -229,7 +229,7 @@ def _shown_by_spans(
         # The same input is not the same call: a span stands for a row only when their outcomes agree too.
         left = list(paired_rows)
         for at in paired_spans:
-            ended = returns.get(open_[at].get("delegation_id"), {})
+            ended: Mapping[str, Any] = returns.get(open_[at].get("delegation_id"), {})
             match = next(
                 (row for row in left if _same_outcome(row, open_[at], ended)), None
             )
@@ -261,18 +261,31 @@ def _same_outcome(
     return mine is None or theirs is None or mine == theirs
 
 
+# Each payload a worker event can carry, with the flag that says it was left out.
+_PAYLOADS: tuple[
+    tuple[Literal["input", "output"], Literal["input_omitted", "output_omitted"]], ...
+] = (("input", "input_omitted"), ("output", "output_omitted"))
+
+
+class _Place(TypedDict, total=False):
+    """Where the harness recorded an event ran: the hand-off it belongs to, or whether that is known."""
+
+    parent_delegation_id: str
+    relationship: Literal["observed", "unknown"]
+
+
 def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
     """The events a record keeps, and how many it left out."""
     kept = events[:_MAX_EVENTS]
     spent = 0
     for event in kept:
-        for key in ("input", "output"):
+        for key, omitted in _PAYLOADS:
             if event.get(key) is None:
                 continue
             size = len(json.dumps(event[key], default=str))
             if spent + size > _PAYLOAD_BUDGET:
                 event[key] = None
-                event[f"{key}_omitted"] = True
+                event[omitted] = True
             else:
                 spent += size
     return kept, len(events) - len(kept)
@@ -298,11 +311,11 @@ def _status(span: Mapping[str, Any]) -> Literal["ok", "error"]:
 def _in_order(events: list[WorkerEvent]) -> None:
     """Sort a call's events into reading order and number them."""
     order = {"transferred": 0, "delegated": 0, "tool_call": 1, "returned": 2}
-    returns = {
-        one["delegation_id"]: one.get("at")
-        for one in events
-        if one["type"] == "returned" and one.get("at")
-    }
+    returns: dict[str, str] = {}
+    for one in events:
+        ended = one.get("at")
+        if one["type"] == "returned" and ended:
+            returns[one["delegation_id"]] = ended
 
     def placed(one: Mapping[str, Any]) -> str:
         if (
@@ -313,12 +326,12 @@ def _in_order(events: list[WorkerEvent]) -> None:
             return str(one.get("at") or "")
         until = returns[one["delegation_id"]]
         steps = [
-            other.get("at")
+            at
             for other in events
             if other["worker_id"] == one["worker_id"]
             and other["type"] == "tool_call"
-            and other.get("at")
-            and other["at"] <= until
+            and (at := other.get("at"))
+            and at <= until
         ]
         return min([until, *steps])
 
@@ -338,11 +351,11 @@ def worker_timeline(
 ) -> WorkerTimeline:
     """Each worker (declared, observed or both) and the call's worker events in order; `traced_calls` are raw sealed rows."""
     by_id = {str(span["span_id"]): span for span in spans}
-    declared_by_key = {}
-    for one in declared:
-        for key in (one.get("id"), one.get("name")):
+    declared_by_key: dict[str, DeclaredWorker] = {}
+    for declared_worker in declared:
+        for key in (declared_worker.get("id"), declared_worker.get("name")):
             if key:
-                declared_by_key[_slug(str(key))] = one
+                declared_by_key[_slug(str(key))] = declared_worker
 
     def ancestors(span: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         # A span is never its own ancestor, so a cycle in the recorded parents ends the walk.
@@ -457,27 +470,23 @@ def worker_timeline(
         )
         maker = agent_ancestor(span)
         by = worker_of(maker)
-        events.append(
-            {
-                "type": "delegated",
-                "worker_id": worker_id,
-                "by": by,
-                "delegation_id": delegation_id,
-                # The hand-off the maker was itself running in, read from the span tree.
-                **(
-                    {"parent_delegation_id": delegation_of(maker)}
-                    if by is not None
-                    else {}
-                ),
-                # The span the hand-off was made in, for opening it in Traces: its launching call, else its agent.
-                "span_id": delegation_id,
-                "trace_id": str(span.get("trace_id") or ""),
-                "task": _summary(span.get("input"))
-                or _summary((launcher or {}).get("input"), argument=True),
-                "at": span.get("start_time"),
-                "attribution": "reported",
-            }
-        )
+        hand_off: WorkerEvent = {
+            "type": "delegated",
+            "worker_id": worker_id,
+            "by": by,
+            "delegation_id": delegation_id,
+            # The span the hand-off was made in, for opening it in Traces: its launching call, else its agent.
+            "span_id": delegation_id,
+            "trace_id": str(span.get("trace_id") or ""),
+            "task": _summary(span.get("input"))
+            or _summary((launcher or {}).get("input"), argument=True),
+            "at": span.get("start_time"),
+            "attribution": "reported",
+        }
+        if by is not None and maker is not None:
+            # The hand-off the maker was itself running in, read from the span tree.
+            hand_off["parent_delegation_id"] = delegation_of(maker)
+        events.append(hand_off)
         if span.get("end_time"):
             events.append(
                 {
@@ -496,27 +505,23 @@ def worker_timeline(
             continue
         owner = agent_ancestor(span)
         owner_worker = worker_of(owner)
-        events.append(
-            {
-                "type": "tool_call",
-                "worker_id": owner_worker,
-                # The hand-off the call ran in, read from the span tree.
-                **(
-                    {"delegation_id": delegation_of(owner)}
-                    if owner_worker is not None
-                    else {}
-                ),
-                "tool": str(span.get("name") or ""),
-                "span_id": str(span["span_id"]),
-                "trace_id": str(span.get("trace_id") or ""),
-                "status": _status(span),
-                "input": _payload(span.get("input")),
-                "output": _payload(span.get("output")),
-                "at": span.get("start_time"),
-                # No agent span above the call: neither the coordinator nor a worker can be named for it.
-                "attribution": "reported" if owner is not None else "unattributed",
-            }
-        )
+        made: WorkerEvent = {
+            "type": "tool_call",
+            "worker_id": owner_worker,
+            "tool": str(span.get("name") or ""),
+            "span_id": str(span["span_id"]),
+            "trace_id": str(span.get("trace_id") or ""),
+            "status": _status(span),
+            "input": _payload(span.get("input")),
+            "output": _payload(span.get("output")),
+            "at": span.get("start_time"),
+            # No agent span above the call: neither the coordinator nor a worker can be named for it.
+            "attribution": "reported" if owner is not None else "unattributed",
+        }
+        if owner_worker is not None and owner is not None:
+            # The hand-off the call ran in, read from the span tree.
+            made["delegation_id"] = delegation_of(owner)
+        events.append(made)
     # Each worker's own model calls: the models it used, in the order first seen, and the tokens it spent, as the
     # spans recorded them.
     for span in by_id.values():
@@ -616,7 +621,7 @@ def worker_timeline(
             return None
         return when(at)
 
-    def placed_in(row: Mapping[str, Any]) -> dict[str, str]:
+    def placed_in(row: Mapping[str, Any]) -> _Place:
         """Where the harness recorded this event ran: the hand-off it belongs to, or that it does not know."""
         if not recorded:
             return {}
@@ -627,6 +632,13 @@ def worker_timeline(
         return (
             {"parent_delegation_id": parent} if parent else {"relationship": "observed"}
         )
+
+    def put(event: WorkerEvent, place: _Place) -> WorkerEvent:
+        if "parent_delegation_id" in place:
+            event["parent_delegation_id"] = place["parent_delegation_id"]
+        if "relationship" in place:
+            event["relationship"] = place["relationship"]
+        return event
 
     def ids_of(row: Mapping[str, Any]) -> set[str]:
         # The ids a runtime gave this call: its span, and its own event id.
@@ -822,30 +834,28 @@ def worker_timeline(
             ]
             # The link is the span the hand-off was read from, its launching call: Open in Traces lands on that call,
             # not on the agent run it started.
-            link = {
-                key: from_spans[0][key]
-                for key in ("span_id", "trace_id")
-                if from_spans and from_spans[0].get(key)
-            }
             for one in events:
-                for key in ("delegation_id", "parent_delegation_id"):
-                    if one.get(key) in ids:
-                        one[key] = own_id(call, index)
-            events.append(
-                {
-                    "type": "transferred",
-                    "worker_id": traced_worker(
-                        labels.get(target, target), labels.get(target, target)
-                    ),
-                    "by": worker_id,
-                    "delegation_id": own_id(call, index),
-                    "at": started(call) or when(call.get("ended_at")),
-                    "attribution": "reported",
-                    "row": index,
-                    **placed_in(call),
-                    **link,
-                }
-            )
+                if one.get("delegation_id") in ids:
+                    one["delegation_id"] = own_id(call, index)
+                if one.get("parent_delegation_id") in ids:
+                    one["parent_delegation_id"] = own_id(call, index)
+            transferred: WorkerEvent = {
+                "type": "transferred",
+                "worker_id": traced_worker(
+                    labels.get(target, target), labels.get(target, target)
+                ),
+                "by": worker_id,
+                "delegation_id": own_id(call, index),
+                "at": started(call) or when(call.get("ended_at")),
+                "attribution": "reported",
+                "row": index,
+            }
+            put(transferred, placed_in(call))
+            if from_spans and from_spans[0].get("span_id"):
+                transferred["span_id"] = from_spans[0]["span_id"]
+            if from_spans and from_spans[0].get("trace_id"):
+                transferred["trace_id"] = from_spans[0]["trace_id"]
+            events.append(transferred)
             continue
         target = str(call.get("delegated_to") or "").strip()
         if target:
@@ -858,17 +868,19 @@ def worker_timeline(
             )
             delegation_id = own_id(call, index)
             events.append(
-                {
-                    "type": "delegated",
-                    "worker_id": handed_to,
-                    "by": worker_id,
-                    "delegation_id": delegation_id,
-                    "task": task,
-                    "at": started(call),
-                    "attribution": "reported",
-                    "row": index,
-                    **placed_in(call),
-                }
+                put(
+                    {
+                        "type": "delegated",
+                        "worker_id": handed_to,
+                        "by": worker_id,
+                        "delegation_id": delegation_id,
+                        "task": task,
+                        "at": started(call),
+                        "attribution": "reported",
+                        "row": index,
+                    },
+                    placed_in(call),
+                )
             )
             if when(call.get("ended_at")):
                 events.append(
@@ -905,9 +917,9 @@ def worker_timeline(
             event["delegation_id"] = place["parent_delegation_id"]
         elif place.get("relationship"):
             event["relationship"] = place["relationship"]
-        for key in ("input_omitted", "output_omitted"):
-            if call.get(key):
-                event[key] = True
+        for _key, flag in _PAYLOADS:
+            if call.get(flag):
+                event[flag] = True
         if call.get("task_label") or call.get("task_id"):
             event["task"] = str(call.get("task_label") or call["task_id"])
         if runtime_ids.get("event_id"):
@@ -917,14 +929,14 @@ def worker_timeline(
         events.append(event)
     # A return sorts after the work it closes; a hand-off with no start sorts just before its worker's first step.
     _in_order(events)
-    for one in declared:
-        worker_id = f"{run_key}/{one['id']}"
+    for declared_worker in declared:
+        worker_id = f"{run_key}/{declared_worker['id']}"
         workers.setdefault(
             worker_id,
             {
                 "worker_id": worker_id,
-                "id": str(one["id"]),
-                "name": str(one.get("name") or one["id"]),
+                "id": str(declared_worker["id"]),
+                "name": str(declared_worker.get("name") or declared_worker["id"]),
                 "observed": False,
                 "undeclared": False,
                 "instance_ids": [],
@@ -1145,14 +1157,14 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
 
     # On a tie, the later read: it saw every span the earlier one did, and more.
     best, other = (read, stored) if weight(read) >= weight(stored) else (stored, read)
-    events = [dict(one) for one in best.get("events") or []]
+    events = [cast(WorkerEvent, dict(one)) for one in best.get("events") or []]
     # Each held event matches at most one, so two events alike in everything they recorded stay two.
     held = [_event_keys(one) for one in events]
     for one in other.get("events") or []:
         keys = _event_keys(one)
         match = next((at for at, mine in enumerate(held) if mine & keys), None)
         if match is None:
-            events.append(dict(one))
+            events.append(cast(WorkerEvent, dict(one)))
         else:
             held[match] = set()
     _in_order(events)
@@ -1305,31 +1317,29 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
             spans = _begun_after(spans, since)
         if len(spans) > MAX_SPANS:
             spans, partial = spans[:MAX_SPANS], True
-    timeline: WorkerTimeline = {
-        **worker_timeline(
-            [_span_dict(one) for one in spans],
-            declared,
-            run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
-            traced_calls=traced_calls,
-            turns=_call_turns(call, sealed),
-            started_at=_call_start(call, sealed),
-        ),
-        "collected_at": timezone.now().isoformat(),
-        # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
-        # bound: such a read is ranked below a whole one and gets the later read.
-        "tree_complete": not partial and _has_roots(spans),
-        # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
-        # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
-        "collection": (
-            "unavailable"
-            if unavailable
-            else "partial"
-            if partial
-            else "complete"
-            if (spans or traced_calls)
-            else "no_evidence"
-        ),
-    }
+    timeline = worker_timeline(
+        [_span_dict(one) for one in spans],
+        declared,
+        run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
+        traced_calls=traced_calls,
+        turns=_call_turns(call, sealed),
+        started_at=_call_start(call, sealed),
+    )
+    timeline["collected_at"] = timezone.now().isoformat()
+    # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
+    # bound: such a read is ranked below a whole one and gets the later read.
+    timeline["tree_complete"] = not partial and _has_roots(spans)
+    # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
+    # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
+    timeline["collection"] = (
+        "unavailable"
+        if unavailable
+        else "partial"
+        if partial
+        else "complete"
+        if (spans or traced_calls)
+        else "no_evidence"
+    )
     if not timeline["workers"] and not any(
         one["type"] in _HAND_OFF_TYPES for one in timeline["events"]
     ):
