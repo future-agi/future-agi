@@ -412,9 +412,11 @@ opened, edited, deleted or re-run (and the evaluation that re-run starts), the
 SDK's eval config check, a task's eval list on its detail page, the Ask page's
 list of a project's eval configs, an Instant eval task's questions when the
 run is started or read, feedback on an eval result and its recalculate, and
-the config check in front of an eval result's details. Span and trace
-ingestion, tag and annotation writes, monitors, project versions and the
-dataset copy of eval results also read their fresh rows from the primary.
+the config check in front of an eval result's details, and the error
+localizer's write-back onto an eval result. Span and trace ingestion, tag and
+annotation writes (including the SDK's bulk annotation update), monitors,
+project versions, demo trace publication and the dataset copy of eval results
+also read their fresh rows from the primary.
 
 ```yaml
 postgres:
