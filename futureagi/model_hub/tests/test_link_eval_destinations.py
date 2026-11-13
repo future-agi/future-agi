@@ -519,10 +519,10 @@ class LinkAcceptance(unittest.TestCase):
                 for target in node.targets
             )
         ]
-        # 29 is the version before the link-check changes. Templates seeded at
-        # 29 must be refreshed, whatever number SYSTEM_EVALS_VERSION ships as.
+        # 30 is the version before the link-check changes. Templates seeded at
+        # 30 must be refreshed, whatever number SYSTEM_EVALS_VERSION ships as.
         self.assertEqual(len(versions), 1)
-        self.assertGreater(versions[0], 29)
+        self.assertGreater(versions[0], 30)
 
 
 if __name__ == "__main__":
