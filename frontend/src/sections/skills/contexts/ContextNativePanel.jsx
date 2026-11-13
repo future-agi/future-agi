@@ -69,7 +69,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
       <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Review runtime configuration</Button>
       <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Change</Button>
     </Stack>}
-    <TechnicalDetails title="Runtime details"><Typography variant="s3">Runtime: {targets.data.runtime.runtime} · evidence class: {targets.data.runtime.evidenceClass || 'unstated'}</Typography></TechnicalDetails>
+    <Typography variant="s3" color="text.secondary">Runtime: {targets.data.runtime.runtime} · evidence class: {targets.data.runtime.evidenceClass || 'unstated'}</Typography>
     {create.isError && <Alert severity="error">Could not add the target. Check the runtime and your access, then retry.</Alert>}
     {review && <ClosableDialog open onClose={() => setReview(null)} maxWidth="sm" fullWidth>
       <Stack spacing={1.5} sx={{ p: 3 }}>
@@ -110,9 +110,9 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
     } catch { setError('Could not record this review. Reload the evidence and retry; the automatic outcome was not changed.'); }
   };
   const seen = cell.observed;
-  return <Drawer anchor="right" open onClose={onClose} aria-labelledby="attempt-heading" PaperProps={{ sx: { width: 460, maxWidth: '100vw', p: 3 } }}>
-    <Stack spacing={1.5}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center"><Typography id="attempt-heading" component="h2" variant="m1">{caseTitle}</Typography><IconButton aria-label="Close" onClick={onClose}><Iconify icon="solar:close-circle-linear" /></IconButton></Stack>
+  return <Drawer anchor="right" open onClose={onClose} PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'attempt-heading', sx: { width: 460, maxWidth: '100vw', overflow: 'hidden' } }}>
+    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}><Typography id="attempt-heading" component="h2" variant="m1">{caseTitle}</Typography><IconButton aria-label="Close" onClick={onClose}><Iconify icon="solar:close-circle-linear" /></IconButton></Stack>
+    <Stack spacing={1.5} sx={{ p: 2, flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <Typography variant="s3" color="text.secondary">{ARM[cell.variant]} · repeat {cell.repeatIndex + 1}</Typography>
       <Section title={<Typography component="span" variant="m3">Observed by the application</Typography>}>
         {seen ? <Stack spacing={0.5}>
@@ -122,30 +122,33 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
           <TechnicalDetails title="Technical details"><IdentityChip value={seen.context_digest} label="Context" /><IdentityChip value={seen.session_id} label="Session" kind="id" /></TechnicalDetails>
         </Stack> : <Typography variant="s1">This cell did not return an observation.</Typography>}
       </Section>
-      <Section title={<Typography component="span" variant="m3">Automatic outcomes</Typography>} description={mine.some((row) => row.verdict === 'disagree') ? `${disagreementLabel(mine.filter((row) => row.verdict === 'disagree').length)} below` : undefined}>
+      <Section title={<Typography component="span" variant="m3">Automatic outcomes</Typography>}>
         <Stack spacing={0.5}>{FAMILIES.map(([key, label]) => <Stack key={key} direction="row" justifyContent="space-between"><Typography variant="s1">{label}</Typography><Verdict value={cell[key]} /></Stack>)}</Stack>
       </Section>
       <Section title={<Typography component="span" variant="m3">Human review</Typography>} description="Appended beside the automatic grade; it never replaces it.">
-        {annotations.isLoading ? <ContentSkeleton variant="rows" label="Loading human reviews" /> : annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : !mine.length ? <Typography variant="s3" color="text.secondary">No human reviews for this attempt.</Typography> : mine.map((row) => <Stack key={row.id} spacing={0.5}>
+        {mine.some((row) => row.verdict === 'disagree') && <Typography variant="s3" color="text.secondary">{disagreementLabel(mine.filter((row) => row.verdict === 'disagree').length)} below</Typography>}
+        {annotations.isLoading ? <ContentSkeleton variant="rows" label="Loading human reviews" /> : annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : !mine.length ? <Typography variant="s3" color="text.secondary">No human reviews for this attempt.</Typography> : mine.map((row) => <Stack key={row.id} spacing={0.5} sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
           <StatusBadge status={row.verdict === 'disagree' ? 'warning' : 'info'} role={row.verdict === 'disagree' ? 'warning' : 'info'} label={{ agree: 'Agrees', disagree: 'Disagrees', cannot_assess: "Can’t assess" }[row.verdict]} sx={{ alignSelf: 'flex-start' }} />
-          <Typography variant="s1">{row.comment || 'No comment'}</Typography>
-          <Typography variant="s3">{authorName(row.actorId)}</Typography>
+          <Stack direction="row" spacing={1} flexWrap="wrap"><Typography variant="s3">{authorName(row.actorId)}</Typography><Typography variant="s3" color="text.secondary">{localTime(row.createdAt)}</Typography></Stack>
+          <Typography variant="s1" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.comment || 'No comment'}</Typography>
+          <Typography variant="s3" color="text.secondary">Applies to the whole attempt</Typography>
           <TechnicalDetails title="Author details"><IdentityChip value={row.actorId} label="Author" kind="id" /></TechnicalDetails>
-          <Typography variant="s3" color="text.secondary">{localTime(row.createdAt)} · Applies to the whole attempt</Typography>
         </Stack>)}
-        <Stack spacing={1} sx={{ mt: 1 }}>
+      </Section>
+    </Stack>
+        <Stack spacing={1} sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0, maxHeight: '60%', overflowY: 'auto' }}>
           <FormControl disabled={!canWrite}>
-            <FormLabel id="assessment-label">Your assessment</FormLabel>
+            <FormLabel id="assessment-label" sx={{ color: 'text.primary' }}>Your assessment</FormLabel>
             <RadioGroup aria-labelledby="assessment-label" value={verdict} onChange={(event) => setVerdict(event.target.value)}>
               {VERDICTS.map(([value, label]) => <FormControlLabel key={value} value={value} control={<Radio size="small" />} label={<Typography variant="s1">{label}</Typography>} />)}
             </RadioGroup>
           </FormControl>
           <TextField size="small" label="Why" value={comment} onChange={(event) => setComment(event.target.value)} multiline minRows={2} disabled={!canWrite} />
           {error && <Alert severity="error">{error}</Alert>}
-          <Button variant="outlined" disabled={!canWrite || !verdict || !reference.data || append.isPending} onClick={submit}>Record review</Button>
+          {(!canWrite || !verdict || !reference.data || append.isPending) && <Typography id="review-disabled-reason" variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can record a review.' : !reference.data ? 'Waiting for the current evidence revision.' : append.isPending ? 'Recording your review…' : 'Choose your assessment to record a review.'}</Typography>}
+          {reference.isError && <ErrorState title="Couldn't load the evidence revision" onRetry={reference.refetch} />}
+          <Button variant="contained" sx={{ alignSelf: 'flex-end' }} aria-describedby={(!canWrite || !verdict || !reference.data || append.isPending) ? 'review-disabled-reason' : undefined} disabled={!canWrite || !verdict || !reference.data || append.isPending} onClick={submit}>Record review</Button>
         </Stack>
-      </Section>
-    </Stack>
   </Drawer>;
 }
 CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, canWrite: PropTypes.bool.isRequired };
@@ -162,13 +165,11 @@ function ReleasePacket({ contextId, run, target, canWrite, earlier, onReady }) {
   return <Section title={<Typography component="span" variant="m3">Release packet</Typography>} description="Prepares the exact version, runtime target and shared evidence for the separate release review. Nothing is released here.">
     <Stack spacing={1.5}>
       <Typography variant="s1">Ready to request release review for v{candidate?.version} — add your CI run to attach it as evidence.</Typography>
-      <TechnicalDetails title="Attach your CI run">
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ '& > *': { flex: 1 } }}>
-      <TextField size="small" label="Retained pipeline run URL" helperText="CI run link" value={pipeline.url} onChange={set('url')} />
-      <TextField size="small" label="Pipeline configuration identity" helperText="CI configuration ID" value={pipeline.configurationIdentity} onChange={set('configurationIdentity')} />
-      <TextField size="small" label="Pipeline decision" helperText="CI result (pass/hold)" value={pipeline.decision} onChange={set('decision')} />
+        <TextField size="small" label="CI run link" value={pipeline.url} onChange={set('url')} />
+        <TextField size="small" label="CI configuration ID" value={pipeline.configurationIdentity} onChange={set('configurationIdentity')} />
+        <TextField size="small" label="CI result (pass or hold)" value={pipeline.decision} onChange={set('decision')} />
       </Stack>
-      </TechnicalDetails>
       {prepare.isError && <Alert severity="error">{prepare.error?.response?.data?.error?.message || 'The packet could not be prepared. Check the shared evidence, target and pipeline record.'}</Alert>}
       {prepare.data && <>
         <Alert severity="success">Packet ready — this run is shared with your workspace.</Alert>
@@ -176,7 +177,7 @@ function ReleasePacket({ contextId, run, target, canWrite, earlier, onReady }) {
         <TechnicalDetails title="Packet details"><IdentityChip value={prepare.data.fingerprint} label="Packet fingerprint" /><IdentityChip value={prepare.data.targetDigest} label="Target configuration" /></TechnicalDetails>
       </>}
       {earlier && <Typography variant="s3">This packet applies to the earlier run, not your current selection.</Typography>}
-      <Box><Button variant="outlined" size="small" disabled={!canWrite || !target || !valid || prepare.isPending} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button></Box>
+      <Box><Button variant={!earlier && !prepare.data ? 'contained' : 'outlined'} size="small" disabled={!canWrite || !target || !valid || prepare.isPending} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button></Box>
       <Typography variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can share this run.' : !target ? 'Add an application target to share this run.' : !valid ? 'Fill the three CI fields to share this run.' : prepare.isPending ? 'Preparing the packet…' : 'The packet needs a separate release review; nothing is released here.'}</Typography>
     </Stack>
   </Section>;
