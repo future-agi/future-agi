@@ -79,6 +79,7 @@ const CreateScenarioView = () => {
   const {
     control,
     setValue,
+    setError,
     handleSubmit,
     formState: { errors },
     clearErrors,
@@ -447,7 +448,18 @@ const CreateScenarioView = () => {
         replace: true,
       });
     } catch (error) {
-      enqueueSnackbar(error?.message, { variant: "error" });
+      // Map backend field-level validation errors to form fields.
+      const details = error?.details;
+      if (details?.name) {
+        setError("name", {
+          type: "server",
+          message: Array.isArray(details.name) ? details.name[0] : details.name,
+        });
+      } else {
+        enqueueSnackbar(error?.message || "Failed to create scenario", {
+          variant: "error",
+        });
+      }
       return;
     }
   };
