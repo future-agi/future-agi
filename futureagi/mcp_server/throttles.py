@@ -83,6 +83,17 @@ def _trusted_proxies() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, .
     return _parse_trusted_proxies(tuple(e.strip() for e in entries if e.strip()))
 
 
+def _trusted_proxy_hops() -> int:
+    """How many X-Forwarded-For entries trusted proxies add (0: no limit)."""
+    raw = _setting("MCP_OAUTH_TRUSTED_PROXY_HOPS", 0)
+    try:
+        hops = int(raw or 0)
+    except (TypeError, ValueError):
+        logger.warning("mcp_oauth_trusted_proxy_hops_ignored", value=raw)
+        return 0
+    return max(hops, 0)
+
+
 def _is_trusted_proxy(
     address: str, networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
 ) -> bool:
@@ -107,12 +118,17 @@ def client_ident(request: Request) -> str:
     if networks and _is_trusted_proxy(remote_addr, networks):
         # MCP_OAUTH_TRUSTED_PROXIES lists the ingress and proxy addresses.
         # Each proxy appends the address it received the request from, so the
-        # nearest entry that is not a trusted proxy is the client.
+        # nearest entry that is not a trusted proxy is the client. With
+        # MCP_OAUTH_TRUSTED_PROXY_HOPS, only the entries those proxies added
+        # are read: anything the client sent before them is not.
         hops = [
             hop.strip()
             for hop in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")
             if hop.strip()
         ]
+        limit = _trusted_proxy_hops()
+        if limit:
+            hops = hops[-limit:]
         for hop in reversed(hops):
             if not _is_trusted_proxy(hop, networks):
                 return hop

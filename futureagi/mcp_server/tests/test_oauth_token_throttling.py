@@ -1309,6 +1309,61 @@ def test_trusted_proxy_forwarded_address_is_used(remote_addr, forwarded_for, exp
     assert _client_ident_for(remote_addr, forwarded_for) == expected
 
 
+# The Helm chart's ingress.trustedProxies and gatewayApi.trustedProxies
+# default, which it sets with MCP_OAUTH_TRUSTED_PROXY_HOPS=1.
+CHART_ROUTE_PROXIES = [
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "fc00::/7",
+]
+
+
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=CHART_ROUTE_PROXIES, MCP_OAUTH_TRUSTED_PROXY_HOPS=1
+)
+@pytest.mark.parametrize(
+    "remote_addr, forwarded_for, expected",
+    [
+        ("10.42.0.7", "198.51.100.10", "198.51.100.10"),
+        ("10.42.0.7", "192.0.2.7, 198.51.100.10", "198.51.100.10"),
+        # A client on a private network is counted by the address the
+        # ingress saw, whatever it sends before it.
+        ("10.42.0.7", "192.0.2.7, 10.1.2.3", "10.1.2.3"),
+        ("10.42.0.7", "10.9.9.9, 192.168.5.20", "192.168.5.20"),
+        ("fd00::7", "2001:db8:1::5", "2001:db8:1::5"),
+        ("fd00::7", "2001:db8:1::5, fd00::20", "fd00::20"),
+        ("10.42.0.7", None, "10.42.0.7"),
+        ("10.42.0.7", " , ", "10.42.0.7"),
+        ("203.0.113.5", "198.51.100.10", "203.0.113.5"),
+    ],
+)
+def test_one_trusted_hop_uses_the_address_the_proxy_saw(
+    remote_addr, forwarded_for, expected
+):
+    assert _client_ident_for(remote_addr, forwarded_for) == expected
+
+
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"], MCP_OAUTH_TRUSTED_PROXY_HOPS=2
+)
+@pytest.mark.parametrize(
+    "remote_addr, forwarded_for, expected",
+    [
+        ("10.0.0.1", "192.0.2.7, 198.51.100.10, 10.0.0.9", "198.51.100.10"),
+        ("10.0.0.1", "192.0.2.7, 198.51.100.10", "198.51.100.10"),
+        # The second proxy's own entry is as far as the count reaches.
+        ("10.0.0.1", "192.0.2.7, 10.0.0.8, 10.0.0.9", "10.0.0.8"),
+        ("10.0.0.1", "10.0.0.9", "10.0.0.9"),
+    ],
+)
+def test_trusted_hop_count_limits_how_far_forwarded_entries_are_read(
+    remote_addr, forwarded_for, expected
+):
+    assert _client_ident_for(remote_addr, forwarded_for) == expected
+
+
 @pytest.mark.parametrize(
     "trusted, remote_addr",
     [

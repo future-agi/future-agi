@@ -638,6 +638,33 @@ async def test_sdk_forwarded_address_from_an_untrusted_peer_is_ignored():
     assert statuses == [201, 201, 429]
 
 
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE": "2/hour"},
+    MCP_OAUTH_TRUSTED_PROXIES=[
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    ],
+    MCP_OAUTH_TRUSTED_PROXY_HOPS=1,
+)
+async def test_sdk_register_window_with_the_chart_route_settings():
+    # The Helm chart's Ingress and Gateway API settings: a client on a private
+    # network keeps one window whatever earlier entries it sends.
+    statuses = []
+    for i in range(3):
+        async with _forwarded_client(
+            f"10.{i}.0.1, 192.168.5.20", peer="10.42.0.7"
+        ) as http:
+            statuses.append((await _register_status(http)).status_code)
+    assert statuses == [201, 201, 429]
+
+    # Another client behind the same ingress has its own window.
+    async with _forwarded_client("192.168.5.21", peer="10.42.0.7") as http:
+        assert (await _register_status(http)).status_code == 201
+
+
 ORIGIN = "http://localhost:3031"
 
 
