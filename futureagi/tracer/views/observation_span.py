@@ -178,6 +178,9 @@ from tracer.services.eval_tasks.entries import (
     retire_pending_replacement,
 )
 from tracer.services.eval_tasks.recalculate import (
+    HANDED_TO_TASK,
+    LEFT_RETIRED,
+    RESTORED,
     RecalculationRefused,
     abandon_recalculation,
     begin_recalculation,
@@ -708,13 +711,31 @@ def allowed_root_spans_for_request(
 class _RecalculateLeftNoResult(Exception):
     """A recalculate's recompute saved no live result.
 
-    ``kept`` says whether the previous result is live again: it is not when
-    the task was deleted or rerun meanwhile, or a newer entry holds its slot.
+    ``outcome`` says what happened to the previous result
+    (``tracer.services.eval_tasks.recalculate``): ``RESTORED`` (live again),
+    ``LEFT_RETIRED`` (the task was deleted or rerun meanwhile, or a newer
+    entry holds its slot) or ``HANDED_TO_TASK`` (the task's engine took the
+    recompute over).
     """
 
-    def __init__(self, kept: bool = True):
+    def __init__(self, outcome: str = RESTORED):
         super().__init__()
-        self.kept = kept
+        self.outcome = outcome
+
+
+_LEFT_NO_RESULT_MESSAGES = {
+    RESTORED: (
+        "The evaluation could not be recalculated. The previous result is kept."
+    ),
+    LEFT_RETIRED: (
+        "The evaluation could not be recalculated. The task changed while it "
+        "ran, so the previous result was not kept."
+    ),
+    HANDED_TO_TASK: (
+        "The evaluation task is evaluating this result again. It will be "
+        "updated when the task's run finishes."
+    ),
+}
 
 
 def _recompute_task_result(previous, feedback_id):
@@ -730,13 +751,13 @@ def _recompute_task_result(previous, feedback_id):
     and a request that dies mid-eval is finished by the eval-task sweep. The
     new entry is then run synchronously through ``run_entry``, the same eval
     core the engine's workers use. Only a completed run keeps it. Otherwise
-    (the eval errored or was skipped, the run raised, or the entry was taken
-    from this run) the new entry is retired and the previous result is put
-    back, and ``_RecalculateLeftNoResult`` is raised. An exception from the
-    run is re-raised after the same restore. If something else retired the
-    new entry meanwhile (the task was deleted, Delete & rerun), that
-    retirement stands and the previous result stays retired too
-    (``_RecalculateLeftNoResult(kept=False)``).
+    (the eval errored or was skipped, or the run raised) the new entry is
+    retired, the previous result is put back and ``_RecalculateLeftNoResult``
+    is raised; an exception from the run is re-raised after the same restore.
+    If something else retired the new entry meanwhile (the task was deleted,
+    Delete & rerun), that retirement stands and the previous result stays
+    retired too. If the task's engine took the new entry over (its reaper or
+    a pause requeued it), it is left to the engine and the sweep.
 
     See ``tracer.services.eval_tasks.recalculate``.
     """
@@ -746,7 +767,7 @@ def _recompute_task_result(previous, feedback_id):
     try:
         status = run_entry(entry, feedback_id=feedback_id)
     except Exception:
-        abandon_recalculation(entry, previous)
+        abandon_recalculation(entry, previous, left_as=EvalEntryStatus.RUNNING)
         raise
     if status != EvalEntryStatus.COMPLETED:
         logger.info(
@@ -755,8 +776,17 @@ def _recompute_task_result(previous, feedback_id):
             eval_task_id=str(previous.eval_task_id),
             status=str(status),
         )
-        kept = abandon_recalculation(entry, previous)
-        raise _RecalculateLeftNoResult(kept=kept)
+        outcome = abandon_recalculation(
+            entry,
+            previous,
+            # The status this run's terminal write left; none when the entry
+            # was taken from it ("reclaimed"). A retired ("deleted") one is
+            # found retired whatever is passed.
+            left_as=status
+            if status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED)
+            else (EvalEntryStatus.RUNNING if status == "deleted" else None),
+        )
+        raise _RecalculateLeftNoResult(outcome)
     keep_replacement(entry, previous)
     return True
 
@@ -1988,6 +2018,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 feedback = Feedback.objects.get(
                     id=feedback_id, user=request.user, source_id=observation_span_id
                 )
+                previous_action_type = feedback.action_type
                 feedback.action_type = action_type
                 feedback.save(update_fields=["action_type"])
             except Feedback.DoesNotExist:
@@ -2027,18 +2058,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         feedback_id,
                     )
                 except RecalculationRefused as refused:
+                    # Refused before anything changed: the feedback too.
+                    feedback.action_type = previous_action_type
+                    feedback.save(update_fields=["action_type"])
                     return self._gm.bad_request(refused.message)
                 except _RecalculateLeftNoResult as left:
-                    if not left.kept:
-                        return self._gm.bad_request(
-                            "The evaluation could not be recalculated. The "
-                            "task changed while it ran, so the previous "
-                            "result was not kept."
-                        )
-                    return self._gm.bad_request(
-                        "The evaluation could not be recalculated. The previous "
-                        "result is kept."
-                    )
+                    return self._gm.bad_request(_LEFT_NO_RESULT_MESSAGES[left.outcome])
 
                 if status:
                     count = 1
