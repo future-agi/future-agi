@@ -54,10 +54,12 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   };
 });
 vi.mock("src/api/simulate-environments/readiness", () => ({
+  MAX_CASE_KEYS: 200,
   useReadiness: (envId, picks) => {
     readinessCalls.push(picks);
     return { data: { selection: { requested: 10, eligible: 7 } } };
   },
+  useReadinessCases: () => ({}),
 }));
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
   useFixRun: () => ({ data: state.fixRun }),
@@ -134,8 +136,7 @@ const openDrafts = (updatedAt = "2026-11-12T10:00:00Z") => ({
   pieces: ["environment"],
   environment: { parentId: "e2", revision: 3, updatedAt },
 });
-const envPicker = () =>
-  screen.getByRole("combobox", { name: "Environment version" });
+const envPicker = () => screen.getByRole("combobox", { name: "Environment" });
 
 describe("RunDialog with Ready to run", () => {
   it("asks for the whole suite when running every scenario", () => {
@@ -173,6 +174,10 @@ describe("RunDialog with Ready to run", () => {
     expect(
       screen.getByText(/10 selected · 6 will run · 4 held back/),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("run-counts")).toHaveTextContent(
+      "6 of 10 eligible · 4 blocked",
+    );
+    expect(screen.getByText("2 selected scenarios")).toBeInTheDocument();
   });
 
   it("turns Run off while the versions are being checked together", () => {
@@ -186,7 +191,7 @@ describe("RunDialog with Ready to run", () => {
     renderDialog();
     expect(runButton()).toBeDisabled();
     expect(screen.getByTestId("run-all-held")).toHaveTextContent(
-      "Tools wired to the test world",
+      "Every selected scenario waits on a fix: tools wired to the test world",
     );
   });
 
@@ -194,7 +199,7 @@ describe("RunDialog with Ready to run", () => {
     state.view = view();
     const user = userEvent.setup();
     renderDialog();
-    await user.click(screen.getByRole("combobox", { name: "Agent version" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
     await user.click(screen.getByRole("option", { name: "v3" }));
     expect(sectionCalls.at(-1)).toEqual({
       picks: { agent: "a3" },

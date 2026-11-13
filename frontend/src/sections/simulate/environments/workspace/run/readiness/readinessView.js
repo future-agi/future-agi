@@ -1,3 +1,6 @@
+import { READY_TO_RUN_COPY, RUN_PLAN_COPY } from "./readiness.constants";
+import { RUN_PLAN_PROMPTS_COPY } from "../runPlanPrompts.constants";
+
 // Worst first: an area reads as its worst counted row.
 const STATUS_ORDER = [
   "blocked",
@@ -63,6 +66,8 @@ const areaLine = (area, rowsById) => {
     rowId: worst.id,
     reason: worst.reason,
     consequence: worst.consequence,
+    // Null when nothing has been read for the row yet.
+    checkedAt: worst.checked_at ?? null,
     affected: worst.affected?.count ?? 0,
     fix: worst.fix ?? null,
     group: groupOf(worst),
@@ -101,6 +106,8 @@ export function readinessView(report) {
   return {
     state,
     stateReason: validation.error?.reason ?? null,
+    // When the report was worked out: ties scenario names to its counts.
+    computedAt: report?.computed_at ?? null,
     canRun: state !== "checking" && state !== "failed",
     summary: {
       requested: selection.requested ?? 0,
@@ -125,4 +132,37 @@ export function readinessView(report) {
       notGradable: notGradable.length,
     },
   };
+}
+
+/**
+ * What the builder chat says when a fix ends, and its button: how it ended
+ * and, once saved, what the run plan still has open in `report`. Null while
+ * that report loads.
+ */
+export function fixEndCard(fix, report) {
+  const copy = RUN_PLAN_COPY.fixEnd;
+  if (fix.state === "done" && !fix.draft) {
+    // A report from before the fix ended still shows what it fixed.
+    const before =
+      fix.finished_at &&
+      report?.computed_at &&
+      new Date(report.computed_at) < new Date(fix.finished_at);
+    if (!report || before) return null;
+    // Blockers only, as the plan's header counts them.
+    const open = readinessView(report).open.filter(
+      (line) => line.status === "blocked",
+    );
+    if (!open.length) return { text: copy.clear, action: copy.review };
+    const labels = open.map(
+      (line) => READY_TO_RUN_COPY.areas[line.area] || line.area,
+    );
+    return { text: copy.open(labels), action: copy.openPlan };
+  }
+  const text =
+    fix.state === "done"
+      ? RUN_PLAN_PROMPTS_COPY.draftFix
+      : [READY_TO_RUN_COPY.progress.could_not_fix, fix.error?.message]
+          .filter(Boolean)
+          .join(". ");
+  return { text, action: copy.openPlan };
 }

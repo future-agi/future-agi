@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessView } from "../readinessView";
+import { fixEndCard, readinessView } from "../readinessView";
 
 const row = (id, status, extra = {}) => ({
   id,
@@ -142,6 +142,7 @@ describe("readinessView", () => {
         rowId: "tool_routing",
         reason: "issue_refund still reaches production",
         affected: 4,
+        checkedAt: null,
         fix,
         group: "needs_you",
         progress: null,
@@ -223,5 +224,23 @@ describe("readinessView", () => {
     expect(done).toMatchObject({ area: "tool_binding", progress: fixed });
     expect(view.ready).not.toContain("tool_binding");
     expect(waiting.waitingOnArea).toBe("start_and_message");
+  });
+});
+
+describe("fixEndCard", () => {
+  it("names what a saved fix left open, or says the pair is clear", () => {
+    const fix = { state: "done", draft: false };
+    const open = report({
+      areas: [{ id: "reset", status: "blocked", rows: ["reset_row"] }],
+      rows: [row("reset_row", "blocked", { affected: { count: 2 } })],
+    });
+    expect(fixEndCard(fix, open)).toEqual({
+      text: "Fixed. 1 still to fix in the run plan: World resets.",
+      action: "Open run plan",
+    });
+    expect(fixEndCard(fix, report())).toEqual({
+      text: "The pair passed its check. Nothing left to fix before the run.",
+      action: "Review and start run",
+    });
   });
 });

@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Box,
   Button,
   Drawer,
@@ -32,6 +31,7 @@ import {
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
 import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import CountTip from "./readiness/CountTip";
 import { readinessView } from "./readiness/readinessView";
 import { RUN_PLAN_PROMPTS_COPY as PROMPTS } from "./runPlanPrompts.constants";
 import {
@@ -47,23 +47,57 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
-const PANEL_WIDTH = 480;
+const PANEL_WIDTH = 560;
 // Opening, closing and collapsing all slide the width over this long.
 const SLIDE_MS = 300;
 
 const BOX_SX = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
-// Notes sit compact in the plan, like its Ready to run lines: a 16px icon
-// level with one line of small text.
-const NOTE_SX = {
-  py: 0.5,
-  px: 1.5,
-  alignItems: "center",
-  typography: "s3",
-  "& .MuiAlert-icon": { py: 0, mr: 1, fontSize: 16 },
-  "& .MuiAlert-icon svg": { width: 16, height: 16 },
-  "& .MuiAlert-message": { py: 0.5 },
+// A quiet note: a small icon and grey text, no box. Its actions sit on the
+// right.
+function Note({ severity = "info", action = null, children, ...other }) {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="flex-start" {...other}>
+      <Iconify
+        icon={
+          severity === "warning"
+            ? "solar:danger-triangle-linear"
+            : "solar:info-circle-linear"
+        }
+        width={14}
+        sx={{
+          mt: "1px",
+          flexShrink: 0,
+          color: severity === "warning" ? "warning.main" : "text.disabled",
+        }}
+      />
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          typography: "s3",
+          color: "text.secondary",
+        }}
+      >
+        {children}
+      </Box>
+      {action && (
+        <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0, my: -0.5 }}>
+          {action}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+Note.propTypes = {
+  severity: PropTypes.oneOf(["info", "warning"]),
+  action: PropTypes.node,
+  children: PropTypes.node,
 };
+
+// The one red line, kept for what stops the run.
+const STOP_SX = { typography: "s3", color: "error.main" };
 
 const named = (version) => version?.label || COPY.unlabelled;
 const optionLabel = (version) =>
@@ -87,9 +121,7 @@ function SwitchPrompt({
   );
   const summary = data ? readinessView(data).summary : null;
   return (
-    <Alert
-      severity="info"
-      sx={NOTE_SX}
+    <Note
       data-testid={`run-switch-${piece}`}
       action={
         <>
@@ -105,7 +137,7 @@ function SwitchPrompt({
       {PROMPTS.switchTo(DRAFTS_COPY.pieces[piece], named(saved))}
       {summary &&
         ` ${PROMPTS.switchReady(summary.eligible, summary.requested)}`}
-    </Alert>
+    </Note>
   );
 }
 
@@ -377,23 +409,36 @@ export default function RunDialog({
       })),
     );
 
-  const pickerField = (piece) => (
-    <Stack key={piece} direction="row" spacing={2} alignItems="flex-start">
+  const pickerField = (piece, after = null) => (
+    <Stack key={piece} direction="row" spacing={1.5} alignItems="flex-start">
       <Typography
         component="label"
         id={`run-pick-${piece}-label`}
         htmlFor={`run-pick-${piece}`}
         sx={{
-          typography: "s2",
+          typography: "s3",
           color: "text.secondary",
-          width: 140,
+          width: 96,
           flexShrink: 0,
           pt: 0.75,
         }}
       >
-        {COPY.pieces[piece]}
+        {RUN_PLAN_COPY.pickers[piece]}
       </Typography>
       {versionPicker(piece)}
+      {after && (
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            pt: 0.75,
+            flexShrink: 0,
+          }}
+        >
+          {after}
+        </Typography>
+      )}
     </Stack>
   );
 
@@ -401,7 +446,6 @@ export default function RunDialog({
     <TextField
       id={`run-pick-${piece}`}
       select
-      fullWidth
       size="small"
       value={selected[piece] || ""}
       onChange={(e) => pick(piece, e.target.value)}
@@ -416,6 +460,16 @@ export default function RunDialog({
       }}
       error={pickerError === piece}
       helperText={pickerError === piece ? errorText : undefined}
+      // Sized to its value; a refusal under it takes the row's width.
+      sx={{
+        flex: "0 1 auto",
+        minWidth: 0,
+        "& .MuiInputBase-root": {
+          minWidth: 140,
+          maxWidth: 180,
+          typography: "s2",
+        },
+      }}
     >
       {options[piece].map((version) => (
         <MenuItem key={version.id} value={version.id}>
@@ -425,16 +479,23 @@ export default function RunDialog({
     </TextField>
   );
 
-  const scenarioLine = () => {
+  // How many scenarios the run sends: null for "all current", undefined
+  // while it isn't known.
+  const scenarioCount = () => {
+    if (blocked) return undefined;
+    if (!runAll) return runIds.length;
+    if (!selected.suite) return undefined;
+    if (!needsMembers) return null;
+    return memberKeys?.length;
+  };
+
+  const scenarioLine = (count) => {
+    if (count === undefined) return null;
     const repeats = trials > 1 ? ` ${COPY.trials(trials)}` : "";
-    if (blocked) return null;
-    if (!runAll) return `${COPY.selectedScenarios(runIds.length)}${repeats}`;
-    if (!selected.suite) return null;
-    if (!needsMembers)
+    if (!runAll) return `${COPY.selectedScenarios(count)}${repeats}`;
+    if (count === null)
       return `${COPY.allCurrentScenarios(named(suite))}${repeats}`;
-    if (members.isLoading) return null;
-    if (!memberKeys) return null;
-    return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
+    return `${COPY.allScenarios(count, named(suite))}${repeats}`;
   };
 
   const body = () => {
@@ -442,7 +503,7 @@ export default function RunDialog({
       // The plan's own boxes, greyed, so nothing jumps when they load.
       return (
         <>
-          <Box sx={BOX_SX}>
+          <Box>
             <ContentSkeleton variant="panel" rows={2} label={COPY.loading} />
           </Box>
           <Box sx={BOX_SX} aria-hidden>
@@ -460,12 +521,20 @@ export default function RunDialog({
         </Typography>
       );
     }
-    const line = scenarioLine();
+    const count = scenarioCount();
+    const line = scenarioLine(count);
     return (
       <>
         {/* Versions first: Ready to run answers for whatever is picked. */}
-        <Stack spacing={1.5} sx={{ ...BOX_SX, p: 1.5 }}>
-          {PICKABLE.map(pickerField)}
+        <Stack spacing={1}>
+          {PICKABLE.map((piece) =>
+            pickerField(
+              piece,
+              piece === "suite" && count !== undefined
+                ? RUN_PLAN_COPY.scenarioCount(count, runAll)
+                : null,
+            ),
+          )}
         </Stack>
         {env?.versioning?.enabled && !blocked && (
           <ReadyToRunSection
@@ -494,9 +563,9 @@ export default function RunDialog({
             />
           ))}
           {rerun === "fellBack" && (
-            <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
+            <Note data-testid="rerun-fallback">
               {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
-            </Alert>
+            </Note>
           )}
           {needsMembers && members.isLoading && !blocked && (
             <Box
@@ -507,13 +576,39 @@ export default function RunDialog({
               <Skeleton variant="rounded" width="45%" height={14} />
             </Box>
           )}
-          {(line || (heldBack && !allHeld)) && (
+          {(line || held || (heldBack && !allHeld)) && (
             <Stack spacing={0.5}>
               {line && (
                 <Typography
                   sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
                 >
                   {line}
+                </Typography>
+              )}
+              {held && (
+                <Typography
+                  data-testid="run-counts"
+                  sx={{ typography: "s3", color: "text.secondary" }}
+                >
+                  {READY_TO_RUN_COPY.counts(held).map((part, at) => (
+                    <Fragment key={part.bucket}>
+                      {at > 0 && " · "}
+                      {part.count > 0 ? (
+                        <CountTip
+                          envId={env.id}
+                          picks={picks}
+                          keys={readinessKeys}
+                          bucket={part.bucket}
+                          count={part.count}
+                          report={readiness.computedAt}
+                        >
+                          {part.text}
+                        </CountTip>
+                      ) : (
+                        part.text
+                      )}
+                    </Fragment>
+                  ))}
                 </Typography>
               )}
               {heldBack && !allHeld && (
@@ -523,20 +618,11 @@ export default function RunDialog({
               )}
             </Stack>
           )}
-          {allHeld && (
-            <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
-              {RUN_PLAN_COPY.allHeld(blockingLabel)}
-            </Alert>
-          )}
           {drafts?.any && !readiness?.grouped && (
-            <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
-              {DRAFTS_COPY.notInRun}
-            </Alert>
+            <Note data-testid="run-drafts-note">{DRAFTS_COPY.notInRun}</Note>
           )}
           {drafts?.any && readiness?.grouped && !fixActive && (
-            <Alert
-              severity="info"
-              sx={NOTE_SX}
+            <Note
               data-testid="run-drafts-note"
               action={
                 <Button
@@ -556,30 +642,29 @@ export default function RunDialog({
                   ? PROMPTS.draftFix
                   : DRAFTS_COPY.notInRun}
               {saveDrafts.error && (
-                <Box component="span" sx={{ display: "block" }}>
+                <Box
+                  component="span"
+                  role="alert"
+                  sx={{ display: "block", color: "error.main" }}
+                >
                   {DRAFTS_COPY.errors[saveDrafts.error.error] ??
                     DRAFTS_COPY.saveError}
                 </Box>
               )}
-            </Alert>
+            </Note>
           )}
           {blocked && (
-            <Typography
-              sx={{ typography: "s2", color: "error.main" }}
-              data-testid="run-blocked"
-            >
+            <Typography sx={STOP_SX} data-testid="run-blocked">
               {blocked}
             </Typography>
           )}
           {members.isError && !members.data && (
-            <Typography sx={{ typography: "s2", color: "error.main" }}>
-              {COPY.membersError}
-            </Typography>
+            <Typography sx={STOP_SX}>{COPY.membersError}</Typography>
           )}
           {missing.length > 0 && !blocked && (
-            <Alert severity="warning" sx={NOTE_SX}>
+            <Note severity="warning">
               {COPY.notInSuite(missing, named(suite))}
-            </Alert>
+            </Note>
           )}
           {/* Kept rendered while empty so the live region is announced. */}
           <Stack
@@ -603,16 +688,21 @@ export default function RunDialog({
               </Typography>
             )}
             {warnings.map((warning) => (
-              <Alert
+              <Note
                 key={`${warning.code}:${warning.piece || ""}`}
-                sx={NOTE_SX}
                 severity="warning"
                 data-testid="run-warning"
               >
                 {warning.message}
-              </Alert>
+              </Note>
             ))}
           </Stack>
+          {/* Last, the one line that says why nothing can run. */}
+          {allHeld && (
+            <Typography role="alert" sx={STOP_SX} data-testid="run-all-held">
+              {RUN_PLAN_COPY.allHeld(blockingLabel)}
+            </Typography>
+          )}
         </Stack>
       </>
     );
@@ -774,9 +864,9 @@ export default function RunDialog({
         >
           {body()}
           {dialogError && (
-            <Alert severity="error" sx={NOTE_SX} data-testid="run-error">
+            <Typography role="alert" sx={STOP_SX} data-testid="run-error">
               {errorText}
-            </Alert>
+            </Typography>
           )}
         </Stack>
         <Stack

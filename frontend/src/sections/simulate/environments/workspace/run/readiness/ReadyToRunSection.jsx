@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -17,6 +17,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import {
   useReadiness,
+  MAX_CASE_KEYS,
   useReadinessCases,
   useRecheck,
   useRereadWhenDefaultsMove,
@@ -42,6 +43,7 @@ import {
   named,
 } from "../../agents/agentVersionStatus";
 import { AGENT_VERSIONS_COPY } from "../../workspace.constants";
+import { fToNow } from "src/utils/format-time";
 import { readinessView } from "./readinessView";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
 import * as fixDummy from "src/api/simulate-environments/readinessFix.dummy"; // dummy:
@@ -59,14 +61,16 @@ const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 // A report that fails to load leaves Run as it was: unknown is not blocked.
 const LOADING_VIEW = { canRun: false, loading: true, summary: null, open: [] };
 
+// The check state's dot: info while it waits or runs, danger when it held
+// the run back, warning when it couldn't settle.
 const STATE_ROLE = {
-  checking: "running",
-  failed: "failed",
-  ours: "unavailable",
-  retry: "untested",
-  unchecked: "untested",
-  unavailable: "unavailable",
-  refused: "failed",
+  checking: "info",
+  unchecked: "info",
+  failed: "danger",
+  refused: "danger",
+  ours: "warning",
+  retry: "warning",
+  unavailable: "warning",
 };
 
 function stateText(state, reason) {
@@ -165,73 +169,6 @@ GroupCard.propTypes = {
   children: PropTypes.node,
 };
 
-const MAX_NAMES = 10;
-// The cases route reads at most 200 scenario keys.
-const MAX_KEYS = 200;
-
-// A header count that names its scenarios on hover: the first page the
-// server lists, and how many more from the count itself.
-function CountTip({ envId, picks, keys, bucket, count, report, children }) {
-  const [shown, setShown] = useState(false);
-  const tooMany = (keys?.length || 0) > MAX_KEYS;
-  const cases = useReadinessCases(envId, {
-    picks,
-    bucket,
-    keys,
-    report,
-    enabled: shown && !tooMany,
-  });
-  const names = (cases.data || [])
-    .slice(0, MAX_NAMES)
-    .map((one) => ({ key: one.key, name: one.name || one.key }));
-  let title = COPY.namesLoading;
-  if (tooMany) title = COPY.namesTooMany;
-  else if (cases.isError) title = COPY.namesError;
-  else if (cases.data) {
-    title = (
-      <Box component="ul" sx={{ m: 0, pl: 2 }}>
-        {names.map((one) => (
-          <Box component="li" key={one.key}>
-            {one.name}
-          </Box>
-        ))}
-        {count > names.length && (
-          <Box component="li" sx={{ listStyle: "none", ml: -2 }}>
-            {COPY.namesMore(count - names.length)}
-          </Box>
-        )}
-      </Box>
-    );
-  }
-  return (
-    <CustomTooltip
-      show
-      title={title}
-      size="small"
-      arrow
-      onOpen={() => setShown(true)}
-    >
-      <Box
-        component="span"
-        tabIndex={0}
-        sx={{ textDecoration: "underline dotted", cursor: "default" }}
-      >
-        {children}
-      </Box>
-    </CustomTooltip>
-  );
-}
-
-CountTip.propTypes = {
-  envId: PropTypes.string,
-  picks: PropTypes.object,
-  keys: PropTypes.arrayOf(PropTypes.string),
-  bucket: PropTypes.string.isRequired,
-  count: PropTypes.number,
-  report: PropTypes.string,
-  children: PropTypes.node,
-};
-
 // The version new credential values were saved as, and how its check went.
 function SavedCredentials({ version }) {
   return (
@@ -258,6 +195,60 @@ function SavedCredentials({ version }) {
 
 SavedCredentials.propTypes = { version: PropTypes.object.isRequired };
 
+// An opened line's label and value rows.
+const gridSx = {
+  display: "grid",
+  gridTemplateColumns: "96px minmax(0, 1fr)",
+  columnGap: 1.5,
+  rowGap: 0.75,
+  typography: "s3",
+};
+
+function GridRow({ label, children }) {
+  return (
+    <>
+      <Box sx={{ color: "text.secondary" }}>{label}</Box>
+      <Box sx={{ color: "text.primary", minWidth: 0 }}>{children}</Box>
+    </>
+  );
+}
+
+GridRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
+
+const WAITS_NAMES = 3;
+
+// The scenarios this line's row holds back, by name; nothing until some load.
+function WaitsOn({ envId, picks, keys, line, report }) {
+  const cases = useReadinessCases(envId, {
+    picks,
+    keys,
+    row: line.rowId,
+    report,
+    enabled:
+      Boolean(line.rowId) &&
+      line.affected > 0 &&
+      (keys?.length || 0) <= MAX_CASE_KEYS,
+  });
+  const names = (cases.data || []).map((one) => one.name || one.key);
+  if (!names.length) return null;
+  const shown = names.slice(0, WAITS_NAMES);
+  const more = Math.max(line.affected, names.length) - shown.length;
+  return (
+    <GridRow label={COPY.grid.waits}>
+      {shown.join(", ")}
+      {more > 0 && ` ${COPY.namesMore(more)}`}
+    </GridRow>
+  );
+}
+
+WaitsOn.propTypes = {
+  envId: PropTypes.string,
+  picks: PropTypes.object,
+  keys: PropTypes.arrayOf(PropTypes.string),
+  line: PropTypes.object.isRequired,
+  report: PropTypes.string,
+};
+
 function FixLine({
   line,
   onRecheck,
@@ -277,6 +268,9 @@ function FixLine({
   select,
   onFixOne,
   fixOneLabel,
+  picks,
+  keys,
+  report,
 }) {
   const { fix } = line;
   // The builder chat makes this line's change; its re-check follows the fix.
@@ -340,10 +334,34 @@ function FixLine({
             }}
           >
             {line.reason}
-            {line.affected ? ` · ${COPY.affected(line.affected)}` : ""}
           </Typography>
         </CustomTooltip>
-        {state && (
+        {line.affected > 0 && (
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
+          >
+            {line.status === "blocked"
+              ? COPY.blockedCount(line.affected)
+              : COPY.affected(line.affected)}
+          </Typography>
+        )}
+        {state === "fixing" && (
+          <Stack
+            direction="row"
+            spacing={0.5}
+            alignItems="center"
+            sx={{ color: "primary.main", flexShrink: 0 }}
+          >
+            {spinner}
+            <Typography
+              sx={{ typography: "s3", fontWeight: "fontWeightMedium" }}
+            >
+              {progressText}
+            </Typography>
+          </Stack>
+        )}
+        {state && state !== "fixing" && (
           <StatusBadge
             status={state}
             role={PROGRESS_ROLE[state]}
@@ -353,7 +371,6 @@ function FixLine({
                 : progressText
             }
             size="sm"
-            icon={state === "fixing" ? spinner : undefined}
           />
         )}
         {fix && !checking && offersFix && (
@@ -388,20 +405,48 @@ function FixLine({
           unmountOnExit
         >
           <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
-            {/* A re-check line opens on its full reason and what it means;
-                a fix line on what to change. */}
-            <Typography sx={{ typography: "s3", color: "text.primary" }}>
-              {recheckOnly ? line.reason : fix.action}
-            </Typography>
-            {recheckOnly && line.consequence && (
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {line.consequence}
-              </Typography>
-            )}
-            {!recheckOnly && fix.would && (
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {COPY.after(fix.would)}
-              </Typography>
+            {/* A re-check line opens on what it checks and why again; a fix
+                line on what we saw and what to change. */}
+            {recheckOnly ? (
+              <Box sx={gridSx}>
+                {COPY.checks[line.area] && (
+                  <GridRow label={COPY.grid.checks}>
+                    {COPY.checks[line.area]}
+                  </GridRow>
+                )}
+                {line.checkedAt && (
+                  <GridRow label={COPY.grid.lastCheck}>
+                    {fToNow(line.checkedAt)}
+                  </GridRow>
+                )}
+                <GridRow label={COPY.grid.why}>
+                  {line.reason}
+                  {line.consequence && (
+                    <Box sx={{ color: "text.secondary", pt: 0.5 }}>
+                      {line.consequence}
+                    </Box>
+                  )}
+                </GridRow>
+              </Box>
+            ) : (
+              <Box sx={gridSx}>
+                {line.reason && (
+                  <GridRow label={COPY.grid.saw}>{line.reason}</GridRow>
+                )}
+                {fix.action && (
+                  <GridRow label={COPY.grid.fix}>{fix.action}</GridRow>
+                )}
+                {fix.would && (
+                  <GridRow label={COPY.grid.would}>{fix.would}</GridRow>
+                )}
+                <WaitsOn
+                  envId={envId}
+                  picks={picks}
+                  keys={keys}
+                  line={line}
+                  report={report}
+                />
+              </Box>
             )}
             {saved && <SavedCredentials version={saved} />}
             {credentials && !inFlight && (
@@ -411,22 +456,27 @@ function FixLine({
                 onSaved={onSaved}
                 onCancel={onToggle}
                 extras={false}
+                saveLabel={COPY.saveAndRecheck}
+                note={COPY.credentialsNote}
               />
             )}
             {inChat && fix.message && (
-              <Box
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  px: 1.25,
-                  py: 1,
-                }}
-              >
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              <Box>
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mb: 0.5 }}
+                >
                   {COPY.sendsToChat}
                 </Typography>
-                <Typography sx={{ typography: "s3", color: "text.primary" }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.primary",
+                    bgcolor: "background.neutral",
+                    borderRadius: 1,
+                    px: 1.25,
+                    py: 1,
+                  }}
+                >
                   {fix.message}
                 </Typography>
               </Box>
@@ -494,6 +544,10 @@ FixLine.propTypes = {
   // Sends only this line to the builder chat.
   onFixOne: PropTypes.func,
   fixOneLabel: PropTypes.string,
+  // What the opened line's scenario names are read for.
+  picks: PropTypes.object,
+  keys: PropTypes.arrayOf(PropTypes.string),
+  report: PropTypes.string,
   // Its checkbox, while the chat can take it on: { checked, onChange }.
   select: PropTypes.shape({
     checked: PropTypes.bool.isRequired,
@@ -669,6 +723,9 @@ export default function ReadyToRunSection({
           : undefined
       }
       fixOneLabel={chatShown ? COPY.addOne : COPY.fixOne}
+      picks={picks}
+      keys={keys}
+      report={view.computedAt}
       select={
         view.grouped && line.group === "builder" && fixable(line)
           ? {
@@ -727,37 +784,13 @@ export default function ReadyToRunSection({
         alignItems="center"
         sx={{ px: 1.5, py: 1 }}
       >
-        <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
-          {COPY.title}
-        </Typography>
-        <Typography
-          noWrap
-          sx={{
-            typography: "s3",
-            color: "text.secondary",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {COPY.summary(view.summary, blockers).map((part, at) => (
-            <Fragment key={part.bucket || "blockers"}>
-              {at > 0 && " · "}
-              {part.bucket && part.count > 0 ? (
-                <CountTip
-                  envId={envId}
-                  picks={picks}
-                  keys={keys}
-                  bucket={part.bucket}
-                  count={part.count}
-                  report={readiness.data?.computed_at}
-                >
-                  {part.text}
-                </CountTip>
-              ) : (
-                part.text
-              )}
-            </Fragment>
-          ))}
+        <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+          <Box component="span" sx={{ fontWeight: "fontWeightSemiBold" }}>
+            {COPY.title}
+          </Box>
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            {` · ${COPY.blockers(blockers)}`}
+          </Box>
         </Typography>
         <Button
           size="small"
@@ -775,7 +808,8 @@ export default function ReadyToRunSection({
         // starts where the area names below start.
         <Stack direction="row" spacing={0.75} alignItems="center" sx={lineSx}>
           <StatusBadge
-            status={STATE_ROLE[noteState]}
+            status={noteState}
+            role={STATE_ROLE[noteState]}
             label=""
             variant="dot"
             sx={{ gap: 0 }}
@@ -802,14 +836,18 @@ export default function ReadyToRunSection({
               count={builder.length}
               lead={selectAll(builder, COPY.selectAll)}
               action={
-                takeable.length > 0 ? (
+                takeable.length > 0 || chatShown ? (
                   <Button
                     size="small"
                     variant="contained"
                     disabled={
                       !chosen.length || checking || start.isPending || unsaved
                     }
-                    aria-describedby={unsaved ? "fix-chat-unsaved" : undefined}
+                    aria-describedby={
+                      takeable.length > 0 && unsaved
+                        ? "fix-chat-unsaved"
+                        : undefined
+                    }
                     onClick={sendChosen}
                     sx={{ py: 0.25, flexShrink: 0 }}
                   >
@@ -924,15 +962,20 @@ export default function ReadyToRunSection({
         </Stack>
       )}
       {readyLabels.length > 0 && (
-        <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="flex-start"
+          sx={dimSx}
+        >
+          {/* As tall as one text line, so the dot sits on the first. */}
           <StatusBadge
             status="supported"
             label=""
             variant="dot"
-            sx={{ gap: 0 }}
+            sx={{ gap: 0, height: 16 }}
           />
           <Typography
-            noWrap
             sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
           >
             {COPY.moreReady(

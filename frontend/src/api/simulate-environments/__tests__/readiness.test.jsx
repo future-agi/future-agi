@@ -95,6 +95,9 @@ describe("useReadiness", () => {
       bucket: "stale",
       keys: ["a", "b"],
     });
+
+    await getReadinessCases("env-1", {}, null, null, "tool_routing");
+    expect(axios.get.mock.calls[1][1].params).toEqual({ row: "tool_routing" });
   });
 
   it("keeps asking while the agent's start check is still running", async () => {

@@ -32,6 +32,7 @@ import {
   FIX_ACTIVE_STATES,
   useFixRun,
 } from "src/api/simulate-environments/readinessFix";
+import { useReadiness } from "src/api/simulate-environments/readiness";
 import * as fixDummy from "src/api/simulate-environments/readinessFix.dummy"; // dummy:
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -53,6 +54,7 @@ import DraftBar from "./drafts/DraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
+import { fixEndCard } from "./run/readiness/readinessView";
 import { inlineRunError } from "./run/runErrors";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
@@ -156,6 +158,30 @@ export default function EnvironmentWorkspace() {
     })),
   ];
   const activeFixId = FIX_ACTIVE_STATES.has(fixRun?.state) ? fixRun.id : null;
+  // The latest fix seen ending here, and the chat turn it ended after, kept
+  // after the plan closes so the chat can say how it went. A fix already over
+  // when the page loads says nothing.
+  const [endedFix, setEndedFix] = useState(null);
+  const lastFix = useRef(null);
+  const lastTurnId = chatTurns.at(-1)?.id ?? null;
+  useEffect(() => {
+    if (!fixRun) return;
+    const was = lastFix.current;
+    lastFix.current = fixRun;
+    if (endedFix && endedFix.id !== fixRun.id) setEndedFix(null);
+    if (
+      was?.id === fixRun.id &&
+      FIX_ACTIVE_STATES.has(was.state) &&
+      !FIX_ACTIVE_STATES.has(fixRun.state)
+    ) {
+      setEndedFix({ ...fixRun, afterTurn: lastTurnId });
+    }
+  }, [fixRun, endedFix, lastTurnId]);
+  // The card opens the run plan, so only where runs go through it. A saved
+  // fix became the defaults, so the no-picks report says what is still open.
+  const planned = source === "harness" && Boolean(env?.versioning?.enabled);
+  const endedSaved = planned && endedFix?.state === "done" && !endedFix.draft;
+  const endReport = useReadiness(env?.id, {}, { enabled: endedSaved }).data;
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -228,6 +254,26 @@ export default function EnvironmentWorkspace() {
     }
     runMutation.mutate({ ids, trials });
   };
+  // Opens the run plan, or expands it when collapsed; never starts a run.
+  const openRunPlan = () =>
+    runDialog
+      ? setRunDialog((open) => open && { ...open, collapsed: false })
+      : startRun(undefined, 1);
+  const endCard = planned && endedFix && fixEndCard(endedFix, endReport);
+  if (endCard) {
+    // Where the fix ended in the chat, so later turns follow the card.
+    const at = chatTurns.findIndex((turn) => turn.id === endedFix.afterTurn);
+    const cut = at === -1 ? chatTurns.length : at + 1;
+    chatTurns = [
+      ...chatTurns.slice(0, cut),
+      {
+        id: `fix-end-${endedFix.id}`,
+        role: "builder",
+        card: { ...endCard, onAction: openRunPlan },
+      },
+      ...chatTurns.slice(cut),
+    ];
+  }
   const executionMatch = useMatch(EXECUTION_PATTERN);
   // Keyed by the re-run's versions, which it reads only when it mounts.
   const runDialogEl = runDialog && (
