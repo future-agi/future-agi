@@ -3,6 +3,8 @@ import { test, expect } from '../../lib/fixtures';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { authInitScript } from '../../lib/auth';
+import { provisionActor } from '../../lib/provisioning';
 
 // GuardrailManagementSection.jsx TAB_SLUGS and ConfigTab's Save & Activate.
 const RULES_ROUTE = '/dashboard/gateway/guardrails/configuration';
@@ -37,11 +39,24 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
       'an invalid boolean is refused without creating a configuration version',
     ],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ browser, probe }, testInfo) => {
   // Seven UI waits, three pushes, three HTTP requests and seeding headroom.
   test.setTimeout(720_000);
+  // The blocking check, provider, key and request logs below belong to an
+  // organization of this test's own, so later specs on the worker's shared
+  // actor never see them.
+  const accounts = await request.newContext({ baseURL: E2E.apiUrl });
+  const actor = await provisionActor(accounts, `gw-optin-${testInfo.workerIndex}`);
+  const context = await browser.newContext({ baseURL: E2E.appUrl });
+  await context.addInitScript(authInitScript, {
+    access: actor.tokens.access,
+    refresh: actor.tokens.refresh,
+    organizationId: actor.organizationId,
+    workspaceId: actor.workspaceId,
+  });
+  const page = await context.newPage();
   const blockedURLs: string[] = [];
-  await page.context().route('**/*', route => {
+  await context.route('**/*', route => {
     const host = new URL(route.request().url()).hostname;
     if (['localhost', '127.0.0.1', 'backend', 'frontend', 'mock-llm', 'agentcc-gateway'].includes(host)) return route.continue();
     blockedURLs.push(route.request().url());
@@ -137,5 +152,7 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
   } finally {
     await testInfo.attach('blocked-external-urls', { body: JSON.stringify(blockedURLs), contentType: 'application/json' });
     await gateway.dispose();
+    await context.close();
+    await accounts.dispose();
   }
 });
