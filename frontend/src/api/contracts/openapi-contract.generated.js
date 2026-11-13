@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1126,
+  endpointCount: 1139,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -2832,7 +2832,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           workspace_id: {
@@ -6046,7 +6046,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/GatewayHealthResponse",
           },
           400: {
-            $ref: "#/definitions/AgentccErrorResponse",
+            $ref: "#/definitions/GatewayHealthErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -13241,13 +13241,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/api/models_list/": {
       get: {
         operationId: "model-hub_api_models_list_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelListResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -16739,7 +16767,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           page_size: {
@@ -20706,7 +20734,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           filters: {
@@ -28942,6 +28970,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/verify/": {
+      post: {
+        operationId: "simulate_api_harness-environments_verify",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessVerifyCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessVerifyCreateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/verify/{verify_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_verify_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVerifyResult",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/versions/": {
       get: {
         operationId: "simulate_api_harness-environments_versions",
@@ -30595,7 +30659,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -31211,7 +31275,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -32940,7 +33004,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           ordering: {
@@ -32992,6 +33056,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "goal",
                 "sub_goal",
                 "accent",
@@ -33804,7 +33869,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           agent_definition_id: {
@@ -33841,6 +33906,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "system_metric",
                 "eval_metric",
                 "annotation_metric",
@@ -33854,7 +33920,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["metric", "dimension"],
+              enum: ["", "metric", "dimension"],
               default: "",
             },
           },
@@ -33863,6 +33929,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "traces",
                 "spans",
                 "sessions",
@@ -40206,6 +40273,138 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/saved-sql-query/": {
+      get: {
+        operationId: "tracer_saved-sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSavedList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_saved-sql-query_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/": {
+      get: {
+        operationId: "tracer_saved-sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_saved-sql-query_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_saved-sql-query_delete",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/add-widget/": {
+      post: {
+        operationId: "tracer_saved-sql-query_add_widget",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLWidget",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLWidgetResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/saved-views/": {
       get: {
         operationId: "tracer_saved-views_list",
@@ -40617,6 +40816,224 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/sql-query/": {
+      get: {
+        operationId: "tracer_sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLHistory",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/catalog/": {
+      get: {
+        operationId: "tracer_sql-query_catalog",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLCatalog",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/estimate/": {
+      post: {
+        operationId: "tracer_sql-query_estimate",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLQueryInput",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLEstimate",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run-saved/": {
+      post: {
+        operationId: "tracer_sql-query_run_saved",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRunSaved",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run/": {
+      post: {
+        operationId: "tracer_sql-query_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRun",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/": {
+      get: {
+        operationId: "tracer_sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1000,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/cancel/": {
+      post: {
+        operationId: "tracer_sql-query_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLProject",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/download/": {
+      get: {
+        operationId: "tracer_sql-query_download",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          file_format: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["csv", "parquet"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
+          },
+          409: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          410: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/trace-annotation/get_annotation_values/": {
       get: {
         operationId: "tracer_trace-annotation_get_annotation_values",
@@ -40655,14 +41072,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
           exclude_annotators: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
         },
@@ -41920,7 +42337,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           filters: {
@@ -43164,14 +43581,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
             },
           },
           attribute_keys: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
         },
@@ -50736,7 +51152,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "target_scenario_keys",
         "surfaces",
         "budget_credits",
-        "max_minutes",
       ],
       type: "object",
       properties: {
@@ -58458,6 +58873,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 100,
           minLength: 1,
         },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["user", "coding_agent"],
+          default: "user",
+        },
+        simulation_environment_id: {
+          title: "Simulation environment id",
+          type: "string",
+          format: "uuid",
+        },
       },
     },
     CurrentOrganizationResponse: {
@@ -59208,6 +59634,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Category",
           type: "string",
           enum: [
+            "",
             "system_metric",
             "eval_metric",
             "annotation_metric",
@@ -59219,13 +59646,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         role: {
           title: "Role",
           type: "string",
-          enum: ["metric", "dimension"],
+          enum: ["", "metric", "dimension"],
           default: "",
         },
         source: {
           title: "Source",
           type: "string",
           enum: [
+            "",
             "traces",
             "spans",
             "sessions",
@@ -65257,6 +65685,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/GatewayHealthErrorResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+      description:
+        "Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.",
+    },
     GatewayHealthResponse: {
       required: ["status", "result"],
       type: "object",
@@ -66150,6 +66650,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         agent_payload: {
           $ref: "#/definitions/HarnessAgentPayloadChange",
+        },
+        make_default: {
+          title: "Make default",
+          description:
+            "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+          type: "boolean",
         },
       },
     },
@@ -68251,6 +68757,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Upgrade cta",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessVerifyCreate: {
+      required: ["agent_version_id"],
+      type: "object",
+      properties: {
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+          type: "string",
+          format: "uuid",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 3,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessVerifyCreateResponse: {
+      required: ["verify_id", "state"],
+      type: "object",
+      properties: {
+        verify_id: {
+          title: "Verify id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+      },
+    },
+    HarnessVerifyResult: {
+      required: [
+        "state",
+        "passed",
+        "failed",
+        "total",
+        "trials",
+        "held_back_pass_rate",
+        "limited_validation",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+          minimum: 0,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        held_back_pass_rate: {
+          description:
+            "95% range of the trial pass rate, [low, high]; null until it ends.",
+          type: "array",
+          items: {
+            type: "number",
+            maximum: 1,
+            minimum: 0,
+          },
+          maxItems: 2,
+          minItems: 2,
+          "x-nullable": true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          description:
+            "Too few cases were held back to call a version verified.",
+          type: "boolean",
         },
       },
     },
@@ -74835,6 +75460,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
               minLength: 1,
             },
+          },
+        },
+      },
+    },
+    ModelListResponse: {
+      required: ["count", "results"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelListEntry",
           },
         },
       },
@@ -82097,11 +82748,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-      additionalProperties: {
-        description:
-          "Provider-specific credential fields accepted at top level.",
-        type: "object",
-      },
+      description:
+        "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
+      additionalProperties: true,
     },
     SDKConfigureEvaluationsResponse: {
       required: ["status", "result"],
@@ -82336,6 +82985,416 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "email",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+    },
+    SQLCatalog: {
+      required: [
+        "identity_semantics",
+        "version",
+        "datasets",
+        "examples",
+        "max_rows",
+        "max_window_days",
+        "can_save",
+      ],
+      type: "object",
+      properties: {
+        identity_semantics: {
+          title: "Identity semantics",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+        },
+        datasets: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLDataset",
+          },
+        },
+        examples: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExample",
+          },
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+        },
+        max_window_days: {
+          title: "Max window days",
+          type: "integer",
+        },
+        can_save: {
+          title: "Can save",
+          type: "boolean",
+        },
+      },
+    },
+    SQLEstimate: {
+      required: [
+        "status",
+        "reason",
+        "sources",
+        "max_rows_to_read",
+        "exceeds_scan_bound",
+        "elapsed_ms",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        sources: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLEstimateSource",
+          },
+        },
+        max_rows_to_read: {
+          title: "Max rows to read",
+          type: "integer",
+        },
+        exceeds_scan_bound: {
+          title: "Exceeds scan bound",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+      },
+    },
+    SQLExecution: {
+      required: [
+        "id",
+        "project_id",
+        "sql",
+        "state",
+        "created_at",
+        "expires_at",
+        "finished_at",
+        "error",
+        "result",
+        "expired",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        reused: {
+          title: "Reused",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        result: {
+          $ref: "#/definitions/SQLResult",
+        },
+        expired: {
+          title: "Expired",
+          type: "boolean",
+        },
+      },
+    },
+    SQLHistory: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExecution",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLProject: {
+      required: ["project_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLQueryInput: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLRun: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+        reuse: {
+          title: "Reuse",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    SQLRunSaved: {
+      required: ["project_id", "saved_query_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        saved_query_id: {
+          title: "Saved query id",
+          type: "string",
+          format: "uuid",
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLSave: {
+      required: ["project_id", "name", "sql"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          default: "private",
+        },
+        chart: {
+          $ref: "#/definitions/SQLChart",
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          default: 24,
+          maximum: 744,
+          minimum: 1,
+        },
+      },
+    },
+    SQLSaved: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          readOnly: true,
+        },
+        chart: {
+          title: "Chart",
+          type: "object",
+          readOnly: true,
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        created_by_id: {
+          title: "Created by id",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    SQLSavedList: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLSaved",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLWidget: {
+      required: ["project_id", "dashboard_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLWidgetResponse: {
+      required: ["id", "dashboard_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
         },
       },
     },
@@ -86958,7 +88017,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         trace_ids: {
           title: "Trace ids",
           type: "string",
-          default: [],
+          default: "",
         },
         filters: {
           title: "Filters",
@@ -89204,6 +90263,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
+          "x-nullable": true,
+        },
         is_mute: {
           title: "Is mute",
           type: "boolean",
@@ -89827,6 +90893,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         slack_notes: {
           title: "Slack notes",
           type: "string",
+          "x-nullable": true,
+        },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
           "x-nullable": true,
         },
         is_mute: {
@@ -90468,14 +91541,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
           type: "string",
-          default: [],
         },
         attribute_keys: {
           title: "Attribute keys",
           description:
             "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
           type: "string",
-          default: [],
+          default: "",
         },
       },
     },
@@ -100240,7 +101312,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewaySummaryResult: {
-      required: ["id", "name", "base_url", "status"],
+      required: ["id", "name", "base_url", "status", "last_health_check"],
       type: "object",
       properties: {
         id: {
@@ -100264,6 +101336,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's live health probe, including unreachable results.",
+          type: "string",
+          format: "date-time",
+        },
         provider_count: {
           title: "Provider count",
           type: "integer",
@@ -100274,14 +101353,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResult: {
+      required: ["status", "error", "last_health_check"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["unreachable"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's failed live health probe.",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-string-or-object": true,
+    },
     GatewayHealthResult: {
-      required: ["status", "providers", "provider_count", "model_count"],
+      required: [
+        "status",
+        "last_health_check",
+        "providers",
+        "provider_count",
+        "model_count",
+      ],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+        last_health_check: {
+          title: "Last health check",
+          description: "Completion time of this request's live health probe.",
+          type: "string",
+          format: "date-time",
         },
         health: {
           title: "Health",
@@ -106346,6 +107460,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelListEntry: {
+      required: ["model_name", "type"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        author: {
+          title: "Author",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        question_types: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        min_choices: {
+          title: "Min choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_choices: {
+          title: "Max choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_state_bytes: {
+          title: "Max state bytes",
+          type: "integer",
+          minimum: 1,
+        },
+        notice: {
+          title: "Notice",
+          type: "string",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DecisionConnection",
+          },
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
     ModelParametersResult: {
       type: "object",
       properties: {
@@ -110521,6 +111759,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scoring_status",
         "csat_status",
         "csat_reason",
+        "failure_domain",
+        "failure_code",
       ],
       type: "object",
       properties: {
@@ -110722,6 +111962,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         csat_reason: {
           title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        failure_domain: {
+          title: "Failure domain",
+          type: "string",
+          enum: [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync",
+          ],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
           type: "string",
           minLength: 1,
           "x-nullable": true,
@@ -111847,9 +113107,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 1,
         },
       },
-      additionalProperties: {
-        type: "object",
-      },
+      description:
+        "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
+      additionalProperties: true,
     },
     SDKStandaloneEvalResultItem: {
       required: ["evaluations"],
@@ -111876,6 +113136,203 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "object",
         },
+      },
+    },
+    SQLDataset: {
+      required: [
+        "available",
+        "unavailable_reason",
+        "name",
+        "description",
+        "columns",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+      },
+    },
+    SQLExample: {
+      required: ["id", "title", "description", "sql", "datasets"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        datasets: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    SQLEstimateSource: {
+      required: [
+        "dataset",
+        "estimated",
+        "parts",
+        "marks",
+        "max_rows",
+        "reason",
+      ],
+      type: "object",
+      properties: {
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          minLength: 1,
+        },
+        estimated: {
+          title: "Estimated",
+          type: "boolean",
+        },
+        parts: {
+          title: "Parts",
+          type: "integer",
+          "x-nullable": true,
+        },
+        marks: {
+          title: "Marks",
+          type: "integer",
+          "x-nullable": true,
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+      },
+    },
+    SQLResult: {
+      type: "object",
+      properties: {
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+        rows: {
+          type: "array",
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+            },
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+        },
+        result_bytes: {
+          title: "Result bytes",
+          type: "integer",
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        next_offset: {
+          title: "Next offset",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+        page_row_count: {
+          title: "Page row count",
+          type: "integer",
+        },
+        previewed: {
+          title: "Previewed",
+          type: "boolean",
+        },
+        retrieval_note: {
+          title: "Retrieval note",
+          type: "string",
+        },
+      },
+    },
+    SQLChart: {
+      type: "object",
+      properties: {
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["table", "bar"],
+          default: "table",
+        },
+        x: {
+          title: "X",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        y: {
+          title: "Y",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+      default: {
+        type: "table",
       },
     },
     SavedViewDetail: {
@@ -123160,6 +124617,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DecisionConnection: {
+      required: ["model_name", "provider", "label", "is_available"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+      },
+    },
     ModelParameterBoolean: {
       required: ["label"],
       type: "object",
@@ -126086,6 +127568,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval results",
           type: "string",
           readOnly: true,
+        },
+      },
+    },
+    SQLColumn: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
         },
       },
     },

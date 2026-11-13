@@ -497,6 +497,7 @@ const TracingTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       onClearResult,
@@ -1648,6 +1649,7 @@ const TracingTestMode = React.forwardRef(
               ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1705,6 +1707,7 @@ const TracingTestMode = React.forwardRef(
       compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
+      runConfig,
       model,
     ]);
 
@@ -1755,7 +1758,7 @@ const TracingTestMode = React.forwardRef(
                   placeholder="Search projects..."
                   InputProps={{
                     ...params.InputProps,
-                    sx: { ...params.InputProps.sx, fontSize: "13px" },
+                    sx: { ...params.InputProps.sx, fontSize: "12px" },
                     endAdornment: loadingProjects ? (
                       <InputAdornment position="end">
                         <CircularProgress size={14} />
@@ -1773,7 +1776,7 @@ const TracingTestMode = React.forwardRef(
                     component="li"
                     key={key}
                     {...rest}
-                    sx={{ ...rest.sx, fontSize: "13px" }}
+                    sx={{ ...rest.sx, fontSize: "12px" }}
                   >
                     {option.name || option.id}
                   </Box>
@@ -2473,6 +2476,7 @@ TracingTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,

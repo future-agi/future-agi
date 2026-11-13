@@ -27,7 +27,7 @@ const SlideNumberPreview = ({
       >
         <Typography
           variant="body1"
-          sx={{ fontWeight: "medium", fontSize: 13, minWidth: "max-content" }}
+          sx={{ fontWeight: "medium", fontSize: 12, minWidth: "max-content" }}
         >
           {label}
         </Typography>
@@ -71,7 +71,7 @@ const SlideNumberPreview = ({
             border: "1px solid var(--border-default)",
             padding: "5px 20px",
             borderRadius: "6px",
-            fontSize: 13,
+            fontSize: 12,
           }}
         >
           {initialValue}

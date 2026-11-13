@@ -152,7 +152,7 @@ const RankerSpan = ({
                       <Typography
                         sx={{
                           color: "text.secondary",
-                          fontSize: "13px",
+                          fontSize: "12px",
                           fontWeight: "500",
                         }}
                       >

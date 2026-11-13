@@ -151,6 +151,12 @@ def _is_workspace_write_exempt_view(request):
     )
 
 
+def is_coding_agent_key(request) -> bool:
+    """Whether ``request`` authenticated with a coding agent's key."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
@@ -216,7 +222,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         try:
             org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
+                "organization", "workspace", "minted_by"
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
@@ -229,6 +235,14 @@ class APIKeyAuthentication(BaseAuthentication):
             # so it can never act as the organisation's system user.
             if org_api_key.type == "ingest":
                 raise AuthenticationFailed("ingest keys cannot call the API")
+            # A coding agent's key runs on the developer's machine beside the
+            # agent being fixed; it may make only its loop's calls, on its own
+            # environment.
+            if org_api_key.type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import refuse_coding_agent_request
+
+                refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -246,8 +260,13 @@ class APIKeyAuthentication(BaseAuthentication):
                     .order_by("created_at")
                     .first()
                 )
+            elif org_api_key.type == "coding_agent":
+                # Its user is null, so an older build refuses it; its minter acts.
+                user = org_api_key.minted_by
             else:
                 user = org_api_key.user
+            if user is None:
+                raise AuthenticationFailed("No user found for API key")
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key
@@ -719,6 +738,10 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         # to the collector, even if a user was attached to it.
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
+        if org_api_key.type == "coding_agent":
+            from simulate.authentication import refuse_coding_agent_request
+
+            refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":
@@ -997,7 +1020,76 @@ def _touch_non_saml_access_token(token_id, user_id, now):
     )
 
 
+def _cache_transport_category(exc):
+    """Only known transport errors qualify; Redis auth/config errors do not.
+
+    django-redis wraps transport AND command errors in ConnectionInterrupted.
+    Do not infer availability from the wrapper or an exception's message.
+    """
+    for _ in range(4):
+        if type(exc) is RedisTimeoutError:
+            return "timeout"
+        if type(exc) is RedisConnectionError:
+            return "connection"
+        if type(exc) is not ConnectionInterrupted:
+            return None
+        exc = exc.__cause__
+    return None
+
+
+def _cache_unavailable_metadata(exc):
+    # Same bounded source attribution as database errors; never log values,
+    # exception text, frame locals, cache keys or connection URLs.
+    metadata = _database_unavailable_metadata(exc)
+    metadata.pop("sqlstate")
+    metadata["transport_category"] = _cache_transport_category(exc) or "unknown"
+    metadata["transport_phase"] = "unknown"
+    options = settings.CACHES.get("default", {}).get("OPTIONS", {})
+    for key in ("SOCKET_TIMEOUT", "SOCKET_CONNECT_TIMEOUT"):
+        value = options.get(key)
+        metadata[key.lower()] = (
+            value if type(value) in (int, float) and 0 <= value <= 10 else None
+        )
+    pool = options.get("CONNECTION_POOL_KWARGS", {})
+    retry = pool.get("retry_on_timeout")
+    metadata["retry_on_timeout"] = retry if type(retry) is bool else None
+    # RequestMiddleware already binds the correlation ID to structlog context;
+    # do not read raw headers here or serialize a retry object/connection config.
+    return metadata
+
+
+class _AccessTokenCache:
+    """One failed optional cache operation per decode, never a retry loop."""
+
+    def __init__(self):
+        self.unavailable = False
+
+    def call(self, operation, *args, **kwargs):
+        if self.unavailable:
+            return None
+        started = time.monotonic()
+        try:
+            return getattr(cache, operation)(*args, **kwargs)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            self.unavailable = True
+            logger.warning(
+                "access_token_cache_unavailable",
+                component="access_token_cache",
+                operation=operation,
+                elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+                fallback="database_validated"
+                if operation == "set"
+                else "validate_database",
+                **_cache_unavailable_metadata(exc),
+            )
+            return None
+
+
 def decode_token(token: str, *, transport: str = "http"):
+    token_cache = _AccessTokenCache()
+    outcome = "credential_rejected"
     try:
         if not token:
             raise AuthenticationFailed("empty token")
@@ -1010,7 +1102,7 @@ def decode_token(token: str, *, transport: str = "http"):
 
         now = timezone.now()
         cache_key = f"access_token_{token_id}"
-        cache_data = cache.get(cache_key)
+        cache_data = token_cache.call("get", cache_key)
         # Older pods may cache SAML as ordinary. Only this code writes the
         # versioned marker, after authoritative classification and validation.
         # Keep the existing cache key so all revocation paths still evict it.
@@ -1025,16 +1117,18 @@ def decode_token(token: str, *, transport: str = "http"):
             ):
                 if "organization" not in user._state.fields_cache:
                     user = User.objects.select_related("organization").get(pk=user.pk)
-                cache.set(
+                token_cache.call(
+                    "set",
                     cache_key,
                     {"token": token, "user": user, "non_saml_v1": True},
                     timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
                 )
+                outcome = "authenticated"
                 return user, token, None
 
         # Legacy and failed cache hits must be reclassified, not promoted.
         if cache_data:
-            cache.delete(cache_key)
+            token_cache.call("delete", cache_key)
         token_row = (
             AuthToken.objects.filter(id=token_id)
             .values(
@@ -1064,6 +1158,7 @@ def decode_token(token: str, *, transport: str = "http"):
                 != 1
             ):
                 raise SamlCredentialInvalid("token_inactive")
+            outcome = "authenticated"
             return user, token, credential
         if (
             str(token_row["user_id"]) != str(user_id)
@@ -1094,18 +1189,31 @@ def decode_token(token: str, *, transport: str = "http"):
         if not _touch_non_saml_access_token(token_id, user_id, now):
             raise AuthenticationFailed("Invalid auth token")
 
-        cache.set(
+        token_cache.call(
+            "set",
             cache_key,
             {"token": token, "user": user, "non_saml_v1": True},
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
         )
 
+        outcome = "authenticated"
         return user, token, None
 
+    except (DatabaseError, InterfaceError):
+        outcome = "database_unavailable"
+        raise
     except (*INFRASTRUCTURE_ERRORS, SamlCredentialInvalid):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
+
+    finally:
+        if token_cache.unavailable:
+            logger.info(
+                "access_token_cache_fallback_result",
+                component="access_token_cache",
+                outcome=outcome,
+            )
 
 
 def _pydantic_error_response(exc):
@@ -1197,7 +1305,19 @@ def custom_exception_handler(exc, context):
         # Keep raw database details private and use DRF's normal rollback path.
         exc = DatabaseUnavailable()
     elif isinstance(exc, _CACHE_UNAVAILABLE_ERRORS):
-        logger.warning("api_cache_unavailable", error_class=type(exc).__name__)
+        request = context.get("request")
+        method = getattr(request, "method", None)
+        route = getattr(getattr(request, "resolver_match", None), "route", None)
+        logger.warning(
+            "api_cache_unavailable",
+            method=method
+            if method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+            else None,
+            route_template=route
+            if isinstance(route, str) and len(route) <= 256
+            else None,
+            **_cache_unavailable_metadata(exc),
+        )
         exc = CacheUnavailable()
     response = exception_handler(exc, context)
 

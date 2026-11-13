@@ -32,7 +32,10 @@ module.exports = {
   overrides: [
     {
       // The shared dialogs are built on MUI Dialog.
-      files: ["src/components/custom-dialog/**", "src/components/ModalWrapper/**"],
+      files: [
+        "src/components/custom-dialog/**",
+        "src/components/ModalWrapper/**",
+      ],
       rules: { "no-restricted-imports": "off" },
     },
   ],
@@ -57,16 +60,22 @@ module.exports = {
         patterns: [
           {
             group: ["**/EmptyLayout", "**/EmptyLayout/*"],
-            message: "[DS] Use src/components/empty-state (EmptyState); EmptyLayout is kept only for existing screens.",
+            message:
+              "[DS] Use src/components/empty-state (EmptyState); EmptyLayout is kept only for existing screens.",
           },
           {
             group: ["**/custom-status-chip", "**/custom-status-chip/*"],
-            message: "[DS] Use src/components/status-badge with src/utils/runStatus; CustomStatusChip is kept only for existing screens.",
+            message:
+              "[DS] Use src/components/status-badge with src/utils/runStatus; CustomStatusChip is kept only for existing screens.",
           },
           {
-            group: ["**/components/filter-panel", "**/filter-panel/FilterPanel"],
+            group: [
+              "**/components/filter-panel",
+              "**/filter-panel/FilterPanel",
+            ],
             importNames: ["FilterPanel", "default"],
-            message: "[DS] Use src/components/filter (FilterButton); this FilterPanel is kept only for its existing screens.",
+            message:
+              "[DS] Use src/components/filter (FilterButton); this FilterPanel is kept only for its existing screens.",
           },
         ],
       },
@@ -132,7 +141,7 @@ module.exports = {
       ),
       DS(
         "JSXOpeningElement[name.name=/^(MenuItem|ListItemText)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(fontSize|fontWeight|color|minHeight|height)$/]",
-        "Menu item override. Menu items are 13px regular from the theme.",
+        "Menu item override. Menu items are 12px regular from the theme.",
       ),
       DS(
         "JSXOpeningElement[name.name='Alert'] JSXAttribute[name.name='sx'] Property[key.name=/^(bgcolor|backgroundColor|color|border|borderColor|borderRadius)$/]",

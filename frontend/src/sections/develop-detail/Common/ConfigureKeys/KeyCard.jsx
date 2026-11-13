@@ -15,6 +15,7 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { decisionModelsQueryKey } from "src/api/evaluations/decision-models";
 
 // Providers without a hosted logo (e.g. TypeSafe) show their initial
 // instead of a broken image.
@@ -42,7 +43,7 @@ const ProviderLogo = ({ data }) =>
         justifyContent: "center",
         bgcolor: "action.hover",
         color: "text.secondary",
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 600,
       }}
     >
@@ -132,6 +133,7 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
         queryKey: ["model-list"],
       });
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      queryClient.invalidateQueries({ queryKey: decisionModelsQueryKey });
       setEditMode(false);
       hasClearedOnceRef.current = false;
       onKeySaved?.(data.provider);
@@ -146,6 +148,7 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
         queryKey: ["model-list"],
       });
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      queryClient.invalidateQueries({ queryKey: decisionModelsQueryKey });
       setEditMode(false);
       hasClearedOnceRef.current = false;
       onKeySaved?.(data.provider);

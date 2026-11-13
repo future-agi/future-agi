@@ -536,7 +536,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(inputs.stack.options, ['distributed', 'standalone']);
   assert.equal(inputs.host_update_fallibility.type, 'boolean');
   assert.equal(inputs.host_update_fallibility.default, false);
-  assert.deepEqual(workflow.on.pull_request.branches, ['dev', 'main']);
+  // PRs into any base branch, stacked feature-branch PRs included.
+  assert.ok('pull_request' in workflow.on);
+  assert.equal(workflow.on.pull_request?.branches, undefined);
   assert.deepEqual(workflow.on.push.branches, ['dev', 'main']);
   assert.deepEqual(workflow.on.schedule, [{ cron: '37 2 * * *' }]);
   const validation = workflow.jobs.changes.steps[0];
@@ -564,7 +566,7 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   const ordinaryReport = steps.find(step => step.name === 'Upload report');
   assert.equal(ordinaryReport.with.path, 'e2e/playwright-report');
   assert.equal(ordinaryReport.with['retention-days'], 7);
-  assert.equal(workflow.jobs.e2e['timeout-minutes'], 90);
+  assert.equal(workflow.jobs.e2e['timeout-minutes'], 120);
   const allow = new Function('github', 'inputs', 'matrix', `return ${proof.if};`);
   const invalid = new Function('github', 'inputs', `return ${validation.if};`);
   for (const event_name of ['pull_request', 'push', 'schedule', 'merge_group', 'workflow_dispatch']) {

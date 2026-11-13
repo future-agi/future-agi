@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -75,6 +76,8 @@ logger = structlog.get_logger(__name__)
 
 class JsonObjectField(serializers.JSONField):
     """Accept a JSON object both in query strings and request bodies."""
+
+    swagger_empty_input_default = "{}"
 
     def to_internal_value(self, data):
         if data in (None, ""):
@@ -170,7 +173,7 @@ class RunCallsV3QuerySerializer(RunCallFiltersSerializer):
         default=50, min_value=1, max_value=500, required=False
     )
     group_by = serializers.ChoiceField(
-        choices=list(GROUP_FIELDS), allow_blank=True, required=False, default=""
+        choices=["", *GROUP_FIELDS], allow_blank=True, required=False, default=""
     )
     group_key = serializers.CharField(allow_blank=True, required=False, allow_null=True)
 
@@ -355,6 +358,10 @@ class RunCallSerializer(serializers.Serializer):
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
+    failure_domain = serializers.ChoiceField(
+        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
+    )
+    failure_code = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):
