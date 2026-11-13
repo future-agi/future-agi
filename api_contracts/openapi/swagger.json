@@ -5380,7 +5380,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "workspace_id",
@@ -30522,7 +30522,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "page_size",
@@ -37559,7 +37559,37 @@
             "get": {
                 "operationId": "model-hub_get-eval-logs_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "log_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "order",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "include_source_navigation",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "true",
+                            "false"
+                        ]
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -37606,7 +37636,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "patch": {
                 "operationId": "model-hub_get-eval-logs_partial_update",
@@ -37738,7 +37770,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "filters",
@@ -55661,6 +55693,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "agent_definition",
                             "prompt"
                         ],
@@ -56748,6 +56781,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "agent_definition",
                             "prompt"
                         ],
@@ -60023,7 +60057,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "ordering",
@@ -60075,6 +60109,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "goal",
                             "sub_goal",
                             "accent",
@@ -61371,7 +61406,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "agent_definition_id",
@@ -61408,6 +61443,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "system_metric",
                             "eval_metric",
                             "annotation_metric",
@@ -61422,6 +61458,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "metric",
                             "dimension"
                         ],
@@ -61433,6 +61470,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "traces",
                             "spans",
                             "sessions",
@@ -73003,14 +73041,14 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": "[]"
                     },
                     {
                         "name": "exclude_annotators",
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": "[]"
                     }
                 ],
                 "responses": {
@@ -74883,7 +74921,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "filters",
@@ -75469,6 +75507,15 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "expected_span_id",
+                        "in": "query",
+                        "description": "Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
                     }
                 ],
                 "responses": {
@@ -75485,6 +75532,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -76784,8 +76837,7 @@
                         "in": "query",
                         "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
                         "required": false,
-                        "type": "string",
-                        "default": []
+                        "type": "string"
                     },
                     {
                         "name": "attribute_keys",
@@ -76793,7 +76845,7 @@
                         "description": "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     }
                 ],
                 "responses": {
@@ -86622,6 +86674,13 @@
                     "maxLength": 100,
                     "minLength": 1
                 },
+                "expires_at": {
+                    "title": "Expires at",
+                    "description": "Optional expiry. Omit or send null for a key that never expires.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
                 "type": {
                     "title": "Type",
                     "type": "string",
@@ -86645,7 +86704,8 @@
                 "api_key",
                 "masked_api_key",
                 "secret_key",
-                "masked_secret_key"
+                "masked_secret_key",
+                "expires_at"
             ],
             "type": "object",
             "properties": {
@@ -86678,6 +86738,12 @@
                     "title": "Masked secret key",
                     "type": "string",
                     "minLength": 1
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 }
             }
         },
@@ -86733,7 +86799,9 @@
                 "created_by",
                 "created_at",
                 "enabled",
-                "type"
+                "type",
+                "expires_at",
+                "is_expired"
             ],
             "type": "object",
             "properties": {
@@ -86776,6 +86844,16 @@
                     "title": "Type",
                     "type": "string",
                     "minLength": 1
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "is_expired": {
+                    "title": "Is expired",
+                    "type": "boolean"
                 }
             }
         },
@@ -112962,133 +113040,27 @@
                 }
             }
         },
-        "Organization": {
-            "required": [
-                "name"
-            ],
+        "AnnotationTaskAssignee": {
             "type": "object",
             "properties": {
                 "id": {
                     "title": "Id",
                     "type": "string",
                     "format": "uuid",
-                    "readOnly": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time",
                     "readOnly": true
                 },
                 "name": {
                     "title": "Name",
                     "type": "string",
-                    "maxLength": 255,
+                    "readOnly": true,
                     "minLength": 1
-                },
-                "display_name": {
-                    "title": "Display name",
-                    "type": "string",
-                    "maxLength": 255
-                },
-                "is_new": {
-                    "title": "Is new",
-                    "type": "boolean"
-                },
-                "ws_enabled": {
-                    "title": "Ws enabled",
-                    "type": "boolean"
-                },
-                "region": {
-                    "title": "Region",
-                    "type": "string",
-                    "maxLength": 16,
-                    "minLength": 1
-                },
-                "require_2fa": {
-                    "title": "Require 2fa",
-                    "type": "boolean"
-                },
-                "require_2fa_grace_period_days": {
-                    "title": "Require 2fa grace period days",
-                    "type": "integer",
-                    "maximum": 32767,
-                    "minimum": 0
-                },
-                "require_2fa_enforced_at": {
-                    "title": "Require 2fa enforced at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                }
-            }
-        },
-        "User": {
-            "required": [
-                "email",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
                 },
                 "email": {
                     "title": "Email",
                     "type": "string",
                     "format": "email",
-                    "maxLength": 254,
+                    "readOnly": true,
                     "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "organization_role": {
-                    "title": "Organization role",
-                    "type": "string",
-                    "enum": [
-                        "Owner",
-                        "Admin",
-                        "Member",
-                        "Viewer",
-                        "workspace_admin",
-                        "workspace_member",
-                        "workspace_viewer"
-                    ],
-                    "x-nullable": true
-                },
-                "organization": {
-                    "$ref": "#/definitions/Organization"
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time",
-                    "readOnly": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "role": {
-                    "title": "Role",
-                    "description": "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-                    "type": "string",
-                    "maxLength": 255,
-                    "x-nullable": true
-                },
-                "goals": {
-                    "title": "Goals",
-                    "description": "List of user's goals for using the platform",
-                    "type": "object",
-                    "x-nullable": true
                 }
             }
         },
@@ -113280,7 +113252,7 @@
                 "assigned_users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/User"
+                        "$ref": "#/definitions/AnnotationTaskAssignee"
                     },
                     "readOnly": true
                 },
@@ -127010,6 +126982,67 @@
                 }
             }
         },
+        "EvalLogSourceNavigation": {
+            "required": [
+                "status",
+                "kind",
+                "project_id",
+                "trace_id",
+                "span_id",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "no_reference",
+                        "unsupported_source",
+                        "unsupported_target",
+                        "incomplete_reference",
+                        "invalid_reference",
+                        "ambiguous_reference",
+                        "unavailable",
+                        "source_not_recorded",
+                        "temporarily_unavailable"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "voice_call"
+                    ],
+                    "x-nullable": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                }
+            }
+        },
         "EvalApiLogRowResponseResult": {
             "required": [
                 "log_id",
@@ -127082,7 +127115,7 @@
                 "span_id": {
                     "title": "Span id",
                     "type": "string",
-                    "format": "uuid",
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "trace_id": {
@@ -127108,6 +127141,9 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "source_navigation": {
+                    "$ref": "#/definitions/EvalLogSourceNavigation"
                 }
             }
         },
@@ -132849,10 +132885,8 @@
                     "x-nullable": true
                 }
             },
-            "additionalProperties": {
-                "description": "Provider-specific credential fields accepted at top level.",
-                "type": "object"
-            }
+            "description": "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
+            "additionalProperties": true
         },
         "SDKMessageResult": {
             "required": [
@@ -132929,9 +132963,8 @@
                     "minimum": 1
                 }
             },
-            "additionalProperties": {
-                "type": "object"
-            }
+            "description": "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
+            "additionalProperties": true
         },
         "SDKStandaloneEvalRequest": {
             "required": [
@@ -159134,6 +159167,136 @@
                 }
             }
         },
+        "Organization": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "display_name": {
+                    "title": "Display name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "is_new": {
+                    "title": "Is new",
+                    "type": "boolean"
+                },
+                "ws_enabled": {
+                    "title": "Ws enabled",
+                    "type": "boolean"
+                },
+                "region": {
+                    "title": "Region",
+                    "type": "string",
+                    "maxLength": 16,
+                    "minLength": 1
+                },
+                "require_2fa": {
+                    "title": "Require 2fa",
+                    "type": "boolean"
+                },
+                "require_2fa_grace_period_days": {
+                    "title": "Require 2fa grace period days",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "require_2fa_enforced_at": {
+                    "title": "Require 2fa enforced at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "User": {
+            "required": [
+                "email",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "maxLength": 254,
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "organization_role": {
+                    "title": "Organization role",
+                    "type": "string",
+                    "enum": [
+                        "Owner",
+                        "Admin",
+                        "Member",
+                        "Viewer",
+                        "workspace_admin",
+                        "workspace_member",
+                        "workspace_viewer"
+                    ],
+                    "x-nullable": true
+                },
+                "organization": {
+                    "$ref": "#/definitions/Organization"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "role": {
+                    "title": "Role",
+                    "description": "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+                    "type": "string",
+                    "maxLength": 255,
+                    "x-nullable": true
+                },
+                "goals": {
+                    "title": "Goals",
+                    "description": "List of user's goals for using the platform",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "Dashboard": {
             "required": [
                 "name"
@@ -159772,6 +159935,7 @@
                     "title": "Category",
                     "type": "string",
                     "enum": [
+                        "",
                         "system_metric",
                         "eval_metric",
                         "annotation_metric",
@@ -159784,6 +159948,7 @@
                     "title": "Role",
                     "type": "string",
                     "enum": [
+                        "",
                         "metric",
                         "dimension"
                     ],
@@ -159793,6 +159958,7 @@
                     "title": "Source",
                     "type": "string",
                     "enum": [
+                        "",
                         "traces",
                         "spans",
                         "sessions",
@@ -176437,7 +176603,7 @@
                 "trace_ids": {
                     "title": "Trace ids",
                     "type": "string",
-                    "default": []
+                    "default": ""
                 },
                 "filters": {
                     "title": "Filters",
@@ -177611,6 +177777,13 @@
                     "type": "string",
                     "x-nullable": true
                 },
+                "webhook_url": {
+                    "title": "Webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "maxLength": 200,
+                    "x-nullable": true
+                },
                 "is_mute": {
                     "title": "Is mute",
                     "type": "boolean"
@@ -178116,6 +178289,13 @@
                     "type": "string",
                     "x-nullable": true
                 },
+                "webhook_url": {
+                    "title": "Webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "maxLength": 200,
+                    "x-nullable": true
+                },
                 "is_mute": {
                     "title": "Is mute",
                     "type": "boolean"
@@ -178600,14 +178780,13 @@
                 "requested_columns": {
                     "title": "Requested columns",
                     "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
-                    "type": "string",
-                    "default": []
+                    "type": "string"
                 },
                 "attribute_keys": {
                     "title": "Attribute keys",
                     "description": "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
                     "type": "string",
-                    "default": []
+                    "default": ""
                 }
             }
         },

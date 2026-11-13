@@ -257,7 +257,7 @@ export default function TwoFactorVerifyView() {
       </Typography>
       <Typography
         sx={{
-          fontSize: "13px",
+          fontSize: "12px",
           color: "text.secondary",
           fontFamily: "Inter",
           mt: 1,

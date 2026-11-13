@@ -25,6 +25,9 @@ func New(cfg map[string]interface{}) *SystemPromptGuardrail {
 func (g *SystemPromptGuardrail) Name() string           { return "system-prompt-protection" }
 func (g *SystemPromptGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// ChecksRequestTextOnly marks that Check reads only request messages.
+func (g *SystemPromptGuardrail) ChecksRequestTextOnly() {}
+
 // Check detects system prompt extraction attempts in user messages.
 func (g *SystemPromptGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || input.Request == nil {

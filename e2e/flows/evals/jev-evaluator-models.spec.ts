@@ -162,7 +162,7 @@ async function authorJevEvaluator(page: Page, name: string,
   const picker = await openModelPicker(page);
   const latest = jevRows(picker).filter({ hasText: /^Jev latest/ });
   // Catalog readiness, not the legacy provider-status list, controls this row.
-  await ui(latest.getByText('via TypeSafe · Key configured', { exact: true })).toBeVisible();
+  await ui(latest.getByText('Key configured', { exact: true })).toBeVisible();
   await latest.click();
   await ui(page.getByPlaceholder('Search models...')).toBeHidden();
   await ui(page.getByText('Jev latest', { exact: true })).toBeVisible();
@@ -220,7 +220,7 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
       'create-v2 with jev-latest answers 200 and stores one row with model jev-latest',
     ],
     browserChecks: [
-      'searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models',
+      'searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI',
       'all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")',
     ],
   }),
@@ -256,7 +256,7 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
       await ui(picker.getByRole('combobox', { name: `Connection for ${label}`, exact: true })).toHaveValue(JEV_IDS[index]);
     }
     await picker.getByPlaceholder('Search models...').fill('');
-    const turingTop = (await picker.getByText('FutureAGI Models', { exact: true }).boundingBox())!.y;
+    const turingTop = (await picker.getByText('Future AGI', { exact: true }).boundingBox())!.y;
     const decisionTop = (await picker.getByText('Decision models', { exact: true }).boundingBox())!.y;
     expect(decisionTop).toBeGreaterThan(turingTop);
     await testInfo.attach('community-picker', { body: await page.screenshot(), contentType: 'image/png' });

@@ -485,6 +485,8 @@ export interface CreateSecretKeyApi {
    * @maxLength 100
    */
   key_name: string;
+  /** Optional expiry. Omit or send null for a key that never expires. */
+  expires_at?: string | null;
   type?: CreateSecretKeyApiType;
   simulation_environment_id?: string;
 }
@@ -501,6 +503,7 @@ export interface SecretKeyCreateResultApi {
   secret_key: string;
   /** @minLength 1 */
   masked_secret_key: string;
+  expires_at: string | null;
 }
 
 export interface SecretKeyCreateResponseApi {
@@ -528,6 +531,8 @@ export interface SecretKeyListItemApi {
   enabled: boolean;
   /** @minLength 1 */
   type: string;
+  expires_at: string | null;
+  is_expired: boolean;
 }
 
 export interface SecretKeyListResultApi {
@@ -8182,73 +8187,12 @@ export interface QueueReviewItemResponseApi {
   result: QueueReviewItemResultApi;
 }
 
-export type UserApiOrganizationRole =
-  (typeof UserApiOrganizationRole)[keyof typeof UserApiOrganizationRole];
-
-export const UserApiOrganizationRole = {
-  Owner: "Owner",
-  Admin: "Admin",
-  Member: "Member",
-  Viewer: "Viewer",
-  workspace_admin: "workspace_admin",
-  workspace_member: "workspace_member",
-  workspace_viewer: "workspace_viewer",
-} as const;
-
-export interface OrganizationApi {
+export interface AnnotationTaskAssigneeApi {
   readonly id?: string;
-  readonly created_at?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  /** @maxLength 255 */
-  display_name?: string;
-  is_new?: boolean;
-  ws_enabled?: boolean;
-  /**
-   * @minLength 1
-   * @maxLength 16
-   */
-  region?: string;
-  require_2fa?: boolean;
-  /**
-   * @minimum 0
-   * @maximum 32767
-   */
-  require_2fa_grace_period_days?: number;
-  require_2fa_enforced_at?: string;
-}
-
-/**
- * List of user's goals for using the platform
- */
-export type UserApiGoals = { [key: string]: unknown };
-
-export interface UserApi {
-  readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 254
-   */
-  email: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  organization_role?: UserApiOrganizationRole;
-  organization?: OrganizationApi;
-  readonly created_at?: string;
-  readonly status?: string;
-  /**
-   * User's job role (e.g., Data Scientist, ML Engineer, or custom role)
-   * @maxLength 255
-   */
-  role?: string;
-  /** List of user's goals for using the platform */
-  goals?: UserApiGoals;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly email?: string;
 }
 
 export type MonitorApiMonitorType =
@@ -8343,7 +8287,7 @@ export interface AIModelApi {
 
 export interface AnnotationTaskApi {
   readonly id?: string;
-  readonly assigned_users?: readonly UserApi[];
+  readonly assigned_users?: readonly AnnotationTaskAssigneeApi[];
   readonly created_at?: string;
   readonly updated_at?: string;
   ai_model?: AIModelApi;
@@ -13644,6 +13588,31 @@ export interface ModelHubEvalConfigResponseApi {
   result: ModelHubEvalConfigResponseResultApi;
 }
 
+export type EvalLogSourceNavigationApiStatus =
+  (typeof EvalLogSourceNavigationApiStatus)[keyof typeof EvalLogSourceNavigationApiStatus];
+
+export const EvalLogSourceNavigationApiStatus = {
+  ready: "ready",
+  no_reference: "no_reference",
+  unsupported_source: "unsupported_source",
+  unsupported_target: "unsupported_target",
+  incomplete_reference: "incomplete_reference",
+  invalid_reference: "invalid_reference",
+  ambiguous_reference: "ambiguous_reference",
+  unavailable: "unavailable",
+  source_not_recorded: "source_not_recorded",
+  temporarily_unavailable: "temporarily_unavailable",
+} as const;
+
+export interface EvalLogSourceNavigationApi {
+  status: EvalLogSourceNavigationApiStatus;
+  kind: "trace" | "voice_call" | null;
+  project_id: string | null;
+  trace_id: string | null;
+  span_id: string | null;
+  retryable: boolean;
+}
+
 export type EvalApiLogRowResponseResultApiValues = { [key: string]: unknown };
 
 export type EvalApiLogRowResponseResultApiOutput = { [key: string]: unknown };
@@ -13660,7 +13629,7 @@ export interface EvalApiLogRowResponseResultApi {
   log_id: string;
   created_at: string;
   evaluation_id: string;
-  source?: string;
+  source?: string | null;
   required_keys: string[];
   values: EvalApiLogRowResponseResultApiValues;
   output: EvalApiLogRowResponseResultApiOutput;
@@ -13668,12 +13637,13 @@ export interface EvalApiLogRowResponseResultApi {
   error_details?: EvalApiLogRowResponseResultApiErrorDetails;
   error_localizer_status?: string;
   error_localizer_message?: string;
-  dataset_id?: string;
-  span_id?: string;
-  trace_id?: string;
-  prompt_id?: string;
-  optimization_id?: string;
-  experiment_id?: string;
+  dataset_id?: string | null;
+  span_id?: string | null;
+  trace_id?: string | null;
+  prompt_id?: string | null;
+  optimization_id?: string | null;
+  experiment_id?: string | null;
+  source_navigation?: EvalLogSourceNavigationApi;
 }
 
 export interface EvalApiLogRowResponseApi {
@@ -15975,12 +15945,15 @@ export interface ConfigureEvaluationsApi {
   config?: ConfigureEvaluationsApiConfig;
 }
 
+/**
+ * Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.
+ */
 export interface SDKConfigureEvaluationsRequestApi {
   eval_config: ConfigureEvaluationsApi;
   /** @minLength 1 */
   platform: string;
   custom_eval_name?: string;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKMessageResultApi {
@@ -16004,11 +15977,14 @@ export interface SDKErrorResponseApi {
 
 export type SDKStandaloneEvalRequestApiConfig = { [key: string]: string };
 
+/**
+ * One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.
+ */
 export interface SDKStandaloneEvalInputApi {
   input?: string;
   /** @minimum 1 */
   max_tokens?: number;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKStandaloneEvalRequestApi {
@@ -26664,6 +26640,75 @@ export interface CustomEvalConfigApi {
   readonly eval_group?: string;
 }
 
+export type UserApiOrganizationRole =
+  (typeof UserApiOrganizationRole)[keyof typeof UserApiOrganizationRole];
+
+export const UserApiOrganizationRole = {
+  Owner: "Owner",
+  Admin: "Admin",
+  Member: "Member",
+  Viewer: "Viewer",
+  workspace_admin: "workspace_admin",
+  workspace_member: "workspace_member",
+  workspace_viewer: "workspace_viewer",
+} as const;
+
+export interface OrganizationApi {
+  readonly id?: string;
+  readonly created_at?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @maxLength 255 */
+  display_name?: string;
+  is_new?: boolean;
+  ws_enabled?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  region?: string;
+  require_2fa?: boolean;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  require_2fa_grace_period_days?: number;
+  require_2fa_enforced_at?: string;
+}
+
+/**
+ * List of user's goals for using the platform
+ */
+export type UserApiGoals = { [key: string]: unknown };
+
+export interface UserApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 254
+   */
+  email: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  organization_role?: UserApiOrganizationRole;
+  organization?: OrganizationApi;
+  readonly created_at?: string;
+  readonly status?: string;
+  /**
+   * User's job role (e.g., Data Scientist, ML Engineer, or custom role)
+   * @maxLength 255
+   */
+  role?: string;
+  /** List of user's goals for using the platform */
+  goals?: UserApiGoals;
+}
+
 export interface DashboardApi {
   readonly id?: string;
   /**
@@ -27040,6 +27085,7 @@ export type DashboardMetricsCatalogQueryApiCategory =
   (typeof DashboardMetricsCatalogQueryApiCategory)[keyof typeof DashboardMetricsCatalogQueryApiCategory];
 
 export const DashboardMetricsCatalogQueryApiCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -27051,6 +27097,7 @@ export type DashboardMetricsCatalogQueryApiRole =
   (typeof DashboardMetricsCatalogQueryApiRole)[keyof typeof DashboardMetricsCatalogQueryApiRole];
 
 export const DashboardMetricsCatalogQueryApiRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -27059,6 +27106,7 @@ export type DashboardMetricsCatalogQueryApiSource =
   (typeof DashboardMetricsCatalogQueryApiSource)[keyof typeof DashboardMetricsCatalogQueryApiSource];
 
 export const DashboardMetricsCatalogQueryApiSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",
@@ -34903,6 +34951,8 @@ export interface UserAlertMonitorApi {
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
+  /** @maxLength 200 */
+  webhook_url?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorApiFilters;
   readonly logs?: readonly UserAlertMonitorApiLogsItem[];
@@ -35099,6 +35149,8 @@ export interface UserAlertMonitorPreviewGraphApi {
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
+  /** @maxLength 200 */
+  webhook_url?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorPreviewGraphApiFilters;
   readonly logs?: readonly UserAlertMonitorPreviewGraphApiLogsItem[];
@@ -38443,6 +38495,21 @@ export type ModelHubGetEvalConfigListParams = {
   eval_id: string;
 };
 
+export type ModelHubGetEvalLogsListParams = {
+  log_id: string;
+  order?: string;
+  source?: string;
+  include_source_navigation?: ModelHubGetEvalLogsListIncludeSourceNavigation;
+};
+
+export type ModelHubGetEvalLogsListIncludeSourceNavigation =
+  (typeof ModelHubGetEvalLogsListIncludeSourceNavigation)[keyof typeof ModelHubGetEvalLogsListIncludeSourceNavigation];
+
+export const ModelHubGetEvalLogsListIncludeSourceNavigation = {
+  true: "true",
+  false: "false",
+} as const;
+
 export type ModelHubGetEvalLogsDetailsListParams = {
   eval_template_id: string;
   /**
@@ -39589,6 +39656,7 @@ export type SimulateApiRunTestsListSimulationType =
   (typeof SimulateApiRunTestsListSimulationType)[keyof typeof SimulateApiRunTestsListSimulationType];
 
 export const SimulateApiRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39667,6 +39735,7 @@ export type SimulateRunTestsListSimulationType =
   (typeof SimulateRunTestsListSimulationType)[keyof typeof SimulateRunTestsListSimulationType];
 
 export const SimulateRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39819,6 +39888,7 @@ export type SimulateV3TestExecutionCallsGroupBy =
   (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
 
 export const SimulateV3TestExecutionCallsGroupBy = {
+  "": "",
   goal: "goal",
   sub_goal: "sub_goal",
   accent: "accent",
@@ -40029,6 +40099,7 @@ export type TracerDashboardMetricsCategory =
   (typeof TracerDashboardMetricsCategory)[keyof typeof TracerDashboardMetricsCategory];
 
 export const TracerDashboardMetricsCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -40040,6 +40111,7 @@ export type TracerDashboardMetricsRole =
   (typeof TracerDashboardMetricsRole)[keyof typeof TracerDashboardMetricsRole];
 
 export const TracerDashboardMetricsRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -40048,6 +40120,7 @@ export type TracerDashboardMetricsSource =
   (typeof TracerDashboardMetricsSource)[keyof typeof TracerDashboardMetricsSource];
 
 export const TracerDashboardMetricsSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",
@@ -41737,6 +41810,12 @@ export type TracerTraceVoiceCallDetailParams = {
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
    */
   project_id?: string;
+  /**
+   * Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.
+   * @minLength 1
+   * @maxLength 255
+   */
+  expected_span_id?: string;
 };
 
 export type TracerTraceReadParams = {

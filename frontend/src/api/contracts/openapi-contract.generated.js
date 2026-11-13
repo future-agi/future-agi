@@ -2832,7 +2832,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           workspace_id: {
@@ -16767,7 +16767,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           page_size: {
@@ -20618,10 +20618,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/get-eval-logs": {
       get: {
         operationId: "model-hub_get-eval-logs_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          log_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          order: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          source: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          include_source_navigation: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/EvalApiLogRowResponse",
@@ -20734,7 +20761,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           filters: {
@@ -30659,7 +30686,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -31275,7 +31302,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -33004,7 +33031,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           ordering: {
@@ -33056,6 +33083,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "goal",
                 "sub_goal",
                 "accent",
@@ -33868,7 +33896,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           agent_definition_id: {
@@ -33905,6 +33933,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "system_metric",
                 "eval_metric",
                 "annotation_metric",
@@ -33918,7 +33947,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["metric", "dimension"],
+              enum: ["", "metric", "dimension"],
               default: "",
             },
           },
@@ -33927,6 +33956,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "traces",
                 "spans",
                 "sessions",
@@ -41069,14 +41099,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
           exclude_annotators: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
         },
@@ -42334,7 +42364,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           filters: {
@@ -42750,6 +42780,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          expected_span_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
         },
         responses: {
           200: {
@@ -42759,6 +42797,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorResponse",
           },
           500: {
@@ -43578,14 +43619,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
             },
           },
           attribute_keys: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
         },
@@ -54447,7 +54487,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         assigned_users: {
           type: "array",
           items: {
-            $ref: "#/definitions/User",
+            $ref: "#/definitions/AnnotationTaskAssignee",
           },
           readOnly: true,
         },
@@ -58871,6 +58911,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 100,
           minLength: 1,
         },
+        expires_at: {
+          title: "Expires at",
+          description:
+            "Optional expiry. Omit or send null for a key that never expires.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
         type: {
           title: "Type",
           type: "string",
@@ -59632,6 +59680,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Category",
           type: "string",
           enum: [
+            "",
             "system_metric",
             "eval_metric",
             "annotation_metric",
@@ -59643,13 +59692,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         role: {
           title: "Role",
           type: "string",
-          enum: ["metric", "dimension"],
+          enum: ["", "metric", "dimension"],
           default: "",
         },
         source: {
           title: "Source",
           type: "string",
           enum: [
+            "",
             "traces",
             "spans",
             "sessions",
@@ -82744,11 +82794,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-      additionalProperties: {
-        description:
-          "Provider-specific credential fields accepted at top level.",
-        type: "object",
-      },
+      description:
+        "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
+      additionalProperties: true,
     },
     SDKConfigureEvaluationsResponse: {
       required: ["status", "result"],
@@ -88015,7 +88063,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         trace_ids: {
           title: "Trace ids",
           type: "string",
-          default: [],
+          default: "",
         },
         filters: {
           title: "Filters",
@@ -90261,6 +90309,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
+          "x-nullable": true,
+        },
         is_mute: {
           title: "Is mute",
           type: "boolean",
@@ -90884,6 +90939,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         slack_notes: {
           title: "Slack notes",
           type: "string",
+          "x-nullable": true,
+        },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
           "x-nullable": true,
         },
         is_mute: {
@@ -91525,14 +91587,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
           type: "string",
-          default: [],
         },
         attribute_keys: {
           title: "Attribute keys",
           description:
             "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
           type: "string",
-          default: [],
+          default: "",
         },
       },
     },
@@ -95124,8 +95185,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    User: {
-      required: ["email", "name"],
+    AnnotationTaskAssignee: {
       type: "object",
       properties: {
         id: {
@@ -95134,60 +95194,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
         email: {
           title: "Email",
           type: "string",
           format: "email",
-          maxLength: 254,
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        organization_role: {
-          title: "Organization role",
-          type: "string",
-          enum: [
-            "Owner",
-            "Admin",
-            "Member",
-            "Viewer",
-            "workspace_admin",
-            "workspace_member",
-            "workspace_viewer",
-          ],
-          "x-nullable": true,
-        },
-        organization: {
-          $ref: "#/definitions/Organization",
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
           readOnly: true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          readOnly: true,
-        },
-        role: {
-          title: "Role",
-          description:
-            "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-          type: "string",
-          maxLength: 255,
-          "x-nullable": true,
-        },
-        goals: {
-          title: "Goals",
-          description: "List of user's goals for using the platform",
-          type: "object",
-          "x-nullable": true,
+          minLength: 1,
         },
       },
     },
@@ -97476,6 +97494,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    User: {
+      required: ["email", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          maxLength: 254,
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        organization_role: {
+          title: "Organization role",
+          type: "string",
+          enum: [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer",
+          ],
+          "x-nullable": true,
+        },
+        organization: {
+          $ref: "#/definitions/Organization",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+        },
+        role: {
+          title: "Role",
+          description:
+            "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        goals: {
+          title: "Goals",
+          description: "List of user's goals for using the platform",
+          type: "object",
+          "x-nullable": true,
+        },
+      },
+    },
     DashboardFilterValuesResult: {
       required: ["values"],
       type: "object",
@@ -99112,7 +99197,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         span_id: {
           title: "Span id",
           type: "string",
-          format: "uuid",
+          minLength: 1,
           "x-nullable": true,
         },
         trace_id: {
@@ -99138,6 +99223,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           "x-nullable": true,
+        },
+        source_navigation: {
+          $ref: "#/definitions/EvalLogSourceNavigation",
         },
       },
     },
@@ -113092,9 +113180,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 1,
         },
       },
-      additionalProperties: {
-        type: "object",
-      },
+      description:
+        "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
+      additionalProperties: true,
     },
     SDKStandaloneEvalResultItem: {
       required: ["evaluations"],
@@ -113699,6 +113787,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "masked_api_key",
         "secret_key",
         "masked_secret_key",
+        "expires_at",
       ],
       type: "object",
       properties: {
@@ -113731,6 +113820,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Masked secret key",
           type: "string",
           minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -118304,65 +118399,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    Organization: {
-      required: ["name"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        display_name: {
-          title: "Display name",
-          type: "string",
-          maxLength: 255,
-        },
-        is_new: {
-          title: "Is new",
-          type: "boolean",
-        },
-        ws_enabled: {
-          title: "Ws enabled",
-          type: "boolean",
-        },
-        region: {
-          title: "Region",
-          type: "string",
-          maxLength: 16,
-          minLength: 1,
-        },
-        require_2fa: {
-          title: "Require 2fa",
-          type: "boolean",
-        },
-        require_2fa_grace_period_days: {
-          title: "Require 2fa grace period days",
-          type: "integer",
-          maximum: 32767,
-          minimum: 0,
-        },
-        require_2fa_enforced_at: {
-          title: "Require 2fa enforced at",
-          type: "string",
-          format: "date-time",
-          "x-nullable": true,
-        },
-      },
-    },
     AutomationRuleScope: {
       type: "object",
       properties: {
@@ -118888,6 +118924,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Payment type",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    Organization: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        display_name: {
+          title: "Display name",
+          type: "string",
+          maxLength: 255,
+        },
+        is_new: {
+          title: "Is new",
+          type: "boolean",
+        },
+        ws_enabled: {
+          title: "Ws enabled",
+          type: "boolean",
+        },
+        region: {
+          title: "Region",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        require_2fa: {
+          title: "Require 2fa",
+          type: "boolean",
+        },
+        require_2fa_grace_period_days: {
+          title: "Require 2fa grace period days",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        require_2fa_enforced_at: {
+          title: "Require 2fa enforced at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -119961,6 +120056,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/EmbeddingConfigOption",
           },
+        },
+      },
+    },
+    EvalLogSourceNavigation: {
+      required: [
+        "status",
+        "kind",
+        "project_id",
+        "trace_id",
+        "span_id",
+        "retryable",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ready",
+            "no_reference",
+            "unsupported_source",
+            "unsupported_target",
+            "incomplete_reference",
+            "invalid_reference",
+            "ambiguous_reference",
+            "unavailable",
+            "source_not_recorded",
+            "temporarily_unavailable",
+          ],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["trace", "voice_call"],
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
         },
       },
     },
@@ -127603,6 +127756,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "enabled",
         "type",
+        "expires_at",
+        "is_expired",
       ],
       type: "object",
       properties: {
@@ -127645,6 +127800,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Type",
           type: "string",
           minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        is_expired: {
+          title: "Is expired",
+          type: "boolean",
         },
       },
     },

@@ -105,7 +105,7 @@ export default function AssistantMessage({ message, onFeedback }) {
             sx={{
               mt: 0.5,
               color: "error.main",
-              fontSize: 13,
+              fontSize: 12,
             }}
           >
             {message.error}
