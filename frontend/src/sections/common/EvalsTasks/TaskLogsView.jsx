@@ -159,7 +159,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {group.title}
             </Typography>
@@ -405,7 +405,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {warningTypeLabel(group.type)}
             </Typography>
@@ -870,7 +870,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
                 Warnings
               </Typography>
               <Chip
@@ -945,7 +945,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
                 Error Log
               </Typography>
               <Chip
@@ -1055,7 +1055,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             All evaluations completed successfully
           </Typography>

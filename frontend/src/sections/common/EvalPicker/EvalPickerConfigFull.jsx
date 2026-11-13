@@ -1549,7 +1549,7 @@ const EvalPickerConfigFull = ({
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
           FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 32 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "12px", height: 32 } }}
         />
       </Box>
 
@@ -2051,7 +2051,7 @@ const EvalPickerConfigFull = ({
                 <Typography
                   variant="body2"
                   fontWeight={600}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {source === "composite"
                     ? "Test Playground"

@@ -1931,7 +1931,7 @@ const TracingTestMode = React.forwardRef(
                   placeholder="Search projects..."
                   InputProps={{
                     ...params.InputProps,
-                    sx: { ...params.InputProps.sx, fontSize: "13px" },
+                    sx: { ...params.InputProps.sx, fontSize: "12px" },
                     endAdornment: loadingProjects ? (
                       <InputAdornment position="end">
                         <CircularProgress size={14} />
@@ -1949,7 +1949,7 @@ const TracingTestMode = React.forwardRef(
                     component="li"
                     key={key}
                     {...rest}
-                    sx={{ ...rest.sx, fontSize: "13px" }}
+                    sx={{ ...rest.sx, fontSize: "12px" }}
                   >
                     {option.name || option.id}
                   </Box>

@@ -73,7 +73,7 @@
 
 <div class="shell">
   <aside class="side" id="side">
-    <div class="brand"><img class="brand-mark" src="assets/future-agi-mark.svg" alt="Future AGI"><div><b>Future AGI</b><span>Design System · v0.2.3</span></div></div>
+    <div class="brand"><img class="brand-mark" src="assets/future-agi-mark.svg" alt="Future AGI"><div><b>Future AGI</b><span>Design System · v0.2.4</span></div></div>
     <nav aria-label="Sections">
       <div class="grp">Overview</div>
       <a class="lnk" href="#principles">Principles</a>
@@ -140,7 +140,7 @@
       <!-- ===================================================== OVERVIEW -->
       <section class="doc" id="principles">
         <header>
-          <div class="eyebrow">Future AGI · v0.2.3 · 31 Oct 2026</div>
+          <div class="eyebrow">Future AGI · v0.2.4 · 11 Nov 2026</div>
           <h1>Future AGI Design System</h1>
           <p class="lede">One set of tokens, components and rules for the whole Future AGI product, in light and dark. Every screen draws each thing one way, from one shared component, and the rules are checked in code so the product stays consistent as it grows.</p>
         </header>
@@ -167,7 +167,7 @@
             <tr><td>A status colour</td><td><span class="mono">theme.palette.status.&lt;role&gt;.&lt;fg|bg|border|solid&gt;</span></td><td><span class="mono">status.danger.fg</span> on <span class="mono">status.danger.bg</span></td></tr>
             <tr><td>Text style</td><td>A type role as a Typography variant</td><td><span class="mono">&lt;Typography variant="body_sm"&gt;</span>, <span class="mono">variant="label_md"</span></td></tr>
             <tr><td>A size</td><td>Size tokens</td><td>Control <span class="mono">md 32</span>, row <span class="mono">36</span> (<span class="mono">ROW_HEIGHT.default</span>), icon <span class="mono">16</span></td></tr>
-            <tr><td>A page frame or repeated block</td><td>The shared component, never a local copy</td><td><span class="mono">PageHeader</span>, <span class="mono">Section</span> (plain | panel), <span class="mono">MetricStrip</span>, <span class="mono">SelectionBar</span>, <span class="mono">StatusBadge</span>, <span class="mono">EmptyState</span> / <span class="mono">EmptyContent</span>, <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span>, <span class="mono">DataTablePagination</span>, <span class="mono">FormSearchField</span>, <span class="mono">CustomTabs</span> / <span class="mono">SegmentedTabs</span>, <span class="mono">ConfirmDialog</span> / <span class="mono">ClosableDialog</span>. <span class="mono">PageHeader</span>, <span class="mono">MetricStrip</span>, <span class="mono">EmptyState</span>, <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span> and <span class="mono">ClosableDialog</span> are not on <span class="mono">dev</span> yet.</td></tr>
+            <tr><td>A page frame or repeated block</td><td>The shared component, never a local copy</td><td><span class="mono">PageHeader</span>, <span class="mono">Section</span> (plain | panel), <span class="mono">MetricStrip</span>, <span class="mono">SelectionBar</span>, <span class="mono">StatusBadge</span>, <span class="mono">EmptyState</span> / <span class="mono">EmptyContent</span>, <span class="mono">Loader</span> / <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span>, <span class="mono">DataTablePagination</span>, <span class="mono">FormSearchField</span>, <span class="mono">CustomTabs</span> / <span class="mono">SegmentedTabs</span>, <span class="mono">ConfirmDialog</span> / <span class="mono">ClosableDialog</span>. <span class="mono">PageHeader</span>, <span class="mono">MetricStrip</span>, <span class="mono">EmptyState</span>, <span class="mono">Loader</span>, <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span> and <span class="mono">ClosableDialog</span> are not on <span class="mono">dev</span> yet.</td></tr>
             <tr><td>Where it lives in the product</td><td><span class="mono">frontend/src/theme/</span>: <span class="mono">ds-tokens.js</span> (generated) plus the product text variants and component styling</td><td>Change component styling in <span class="mono">frontend/src/theme/overrides/components/</span>; change a value in <span class="mono">tokens.json</span>.</td></tr>
             <tr><td>To check a screen</td><td><span class="mono">yarn lint:ds:changed</span> and <span class="mono">yarn ds:optouts</span> from <span class="mono">frontend/</span> (CI runs both)</td><td>Flags hex colours, legacy palette hues, sizes off the scale, weights above 600, uppercase, restyled Avatar/Tab/Toggle/Menu/Alert/Button/Chip, Card/Paper styling, custom shadows, purple selected states, and <span class="mono">Card</span> imports</td></tr>
             <tr><td>To change a value</td><td>Edit <span class="mono">frontend/design-system/tokens/tokens.json</span>, then run <span class="mono">yarn tokens:build</span> from <span class="mono">frontend/</span></td><td>The build fails if any promised text contrast drops below its minimum</td></tr>
@@ -182,6 +182,7 @@
           <p class="muted">What changed in each version.</p>
         </header>
         <div class="tscroll"><table class="spec"><thead><tr><th>Version</th><th>Date</th><th>Changes</th></tr></thead><tbody>
+          <tr><td>0.2.4</td><td>11 Nov 2026</td><td>13px is gone: <code>body-md</code> and <code>title-xs</code> are 12/18, so section and panel titles, paragraphs, input values, toasts and dialog body text are 12px. Legacy <span class="mono">s1_2</span> and <span class="mono">m3</span> follow. Hard-coded 13px sizes in the product moved to 12. Loading: a skeleton only where it copies the content (table rows, a screen's own cards); pages and panels use the simple <span class="mono">Loader</span>. Replaces the 0.2.2 “no centred spinners” rule. The top progress bar on page changes is removed; the content-area loader is the only page loader. Tables load as skeleton rows under their real headers; a page never shows two loaders in a row.</td></tr>
           <tr><td>0.2.3</td><td>31 Oct 2026</td><td>Unselected tab labels darker: <code>fg.secondary</code>, was <code>fg.tertiary</code>. Every dialog that can be closed has a close cross top right; new <span class="mono">ClosableDialog</span> for raw dialogs.</td></tr>
           <tr><td>0.2.2</td><td>31 Oct 2026</td><td>Table rows 36, two-line rows 48. Tab rail: the theme draws one hairline under every tab row. Sidebar labels darker: items <code>fg.default</code>, section labels <code>fg.secondary</code>. Loading is <span class="mono">ContentSkeleton</span>, no centred spinners. Knowledge base statuses in the status map.</td></tr>
           <tr><td>0.2.1</td><td>30 Oct 2026</td><td>Docs match the product: page titles, object headers, dialog and drawer titles 15/600, section and panel titles 13/500; table rows 36 everywhere (one shared setting); 12 inside panels. Removed screen-specific notes (Evidence and requirements, the long density note, run and issue header details). Status map, merged with Run status into one table. Getting started and Rollout apply the theme kit, not <span class="mono">mui-theme.js</span> alone. White tab underline and focus in dark. Product text sizes and the theme kit.</td></tr>
@@ -236,7 +237,7 @@
       <section class="doc" id="type">
         <header>
           <h2>Typography</h2>
-          <p class="muted">Inter, three weights (400, 500, 600), tabular figures for numbers. Line heights sit on a 4px grid. <code>body-sm</code> (12px) is the UI default; <code>body-md</code> (13px) is only for long reading text. Legacy variants map onto the scale: <span class="mono">s1</span> 12, <span class="mono">s3</span> 11, <span class="mono">m3</span> 13, <span class="mono">m1</span>/<span class="mono">m2</span> 15.</p>
+          <p class="muted">Inter, three weights (400, 500, 600), tabular figures for numbers. Line heights sit on a 4px grid. <code>body-sm</code> (12px) is the UI default; <code>body-md</code> (12/18) is for long reading text. 12px is the largest body size; nothing uses 13px. Legacy variants map onto the scale: <span class="mono">s1</span> 12, <span class="mono">s3</span> 11, <span class="mono">m3</span> 12, <span class="mono">m1</span>/<span class="mono">m2</span> 15.</p>
         </header>
         <div class="type-spec" id="typeSpec"></div>
         <div class="dd">
@@ -382,7 +383,7 @@
       <section class="doc" id="input">
         <header>
           <h2>Text field</h2>
-          <p class="muted">Label above, helper or error below. 32px tall, value in 13px. The label never sits inside the field.</p>
+          <p class="muted">Label above, helper or error below. 32px tall, value in 12px. The label never sits inside the field.</p>
         </header>
         <div class="demo" data-demo="surface">
           <div class="stack" style="max-width:520px">
@@ -602,7 +603,7 @@
           <tr><td>Container</td><td>None. No outer border, radius, background or shadow; the table runs the full width of its column on the page surface. Don't put a table inside a Panel or Card.</td></tr>
           <tr><td>Toolbar</td><td>Above the table, outside it: search, filters and tag chips left, Columns right, 12 below.</td></tr>
           <tr><td>Rows</td><td>36 default, 28 compact, 48 two-line. Every table reads <span class="mono">ROW_HEIGHT</span> from <span class="mono">src/theme/sizes.js</span>; no screen types its own number. Full-width separator <code>border.default</code> under every row, the last one included. Hover <code>bg.hover</code>, selected <code>bg.selected</code>.</td></tr>
-          <tr><td>List rows</td><td>Hand-built lists (card rows, folders, settings, pickers) match the table: title 12/500, meta 11 in <code>fg.tertiary</code>, 28px icon tile, 36px one-line / 48px two-line rows, section headings 13/500 with the count inside the heading. Side trees: 12px items in 28px rows. In-page side panels 224px.</td></tr>
+          <tr><td>List rows</td><td>Hand-built lists (card rows, folders, settings, pickers) match the table: title 12/500, meta 11 in <code>fg.tertiary</code>, 28px icon tile, 36px one-line / 48px two-line rows, section headings 12/500 with the count inside the heading. Side trees: 12px items in 28px rows. In-page side panels 224px.</td></tr>
           <tr><td>Row text</td><td>Values 12/18 in <code>fg.secondary</code>; the row title 12/500 in <code>fg.default</code>; secondary text 11 in <code>fg.tertiary</code>. A status label never sits a size above the cells beside it.</td></tr>
           <tr><td>Cells</td><td>Padding 12. Text left, numbers right with tabular figures. Truncate with an ellipsis and a tooltip; never wrap a single-line row.</td></tr>
           <tr><td>Cell content</td><td>No boxes inside cells: tags, versions and qualifiers are plain text in <code>fg.tertiary</code> joined with “ · ”; counts are plain numbers. The status badge is the only filled element in a row.</td></tr>
@@ -620,7 +621,7 @@
       <section class="doc" id="panel">
         <header>
           <h2>Panel and key-value</h2>
-          <p class="muted">A panel is a <code>bg.surface</code> block with a 1px <code>border.default</code> and radius 8; no shadow. Facts go in a key-value list, not in decorated cards. Compact: a 36px header with the title in 13/500, 12px body padding, key-value rows 6 · 12.</p>
+          <p class="muted">A panel is a <code>bg.surface</code> block with a 1px <code>border.default</code> and radius 8; no shadow. Facts go in a key-value list, not in decorated cards. Compact: a 36px header with the title in 12/500, 12px body padding, key-value rows 6 · 12.</p>
         </header>
         <div class="demo" data-demo>
           <div class="ds-panel" style="max-width:520px">
@@ -751,7 +752,7 @@
           <tr><td>Lifetime</td><td>Auto-hides after 6s. A 3px bar along the bottom counts down in the status colour and pauses while the toast is hovered. Always closable with ×.</td></tr>
           <tr><td>Card</td><td>320–420 wide, padding 12 · 14 (16 at the bottom for the bar), <code>bg.overlay</code>, 1px <code>border.default</code>, <code>radius.lg</code>, <code>shadow.overlay</code>.</td></tr>
           <tr><td>Icon</td><td>28px circle in <code>status.*.bg</code> with an 18px filled status icon in <code>status.*.solid</code> (Solar bold: check-circle, danger-circle, danger-triangle, info-circle).</td></tr>
-          <tr><td>Message</td><td>One sentence, 13/20 at 500 in <code>fg.default</code>, clamped to 3 lines with “Show more”. One optional link action (“Undo”).</td></tr>
+          <tr><td>Message</td><td>One sentence, 12/18 at 500 in <code>fg.default</code>, clamped to 3 lines with “Show more”. One optional link action (“Undo”).</td></tr>
           <tr><td>Variants</td><td>success, error (danger), warning, info, default (neutral).</td></tr>
           <tr><td>Code</td><td><span class="mono">enqueueSnackbar(message, { variant })</span> through <span class="mono">components/snackbar</span>.</td></tr>
           <tr><td>Banner</td><td>When the page's main button is disabled, a warning banner under the header says what's needed in one sentence and carries the button that does it.</td></tr>
@@ -775,10 +776,10 @@
           </div>
         </div>
         <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
-          <tr><td>First run</td><td>Nothing exists yet. Header and tabs stay; the toolbar and empty table headers hide. A centred 400px block about 160px below the header: 40px icon tile, “No ___ yet” in 13/600, one sentence in 12px <code>fg.tertiary</code>, one primary button (verb + noun), optional docs link.</td></tr>
+          <tr><td>First run</td><td>Nothing exists yet. Header and tabs stay; the toolbar and empty table headers hide. A centred 400px block about 160px below the header: 40px icon tile, “No ___ yet” in 12/600, one sentence in 12px <code>fg.tertiary</code>, one primary button (verb + noun), optional docs link.</td></tr>
           <tr><td>First run, optional</td><td>Up to three numbered steps. For anything fed from code, a quickstart panel with language tabs, copy and “Waiting for the first …”.</td></tr>
           <tr><td>No results</td><td>A search or filter matched nothing: inside the table frame, “No tasks match “query””, with Clear filters.</td></tr>
-          <tr><td>Loading</td><td>Keeps the layout: <span class="mono">ContentSkeleton</span> (page, rows or panel) in place of the content. No centred spinners.</td></tr>
+          <tr><td>Loading</td><td>The page header, tabs and toolbar are always real; only the region that waits shows a loader. A table's first load is skeleton rows under its real column headers (<span class="mono">DataTable</span> and every AG Grid table do this; never AG Grid's “Loading…” popup; elsewhere <span class="mono">ContentSkeleton variant="rows"</span>), or a screen's own skeleton of its real cards. Everywhere else, the simple loader: <span class="mono">Loader</span> (or <span class="mono">LoadingScreen</span> for a page), one 20px spinner in <code>fg.secondary</code>, centred, shown after 300 ms. Never grey text bars that don't match the content. One loader per wait, inside the content area: the sidebar and header stay put, and there is no top progress bar.</td></tr>
           <tr><td>Error</td><td>Says what failed and offers a retry.</td></tr>
         </tbody></table></div>
         <div class="dd">
