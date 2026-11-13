@@ -434,13 +434,16 @@ follow the header.
       `scripts/pr_risk.py` and `.github/pr-autopilot.yml`, which the
       approving job runs with the approver token; the header lists the
       files. Then the header's re-listing, in each key-holding repository.
-      Every `v*` tag is listed again and compared with step 2's listing. A
-      tag that points at another commit than in step 2 was moved, and an
-      administrator puts it back at its step-2 commit. A new tag stays if
-      its commit is on `main` and its `.github` and listed paths match
-      main's recorded tip, or if a reader reads the differing files at the
-      tag; otherwise it is deleted with its runs. Each run of the last
-      30 days on a ref that a key or approver environment admits is
+      Every `v*` tag is listed again, and each must point at a commit on
+      `main`. Tags are compared with step 2's listing, which holds only the
+      tags kept after the sweep. A tag that points at another commit than
+      in step 2 was moved, and an administrator puts it back at its step-2
+      commit. That tag push starts `release-images.yml` on the tag with
+      every component; its runs are cancelled and deleted, not approved in
+      Production. Any other tag is deleted with its runs unless its commit
+      is on `main` and its `.github` and listed paths match main's recorded
+      tip, or a reader reads the differing files at the tag. Each run of
+      the last 30 days on a ref that a key or approver environment admits is
       compared only on its own workflow file, what that file reaches
       through `uses: ./` and the paths the one-time read lists for it,
       such as `scripts/pr_risk.py` and `.github/pr-autopilot.yml` for this
@@ -453,7 +456,11 @@ follow the header.
       This repository had up to 712 runs in one hour of 12 Nov (read on
       13 Nov), so its slices are an hour or less. It also keeps
       `pull_request_target` runs, this workflow's PR-event runs among them,
-      because they run main's workflow file whatever branch they report;
+      because they run main's workflow file whatever branch they report.
+      The merged-PR runs, `pull_request` runs created at or after their PR
+      was merged, have the branch it merged into as their ref and are
+      deleted (20 such runs on `dev` for the PRs merged from 14 Oct to
+      13 Nov);
    6. the new release-bot key goes into the environments.
 
    Release jobs that use the key stop working from step 3 to step 6, which
