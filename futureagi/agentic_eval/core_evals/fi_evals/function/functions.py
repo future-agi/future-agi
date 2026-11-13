@@ -3662,7 +3662,7 @@ def calculate_spearman_correlation(output, expected, **kwargs):
     if ss_x == 0 or ss_y == 0:
         # A constant input has no rank correlation; score it as none, not perfect.
         return {"result": 0.5, "reason": "Zero variance in one or both inputs"}
-    rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry)) / (ss_x * ss_y) ** 0.5
+    rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry, strict=True)) / (ss_x * ss_y) ** 0.5
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
