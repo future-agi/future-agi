@@ -750,7 +750,7 @@ def build_call_rows(
             if not name:
                 continue
             result = sub_goal_result(item) if isinstance(item, dict) else None
-            entry = {
+            entry: dict[str, Any] = {
                 "name": str(name),
                 "passed": SUB_GOAL_PASSED.get(result),
             }

@@ -295,21 +295,6 @@ class HarnessEnvironmentAmendmentSerializer(serializers.Serializer):
     note = serializers.CharField()
 
 
-class HarnessEnvironmentCallActorPersonaSerializer(serializers.Serializer):
-    """The caller persona fields an actor's voice is chosen from."""
-
-    name = serializers.CharField(required=False, allow_blank=True)
-    gender = serializers.CharField(required=False, allow_blank=True)
-    age_group = serializers.CharField(required=False, allow_blank=True)
-    occupation = serializers.CharField(required=False, allow_blank=True)
-    location = serializers.CharField(required=False, allow_blank=True)
-    personality = serializers.CharField(required=False, allow_blank=True)
-    communication_style = serializers.CharField(required=False, allow_blank=True)
-    initial_message = serializers.CharField(required=False, allow_blank=True)
-    languages = serializers.ListField(child=serializers.CharField(), required=False)
-    accent = serializers.CharField(required=False, allow_blank=True)
-
-
 class HarnessEnvironmentCallActorSerializer(serializers.Serializer):
     """Someone on the person's side who is not the person, on the environment's list."""
 
@@ -317,8 +302,10 @@ class HarnessEnvironmentCallActorSerializer(serializers.Serializer):
     name = serializers.CharField()
     role = serializers.CharField(allow_blank=True)
     channel = serializers.CharField()
-    persona = HarnessEnvironmentCallActorPersonaSerializer()
-    loudness_ratio = serializers.FloatField(required=False)
+    # The caller persona's fields the voice is chosen from (name, gender, age_group, languages, accent and the rest),
+    # kept as the runtime wrote them, any field it adds included.
+    persona = JsonObjectRequestField()
+    loudness_ratio = serializers.FloatField(required=False, allow_null=True)
     scenarios_count = serializers.IntegerField()
 
 
@@ -357,25 +344,17 @@ class HarnessEnvironmentScenarioActorActionSerializer(serializers.Serializer):
     trigger = HarnessEnvironmentCallActorTriggerSerializer(required=False)
 
 
-class HarnessEnvironmentScenarioActorKnowledgeSerializer(serializers.Serializer):
-    """What the actor is given to read in this scenario: facts, files by path, or records from a store."""
-
-    kind = serializers.ChoiceField(choices=("facts", "files", "records"))
-    text = serializers.CharField(required=False, allow_blank=True)
-    paths = serializers.ListField(child=serializers.CharField(), required=False)
-    store = serializers.CharField(required=False, allow_blank=True)
-    collection = serializers.CharField(required=False, allow_blank=True)
-    where = serializers.JSONField(required=False)
-
-
 class HarnessEnvironmentScenarioCallActorSerializer(serializers.Serializer):
     """An actor a scenario includes: what they say in it and when, what they read, and the world actions they take."""
 
     id = serializers.CharField()
-    instruction = serializers.CharField(allow_blank=True, required=False)
-    knowledge = HarnessEnvironmentScenarioActorKnowledgeSerializer(
-        many=True, required=False
+    instruction = serializers.CharField(
+        allow_blank=True, required=False, trim_whitespace=False
     )
+    # What the actor is given to read in this scenario, each entry kept as the runtime wrote it: usually
+    # `{"kind": "facts", "text"}`, `{"kind": "files", "paths"}` or `{"kind": "records", "store", "collection", "where"?}`,
+    # but any object, with or without a `kind`, is valid.
+    knowledge = serializers.ListField(child=JsonObjectRequestField(), required=False)
     # Absent or null: the actor comes in the way its own activation says.
     trigger = HarnessEnvironmentCallActorTriggerSerializer(
         required=False, allow_null=True
@@ -1844,7 +1823,7 @@ class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
 
 class HarnessActorListSerializer(serializers.Serializer):
     actors = serializers.ListField(child=HarnessActorRecordField())
-    source = serializers.ChoiceField(choices=("draft", "saved"))
+    source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]  # the API field is named source
     revision = serializers.IntegerField()
     # Each actor file's record schema, from the rules of the release that sealed the environment.
     record_schemas = JsonObjectRequestField()
@@ -1870,7 +1849,9 @@ class HarnessActorViewQuerySerializer(serializers.Serializer):
 class HarnessActorSeenSerializer(serializers.Serializer):
     input = serializers.CharField()
     value = serializers.JSONField()
-    source = serializers.ChoiceField(choices=("actor", "scenario", "caller"))
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source
+        choices=("actor", "scenario", "caller")
+    )
 
 
 class HarnessActorNeverSeesSerializer(serializers.Serializer):

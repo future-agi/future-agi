@@ -6,7 +6,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import jsonschema
 from django.db import transaction
@@ -47,6 +47,7 @@ class ActorRecord(TypedDict, total=False):
     parent: str | None
     permitted_actions: list[str]
     activation: dict[str, Any] | None
+    knowledge: list[dict[str, Any]]
     provenance: dict[str, Any]
     scenarios: int
     review_decision: Literal["accepted", "rejected"] | None
@@ -71,6 +72,9 @@ class ActorRules(TypedDict, total=False):
     evaluator_only: dict[str, list[str]]
     private_to_actor: list[str]
     actor_models: list[str]
+    not_knowledge: dict[str, list[str]]
+    record_changes: dict[str, Any]
+    own_actions: list[str]
 
 
 class WorldAction(TypedDict):
@@ -166,7 +170,7 @@ def require_valid_faults(scenarios: Any) -> None:
         faults = scenario.get("faults")
         name = scenario.get("scenario_key") or scenario.get("name") or "a scenario"
         problem = "faults must be a list" if not isinstance(faults, list) else None
-        for fault in faults if problem is None else []:
+        for fault in faults if isinstance(faults, list) else []:
             problem = _fault_problem(fault)
             if problem:
                 break
@@ -227,7 +231,9 @@ def _cast(files: dict[str, bytes]) -> list[ActorRecord]:
 
 @lru_cache(maxsize=1)
 def _rules_before_declared() -> ActorRules:
-    return json.loads(_RULES_BEFORE_DECLARED.read_text(encoding="utf-8"))
+    return cast(
+        ActorRules, json.loads(_RULES_BEFORE_DECLARED.read_text(encoding="utf-8"))
+    )
 
 
 def actor_rules(files: dict[str, bytes]) -> ActorRules:
@@ -271,7 +277,14 @@ def world_actions(files: dict[str, bytes], rules: ActorRules) -> list[WorldActio
             "description": about.get(tool, ""),
         }
     actions.update(_record_changes(files, rules))
-    return [{"action": name, **one} for name, one in sorted(actions.items())]
+    return [
+        {
+            "action": name,
+            "tool": str(one["tool"]),
+            "description": str(one["description"]),
+        }
+        for name, one in sorted(actions.items())
+    ]
 
 
 def _record_changes(
@@ -551,7 +564,7 @@ def _new_choices(
         channels = rules.get("channels") or {}
         channel = after.get("channel")
         listed = _channel_schema(rules)
-        reaches = (rules.get("channel_modalities") or {}).get(channel)
+        reaches = (rules.get("channel_modalities") or {}).get(str(channel))
         if channel != before.get("channel"):
             # A schema that lists the channels already names an unknown one.
             if (
@@ -671,7 +684,7 @@ def _reason(error: jsonschema.ValidationError) -> str:
         return f"{broken.instance!r} is not one of: {', '.join(map(str, broken.validator_value))}"
     if broken.validator == "minLength":
         return "it cannot be empty"
-    return broken.message
+    return str(broken.message)
 
 
 def _record_schema(rules: ActorRules) -> dict[str, Any]:
@@ -990,12 +1003,15 @@ def write_actor_edit(
     it, and retires the builder chat's runtime once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
     # The scenario count and the review decision are read-side only; they are never written into a record.
-    body = {
-        name: value
-        for name, value in (body or {}).items()
-        if name not in _READ_ONLY_FIELDS
-    }
-    given = body.pop("id", None) or actor_id
+    record = cast(
+        ActorRecord,
+        {
+            name: value
+            for name, value in (body or {}).items()
+            if name not in _READ_ONLY_FIELDS
+        },
+    )
+    given = record.pop("id", None) or actor_id
     if op != "delete" and not given:
         raise HostedHarnessError(
             "actor_id_missing", "give the actor an id", status_code=400
@@ -1004,11 +1020,16 @@ def write_actor_edit(
         raise HostedHarnessError(
             "actor_id_mismatch", "an actor's id never changes", status_code=400
         )
-    actor_id = given
+    actor_id = str(given or "")
     refs, environment_files, suite_files = _draft_read(environment, expected_revision)
     before = _cast(environment_files)
     actors = _edited(
-        before, op=op, actor_id=actor_id, body=body, user=user, suite_files=suite_files
+        before,
+        op=op,
+        actor_id=actor_id,
+        body=record,
+        user=user,
+        suite_files=suite_files,
     )
     rules = actor_rules(environment_files)
     if op == "delete":

@@ -28,6 +28,8 @@ describe("toRecord", () => {
       { kind: "facts" },
       { kind: "facts", text: "a\nb" },
       { kind: "records", path: "crm.json" },
+      // An entry the runtime keeps as written, with no kind of its own.
+      { text: "local fact", source: "crm" },
       { kind: "facts", text: "c", source: "builder" },
     ],
   };
@@ -152,6 +154,7 @@ describe("toRecord", () => {
       { kind: "facts" },
       { kind: "facts", text: "new" },
       { kind: "records", path: "crm.json" },
+      { text: "local fact", source: "crm" },
       { kind: "facts", text: "c", source: "builder" },
       { kind: "facts", text: "a\nb" },
       { kind: "facts", text: "another" },
@@ -164,6 +167,7 @@ describe("toRecord", () => {
       { kind: "facts" },
       { kind: "facts", text: "c", source: "builder" },
       { kind: "records", path: "crm.json" },
+      { text: "local fact", source: "crm" },
     ]);
   });
 
