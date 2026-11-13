@@ -8,7 +8,7 @@ reader (or the feature switched off) returns no attachment metadata.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from .binding import Parent, Scope
 from .references import validate_reference
@@ -89,7 +89,7 @@ def attachment_statuses(
     if len(rows) > len(targets) * MAX_PER_PARENT:
         raise ValueError("attachment_reader_exceeded_bound")
     allowed = set(targets)
-    result = {}
+    result: dict[ReadTarget, list[dict[str, Any]]] = {}
     for row in rows:
         if (
             row.target not in allowed

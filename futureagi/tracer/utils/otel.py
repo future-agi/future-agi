@@ -1071,7 +1071,7 @@ def process_attributes(attributes: dict[str, Any], org_id=None) -> dict[str, Any
         normalize_attributes,
     )
 
-    updated_attributes = normalize_attributes(attributes)
+    updated_attributes: dict[str, Any] = normalize_attributes(attributes)
 
     for key in list(updated_attributes):
         match = pattern.match(key)

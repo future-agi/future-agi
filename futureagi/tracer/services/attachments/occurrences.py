@@ -216,6 +216,8 @@ def get_occurrence(
         )
         .first()
     )
+    if row is None:
+        raise not_found()
     check_readable(row, scope, state, timezone.now(), ready=ready)
     return row, scope, min(row.expires_at, row.source_expires_at, state.expires_at)
 
