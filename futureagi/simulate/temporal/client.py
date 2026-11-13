@@ -305,7 +305,7 @@ async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -
         RPCStatusCode.RESOURCE_EXHAUSTED,
         RPCStatusCode.ABORTED,
     }
-    last_error = None
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             handle = client.get_workflow_handle(workflow_id)
