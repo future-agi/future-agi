@@ -110,7 +110,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         )
 
     async def receive_json(self, content):
-        if not await self._guard.ensure_live(inbound=True):
+        if not await self._ensure_live(inbound=True):
             return
         if not await self._ensure_member():
             return
@@ -288,10 +288,12 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             self._agent_task = None
             await self.send_json({"type": "stopped"})
 
-    async def _cancel_agent_task(self, task=None):
-        task = self._agent_task if task is None else task
+    @staticmethod
+    def _request_agent_cancel(task):
+        """Ask a run to stop; return whether it was still running."""
+
         if task is None or task.done():
-            return
+            return False
         # Request cancellation once: a second request would interrupt the
         # run's own cleanup (partial save, usage, stream status).
         if not task.cancelling():
@@ -305,6 +307,12 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             if rca_stop_event is not None:
                 rca_stop_event.set()
             task.cancel()
+        return True
+
+    async def _cancel_agent_task(self, task=None):
+        task = self._agent_task if task is None else task
+        if not self._request_agent_cancel(task):
+            return
         if task is asyncio.current_task():
             # Called from the run itself; it unwinds at its next await.
             return
@@ -327,12 +335,32 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
     async def _stop_all_agent_runs(self):
         current = asyncio.current_task()
-        runs = [task for task in self._agent_runs if task is not current]
-        for task in runs:
-            await self._cancel_agent_task(task)
+        runs = [
+            task
+            for task in self._agent_runs
+            if task is not current and self._request_agent_cancel(task)
+        ]
         if current in self._agent_runs:
-            # The calling run stops last, at its next await.
-            await self._cancel_agent_task(current)
+            # The calling run stops at its next await.
+            self._request_agent_cancel(current)
+        if runs:
+            # Every run is asked to stop before any cleanup is awaited, so none
+            # keeps working while another saves its partial result. wait() does
+            # not cancel the runs again if this caller is itself cancelled.
+            await asyncio.wait(runs)
+
+    async def _ensure_live(self, *, inbound):
+        """Whether the sign-in behind this socket is still valid.
+
+        A refused sign-in also stops the socket's agent runs: once the socket
+        is closed they would no longer hear about membership changes.
+        """
+
+        if await self._guard.ensure_live(inbound=inbound):
+            return True
+        if self._guard.revoked:
+            await self._stop_all_agent_runs()
+        return False
 
     async def membership_changed(self, event):
         """Revalidate now; one of this user's memberships has changed."""
@@ -622,7 +650,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def send_json(self, content, close=False):
-        if not await self._guard.ensure_live(inbound=False):
+        if not await self._ensure_live(inbound=False):
             return
         if not await self._ensure_member():
             return

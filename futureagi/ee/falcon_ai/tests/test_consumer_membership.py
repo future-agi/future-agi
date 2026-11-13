@@ -202,3 +202,64 @@ def test_repeated_stop_requests_let_a_run_finish_its_cleanup():
 
     asyncio.run(run())
     assert cleanup == ["finished"]
+
+
+def test_stopping_runs_asks_every_run_to_stop_before_awaiting_cleanup():
+    consumer = FalconAIConsumer()
+    events = []
+
+    async def agent_run(name):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            events.append(f"{name} stopping")
+            # Stands in for the partial save and usage emission on cancel.
+            await asyncio.sleep(0.1)
+            events.append(f"{name} cleaned up")
+            raise
+
+    async def run():
+        first = consumer._start_agent_run(agent_run("first"))
+        second = consumer._start_agent_run(agent_run("second"))
+        await asyncio.sleep(0)
+        await consumer._stop_all_agent_runs()
+        assert first.cancelled()
+        assert second.cancelled()
+
+    asyncio.run(run())
+    assert set(events[:2]) == {"first stopping", "second stopping"}
+    assert set(events[2:]) == {"first cleaned up", "second cleaned up"}
+
+
+def test_runs_stop_when_the_sign_in_behind_the_socket_is_refused():
+    import types
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from sockets.saml_guard import SamlSocketGuard
+
+    consumer = FalconAIConsumer()
+    consumer.scope = {
+        "user": types.SimpleNamespace(id=uuid4()),
+        "auth_scope": types.SimpleNamespace(org_id=uuid4()),
+        "auth_token_id": uuid4(),
+    }
+    consumer.close = AsyncMock()
+
+    async def run():
+        agent_run = consumer._start_agent_run(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        # The run's next event finds the sign-in refused; the socket closes and
+        # will no longer hear about membership changes, so the run stops too.
+        await consumer.send_json({"type": "stream", "data": {}})
+        await wait_until_done(agent_run)
+        assert agent_run.cancelled()
+
+    with patch.object(
+        SamlSocketGuard,
+        "_validate",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("synthetic credential store outage"),
+    ):
+        asyncio.run(run())
+    consumer.close.assert_awaited_once_with(code=4001)
