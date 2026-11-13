@@ -20743,6 +20743,15 @@ export interface SkillsContextGuestFailureInputApi {
   reason?: string | null;
 }
 
+export interface SkillsContextGuestAcceptedApi {
+  accepted: boolean;
+}
+
+export interface SkillsGuestAcceptedResponseApi {
+  status: boolean;
+  result: SkillsContextGuestAcceptedApi;
+}
+
 export type SkillsContextGuestHealthInputApiPackages = {
   [key: string]: unknown;
 };
@@ -20793,6 +20802,19 @@ export interface SkillsContextGuestObservationInputApi {
   business: SkillsContextGuestObservationInputApiBusiness;
   /** @minLength 1 */
   observation_digest: string;
+}
+
+export interface SkillsContextGuestObservationAcceptedApi {
+  accepted: boolean;
+  /** @minimum 0 */
+  received: number;
+  /** @minimum 0 */
+  planned: number;
+}
+
+export interface SkillsGuestObservationAcceptedResponseApi {
+  status: boolean;
+  result: SkillsContextGuestObservationAcceptedApi;
 }
 
 export interface SkillsHubPushRequestApi {

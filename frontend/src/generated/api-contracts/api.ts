@@ -1417,6 +1417,8 @@ import type {
   SkillsFileChunkResponseApi,
   SkillsGitHubPreviewOutResponseApi,
   SkillsGitHubSourceOutResponseApi,
+  SkillsGuestAcceptedResponseApi,
+  SkillsGuestObservationAcceptedResponseApi,
   SkillsHeadReviewResponseApi,
   SkillsHistoryPageResponseApi,
   SkillsHubArchiveRequestApi,
@@ -65142,24 +65144,70 @@ export const modelHubSkillsIntakeReviewCreate = async (
   );
 };
 
-export type modelHubSkillsNativeAttemptsFailureCreateResponse201 = {
-  data: SkillsContextGuestFailureInputApi;
-  status: 201;
+export type modelHubSkillsNativeAttemptsFailureCreateResponse200 = {
+  data: SkillsGuestAcceptedResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsNativeAttemptsFailureCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
 };
 
 export type modelHubSkillsNativeAttemptsFailureCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 422
+  >;
 };
 
 export type modelHubSkillsNativeAttemptsFailureCreateResponseSuccess =
-  modelHubSkillsNativeAttemptsFailureCreateResponse201 & {
+  modelHubSkillsNativeAttemptsFailureCreateResponse200 & {
     headers: Headers;
   };
-export type modelHubSkillsNativeAttemptsFailureCreateResponseError =
-  modelHubSkillsNativeAttemptsFailureCreateResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubSkillsNativeAttemptsFailureCreateResponseError = (
+  | modelHubSkillsNativeAttemptsFailureCreateResponse400
+  | modelHubSkillsNativeAttemptsFailureCreateResponse401
+  | modelHubSkillsNativeAttemptsFailureCreateResponse403
+  | modelHubSkillsNativeAttemptsFailureCreateResponse404
+  | modelHubSkillsNativeAttemptsFailureCreateResponse409
+  | modelHubSkillsNativeAttemptsFailureCreateResponse413
+  | modelHubSkillsNativeAttemptsFailureCreateResponse422
+  | modelHubSkillsNativeAttemptsFailureCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubSkillsNativeAttemptsFailureCreateResponse =
   | modelHubSkillsNativeAttemptsFailureCreateResponseSuccess
@@ -65187,24 +65235,70 @@ export const modelHubSkillsNativeAttemptsFailureCreate = async (
   );
 };
 
-export type modelHubSkillsNativeAttemptsHealthCreateResponse201 = {
-  data: SkillsContextGuestHealthInputApi;
-  status: 201;
+export type modelHubSkillsNativeAttemptsHealthCreateResponse200 = {
+  data: SkillsGuestAcceptedResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsNativeAttemptsHealthCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
 };
 
 export type modelHubSkillsNativeAttemptsHealthCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 422
+  >;
 };
 
 export type modelHubSkillsNativeAttemptsHealthCreateResponseSuccess =
-  modelHubSkillsNativeAttemptsHealthCreateResponse201 & {
+  modelHubSkillsNativeAttemptsHealthCreateResponse200 & {
     headers: Headers;
   };
-export type modelHubSkillsNativeAttemptsHealthCreateResponseError =
-  modelHubSkillsNativeAttemptsHealthCreateResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubSkillsNativeAttemptsHealthCreateResponseError = (
+  | modelHubSkillsNativeAttemptsHealthCreateResponse400
+  | modelHubSkillsNativeAttemptsHealthCreateResponse401
+  | modelHubSkillsNativeAttemptsHealthCreateResponse403
+  | modelHubSkillsNativeAttemptsHealthCreateResponse404
+  | modelHubSkillsNativeAttemptsHealthCreateResponse409
+  | modelHubSkillsNativeAttemptsHealthCreateResponse413
+  | modelHubSkillsNativeAttemptsHealthCreateResponse422
+  | modelHubSkillsNativeAttemptsHealthCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubSkillsNativeAttemptsHealthCreateResponse =
   | modelHubSkillsNativeAttemptsHealthCreateResponseSuccess
@@ -65232,24 +65326,70 @@ export const modelHubSkillsNativeAttemptsHealthCreate = async (
   );
 };
 
-export type modelHubSkillsNativeAttemptsObservationsCreateResponse201 = {
-  data: SkillsContextGuestObservationInputApi;
-  status: 201;
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse200 = {
+  data: SkillsGuestObservationAcceptedResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsNativeAttemptsObservationsCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
 };
 
 export type modelHubSkillsNativeAttemptsObservationsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 422
+  >;
 };
 
 export type modelHubSkillsNativeAttemptsObservationsCreateResponseSuccess =
-  modelHubSkillsNativeAttemptsObservationsCreateResponse201 & {
+  modelHubSkillsNativeAttemptsObservationsCreateResponse200 & {
     headers: Headers;
   };
-export type modelHubSkillsNativeAttemptsObservationsCreateResponseError =
-  modelHubSkillsNativeAttemptsObservationsCreateResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubSkillsNativeAttemptsObservationsCreateResponseError = (
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse400
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse401
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse403
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse404
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse409
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse413
+  | modelHubSkillsNativeAttemptsObservationsCreateResponse422
+  | modelHubSkillsNativeAttemptsObservationsCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubSkillsNativeAttemptsObservationsCreateResponse =
   | modelHubSkillsNativeAttemptsObservationsCreateResponseSuccess

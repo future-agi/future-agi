@@ -44086,6 +44086,13 @@ export const ModelHubSkillsNativeAttemptsFailureCreateBody = zod.object({
   reason: zod.string().nullish(),
 });
 
+export const ModelHubSkillsNativeAttemptsFailureCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    accepted: zod.boolean(),
+  }),
+});
+
 export const ModelHubSkillsNativeAttemptsHealthCreateParams = zod.object({
   attempt_id: zod.string(),
 });
@@ -44103,6 +44110,13 @@ export const ModelHubSkillsNativeAttemptsHealthCreateBody = zod.object({
   read_only_context: zod.boolean(),
   separate_writable_state: zod.boolean(),
   controlled_paid_egress: zod.boolean(),
+});
+
+export const ModelHubSkillsNativeAttemptsHealthCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    accepted: zod.boolean(),
+  }),
 });
 
 export const ModelHubSkillsNativeAttemptsObservationsCreateParams = zod.object({
@@ -44124,6 +44138,28 @@ export const ModelHubSkillsNativeAttemptsObservationsCreateBody = zod.object({
   business: zod.record(zod.string(), zod.string().nullable()),
   observation_digest: zod.string().min(1),
 });
+
+export const modelHubSkillsNativeAttemptsObservationsCreateResponseResultReceivedMin = 0;
+
+export const modelHubSkillsNativeAttemptsObservationsCreateResponseResultPlannedMin = 0;
+
+export const ModelHubSkillsNativeAttemptsObservationsCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      accepted: zod.boolean(),
+      received: zod
+        .number()
+        .min(
+          modelHubSkillsNativeAttemptsObservationsCreateResponseResultReceivedMin,
+        ),
+      planned: zod
+        .number()
+        .min(
+          modelHubSkillsNativeAttemptsObservationsCreateResponseResultPlannedMin,
+        ),
+    }),
+  });
 
 export const modelHubSkillsPublishCreateBodyExpectedDigestRegExp = new RegExp(
   "^sha256:[0-9a-f]{64}$",

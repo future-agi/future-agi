@@ -31108,14 +31108,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "model-hub_skills_native_attempts_failure_create",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/SkillsContextGuestFailureInput",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/SkillsContextGuestFailureInput",
+          200: {
+            $ref: "#/definitions/SkillsGuestAcceptedResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -31127,14 +31148,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "model-hub_skills_native_attempts_health_create",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/SkillsContextGuestHealthInput",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/SkillsContextGuestHealthInput",
+          200: {
+            $ref: "#/definitions/SkillsGuestAcceptedResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -31146,14 +31188,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "model-hub_skills_native_attempts_observations_create",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/SkillsContextGuestObservationInput",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/SkillsContextGuestObservationInput",
+          200: {
+            $ref: "#/definitions/SkillsGuestObservationAcceptedResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -96426,6 +96489,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsGuestAcceptedResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextGuestAccepted",
+        },
+      },
+    },
+    SkillsGuestObservationAcceptedResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextGuestObservationAccepted",
+        },
+      },
+    },
     SkillsHeadReviewResponse: {
       required: ["status", "result"],
       type: "object",
@@ -130621,6 +130710,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    SkillsContextGuestAccepted: {
+      required: ["accepted"],
+      type: "object",
+      properties: {
+        accepted: {
+          title: "Accepted",
+          type: "boolean",
+        },
+      },
+    },
+    SkillsContextGuestObservationAccepted: {
+      required: ["accepted", "received", "planned"],
+      type: "object",
+      properties: {
+        accepted: {
+          title: "Accepted",
+          type: "boolean",
+        },
+        received: {
+          title: "Received",
+          type: "integer",
+          minimum: 0,
+        },
+        planned: {
+          title: "Planned",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

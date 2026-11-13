@@ -57695,10 +57695,52 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SkillsContextGuestFailureInput"
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsGuestAcceptedResponse"
                         }
                     },
                     "default": {
@@ -57711,7 +57753,8 @@
                 "tags": [
                     "model-hub"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -57737,10 +57780,52 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SkillsContextGuestHealthInput"
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsGuestAcceptedResponse"
                         }
                     },
                     "default": {
@@ -57753,7 +57838,8 @@
                 "tags": [
                     "model-hub"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -57779,10 +57865,52 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SkillsContextGuestObservationInput"
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsGuestObservationAcceptedResponse"
                         }
                     },
                     "default": {
@@ -57795,7 +57923,8 @@
                 "tags": [
                     "model-hub"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -163569,6 +163698,34 @@
                 }
             }
         },
+        "SkillsContextGuestAccepted": {
+            "required": [
+                "accepted"
+            ],
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "title": "Accepted",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsGuestAcceptedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextGuestAccepted"
+                }
+            }
+        },
         "SkillsContextGuestHealthInput": {
             "required": [
                 "protocol",
@@ -163706,6 +163863,46 @@
                     "title": "Observation digest",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "SkillsContextGuestObservationAccepted": {
+            "required": [
+                "accepted",
+                "received",
+                "planned"
+            ],
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "title": "Accepted",
+                    "type": "boolean"
+                },
+                "received": {
+                    "title": "Received",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "planned": {
+                    "title": "Planned",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SkillsGuestObservationAcceptedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextGuestObservationAccepted"
                 }
             }
         },
