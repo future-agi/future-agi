@@ -419,7 +419,8 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		finalizeStream(ctx.Err() != nil)
 		return
 	}
-	// Routing latency is time to first chunk, not the whole stream's length.
+	// Routing latency is time to first chunk, not the whole stream's length,
+	// for the outcome recorded below whether the stream succeeds or fails.
 	firstChunkLatency := time.Since(upstreamStart)
 	sseWriter.WriteHeaders()
 	if !relay(*first) {
@@ -432,7 +433,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
-						h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), apiErr)
+						h.recordProviderOutcome(ctx, provider, firstChunkLatency, apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
@@ -460,7 +461,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), err)
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -475,7 +476,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. Drain the channel and run post-plugins.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), ctx.Err())
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}

@@ -153,9 +153,10 @@ func TestAdaptiveGatewayLearnsFromHTTP(t *testing.T) {
 	if health := srv.handlers.healthMonitor.GetHealth("fast"); health.RequestCount == 0 || health.LatencyEWMAMs == 0 {
 		t.Fatal("healthy provider has no live health/latency observations")
 	}
-	// Failed calls count as errors but add no latency: failing fast is not speed.
-	if health := srv.handlers.healthMonitor.GetHealth("slow"); health.ErrorCount == 0 || health.LatencyEWMAMs != 0 {
-		t.Fatalf("failing provider: errors=%d latency=%dms, want errors and no latency", health.ErrorCount, health.LatencyEWMAMs)
+	// Failed calls count as errors and feed least-latency's average, but not
+	// adaptive's success-only latency: failing fast is not speed.
+	if health := srv.handlers.healthMonitor.GetHealth("slow"); health.ErrorCount == 0 || health.LatencyEWMAMs == 0 || health.SuccessLatencyEWMAMs != 0 {
+		t.Fatalf("failing provider: errors=%d latency=%dms success_latency=%.0fms, want errors, latency and no success latency", health.ErrorCount, health.LatencyEWMAMs, health.SuccessLatencyEWMAMs)
 	}
 }
 
@@ -183,8 +184,11 @@ func TestAdaptiveFastFailingTargetGetsLessThanRoundRobin(t *testing.T) {
 	}
 	failing, healthy := failingCalls.Load()-failingBefore, healthyCalls.Load()-healthyBefore
 	t.Logf("fast-failing=%d slow-healthy=%d of %d", failing, healthy, requests)
-	if failing+healthy != requests || failing >= requests/4 {
-		t.Fatalf("fast-failing target got %d of %d requests; round-robin gives it %d", failing, requests, requests/2)
+	// Round-robin gives it 100 and the fix about 11; 60 leaves room for
+	// random selection while a reverted fix (about 100) cannot pass by chance.
+	const maxFailing = 60
+	if failing+healthy != requests || failing > maxFailing {
+		t.Fatalf("fast-failing target got %d of %d requests, want at most %d (round-robin gives it %d)", failing, requests, maxFailing, requests/2)
 	}
 }
 
@@ -291,5 +295,66 @@ func TestAdaptiveStreamLatencyIsTimeToFirstChunk(t *testing.T) {
 	health := srv.handlers.healthMonitor.GetHealth("fast")
 	if health.RequestCount != 1 || health.LatencyEWMAMs >= 100 {
 		t.Fatalf("stream latency sample=%dms requests=%d, want time to first chunk (well under 150ms)", health.LatencyEWMAMs, health.RequestCount)
+	}
+}
+
+// least-latency, with failover and breakers off, must move off a provider that
+// starts failing slowly. Failed calls feed its average as a penalty that never
+// lowers it; recording successful calls only left it stuck on the failing one.
+func TestLeastLatencyMovesOffAProviderThatStartsFailing(t *testing.T) {
+	var flakyCalls, steadyCalls atomic.Int64
+	var flakyFailing atomic.Bool
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		flakyCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if flakyFailing.Load() {
+			time.Sleep(300 * time.Millisecond)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"error":{"message":"synthetic upstream unavailable","type":"server_error"}}`)
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+		io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"adaptive-sample","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	}))
+	t.Cleanup(flaky.Close)
+	steady := adaptiveUpstream(t, false, 60*time.Millisecond, &steadyCalls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"flaky":  {BaseURL: flaky.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+		"steady": {BaseURL: steady.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = config.RoutingConfig{
+		DefaultStrategy: "least-latency",
+		Targets: map[string][]config.RoutingTargetConfig{
+			"adaptive-sample": {{Provider: "flaky"}, {Provider: "steady"}},
+		},
+	}
+	srv, gateway := adaptiveServer(t, cfg)
+	if srv.registry.Router() == nil || srv.registry.Router().Strategy() != "least-latency" {
+		t.Fatal("least-latency routing is not active")
+	}
+	// Learn both latencies: flaky about 5ms, steady about 60ms.
+	for i := 0; i < 3; i++ {
+		adaptiveRequest(t, gateway, "flaky/adaptive-sample")
+		adaptiveRequest(t, gateway, "steady/adaptive-sample")
+	}
+	if status := adaptiveRequest(t, gateway, "adaptive-sample"); status != http.StatusOK || flakyCalls.Load() != 4 {
+		t.Fatalf("least-latency did not pick the faster provider while healthy: status=%d flaky_calls=%d", status, flakyCalls.Load())
+	}
+
+	flakyFailing.Store(true)
+	flakyBefore, steadyBefore := flakyCalls.Load(), steadyCalls.Load()
+	const requests = 10
+	for i := 0; i < requests; i++ {
+		adaptiveRequest(t, gateway, "adaptive-sample")
+	}
+	flakyGot, steadyGot := flakyCalls.Load()-flakyBefore, steadyCalls.Load()-steadyBefore
+	t.Logf("after flaky starts failing: flaky=%d steady=%d of %d", flakyGot, steadyGot, requests)
+	if flakyGot+steadyGot != requests || flakyGot > 2 {
+		t.Fatalf("least-latency kept the failing provider: flaky=%d steady=%d of %d, want flaky at most 2", flakyGot, steadyGot, requests)
 	}
 }

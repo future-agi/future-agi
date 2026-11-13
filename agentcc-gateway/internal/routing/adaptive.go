@@ -200,10 +200,12 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 		return
 	}
 
+	// Latency here is successful calls only: failed calls feed the
+	// least-latency tracker, but failing fast must not count as speed.
 	// Find max latency for normalization.
 	var maxLatency float64
 	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
+		lat := h.SuccessLatencyEWMAMs
 		if lat > maxLatency {
 			maxLatency = lat
 		}
@@ -216,7 +218,7 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 	rawScores := make(map[string]float64, len(allHealth))
 	var totalRaw float64
 	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
+		lat := h.SuccessLatencyEWMAMs
 		normalizedLatency := 1.0 - (lat / maxLatency)
 		// Clamp to [0, 1].
 		normalizedLatency = math.Max(0, math.Min(1, normalizedLatency))

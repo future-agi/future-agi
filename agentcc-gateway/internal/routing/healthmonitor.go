@@ -21,11 +21,18 @@ type ProviderHealth struct {
 	// RecentSuccessRate is an EWMA of request outcomes, so old results fade.
 	// Adaptive routing scores on it; the health endpoints keep SuccessRate.
 	RecentSuccessRate float64 `json:"-"`
+	// SuccessLatencyEWMAMs averages successful calls only. Adaptive routing
+	// scores on it, so failing fast never counts as speed. LatencyEWMAMs (the
+	// least-latency tracker) also folds in failed calls.
+	SuccessLatencyEWMAMs float64 `json:"-"`
 }
 
 // successRateAlpha weights each new outcome in RecentSuccessRate, so roughly
 // the last 20 calls dominate and a provider recovers once it succeeds again.
 const successRateAlpha = 0.1
+
+// successLatencyAlpha matches the least-latency tracker's default smoothing.
+const successLatencyAlpha = 0.3
 
 // providerStats tracks per-provider request statistics.
 type providerStats struct {
@@ -37,6 +44,9 @@ type providerStats struct {
 	lastSuccessAt time.Time
 	recentSuccess float64 // EWMA of outcomes (1 success, 0 error); guarded by mu
 	hasOutcome    bool    // guarded by mu
+	// EWMA of successful calls' latency in ms; guarded by mu.
+	successLatencyMs  float64
+	hasSuccessLatency bool
 }
 
 // recordOutcomeLocked folds one outcome into the EWMA. s.mu must be held.
@@ -102,10 +112,33 @@ func (hm *HealthMonitor) getOrCreate(providerID string) *providerStats {
 	return s
 }
 
-// RecordLatency keeps observations even while routing is disabled.
+// RecordLatency records a successful call's latency: in the least-latency
+// tracker, and in the success-only average adaptive routing scores on.
+// Observations are kept even while routing is disabled.
 func (hm *HealthMonitor) RecordLatency(providerID string, latency time.Duration) {
-	if hm != nil && hm.tracker != nil {
+	if hm == nil {
+		return
+	}
+	if hm.tracker != nil {
 		hm.tracker.Record(providerID, latency)
+	}
+	ms := float64(latency.Milliseconds())
+	s := hm.getOrCreate(providerID)
+	s.mu.Lock()
+	if s.hasSuccessLatency {
+		s.successLatencyMs = successLatencyAlpha*ms + (1-successLatencyAlpha)*s.successLatencyMs
+	} else {
+		s.successLatencyMs = ms
+		s.hasSuccessLatency = true
+	}
+	s.mu.Unlock()
+}
+
+// RecordFailureLatency records how long a failed call took, for least-latency
+// only (see LatencyTracker.RecordFailure). Adaptive scoring ignores it.
+func (hm *HealthMonitor) RecordFailureLatency(providerID string, elapsed time.Duration) {
+	if hm != nil && hm.tracker != nil {
+		hm.tracker.RecordFailure(providerID, elapsed)
 	}
 }
 
@@ -169,6 +202,7 @@ func (hm *HealthMonitor) GetHealth(providerID string) ProviderHealth {
 
 		s.mu.Lock()
 		h.RecentSuccessRate = s.recentSuccess
+		h.SuccessLatencyEWMAMs = s.successLatencyMs
 		if s.lastError != "" {
 			h.LastError = s.lastError
 			t := s.lastErrorTime

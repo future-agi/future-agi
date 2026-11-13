@@ -174,9 +174,10 @@ func TestAdaptiveLegacyCompletionAttemptHealth(t *testing.T) {
 					wantErrors = wantCalls
 				}
 				health := srv.handlers.healthMonitor.GetHealth("fast")
-				// Only successful calls add latency; failing fast is not speed.
-				if calls.Load() != wantCalls || health.RequestCount != wantCalls || health.ErrorCount != wantErrors || (health.LatencyEWMAMs >= 1) != (wantErrors == 0) {
-					t.Fatalf("legacy health attribution: calls=%d samples=%d errors=%d latency=%d want_calls=%d want_errors=%d", calls.Load(), health.RequestCount, health.ErrorCount, health.LatencyEWMAMs, wantCalls, wantErrors)
+				// Every call feeds least-latency's average; only successful
+				// calls feed adaptive's, since failing fast is not speed.
+				if calls.Load() != wantCalls || health.RequestCount != wantCalls || health.ErrorCount != wantErrors || health.LatencyEWMAMs < 1 || (health.SuccessLatencyEWMAMs >= 1) != (wantErrors == 0) {
+					t.Fatalf("legacy health attribution: calls=%d samples=%d errors=%d latency=%d success_latency=%.0f want_calls=%d want_errors=%d", calls.Load(), health.RequestCount, health.ErrorCount, health.LatencyEWMAMs, health.SuccessLatencyEWMAMs, wantCalls, wantErrors)
 				}
 			})
 		}

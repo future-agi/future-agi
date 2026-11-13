@@ -99,3 +99,25 @@ func TestAdaptiveReloadKeepsLearnedWeights(t *testing.T) {
 		t.Fatalf("reload lost learned state: phase=%s learned=%v got=%v", next.GetPhase(), learned, got)
 	}
 }
+
+// Failed calls raise the least-latency average when they are slow and never
+// lower it when they are fast; adaptive's success-only latency ignores them.
+func TestFailedCallLatencyIsAPenaltyForLeastLatencyOnly(t *testing.T) {
+	_, hm := newScoringStrategy(t)
+	hm.RecordLatency("p", 20*time.Millisecond)
+	hm.RecordSuccess("p")
+	hm.RecordFailureLatency("p", 2*time.Millisecond)
+	hm.RecordError("p", errors.New("synthetic 401"))
+	if got := hm.GetHealth("p"); got.LatencyEWMAMs != 20 || got.SuccessLatencyEWMAMs != 20 {
+		t.Fatalf("fast failure changed latency: least_latency=%dms success=%.0fms, want 20 and 20", got.LatencyEWMAMs, got.SuccessLatencyEWMAMs)
+	}
+	hm.RecordFailureLatency("p", 1020*time.Millisecond)
+	hm.RecordError("p", errors.New("synthetic 503"))
+	if got := hm.GetHealth("p"); got.LatencyEWMAMs != 320 || got.SuccessLatencyEWMAMs != 20 {
+		t.Fatalf("slow failure: least_latency=%dms success=%.0fms, want 320 and 20", got.LatencyEWMAMs, got.SuccessLatencyEWMAMs)
+	}
+	hm.RecordFailureLatency("never-succeeded", 50*time.Millisecond)
+	if got := hm.GetHealth("never-succeeded"); got.LatencyEWMAMs != 50 || got.SuccessLatencyEWMAMs != 0 {
+		t.Fatalf("first failure: least_latency=%dms success=%.0fms, want 50 and 0", got.LatencyEWMAMs, got.SuccessLatencyEWMAMs)
+	}
+}
