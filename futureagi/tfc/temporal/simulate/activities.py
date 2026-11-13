@@ -2496,6 +2496,10 @@ def _create_graph_scenario_sync(
                 workspace=scenario.workspace,
             )
         else:
+            if agent_definition_id is None:
+                raise AgentDefinition.DoesNotExist(
+                    "A graph scenario needs an agent definition"
+                )
             agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id
             )
