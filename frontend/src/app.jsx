@@ -94,9 +94,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (window.Appcues) {
-      window.Appcues.page();
-    }
     syncMixpanelSessionReplay(location.pathname);
   }, [location.pathname]);
 
