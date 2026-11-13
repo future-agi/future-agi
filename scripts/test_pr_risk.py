@@ -2685,6 +2685,18 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.behind_again(), [risk.BEHIND_DEV_AGAIN.format(head=head)])
         self.assertEqual(self.api.compared[-2:], [(head, older), (HEAD, BASE)])
 
+    def without_merge_base(self):
+        """GitHub's compare answers name no merge base from now on."""
+        original = self.api.request
+
+        def request(method, route, data=None, **kwargs):
+            answer = original(method, route, data, **kwargs)
+            if method == "GET" and route.startswith("compare/"):
+                answer = {k: v for k, v in answer.items() if k != "merge_base_commit"}
+            return answer
+
+        self.api.request = request
+
     def test_a_note_on_a_head_whose_merge_base_is_unknown_gets_the_new_comment(self):
         # Anyone with write access can edit the note, and GitHub answers 404
         # for a commit it does not know. When in doubt the author is told.
@@ -2696,6 +2708,8 @@ class ControllerTests(unittest.TestCase):
             "compare fails": lambda note: self.failing(
                 lambda method, route, data: route == f"compare/{'e' * 40}...{HEAD}", 1),
             "no merge base in the answer": lambda note: self.api.contained.update({HEAD: "not-a-sha"}),
+            # Two missing merge bases are equal, but neither says the head is the same wait.
+            "no merge base in either answer": lambda note: self.without_merge_base(),
         }
         for name, arrange in cases.items():
             with self.subTest(name):
