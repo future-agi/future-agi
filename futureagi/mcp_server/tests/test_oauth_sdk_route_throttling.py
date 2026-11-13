@@ -217,6 +217,53 @@ async def test_sdk_revoke_wrong_client_secret_triggers_lockout():
     )
 
 
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_revoke_of_an_unknown_token_keeps_the_invalid_attempt_count():
+    client_id, secret = await _register()
+    addr = "203.0.113.91"
+    bad_code = await _post("/token", _code_form(client_id, secret), addr)
+    assert bad_code.json()["error"] == "invalid_grant"
+    # Revoking an unknown token succeeds (RFC 7009 section 2.2), but no token
+    # was issued, so the earlier invalid attempt still counts.
+    revoked = await _post(
+        "/revoke",
+        {
+            "client_id": client_id,
+            "client_secret": secret,
+            "token": secrets.token_urlsafe(32),
+        },
+        addr,
+    )
+    assert revoked.status_code == 200, revoked.text
+    bad_code = await _post("/token", _code_form(client_id, secret), addr)
+    assert bad_code.json()["error"] == "invalid_grant"
+
+    _assert_throttled(
+        await _post("/token", _code_form(client_id, secret), addr),
+        "Too many invalid token attempts",
+    )
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_issued_token_resets_the_invalid_attempt_count():
+    client_id, secret = await _register()
+    addr = "203.0.113.92"
+    bad_code = await _post("/token", _code_form(client_id, secret), addr)
+    assert bad_code.json()["error"] == "invalid_grant"
+    code, verifier = _seed_code(client_id)
+    exchanged = await _post(
+        "/token", _code_form(client_id, secret, code, verifier), addr
+    )
+    assert exchanged.status_code == 200, exchanged.text
+    bad_code = await _post("/token", _code_form(client_id, secret), addr)
+    assert bad_code.json()["error"] == "invalid_grant"
+
+    # One invalid attempt since the issued token: still under the limit of 2.
+    response = await _post("/token", _code_form(client_id, secret), addr)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_grant"
+
+
 @override_settings(**{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_IP_THROTTLE_RATE": "2/min"})
 async def test_sdk_token_and_revoke_share_the_per_address_window():
     addr = "203.0.113.84"

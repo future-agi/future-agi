@@ -50,7 +50,8 @@ Message = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 
-TOKEN_PATHS = frozenset({"/token", "/revoke"})
+TOKEN_PATH = "/token"
+TOKEN_PATHS = frozenset({TOKEN_PATH, "/revoke"})
 REGISTER_PATH = "/register"
 # OAuth token, revocation and registration requests are a few hundred bytes.
 # The body is buffered to read client_id, so cap it.
@@ -216,10 +217,12 @@ def _admit_register_request(
 
 
 def _finish_token_request(
-    request: _ThrottleRequest, status: int | None, error: str | None
+    request: _ThrottleRequest, path: str, status: int | None, error: str | None
 ) -> None:
     try:
-        if status == 200:
+        # Only an issued token clears the count. /revoke answers 200 for an
+        # unknown token too (RFC 7009 section 2.2), so it never does.
+        if status == 200 and path == TOKEN_PATH:
             clear_invalid_token_attempts(request)
         elif error in _INVALID_CREDENTIAL_ERRORS:
             lockout_seconds = record_invalid_token_attempt(request)
@@ -337,4 +340,4 @@ class MCPSDKOAuthThrottleMiddleware:
                     error = json.loads(bytes(response_body)).get("error")
                 except (ValueError, AttributeError):
                     error = None
-            await sync_to_async(_finish_token_request)(request, status, error)
+            await sync_to_async(_finish_token_request)(request, path, status, error)

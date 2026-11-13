@@ -499,8 +499,8 @@ class MCPOAuthTokenThrottled(Throttled):
 class MCPOAuthTokenLockoutThrottle(BaseThrottle):
     """Reject token requests while an invalid-attempt lockout is active.
 
-    Also reserves an in-flight slot so concurrent requests cannot get more
-    secret checks than the invalid-attempt limit. The view must call
+    Also reserves an in-flight slot so concurrent token requests count toward
+    the configured attempt limit. The view must call
     release_token_attempt_reservation() once the request finishes.
     """
 
