@@ -371,9 +371,6 @@ func main() {
 			if budgetPlugin != nil {
 				budgetPlugin.InvalidateOrg(orgID)
 			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
 		}
 		slog.Info("guardrails enabled",
 			"pre_guardrails", grEngine.PreCount(),
@@ -544,23 +541,17 @@ func main() {
 	}
 
 	// The logging plugin is deliberately absent here: its redactor cache moved
-	// onto tenantStore, which invalidates itself on every config change.
-	if onOrgConfigChange != nil {
-		prev := onOrgConfigChange
-		onOrgConfigChange = func(orgID string) {
-			prev(orgID)
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
+	// onto tenantStore, which invalidates itself on every config change. The
+	// ip_acl plugin is always registered, so its cached org lists are dropped
+	// whichever of guardrails, budgets and alerting are enabled.
+	prevOnOrgConfigChange := onOrgConfigChange
+	onOrgConfigChange = func(orgID string) {
+		if prevOnOrgConfigChange != nil {
+			prevOnOrgConfigChange(orgID)
 		}
-	} else if alertingPlugin != nil || ipaclPlugin != nil {
-		onOrgConfigChange = func(orgID string) {
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
+		ipaclPlugin.InvalidateOrg(orgID)
+		if alertingPlugin != nil {
+			alertingPlugin.InvalidateOrg(orgID)
 		}
 	}
 
