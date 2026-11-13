@@ -10,6 +10,7 @@ from model_hub.queries.tts_voices import resolve_voice_id
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from model_hub.models.openai_tools import ensure_openai_tool_envelope
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
@@ -142,7 +143,11 @@ class RunPrompt:
             else self.run_prompt_config.get("response_format")
         )
         self.tool_choice = tool_choice
-        self.tools = tools
+        self.tools = (
+            [ensure_openai_tool_envelope(t) for t in tools]
+            if tools
+            else tools
+        )
         self.output_format = output_format or "string"
         self.organization_id = organization_id
         self.workspace_id = workspace_id
@@ -1699,7 +1704,11 @@ class RunPrompt:
             "max_tokens": int(self.max_tokens) if self.max_tokens is not None else None,
             "top_p": float(self.top_p) if self.top_p is not None else None,
             "response_format": response_format,
-            "tools": self.tools or [],
+            "tools": (
+                [ensure_openai_tool_envelope(t) for t in self.tools]
+                if self.tools
+                else []
+            ),
             "tool_choice": self.tool_choice if self.tools else None,
         }
         payload = {k: v for k, v in payload.items() if v not in [None, [], {}, ""]}
