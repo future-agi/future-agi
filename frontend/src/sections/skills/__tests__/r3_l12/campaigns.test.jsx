@@ -97,7 +97,7 @@ describe('independent observations and availability', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     fireEvent.click(screen.getByRole('button', { name: 'Delivery observations' }));
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
-    expect(screen.getByText(/Merged does not mean installed or delivered/)).toBeInTheDocument();
+    expect(screen.getByText(/A merged PR doesn't mean the app has the change/)).toBeInTheDocument();
   });
   it('retains the planned identity when a binding no longer names a repository', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: null }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
@@ -107,7 +107,7 @@ describe('independent observations and availability', () => {
   });
   it('keeps a zero repository identifier in technical details without exposing it in the summary', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: { ...target.repository, repositoryId: 0 } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
-    expect(screen.getByText('Repository main · project root')).toBeVisible();
+    expect(screen.getByText('Branch: main · Root folder')).toBeVisible();
     expect(screen.queryByText('Repository ID 0')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
     expect(screen.getByText('Repository ID 0')).toBeVisible();
@@ -151,4 +151,25 @@ it('keeps hidden targets in authorization validation when filtering the inventor
   expect(screen.queryByRole('button', { name: 'Review target another-repository' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
   expect(screen.getByText('Reviewed 1 of 2')).toBeVisible();
+});
+
+
+it('links the blocked count to visible, labelled blockers without relaxing authorization', () => {
+  const blocked = { ...target, bindingId: 'blocked', name: 'blocked-repo', plan: { ...target.plan, blockers: ['Local modifications need review'] } };
+  render(<Harness value={{ ...campaign, targetCount: 2 }} targets={[target, blocked]} />);
+  fireEvent.click(screen.getByRole('button', { name: '1 blocked', exact: true }));
+  expect(screen.getByText('Blocked: local changes')).toBeVisible();
+  expect(screen.getByText('Local modifications need review')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Review target synthetic-repository' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+});
+
+it('renders unified excerpts with the shared diff while retaining hunk boundaries', () => {
+  const diffPreview = '--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old policy\n+new policy\n@@ -8 +8 @@\n-old ending\n+new ending';
+  const { container } = render(<ContextCampaignTargetDrawer target={{ ...target, plan: { ...target.plan, changes: [{ ...target.plan.changes[0], diffPreview }] } }} open onClose={vi.fn()} onDecision={vi.fn()} />);
+  expect(screen.getByText('@@ -1 +1 @@')).toBeVisible();
+  expect(screen.getByText('@@ -8 +8 @@')).toBeVisible();
+  expect(document.querySelectorAll('[data-status="added"]')).toHaveLength(2);
+  expect(document.querySelectorAll('[data-status="removed"]')).toHaveLength(2);
+  expect(container.querySelector('img')).toBeNull();
 });

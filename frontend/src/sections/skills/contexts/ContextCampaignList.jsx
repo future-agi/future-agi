@@ -17,7 +17,7 @@ export default function ContextCampaignList({ query, availability, enabled = fal
   const failed = state === 'error' || denied || availability?.isError;
   const records = state === 'empty' ? [] : data?.results ?? [];
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <PageHeader title="Repository rollouts" description={off ? "Roll an agent context out to many repositories at once." : "Review repository changes. Track pull requests and delivery separately."} sx={{ mb: 0 }} />
+    <PageHeader title="Repository rollouts" description="Roll an agent context out to many repositories at once." sx={{ mb: 0 }} />
     {loading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={5} label="Checking rollout availability" />
       : failed ? <ErrorState detail="Nothing was changed. Existing rollouts are unaffected." title={denied ? 'You cannot view these rollouts' : "Couldn't check rollout availability"} onRetry={denied ? undefined : availability?.refetch || query.refetch} />
         : <>

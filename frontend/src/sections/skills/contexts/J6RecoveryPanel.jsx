@@ -80,7 +80,7 @@ function Cohort({ cohort, numbers, asOf }) {
   return (
     <Section title="Verify consumers">
       <Stack spacing={1.5}>
-        <Typography variant="s3" color="text.secondary"><Tooltip title={asOf || "Time not reported"}><Box component="span" tabIndex={0}>As of {fDateTimeUTC(asOf)}</Box></Tooltip>. A label move is not recovery: each runtime must report delivery. Threads with expired authority or lost mappings are not recovered.</Typography>
+        <Typography variant="s3" color="text.secondary"><Tooltip title={asOf || "Time not reported"}><Box component="span" tabIndex={0}>As of {fDateTimeUTC(asOf)}</Box></Tooltip>. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
         {missing > 0 && <Alert severity="warning">{missing} of {cohort.length} consumers still need delivery verification.</Alert>}
         {!cohort.length && <EmptyState title="No declared consumers" description="No runtime delivery can be verified until consumers are registered and report it." />}
         <TableContainer sx={{ maxWidth: 1 }}>
@@ -180,7 +180,6 @@ function Candidates({ candidates, chosen, onChoose }) {
               >
                 <TableCell>
                   <Typography variant="s1">v{row.number}</Typography>
-                  <TechnicalDetails title="Exact identities"><IdentityChip label="Release digest" value={row.digest} /></TechnicalDetails>
                 </TableCell>
                 <TableCell>
                   <Stack spacing={0.5} alignItems="flex-start">
@@ -224,10 +223,11 @@ function Candidates({ candidates, chosen, onChoose }) {
                   ))}
                 </TableCell>
                 <TableCell>
-                  {chosen === row.id && <Stack direction="row" spacing={0.5} alignItems="center"><Iconify icon="solar:check-circle-linear" width={16} /><Typography variant="s3">Selected</Typography></Stack>}
                   {row.isProduction ? <Typography variant="s3" color="text.secondary">In production</Typography> : <Button
                     size="small"
-                    variant="outlined"
+                    variant={chosen === row.id ? "text" : "outlined"}
+                    aria-pressed={chosen === row.id}
+                    startIcon={chosen === row.id ? <Iconify icon="solar:check-circle-linear" width={16} /> : undefined}
                     disabled={!row.selectable}
                     onClick={() => onChoose(row.id)}
                   >
@@ -273,9 +273,11 @@ function ClosureReview({ candidate, production, closure }) {
     <Section title={`Closure review: v${candidate.number} against production v${production?.number ?? "?"}`}>
       <Stack spacing={1.5}>
         <Typography variant="s1" role="status">
-          {rows.length} files in the complete closure: {counts.changed ?? 0} changed, {counts.added ?? 0} added,{" "}
-          {counts.removed ?? 0} removed, {counts.unchanged ?? 0} unchanged. {candidate.children.length} linked skill{candidate.children.length === 1 ? " keeps its pinned version" : "s keep their pinned versions"};{" "}
-          {candidate.unavailableChildren.length} source{candidate.unavailableChildren.length === 1 ? "" : "s"} retired.
+          {counts.changed ?? 0} file{counts.changed === 1 ? " changes" : "s change"}, {counts.unchanged ?? 0} stay{counts.unchanged === 1 ? "s" : ""} the same.
+          {counts.added > 0 && ` ${counts.added} added.`}
+          {counts.removed > 0 && ` ${counts.removed} removed.`}
+          {candidate.children.length > 0 && " Linked skills keep their pinned versions."}
+          {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are retained.`}
         </Typography>
         {changes.map((change) => <Stack key={change.path} spacing={0.5}>
           <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
@@ -296,7 +298,7 @@ function ClosureReview({ candidate, production, closure }) {
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={`${row.status}:${row.path}`} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
-                  <TableCell aria-label={row.path} sx={{ overflowWrap: "anywhere" }}>{row.path}<TechnicalDetails title="Exact identities"><Typography variant="s3">{row.sizeBytes} B</Typography><IdentityChip value={row.sha256} label="File digest" /></TechnicalDetails></TableCell>
+                  <TableCell aria-label={row.path} sx={{ overflowWrap: "anywhere" }}>{row.path}</TableCell>
                   <TableCell>
                     <StatusBadge status={changeStatus[row.status]} label={changeNames[row.status]} />
                   </TableCell>
@@ -371,7 +373,6 @@ function RollbackRequest({
       <Stack spacing={1.5}>
         <Typography variant="m3">Production v{production?.number ?? "?"} → v{candidate.number}</Typography>
         {submit.data && <><Alert severity="success" role="status">Rollback request submitted. Production has not moved. The reviewer approves and releases it from Skills Reviews.</Alert><TechnicalDetails title="Attached test evidence"><EvidenceSummary items={evidenceRows(originalPreview.current?.evidence ?? evidence)} emptyText="No matching test evidence attached. Not tested is not a pass." /></TechnicalDetails></>}
-        <TechnicalDetails title="Exact identities"><IdentityChip label="Recovery release" value={candidate.digest} /></TechnicalDetails>
         {!submit.data && <Section title="Test evidence">
           {options.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" /> : options.isError ? <ErrorState title="Couldn't load test evidence" onRetry={options.refetch} /> : <>
             <EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'workspace'))} selectable selected={selectedEvidence}
@@ -404,11 +405,10 @@ function RollbackRequest({
           label={`I reviewed the complete v${candidate.number} closure, its retained children and the excluded alternatives.`}
         />}
         {!submit.data && !reviewed && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
-        {preview.isPending && (
-          <Typography variant="s3" role="status">
-            Preparing the rollback packet.
-          </Typography>
-        )}
+        {preview.isPending && <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+          <Button variant="contained" disabled>Submit rollback for review</Button>
+          <StatusBadge status="checking" label="Preparing the rollback request…" />
+        </Stack>}
         <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
         {packet && (
           <Stack spacing={1}>
@@ -510,6 +510,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
           select
           size="small"
           label="Credential lifetime"
+          sx={{ width: 1, maxWidth: 480 }}
           value={hours}
           disabled={Boolean(issue.data)}
           onChange={(event) => setHours(Number(event.target.value))}
@@ -556,6 +557,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
         <TextField
           size="small"
           label="Last reviewed commit"
+          sx={{ width: 1, maxWidth: 480 }}
           value={commit}
           onChange={(event) => setCommit(event.target.value)}
           error={Boolean(commit) && !validCommit}
@@ -580,16 +582,15 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
         <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} disabled={!validCommit} onClick={async () => { try { await navigator.clipboard.writeText(commands); setCopyStatus('Copied restore commands.'); } catch { setCopyStatus("Couldn't copy. Select the commands above."); } }}>Copy restore commands</Button>
         {copyStatus && <Typography role="status" variant="s3">{copyStatus}</Typography>}
         </Stack></Section><Section title="Review application threads">
-        <Typography variant="s1" component="div">
-          Resume a paused thread only under its original session and
-          checkpoint. Reconcile persisted business receipts before the next
-          model call; never replay a completed action. A thread whose mapping
-          or authority is lost needs an explicitly reviewed clean thread, and
-          the abandoned thread must be closed so it is not counted as
-          recovered. Plan every registered thread once, review that plan, and
-          apply exactly the reviewed plan: an applied plan is refused if its
-          digest differs or any thread moved after the review.
-        </Typography></Section>
+        <Stack component="ul" spacing={1} sx={{ m: 0, pl: 2.5 }}>
+          <Typography component="li" variant="s1">Resume paused threads from their original saved state.</Typography>
+          <Typography component="li" variant="s1">Check completed actions before continuing. Never run them twice.</Typography>
+          <Typography component="li" variant="s1">If access or a thread link is lost, review a new thread and close the old one.</Typography>
+          <Typography component="li" variant="s1">Review every thread in one plan. If anything changes, review it again.</Typography>
+        </Stack>
+        <TechnicalDetails title="Thread recovery checks">
+          <Typography variant="s3">Resume only under the original session and checkpoint. Reconcile persisted business receipts before the next model call. Threads with expired authority or lost mappings are not recovered; a clean thread needs explicit review and the abandoned thread must be closed. Plan every registered thread once and apply exactly the reviewed plan. A different plan digest or a thread that moved after review is refused.</Typography>
+        </TechnicalDetails></Section>
       </Stack>
   );
 }
@@ -671,7 +672,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     <Typography variant="m3"><Skeleton width="28%" sx={{ bgcolor: 'action.selected' }} /></Typography>
     <ContentSkeleton variant="panel" rows={2} sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />
   </Stack>;
-  if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description="This context has more than 100 releases or consumers, which recovery can't review completely here." details={query.error?.message} />;
+  if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description="This context has more than 100 releases or consumers, which recovery can't review completely here. Use the CLI restore for contexts this large." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
   if (previewState === 'denied') return <ErrorState title="You cannot review recovery for this context" />;
   if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
   if (previewState === 'empty') return <EmptyState title="No eligible recovery release" description="Publish and review a recovery candidate before requesting a production change." />;
@@ -699,14 +700,20 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       </Stack>
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
-      <Stack spacing={3}>
-      {!awaiting && !candidate?.isProduction && <>
+      {!candidate?.isProduction && <Stack spacing={3}>
+      {!awaiting && <>
         <Section title={candidate ? `Recovery release: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a recovery release'}>
           {suggestion && <Typography variant="s3" color="text.secondary">v{suggestion.number} is the newest eligible release before v{suggestion.failing}. Review it below or choose another.</Typography>}
           <TechnicalDetails title="Change" defaultOpen={!candidate}><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /></TechnicalDetails>
         </Section>
         {candidate && <ClosureReview candidate={candidate} production={production} closure={closure} />}
       </>}
+        <TechnicalDetails title="Exact identities">
+          <Stack spacing={1}>
+            {data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}
+            {(closure.data?.rows ?? []).map((row) => <Stack key={`${row.status}:${row.path}`} spacing={0.5}><Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.path} · {row.sizeBytes} B</Typography><IdentityChip label="File digest" value={row.sha256} /></Stack>)}
+          </Stack>
+        </TechnicalDetails>
       {candidate && !candidate.isProduction && (
         <RollbackRequest
           // A moved release revision makes an earlier packet stale: start a fresh review.
@@ -723,8 +730,8 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           onRefresh={() => refreshFacts()}
         />
       )}
-      </Stack>
-      {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /></TechnicalDetails>}
+      </Stack>}
+      {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /><TechnicalDetails title="Exact identities">{data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}</TechnicalDetails></TechnicalDetails>}
       <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} />
       {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare local recovery in advance"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
       <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => refreshFacts()}>

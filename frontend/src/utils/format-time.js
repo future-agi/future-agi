@@ -212,5 +212,5 @@ export function fObservationAge(seconds) {
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "Time not reported";
   const [amount, unit] = seconds < 60 ? [Math.floor(seconds), "s"]
     : seconds < 3600 ? [Math.floor(seconds / 60), "min"] : [Math.floor(seconds / 3600), "h"];
-  return `Updated ${amount} ${unit} ago`;
+  return `Updated ${amount}${unit} ago`;
 }

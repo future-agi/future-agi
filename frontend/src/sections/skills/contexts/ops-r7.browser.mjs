@@ -22,7 +22,7 @@ export const useContextRecovery = () => { const [verify, setVerify] = useState(f
 export const useRecoveryReviewers = () => ({ data: [{ id: 'reviewer', name: 'Independent reviewer', email: 'reviewer@example.invalid' }] });
 export const useRecoveryClosure = () => ({ data: { rows: [{ path: 'AGENTS.md', status: 'changed', sizeBytes: 146, sha256: 'a'.repeat(64) }, { path: 'skills/refund-policy/SKILL.md', status: 'unchanged', sizeBytes: 88, sha256: 'b'.repeat(64) }], changes: [{ path: 'AGENTS.md', status: 'changed', lines: [{ kind: 'removed', text: 'Refund shipping for every return.' }, { kind: 'added', text: 'Refund shipping only when the shipment is damaged.' }] }] } });
 export const useRefreshContextFacts = () => () => {};
-export const usePreviewRecoveryRelease = () => { const [data, setData] = useState(null); return { data, mutate: () => setData({ fingerprint: 'sha256:' + 'f'.repeat(64), packet: {} }), reset: () => setData(null) }; };
+export const usePreviewRecoveryRelease = () => { const [data, setData] = useState(null); const [isPending, setPending] = useState(false); return { data, isPending, mutate: () => params.get('screen') === 'recovery-preparing' ? setPending(true) : setData({ fingerprint: 'sha256:' + 'f'.repeat(64), packet: {} }), reset: () => setData(null) }; };
 export const useSubmitRecoveryRequest = () => { const [data, setData] = useState(null); return { data, mutate: () => setData({ id: 'request-1' }) }; };
 export const useIssueRecoveryCredential = () => ({ mutate: () => {} });
 export const useReviewOptions = () => ({ data: { evidence: [] } });
@@ -78,7 +78,7 @@ const browser = await chromium.launch({ headless: true, args: ['--disable-dev-sh
 const errors = [];
 const captures = [];
 try {
-  const cases = [['rollouts-off'], ['rollouts-list'], ['rollouts-empty', 'empty'], ['rollouts-loading', 'loading'], ['rollouts-error', 'error'], ['rollout-review'], ['rollout-target-drawer'], ['recovery-review'], ['recovery-await'], ['recovery-verify'], ['recovery-empty', 'empty'], ['recovery-loading', 'loading'], ['recovery-error', 'error'], ['recovery-limit', 'inventory-limit'], ['recovery-candidates'], ['consumers'], ['consumers-drawer'], ['consumers-empty', 'empty'], ['consumers-loading', 'loading'], ['consumers-error', 'error']];
+  const cases = [['rollouts-off'], ['rollouts-list'], ['rollouts-empty', 'empty'], ['rollouts-loading', 'loading'], ['rollouts-error', 'error'], ['rollout-review'], ['rollout-target-drawer'], ['recovery-review'], ['recovery-await'], ['recovery-preparing'], ['recovery-verify'], ['recovery-empty', 'empty'], ['recovery-loading', 'loading'], ['recovery-error', 'error'], ['recovery-limit', 'inventory-limit'], ['recovery-candidates'], ['consumers'], ['consumers-drawer'], ['consumers-empty', 'empty'], ['consumers-loading', 'loading'], ['consumers-error', 'error']];
   for (const theme of ['light', 'dark']) {
     for (const [screen, state] of cases) {
       if (captureOnly && screen !== captureOnly) continue;
@@ -99,13 +99,44 @@ try {
         assert.equal(await page.getByRole('button', { name: 'Submit rollback for review' }).count(), 0);
         await page.evaluate(() => window.scrollTo(0, 0));
       }
+      if (screen === 'recovery-preparing') {
+        await page.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }).check();
+        await page.getByText('Preparing the rollback request…').waitFor();
+        assert(await page.getByRole('button', { name: 'Submit rollback for review' }).isDisabled());
+        await page.getByRole('button', { name: 'Submit rollback for review' }).scrollIntoViewIfNeeded();
+      }
       if (screen === 'recovery-verify') await page.getByText('Production moved from v2 to v1 · 1 of 2 consumers confirmed').waitFor();
-      if (screen === 'consumers') { await page.getByText(/As of 13 Nov 2026, 01:46 UTC/).waitFor(); assert.equal(await page.getByText('Updated 3 s ago', { exact: true }).count(), 2); }
+      if (screen === 'consumers') { await page.getByText(/As of 13 Nov 2026, 01:46 UTC/).waitFor(); assert.equal(await page.getByText('Updated 3s ago', { exact: true }).count(), 2); }
       if (screen === 'recovery-candidates' && !(await page.getByRole('button', { name: 'Choose v1' }).isVisible())) await page.getByRole('button', { name: 'Change', exact: true }).click();
+      if (screen === 'recovery-candidates') {
+        assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);
+        await page.getByText('1 file changes, 1 stays the same. Linked skills keep their pinned versions.').waitFor();
+      }
+      if (screen === 'rollout-review') {
+        await page.getByRole('button', { name: '1 blocked', exact: true }).click();
+        await page.getByText('Blocked: local changes', { exact: true }).waitFor();
+        await page.getByText('Local modifications need review', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Review target support-repository-01', exact: true }).count(), 0);
+        const blockedName = `rollout-blocked${page.viewportSize().width === 390 ? '-390' : new URL(page.url()).searchParams.get('theme') === 'dark' ? '-dark' : ''}.png`;
+        await page.screenshot({ path: path.join(output, blockedName), animations: 'disabled' }); captures.push(blockedName);
+        await page.getByRole('combobox', { name: 'Target status' }).click();
+        await page.getByRole('option', { name: 'All targets', exact: true }).click();
+      }
+      if (screen === 'rollout-target-drawer') assert(await page.getByRole('dialog').locator('[data-status="added"]').count() > 0, 'shared diff has added rows');
+      if (screen === 'recovery-limit') {
+        await page.getByRole('link', { name: 'Open CLI restore instructions' }).waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).count(), 0);
+      }
     await page.evaluate(() => document.fonts.ready);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} desktop overflow`);
       const name = `${screen}${theme === 'dark' ? '-dark' : ''}.png`;
       await page.screenshot({ path: path.join(output, name), animations: 'disabled' }); captures.push(name);
+      if (screen === 'recovery-verify') {
+        const threadName = `recovery-threads${theme === 'dark' ? '-dark' : ''}.png`;
+        await page.getByText('Review application threads', { exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(output, threadName), animations: 'disabled' }); captures.push(threadName);
+      }
       if (screen === 'consumers-drawer') {
         const close = page.getByRole('button', { name: 'Close delivery receipts' });
         assert.equal(await close.locator('svg').count(), 1, 'Receipt close glyph renders on first load');
@@ -127,6 +158,26 @@ try {
     if (screen === 'consumers-drawer') await page.getByRole('button', { name: 'Inspect Support application' }).click();
     if (screen === 'rollout-target-drawer') await page.getByRole('button', { name: 'Review target support-repository-01' }).click();
     if (screen === 'recovery-candidates' && !(await page.getByRole('button', { name: 'Choose v1' }).isVisible())) await page.getByRole('button', { name: 'Change', exact: true }).click();
+      if (screen === 'recovery-candidates') {
+        assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);
+        await page.getByText('1 file changes, 1 stays the same. Linked skills keep their pinned versions.').waitFor();
+      }
+      if (screen === 'rollout-review') {
+        await page.getByRole('button', { name: '1 blocked', exact: true }).click();
+        await page.getByText('Blocked: local changes', { exact: true }).waitFor();
+        await page.getByText('Local modifications need review', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Review target support-repository-01', exact: true }).count(), 0);
+        const blockedName = `rollout-blocked${page.viewportSize().width === 390 ? '-390' : new URL(page.url()).searchParams.get('theme') === 'dark' ? '-dark' : ''}.png`;
+        await page.screenshot({ path: path.join(output, blockedName), animations: 'disabled' }); captures.push(blockedName);
+        await page.getByRole('combobox', { name: 'Target status' }).click();
+        await page.getByRole('option', { name: 'All targets', exact: true }).click();
+      }
+      if (screen === 'rollout-target-drawer') assert(await page.getByRole('dialog').locator('[data-status="added"]').count() > 0, 'shared diff has added rows');
+      if (screen === 'recovery-limit') {
+        await page.getByRole('link', { name: 'Open CLI restore instructions' }).waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).count(), 0);
+      }
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: path.join(output, `${screen}-390.png`), animations: 'disabled' });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} mobile overflow`);

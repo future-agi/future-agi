@@ -253,3 +253,32 @@ it('reopens verification after a reload without inventing the previous productio
   expect(screen.getByRole('button', { name: 'Choose v3' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Choose v1' })).toBeNull();
 });
+
+
+it('uses one exact-identity disclosure and a pressed release choice', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Change', exact: true }));
+  expect(screen.getByRole('button', { name: 'Choose v1' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getAllByRole('button', { name: 'Exact identities', exact: true })).toHaveLength(1);
+  expect(screen.queryByText(/0 removed|0 sources retired/)).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'I reviewed the complete v1 closure, its retained children and the excluded alternatives.' })).not.toBeChecked();
+});
+
+it('shows a disabled submit and a checking status while preparing the rollback request', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  previewState = { isPending: true };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Preparing the rollback request…')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Submit rollback for review' })).toBeDisabled();
+});
+
+it('offers CLI restore, not retry or approval, for an over-limit context', () => {
+  window.history.replaceState({}, '', '?state=inventory-limit');
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    expect(screen.getByRole('link', { name: 'Open CLI restore instructions' })).toHaveAttribute('href', '?tab=use');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+  } finally { window.history.replaceState({}, '', '/'); }
+});

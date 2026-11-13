@@ -39,7 +39,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
     {missing > 0 && <Alert severity="warning">{missing} of {data.results.length} consumers still need delivery verification.</Alert>}
     {data.results.length > 0 && registrationAction}
     <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
-      <FormSearchField label="Search consumers" placeholder="Search this page" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
+      <FormSearchField label="Search consumers" placeholder="Search consumers" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
       <TextField select size="small" label="Verification" value={status} onChange={(event) => setStatus(event.target.value)}>
         <MenuItem value="all">All statuses</MenuItem>
         {Object.entries(consumerStateNames).map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
@@ -48,6 +48,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
         {[7, 30, 90].map((days) => <MenuItem key={days} value={days}>{days} days</MenuItem>)}
       </TextField>
     </ListToolbar>
+    {data.count > data.pageSize && <Typography variant="s3" color="text.secondary">Search and filters apply to the consumers on this page.</Typography>}
     {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
       : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
         : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
@@ -70,8 +71,8 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
         </Stack>
         <Stack spacing={2}>
           <Alert severity="info"><Typography variant="s3" component="div">Next step</Typography><Typography variant="s1" component="div">{consumerNextStep(selected.nextActionCode)}</Typography></Alert>
-          <Stack component="ol" spacing={0} sx={{ listStyle: 'none', m: 0, p: 0 }}>
-            {Object.entries(stageNames).map(([key, label]) => <Box component="li" key={key} sx={{ display: 'grid', gridTemplateColumns: '11ch minmax(0, 1fr)', gap: 1, py: 1.5, pl: 1.5, borderLeft: 1, borderBottom: 1, borderColor: 'divider' }}>
+          <Stack component="ol" spacing={0} sx={{ listStyle: 'none', m: 0, p: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+            {Object.entries(stageNames).map(([key, label]) => <Box component="li" key={key} sx={{ display: 'grid', gridTemplateColumns: '11ch minmax(0, 1fr)', gap: 1, p: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
               <Typography variant="m3">{label}</Typography><Stack spacing={0.5} alignItems="flex-start"><Stage stage={selected[key]} versionNumbers={versionNumbers} />{selected[key] && <Typography variant="s3" color="text.secondary" title={selected[key].observedAt}>{fDateTimeUTC(selected[key].observedAt)}</Typography>}</Stack>
             </Box>)}
           </Stack>

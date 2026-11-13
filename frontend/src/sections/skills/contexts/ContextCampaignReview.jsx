@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Checkbox, FormControlLabel, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import ListToolbar from 'src/components/list-toolbar';
 import FormSearchField from 'src/components/FormSearchField/FormSearchField';
 import EmptyState from 'src/components/empty-state';
@@ -39,6 +39,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
   // Filtering is presentation only. Readiness and the payload always use the complete inventory.
   const decisionFor = (target) => campaign.status === 'draft' ? chosen(target).decision : target.decision;
   const blocked = (target) => !target.repository || !target.plan || target.plan.blockers.length > 0 || (target.selector.version && target.selector.version !== target.desiredVersion);
+  const blockedLabel = (target) => !target.repository ? 'Blocked: repository missing' : !target.plan ? 'Blocked: no plan' : target.plan.blockers.length ? (target.plan.blockers.some((reason) => /local/i.test(reason)) ? 'Blocked: local changes' : 'Blocked: plan needs attention') : 'Blocked: pinned version';
   const needsReview = (target) => campaign.status === 'draft' ? !reviewedTarget(target) : target.decision === 'pending';
   const visible = targets.filter((target) => target.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === 'all' || (filter === 'pending' && needsReview(target)) || (filter === 'blocked' && blocked(target)) || (filter === 'excluded' && decisionFor(target) === 'exclude')));
   const outstanding = targets.filter(needsReview);
@@ -55,35 +56,35 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <ObjectHeader crumbs={[{ label: 'Repository rollouts', to: '/dashboard/skills/contexts/rollouts' }, { label: campaign.name }]} title={campaign.name} purpose={campaign.status === 'settled' ? 'Repository work finished · delivery tracked separately' : 'Review repository changes'} badge={<StatusBadge status={campaign.status} />} />
-    <Typography variant="s1">{campaign.targetCount} targets · {outstanding.length} need review · {targets.filter(blocked).length} blocked · {targets.filter((target) => decisionFor(target) === 'exclude').length} excluded</Typography>
+    <Typography variant="s1">{campaign.targetCount} targets · {outstanding.length} need review · <Link component="button" type="button" variant="s1" color="inherit" onClick={() => setFilter('blocked')}>{targets.filter(blocked).length} blocked</Link> · {targets.filter((target) => decisionFor(target) === 'exclude').length} excluded</Typography>
     <Typography variant="s3">Revision {campaign.revision}</Typography><TechnicalDetails title="Rollout details">{campaign.manifestDigest ? <IdentityChip label="Inventory fingerprint" value={campaign.manifestDigest} /> : <Typography variant="s3">Waiting for local plans</Typography>}</TechnicalDetails>
     {!campaign.enabled && <Alert severity="info">Campaign execution is disabled. No repository writes can be authorized or claimed.</Alert>}
     {!campaign.canAuthorize && <Alert severity="info">A current workspace administrator must authorize these repository writes.</Alert>}
     {!complete && <Alert severity="warning">The complete target inventory has not loaded. Authorization is unavailable.</Alert>}
     {stale && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={reset}>Review changed state</Button>}>This review is stale. No preconditions were refreshed automatically.</Alert>}
     {error && <Alert severity="error" role="alert">{error}</Alert>}
-    <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
-      <FormSearchField label="Search repositories" searchQuery={search} onChange={(event) => setSearch(event.target.value)} />
-      <TextField select size="small" label="Target status" value={filter} onChange={(event) => setFilter(event.target.value)}>
-        <MenuItem value="all">All targets</MenuItem><MenuItem value="pending">Needs review</MenuItem><MenuItem value="blocked">Blocked</MenuItem><MenuItem value="excluded">Excluded</MenuItem>
-      </TextField>
-    </ListToolbar>
-    <Box sx={{ position: 'sticky', top: 0, zIndex: 1, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider', py: 1 }}>
-    {campaign.status === 'draft' && <Section title="Repository-write authorization"><Stack spacing={1} alignItems="flex-start">
+    <Box sx={{ bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider', py: 1 }}>
+    {campaign.status === 'draft' && <Section title="Authorize pull requests"><Stack spacing={1} alignItems="flex-start">
       <Typography variant="s3">Reviewed {targets.length - outstanding.length} of {campaign.targetCount}</Typography>
       <FormControlLabel control={<Checkbox checked={acknowledged} disabled={!editable} onChange={(event) => setAcknowledged(event.target.checked)} />} label="I reviewed every included patch and authorize only the listed repository writes, not merge or deployment." />
       <Button variant="contained" disabled={!editable || !ready || !acknowledged} onClick={() => setConfirm('authorize')}>Authorize reviewed PR plans</Button>
       {!ready ? <Typography variant="s3">Review every target to continue.</Typography> : !acknowledged && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
     </Stack></Section>}
     </Box>
+    <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
+      <FormSearchField label="Search repositories" searchQuery={search} onChange={(event) => setSearch(event.target.value)} />
+      <TextField select size="small" label="Target status" value={filter} onChange={(event) => setFilter(event.target.value)}>
+        <MenuItem value="all">All targets</MenuItem><MenuItem value="pending">Needs review</MenuItem><MenuItem value="blocked">Blocked</MenuItem><MenuItem value="excluded">Excluded</MenuItem>
+      </TextField>
+    </ListToolbar>
     {!visible.length && <EmptyState variant="no-results" title="No targets match these filters" onClearFilters={() => { setSearch(''); setFilter('all'); }} />}
     <TableContainer><Table size="small" aria-label="Fixed rollout targets">
       <TableHead sx={{ display: { xs: 'none', md: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Repository / target</TableCell><TableCell>Changes</TableCell><TableCell>Pull request</TableCell><TableCell>Decision</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
       <TableBody>{visible.map((target) => <TableRow key={target.bindingId} hover onClick={() => onSelectTarget(target.bindingId)} sx={{ cursor: 'pointer', height: { xs: 'auto', md: ROW_HEIGHT.default }, display: { xs: 'grid', md: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, md: 0 }, '& > td': { borderBottom: { xs: 0, md: undefined } } }}>
         <TableCell sx={{ gridColumn: '1 / -1', wordBreak: 'normal', overflowWrap: 'break-word' }}><Typography variant="s1">{target.name.split(/(?<=[/-])/).map((part, i) => <Box key={i} component="span">{part}<wbr /></Box>)}</Typography><Typography component="div" variant="s3" color="text.secondary">v{target.desiredVersion} · {target.selector.version ? `Pin v${target.selector.version}` : `Follow ${target.selector.label}`}</Typography></TableCell>
-        <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Typography variant="s3">{fileCount(target.plan)}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Local instructions need review</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</TableCell>
+        <TableCell sx={{ gridColumn: '1 / -1' }}><Typography variant="s3">{fileCount(target.plan)}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Local instructions need review</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</TableCell>
         <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><StatusBadge status={target.prState} /></TableCell>
-        <TableCell><StatusBadge status="draft" label={decisionLabels[decisionFor(target)] || 'Not decided'} /></TableCell>
+        <TableCell><Stack spacing={0.5} alignItems="flex-start">{blocked(target) && <StatusBadge status="warning" label={blockedLabel(target)} />}{(!blocked(target) || decisionFor(target) !== 'pending') && <StatusBadge status="draft" label={decisionLabels[decisionFor(target)] || 'Not decided'} />}</Stack></TableCell>
         <TableCell><Button variant="outlined" size="small" onClick={(event) => { event.stopPropagation(); onSelectTarget(target.bindingId); }} aria-label={`Review target ${target.name}`}>Review</Button></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableContainer>

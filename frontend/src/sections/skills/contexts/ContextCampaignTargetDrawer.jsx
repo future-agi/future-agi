@@ -8,12 +8,26 @@ import { humanizeCode } from './consumerPresentation';
 import Section from 'src/components/section';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
+import TextDiff from '../components/TextDiff';
 import StatusBadge from 'src/components/status-badge';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import { coveredDrawerSx, useDrawerCovered } from 'src/hooks/use-drawer-stack';
 
 const source = { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', m: 0 };
+
+// Excerpts can be plain descriptions or unified diffs. Keep hunk headers visible
+// and render each hunk separately so omitted lines never look like adjacent text.
+function ChangeExcerpt({ text }) {
+  const chunks = text.split(/(^@@[^\n]*@@[^\n]*$|^--- [^\n]*$|^\+\+\+ [^\n]*$)/m).filter(Boolean);
+  return <Stack spacing={1}>{chunks.map((chunk, index) => {
+    const lines = chunk.replace(/^\n|\n$/g, '').split('\n');
+    if (!lines.some((line) => /^[+-]/.test(line)) || /^(?:@@|--- |\+\+\+ )/.test(chunk)) return <Typography key={index} component="pre" variant="s1" sx={source}>{chunk}</Typography>;
+    const content = (line) => /^[ +-]/.test(line) ? line.slice(1) : line;
+    return <TextDiff key={index} fromText={lines.filter((line) => !line.startsWith('+')).map(content).join('\n')} toText={lines.filter((line) => !line.startsWith('-')).map(content).join('\n')} fromTitle="Before (excerpt)" toTitle="After (excerpt)" />;
+  })}</Stack>;
+}
+ChangeExcerpt.propTypes = { text: PropTypes.string.isRequired };
 export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, observations, onNext }) {
   const title = useId();
   const covered = useDrawerCovered(open);
@@ -24,17 +38,17 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
       <IconButton aria-label="Close target" onClick={onClose}><Iconify icon="solar:close-linear" width={18} /></IconButton>
     </Stack>
     {target && <Stack spacing={2} sx={{ minWidth: 0, overflowY: 'auto', flex: 1, p: 2 }}>
-      <Alert severity="info">Git plans and PR receipts are client-reported. Merged does not mean installed or delivered.</Alert>
-      <Section title="Exact target">
+      <Alert severity="info">Pull request status comes from your Git client. A merged PR doesn&apos;t mean the app has the change.</Alert>
+      <Section title="Target">
         <Typography component="p" variant="s1">Release v{target.desiredVersion} · {target.selector.version ? `Pinned v${target.selector.version}` : `Follows ${target.selector.label}`}</Typography>
-        {target.repository ? <Typography component="p" variant="s3" sx={source}>Repository {target.repository.defaultBranch} · {target.repository.projectScope || 'project root'}</Typography> : <Alert severity="warning">This target no longer names a repository. The old plan cannot authorize new writes.</Alert>}
+        {target.repository ? <Typography component="p" variant="s3" sx={source}>Branch: {target.repository.defaultBranch} · {target.repository.projectScope ? `Folder: ${target.repository.projectScope}` : 'Root folder'}</Typography> : <Alert severity="warning">This target no longer names a repository. The old plan cannot authorize new writes.</Alert>}
       </Section>
       {!target.plan ? <Alert severity="warning">No local plan has been submitted. Inspect this repository with the qualified local executor before including it.</Alert> : <>
         <Section title="Changes" description="Excerpts only. Files are checked again before anything is written.">
           {target.plan.changes.map((change) => <Box key={change.path} sx={{ borderBottom: 1, borderColor: 'divider', py: 1 }}>
             <Typography component="h3" variant="m3" sx={source}>{{ replace: 'Replaces', add: 'Adds', create: 'Creates', remove: 'Removes', delete: 'Deletes' }[change.action] || humanizeCode(change.action)} {change.path} ({change.ownership === 'managed' ? 'managed by Future AGI' : humanizeCode(change.ownership)})</Typography>
             <TechnicalDetails title="File fingerprints"><IdentityChip label="Before" value={change.beforeSha256 || 'absent'} /><IdentityChip label="After" value={change.afterSha256 || 'absent'} /></TechnicalDetails>
-            <Typography component="pre" variant="s1" sx={source}>{change.diffPreview}</Typography>
+            <ChangeExcerpt text={change.diffPreview || ''} />
           </Box>)}
         </Section>
         {(target.plan.localReviewRequired || target.plan.blockers.length > 0) && <Section title="Needs attention">
