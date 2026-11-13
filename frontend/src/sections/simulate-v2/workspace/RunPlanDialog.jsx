@@ -411,6 +411,9 @@ export default function RunPlanDialog({
             }
           : null;
   const canStart = check.canStart && !pairHold;
+  /* Nothing can run (the check failed, or every selected scenario waits on a
+     fix): say why once, never "0 scenarios" or "pick a scenario". */
+  const noRun = pairFailed || (!multi && allHeld);
   /* The estimate can be over the admin's per-run limit however the limit is
      set — then the most attempts that fit is the useful suggestion. */
   const overPolicy =
@@ -668,7 +671,7 @@ export default function RunPlanDialog({
                 }
                 checking={checkingCompat}
               >
-                {allHeld && !pairFailed && (
+                {multi && allHeld && !pairFailed && (
                   <Typography
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
@@ -904,7 +907,7 @@ export default function RunPlanDialog({
             )}
 
             {/* ── what runs: one sentence, its numbers editable in place ── */}
-            {!pairFailed && (
+            {!noRun && (
               <Stack
                 direction="row"
                 alignItems="center"
@@ -1442,7 +1445,7 @@ export default function RunPlanDialog({
               </>
             )}
 
-            {(pairFailed ? [pairHold] : check.holds).length > 0 && (
+            {(noRun ? [pairHold] : check.holds).length > 0 && (
               <Box
                 role="alert"
                 sx={{
@@ -1454,7 +1457,7 @@ export default function RunPlanDialog({
                   py: 1,
                 }}
               >
-                {(pairFailed ? [{ id: "pair", ...pairHold }] : check.holds).map(
+                {(noRun ? [{ id: "pair", ...pairHold }] : check.holds).map(
                   (h) => (
                     <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
                       <Typography
