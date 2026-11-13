@@ -14,11 +14,14 @@ type Registry struct {
 	startTime  time.Time
 	counters   sync.Map // name → *CounterVec
 	histograms sync.Map // name → *Histogram
+	gauges     sync.Map // name -> *gauge
 }
 
 // NewRegistry creates a new metrics registry.
 func NewRegistry() *Registry {
-	return &Registry{startTime: time.Now()}
+	r := &Registry{startTime: time.Now()}
+	r.registerVideo()
+	return r
 }
 
 // CounterInc increments a counter by 1.
@@ -95,6 +98,7 @@ func (r *Registry) Render() string {
 		h.render(&b, name)
 	}
 
+	r.renderGauges(&b)
 	return b.String()
 }
 
