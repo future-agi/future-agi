@@ -59,6 +59,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
     catch { setError('Could not pin this configuration. Reopen the review to compare the latest target revision.'); }
   };
   return <Section title={<Typography component="span" variant="m3">Application target</Typography>}>
+    <TechnicalDetails title="Runtime details"><Typography variant="s3" color="text.secondary">Runtime: {targets.data.runtime.runtime} · evidence class: {targets.data.runtime.evidenceClass || 'unstated'}</Typography></TechnicalDetails>
     {!target ? <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography variant="s1">No application is registered for this context.</Typography>
       <Button size="small" variant="outlined" disabled={!canWrite || !version || create.isPending} onClick={() => create.mutate({ version: version.number })}>Add application target</Button>
@@ -69,7 +70,6 @@ function TargetSection({ contextId, version, canWrite, targets }) {
       <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Review runtime configuration</Button>
       <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Change</Button>
     </Stack>}
-    <Typography variant="s3" color="text.secondary">Runtime: {targets.data.runtime.runtime} · evidence class: {targets.data.runtime.evidenceClass || 'unstated'}</Typography>
     {create.isError && <Alert severity="error">Could not add the target. Check the runtime and your access, then retry.</Alert>}
     {review && <ClosableDialog open onClose={() => setReview(null)} maxWidth="sm" fullWidth>
       <Stack spacing={1.5} sx={{ p: 3 }}>
@@ -164,7 +164,7 @@ function ReleasePacket({ contextId, run, target, canWrite, earlier, onReady }) {
   const valid = pipeline.url.trim() && pipeline.configurationIdentity.trim() && pipeline.decision.trim();
   return <Section title={<Typography component="span" variant="m3">Release packet</Typography>} description="Prepares the exact version, runtime target and shared evidence for the separate release review. Nothing is released here.">
     <Stack spacing={1.5}>
-      <Typography variant="s1">Ready to request release review for v{candidate?.version} — add your CI run to attach it as evidence.</Typography>
+      <Typography variant="s1">Ready to request release review for v{candidate?.version}. Add a CI run link, configuration ID and result to prepare the evidence packet.</Typography>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ '& > *': { flex: 1 } }}>
         <TextField size="small" label="CI run link" value={pipeline.url} onChange={set('url')} />
         <TextField size="small" label="CI configuration ID" value={pipeline.configurationIdentity} onChange={set('configurationIdentity')} />
@@ -184,7 +184,7 @@ function ReleasePacket({ contextId, run, target, canWrite, earlier, onReady }) {
 }
 ReleasePacket.propTypes = { earlier: PropTypes.bool, onReady: PropTypes.func, contextId: PropTypes.string.isRequired, run: PropTypes.object.isRequired, target: PropTypes.object, canWrite: PropTypes.bool.isRequired };
 
-function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, currentForm }) {
+function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier }) {
   const query = useNativeRun(contextId, evidenceId);
   const navigate = useNavigate();
   const annotations = useAllEvidenceAnnotations('simulation_native', evidenceId);
@@ -209,6 +209,14 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const untested = cases.filter((item) => !runCases.includes(item.id)).length;
   const inspect = (cell, event) => { origin.current = event.currentTarget; setOpen(cell); };
   const referenceArm = run.arms.find((arm) => arm.variant === 'reference');
+  const passedCases = runCases.filter((id) => {
+    const attempts = (run.cells || []).filter((cell) => cell.caseId === id && cell.variant === 'candidate');
+    return attempts.length > 0 && attempts.every((cell) => cell.status === 'completed' && FAMILIES.every(([key]) => cell[key] === 'pass'));
+  }).length;
+  const firstDisagreement = run.cells?.find((cell) => cell.attemptId && disagreements.some((row) => row.attemptId === cell.attemptId));
+  const reproduction = run.result?.reproduction === 'reproduced'
+    ? `the recorded failure reproduced${referenceArm ? ` on v${referenceArm.version}` : ''}`
+    : `the recorded failure ${run.result?.reproduction === 'not_reproduced' ? 'did not reproduce' : 'was not verified'}`;
   return <Stack spacing={1.5}>
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography component="h3" variant="m3" data-execution-fingerprint={run.executionFingerprint}>Application verification</Typography>
@@ -217,33 +225,36 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     </Stack>
     <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center"><Typography variant="s3">v{candidate?.version}{referenceArm ? ` vs recorded v${referenceArm.version}` : ''} · {runCases.length} of {cases.length} cases · {untested} not tested · {localTime(run.createdAt)}</Typography><IdentityChip value={run.configurationDigest} label="Configuration" /></Stack>
     {active && <LinearProgress aria-label="Application run progress" variant={run.planned ? "determinate" : "indeterminate"} value={run.planned ? Math.min(100, received / run.planned * 100) : 0} />}
-    {earlier && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}><StatusBadge status="unknown" label="Earlier result" sx={{ alignSelf: 'flex-start' }} /><Typography variant="s1">This result is for v{candidate?.version} with {runCases.length} case{runCases.length === 1 ? '' : 's'}; your current selection is different.</Typography><Button variant={currentForm ? "outlined" : "contained"} onClick={onRunCurrent} sx={{ alignSelf: 'flex-start' }}>Run on current selection</Button></Stack>}
+    {earlier && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}><StatusBadge status="unknown" label="Earlier result" sx={{ alignSelf: 'flex-start' }} /><Typography variant="s1">This result is for v{candidate?.version} with {runCases.length} case{runCases.length === 1 ? '' : 's'}; your current selection is different.</Typography><Button variant="text" onClick={onRunCurrent} sx={{ alignSelf: 'flex-start' }}>Run on current selection</Button></Stack>}
     {run.failure && <Alert severity="error">The run stopped: {run.failure.replaceAll('_', ' ')}. No outcome is inferred.</Alert>}
-    {run.decision && !active && <Box sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, color: earlier ? 'text.secondary' : 'text.primary' }}>
-      <Typography variant="s1" component="div">{run.decision.state === 'release_ready' ? 'Application checks passed for these cases' : 'Hold this release'}</Typography>
-      {run.decision.state === 'release_ready' && <Typography variant="s3" component="div">Ready for release review</Typography>}
-      <TechnicalDetails title="How it was decided">{run.decision.reasons.map((reason) => <Typography key={reason} variant="s1" component="div">{reason}</Typography>)}</TechnicalDetails>
-    </Box>}
-    {run.result && !active && <Typography variant="s1">Historical failure: {run.result.reproduction.replaceAll('_', ' ')} · Repair {run.result.repair_verified ? 'verified' : 'not verified'}{run.result.regressed_cases?.length ? ` · ${run.result.regressed_cases.length} neighboring case(s) regressed` : ''}</Typography>}
+    {!active && (run.result || run.decision) && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+      <Typography variant="m3" component="p" sx={{ m: 0 }}>
+        {run.result ? `${run.result.repair_verified ? 'Repair verified' : 'Repair not verified'}: v${candidate?.version} passed ${passedCases} of ${runCases.length} cases; ${reproduction}.` : run.decision.state === 'release_ready' ? 'Application checks passed for these cases.' : 'Hold this release.'}
+        {run.result?.regressed_cases > 0 ? ` ${run.result.regressed_cases} neighboring case${run.result.regressed_cases === 1 ? '' : 's'} regressed.` : ''}
+      </Typography>
+      {annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : annotations.isLoading ? <Typography variant="s3">Loading human reviews…</Typography> : firstDisagreement ? <Button variant="text" size="small" sx={{ alignSelf: 'flex-start' }} onClick={(event) => inspect(firstDisagreement, event)}>{disagreementLabel(disagreements.length)} to inspect</Button> : <Typography variant="s3" color="text.secondary">{disagreementLabel(disagreements.length)}{disagreements.length ? ' recorded; attempt details unavailable' : ''}</Typography>}
+      {run.decision?.state === 'release_ready' && <StatusBadge status="info" label="Ready for release review" sx={{ alignSelf: 'flex-start' }} />}
+      {run.decision && <TechnicalDetails title="How it was decided">{run.decision.reasons.map((reason) => <Typography key={reason} variant="s1" component="div">{reason}</Typography>)}</TechnicalDetails>}
+    </Stack>}
     {!active && canWrite && run.result?.reproduction === 'reproduced' && referenceArm && <Box>
       <Button variant="outlined" size="small" onClick={() => navigate(`${paths.dashboard.skills.contextEdit(contextId)}?from=${referenceArm.version}&preserve=1`)}>{`Repair from recorded v${referenceArm.version}`}</Button>
     </Box>}
-    {run.runtime && <TechnicalDetails title="Runtime details"><Typography variant="s3" color="text.secondary">Runtime proved read-only source {String(run.runtime.read_only_source)}, read-only context {String(run.runtime.read_only_context)}, closed paid egress {String(run.runtime.controlled_paid_egress)}.</Typography><IdentityChip value={run.executionFingerprint} label="Execution fingerprint" /></TechnicalDetails>}
-    {annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : <Typography variant="s3">{annotations.isLoading ? 'Loading human reviews…' : `${disagreementLabel(disagreements.length)} to inspect`}</Typography>}
+    {run.runtime && <TechnicalDetails title="Runtime evidence"><Typography variant="s3" color="text.secondary">Runtime proved read-only source {String(run.runtime.read_only_source)}, read-only context {String(run.runtime.read_only_context)}, closed paid egress {String(run.runtime.controlled_paid_egress)}.</Typography><IdentityChip value={run.executionFingerprint} label="Execution fingerprint" /></TechnicalDetails>}
     {run.cells && <TableContainer>
       <Table size="small" aria-label="Verification cells" sx={{
         '& thead': { display: { xs: 'none', sm: 'table-header-group' } },
         '& tbody': { display: { xs: 'block', sm: 'table-row-group' } },
-        '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: '1fr 1fr', height: { xs: 'auto', sm: ROW_HEIGHT.default }, py: { xs: 1, sm: 0 } },
-        '& tbody td': { display: { xs: 'block', sm: 'table-cell' }, whiteSpace: 'normal', overflowWrap: 'anywhere' },
         '& tbody td:first-of-type, & tbody td:last-of-type': { gridColumn: '1 / -1' },
+        '& tbody td.mobile-hidden': { display: { xs: 'none', sm: 'table-cell' } },
+        '& tbody td': { display: { xs: 'block', sm: 'table-cell' }, whiteSpace: 'normal', overflowWrap: 'anywhere', borderBottom: { xs: 0, sm: 1 }, borderColor: 'divider', py: { xs: 0.5, sm: 1 } },
+        '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: '1fr 1fr', height: { xs: 'auto', sm: ROW_HEIGHT.default }, py: { xs: 1, sm: 0 }, borderBottom: { xs: 1, sm: 0 }, borderColor: 'divider' },
       }}><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
         <TableCell>Example</TableCell><TableCell>Context</TableCell><TableCell>Run</TableCell>{FAMILIES.map(([key, label]) => <TableCell key={key}>{label}</TableCell>)}<TableCell>Human review</TableCell><TableCell />
       </TableRow></TableHead><TableBody>{run.cells.map((cell) => <TableRow key={`${cell.caseId}/${cell.variant}/${cell.repeatIndex}`} hover sx={{ height: ROW_HEIGHT.default, cursor: cell.attemptId ? 'pointer' : 'default' }} onClick={(event) => cell.attemptId && inspect(cell, event)}>
-        <TableCell>{titles[cell.caseId] || cell.caseId}</TableCell><TableCell>{ARM[cell.variant]} v{run.arms.find((arm) => arm.variant === cell.variant)?.version}</TableCell><TableCell>{cell.repeatIndex + 1}</TableCell>
-        {FAMILIES.map(([key, label]) => <TableCell key={key}><Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{label}</Typography><Verdict value={cell.status === 'completed' || !active ? cell[key] : undefined} status={cell.status} /></TableCell>)}
-        <TableCell>{annotations.isError ? 'Unavailable' : annotations.isLoading ? 'Loading…' : disagreements.filter((row) => row.attemptId === cell.attemptId).length ? <StatusBadge status="warning" label={disagreementLabel(disagreements.filter((row) => row.attemptId === cell.attemptId).length)} /> : '—'}</TableCell>
-        <TableCell><Button size="small" variant="outlined" disabled={!cell.attemptId} aria-label={`Inspect ${titles[cell.caseId] || cell.caseId} ${ARM[cell.variant]} repeat ${cell.repeatIndex + 1}`} onClick={(event) => { event.stopPropagation(); inspect(cell, event); }}>Inspect</Button></TableCell>
+        <TableCell>{titles[cell.caseId] || cell.caseId}<Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{ARM[cell.variant]} v{run.arms.find((arm) => arm.variant === cell.variant)?.version} · repeat {cell.repeatIndex + 1}</Typography></TableCell><TableCell className="mobile-hidden">{ARM[cell.variant]} v{run.arms.find((arm) => arm.variant === cell.variant)?.version}</TableCell><TableCell className="mobile-hidden">{cell.repeatIndex + 1}</TableCell>
+        {FAMILIES.map(([key, label]) => <TableCell key={key} className={cell.status === 'completed' && cell[key] === 'pass' && !disagreements.some((row) => row.attemptId === cell.attemptId) ? 'mobile-hidden' : undefined}><Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{label}</Typography><Verdict value={cell.status === 'completed' || !active ? cell[key] : undefined} status={cell.status} /></TableCell>)}
+        <TableCell className={!annotations.isError && !annotations.isLoading && !disagreements.some((row) => row.attemptId === cell.attemptId) ? 'mobile-hidden' : undefined}>{annotations.isError ? 'Unavailable' : annotations.isLoading ? 'Loading…' : disagreements.filter((row) => row.attemptId === cell.attemptId).length ? <StatusBadge status="warning" label={disagreementLabel(disagreements.filter((row) => row.attemptId === cell.attemptId).length)} /> : '—'}</TableCell>
+        <TableCell>{cell.status === 'completed' && FAMILIES.every(([key]) => cell[key] === 'pass') && <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' }, mb: 0.5 }}>All 4 checks passed</Typography>}<Button size="small" variant="outlined" disabled={!cell.attemptId} aria-label={`Inspect ${titles[cell.caseId] || cell.caseId} ${ARM[cell.variant]} repeat ${cell.repeatIndex + 1}`} onClick={(event) => { event.stopPropagation(); inspect(cell, event); }}>Inspect</Button></TableCell>
       </TableRow>)}</TableBody></Table>
     </TableContainer>}
     {run.decision?.state === 'release_ready' && !active && <ReleasePacket contextId={contextId} run={run} target={target} canWrite={canWrite} earlier={earlier} onReady={onReady} />}
@@ -311,7 +322,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
         <TextField select size="small" label="Candidate version" value={candidate} onChange={(event) => setOver({ ...over, candidate: event.target.value })} sx={{ minWidth: 170 }}>{versionOptions}</TextField>
         <TextField select size="small" label="Recorded reference version" error={candidateIsReference} helperText={candidateIsReference ? 'Choose a reference different from the candidate.' : duplicateBaseline ? `Recorded reference v${reference} · also production` : undefined} value={reference} onChange={(event) => setOver({ ...over, reference: event.target.value })} sx={{ minWidth: 210 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
-        <TextField select size="small" label="Production version" error={candidateIsProduction} helperText={candidateIsProduction ? 'Choose production different from the candidate, or None.' : undefined} value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 170 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
+        <TextField select size="small" label="Production version" InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }} error={candidateIsProduction} helperText={candidateIsProduction ? 'Choose production different from the candidate, or None.' : production === '' && Number(productionVersion) === Number(candidate) ? `v${candidate} is production, so it runs once as the candidate.` : undefined} value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 170 }}><MenuItem value="">None (no production comparison)</MenuItem>{versionOptions}</TextField>
         <TextField select size="small" label="Repetitions" value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))} sx={{ minWidth: 130 }}><MenuItem value={1}>1 each</MenuItem><MenuItem value={3}>3 each</MenuItem></TextField>
       </Stack>
       <Box role="group" aria-label="Examples to run">
@@ -385,7 +396,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
     <Box ref={formRegion}>
       <Section title={<Typography component="span" variant="m3">Run a test</Typography>}>
         <Stack spacing={2}>
-          <FormControl><FormLabel id="test-kind-label">Choose what to test</FormLabel>
+          <FormControl><FormLabel id="test-kind-label" sx={{ color: 'text.primary' }}>Choose what to test</FormLabel>
             <RadioGroup aria-labelledby="test-kind-label" value={kind} onChange={(event) => { setKind(event.target.value); setStartedForm(true); setCurrentForm(true); }} sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5 }}>
               <FormControlLabel value="answers" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Check answers with this context</Typography><Typography variant="s3" color="text.secondary">Compare answers using your instructions and linked skills.</Typography></Stack>} />
               <FormControlLabel value="application" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Verify on the application</Typography><Typography variant="s3" color="text.secondary">Check skill selection, delivered files, actions and answers.</Typography></Stack>} />
@@ -393,7 +404,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
           </FormControl>
           <Box ref={answerForm} hidden={kind !== 'answers'}>{typeof children === 'function' ? children(!firstRun && (!packetReady || earlier) && (!earlier || currentForm) && kind === 'answers') : children}</Box>
           <Box ref={applicationForm} hidden={kind !== 'application'}><Stack spacing={2}>
-            {state === 'loading' || (targets.isLoading && !targets.data) ? <ContentSkeleton variant="panel" label="Loading application target" /> : state === 'error' || targets.isError ? <ErrorState title="Couldn't load application test options." onRetry={targets.refetch} sx={{ alignItems: 'flex-start', textAlign: 'left', py: 1.5, px: 0 }} /> : state === 'off' || !targets.data?.runtime.available ? <CapabilityNotice title="Application verification is off" description="This workspace has no hosted application runtime. You can still check answers with the whole context; text results don't prove an application repair." /> : <>
+            {state === 'loading' || (targets.isLoading && !targets.data) ? <ContentSkeleton variant="panel" label="Loading application target" /> : state === 'error' || targets.isError ? <ErrorState title="Couldn't load application test options." detail="You can still open past results and reviewed cases." onRetry={targets.refetch} sx={{ alignItems: 'flex-start', textAlign: 'left', py: 1.5, px: 0 }} /> : state === 'off' || !targets.data?.runtime.available ? <CapabilityNotice title="Application verification is off" description="This workspace has no hosted application runtime. You can still check answers with the whole context; text results don't prove an application repair." /> : <>
               <TargetSection contextId={contextId} version={viewed} canWrite={canWrite} targets={targets} />
               <PlanSection contextId={contextId} versions={versions} viewed={viewed} cases={cases} target={target} canWrite={canWrite} onStarted={(id) => setSelected({ type: 'application', id })} onSelectionChange={setSelection} runs={runs.data} productionVersion={productionVersion} seed={seed} primary={!firstRun && (!packetReady || earlier) && (!earlier || currentForm) && kind === 'application'} />
             </>}

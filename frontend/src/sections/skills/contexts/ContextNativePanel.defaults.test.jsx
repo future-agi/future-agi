@@ -130,7 +130,7 @@ it('explains disabled packet prerequisites and marks the earlier-run scope', () 
   expect(screen.getByText('Fill the three CI fields to share this run.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toBeDisabled();
   expect(screen.getByText('This packet applies to the earlier run, not your current selection.')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-text');
   expect(screen.getByRole('button', { name: 'Run on the application' })).toHaveClass('MuiButton-outlined');
 });
 it('reconciles preparing plus returned work without announcing the result grid', () => {
@@ -146,6 +146,49 @@ it('reconciles preparing plus returned work without announcing the result grid',
   expect(screen.getAllByText('Pending')).toHaveLength(4);
 });
 
+it('keeps required CI inputs inline and promotes the packet action for the current result', () => {
+  h.detail.arms[0].version = 7;
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  renderPanel();
+  for (const label of ['CI run link', 'CI configuration ID', 'CI result (pass or hold)']) expect(screen.getByRole('textbox', { name: label })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toHaveClass('MuiButton-contained');
+});
+
+it('explains an automatically omitted production comparison', () => {
+  renderPanel({ viewed: { number: 6 } });
+  expect(screen.getByRole('combobox', { name: /^Production version/ })).toHaveTextContent('None (no production comparison)');
+  expect(screen.getByText('v6 is production, so it runs once as the candidate.')).toBeVisible();
+});
+
+it('keeps the latest retained result visible when application options fail', () => {
+  renderPanel({ state: 'error' });
+  expect(screen.getByRole('region', { name: 'Latest result' })).toHaveTextContent('2 of 2 runs finished');
+  expect(screen.getByText('You can still open past results and reviewed cases.')).toBeVisible();
+});
+
+it('leads with the server result and opens the first disagreeing attempt from its count', async () => {
+  h.detail.result = { repair_verified: true, reproduction: 'reproduced', regressed_cases: 0 };
+  h.detail.decision = { state: 'release_ready', reasons: ['All required checks passed'] };
+  h.detail.cells = ['refund', 'chargeback'].map((caseId) => ({ caseId, variant: 'candidate', repeatIndex: 0, status: 'completed', attemptId: caseId, answer: 'pass', selection: 'pass', delivery: 'pass', tools: 'pass' }));
+  h.detail.cases[0].title = 'Refund';
+  h.annotations = [{ id: 'annotation', attemptId: 'refund', actorId: 'reviewer', verdict: 'disagree', comment: 'Inspect receipt', createdAt: '2026-11-12T12:00:00Z' }];
+  renderPanel();
+  expect(screen.getByText('Repair verified: v6 passed 2 of 2 cases; the recorded failure reproduced on v4.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '1 disagreement to inspect' }));
+  expect(screen.getByRole('heading', { name: 'Refund' })).toBeVisible();
+  expect(screen.getByText('Inspect receipt')).toBeVisible();
+});
+
+it('does not infer a verified repair or release readiness from a passing answer', () => {
+  h.detail.result = { repair_verified: false, reproduction: 'not_reproduced', regressed_cases: 1 };
+  h.detail.decision = { state: 'hold', reasons: ['Business action failed'] };
+  h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'completed', answer: 'pass', tools: 'fail', selection: 'pass', delivery: 'pass' }];
+  renderPanel();
+  expect(screen.getByText(/Repair not verified: v6 passed 0 of 2 cases; the recorded failure did not reproduce. 1 neighboring case regressed./)).toBeVisible();
+  expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Share evidence and prepare packet' })).not.toBeInTheDocument();
+});
+
 it('offers the first-run primary in the real-route empty preview even with retained history', () => {
   renderPanel({ state: 'empty' });
   expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
@@ -158,6 +201,6 @@ it('hands the primary to the chosen answer form when the packet belongs to an ea
   renderPanel({ children: renderForm });
   fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   expect(renderForm).toHaveBeenLastCalledWith(true);
-  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-text');
   expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
 });

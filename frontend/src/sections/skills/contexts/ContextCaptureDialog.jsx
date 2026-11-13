@@ -16,12 +16,13 @@ import CaseImportDialog from "../review/CaseImportDialog";
 import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from '../components/IdentityChip';
 
-const segmentLabel = (item) => item.kind === 'request' ? 'Customer request' : `Tool result${item.name ? ` · ${item.name}` : ''}`;
 import { IdentityValue, ReviewState } from "../review/ReleaseReviewBody";
 import {
   OperationFeedback,
   useReviewedOperation,
 } from "../review/ReleaseRequestPanel";
+
+const segmentLabel = (item) => item.kind === 'request' ? 'Customer request' : `Tool result${item.name ? ` · ${item.name}` : ''}`;
 
 function Capture({
   open,

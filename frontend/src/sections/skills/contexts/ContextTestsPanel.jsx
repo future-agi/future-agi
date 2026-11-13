@@ -81,7 +81,7 @@ RegressionCases.propTypes = { contextId: PropTypes.string.isRequired, version: P
 // It changes only the whole-context candidate; application verification keeps the viewed release.
 function CandidateSource({ source }) {
   return <FormControl>
-    <FormLabel id="context-test-source">Test which version</FormLabel>
+    <FormLabel id="context-test-source" sx={{ color: 'text.primary' }}>Test which version</FormLabel>
     <RadioGroup row aria-labelledby="context-test-source" value={source.testingDraft ? 'draft' : 'version'} onChange={(event) => source.onSelect(event.target.value === 'draft')}>
       <FormControlLabel value="draft" disabled={!source.draftAvailable} control={<Radio size="small" />} label="Saved draft" />
       <FormControlLabel value="version" disabled={!source.releaseAvailable} control={<Radio size="small" />} label="Published version" />
@@ -199,7 +199,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
         <TextField size="small" label="Historical reference version (optional)" value={reference} onChange={change(setReference)} disabled={locked} error={!validReference} />
       </Stack>
       <AuthoringError error={prepare.error || operation.error} />
-      <Button variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview whole-context test</Button>
+      <Button sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview whole-context test</Button>
       <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : !prompt.trim() || !expected.trim() ? 'Add a request and the answer text to check.' : !reviewedCase ? 'Tick the reviewed-case acknowledgment to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Enter a valid published reference version.' : 'Preview the files before starting the test.'}</Typography>
     </Stack>
     {preview && <Stack spacing={1.5}>
@@ -208,7 +208,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
       {!currentCandidate && <Alert severity="warning">The saved candidate changed. Preview and review the new compiled context before running.</Alert>}
       <TestInventoryReview subjectName={contextName} subjectKind="agent_context" subjectId={contextId} preview={preview} value={inventory.review} onChange={setInventory} disabled={locked || !currentCandidate} />
       <FormControlLabel control={<Checkbox checked={providerConsent} disabled={locked || !currentCandidate} onChange={(event) => setProviderConsent(event.target.checked)} />} label="I acknowledge provider processing of this reviewed context and test request." />
-      <Button variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !inventory.complete || !providerConsent} onClick={launch}>Run whole-context test</Button>
+      <Button sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !inventory.complete || !providerConsent} onClick={launch}>Run whole-context test</Button>
       {(!inventory.complete || !providerConsent) && <Typography variant="s3" color="text.secondary">Review all files and findings, then confirm provider processing to run this test.</Typography>}
     </Stack>}
     {operation.uncertain && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const receipt = await operation.retry(); if (receipt) { onStarted(receipt.id); invalidate(); } }}>Recover original context test</Button>}

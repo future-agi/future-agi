@@ -29,7 +29,12 @@ export default function TestInventoryReview({
   subjectId,
   subjectName,
 }) {
+  // Keep the complete inventory one click away; required findings and unticked
+  // acknowledgments stay inline at the decision, never inside the disclosure.
   const [inspected, setInspected] = useState(null);
+  const files = preview.inventory.flatMap((bundle) => bundle.files);
+  const bytes = files.reduce((total, file) => total + file.sizeBytes, 0);
+  const flaggedCount = files.filter((file) => file.flags.length > 0).length;
   const flagged = preview.inventory.flatMap((bundle) =>
     bundle.files
       .filter(
@@ -121,6 +126,8 @@ export default function TestInventoryReview({
         description="All listed files remain available. To remove answer keys, edit the real draft and preview again."
       >
         <Stack spacing={1.5}>
+          <Typography variant="s1">{files.length} files · {flaggedCount} flagged · {bytes < 1024 ? `${bytes} bytes` : `${(bytes / 1024).toFixed(1)} KB`}</Typography>
+          <TechnicalDetails title="View all model-visible files">
           <TableContainer><Table size="small" aria-label="Model-visible inventory">
             <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
             <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
@@ -131,6 +138,7 @@ export default function TestInventoryReview({
               <TableCell><Button size="small" variant="outlined" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
             </TableRow>))}</TableBody>
           </Table></TableContainer>
+          </TechnicalDetails>
           {inspected && inspected.fingerprint === preview.fingerprint && <InventoryFileDrawer key={`${preview.fingerprint}:${inspected.file.path}:${inspected.file.sha256}`} subjectKind={subjectKind} subjectId={subjectId} candidate={[preview.candidate, preview.production, preview.reference, ...(preview.competitors || [])].find((item) => item?.digest === inspected.bundle.digest && (item.skillId ?? item.skill_id) === inspected.bundle.skillId)} bundle={inspected.bundle} file={inspected.file} onClose={() => setInspected(null)} />}
           {uniqueFlagged.length > 1 && (
             <Stack spacing={1} data-testid="bulk-classification">
