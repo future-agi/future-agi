@@ -36,6 +36,7 @@ export const WebSocketProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
   const reconnectAttemptsBeforeOpen = useRef(0);
+  const retryBudgetCredentialRef = useRef(null);
   const navigate = useNavigate();
 
   const socketRef = useRef(null);
@@ -193,6 +194,9 @@ export const WebSocketProvider = ({ children }) => {
     };
 
     const messageHandler = (event) => {
+      // A frame from the server means the socket was authenticated, so a
+      // later 1011 close starts a new backoff instead of resuming the old one.
+      reconnectAttemptsBeforeOpen.current = 0;
       let message = event.data;
       try {
         message = JSON.parse(event.data);
@@ -367,6 +371,21 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
       authorizationRefusedRef.current = null;
+
+      const budget = retryBudgetCredentialRef.current;
+      if (
+        !budget ||
+        budget.token !== user?.accessToken ||
+        budget.organizationId !== organizationId
+      ) {
+        // A new credential or organization gets the full retry budget.
+        retryBudgetCredentialRef.current = {
+          token: user?.accessToken,
+          organizationId,
+        };
+        reconnectAttempts.current = 0;
+        reconnectAttemptsBeforeOpen.current = 0;
+      }
 
       if (
         !socketRef.current ||

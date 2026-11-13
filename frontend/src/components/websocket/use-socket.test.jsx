@@ -250,3 +250,61 @@ it("does not retry a credential the server refused after an outage", () => {
   waitLongerThanEveryBackoff();
   expect(sockets).toHaveLength(2);
 });
+
+it("starts a new backoff when an authenticated socket later closes with 1011", () => {
+  vi.useFakeTimers();
+  render(tree());
+  for (let i = 0; i < 3; i += 1) {
+    act(() => {
+      sockets.at(-1).emit("open");
+      sockets.at(-1).emit("close", { code: 1011 });
+    });
+    act(() => {
+      vi.advanceTimersByTime(30000);
+    });
+  }
+  expect(sockets).toHaveLength(4);
+
+  // This socket authenticates and receives frames, then the server closes it.
+  act(() => {
+    sockets[3].emit("open");
+    sockets[3].emit("message", { data: JSON.stringify({ type: "pong" }) });
+  });
+  act(() => {
+    sockets[3].emit("close", { code: 1011 });
+  });
+  act(() => {
+    vi.advanceTimersByTime(5000);
+  });
+  expect(sockets).toHaveLength(5);
+});
+
+it("gives a replaced credential the full retry budget during an outage", () => {
+  vi.useFakeTimers();
+  const { rerender } = render(tree());
+  const failHandshakes = (count) => {
+    for (let i = 0; i < count; i += 1) {
+      act(() => {
+        sockets.at(-1).emit("open");
+        sockets.at(-1).emit("close", { code: 1011 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(30000);
+      });
+    }
+  };
+  failHandshakes(20);
+  // The first socket plus MAX_RECONNECT_ATTEMPTS (10) retries.
+  expect(sockets).toHaveLength(11);
+
+  act(() => {
+    state.user = { ...state.user, accessToken: "synthetic-token-2" };
+    rerender(tree());
+  });
+  expect(sockets).toHaveLength(12);
+  failHandshakes(3);
+  expect(sockets).toHaveLength(15);
+  expect(new URL(sockets[14].url).searchParams.get("token")).toBe(
+    "synthetic-token-2",
+  );
+});
