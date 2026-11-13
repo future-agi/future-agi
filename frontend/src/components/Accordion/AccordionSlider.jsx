@@ -130,7 +130,7 @@ export default function AccordionSlider({
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}

@@ -624,6 +624,33 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // drf-yasg emits x-nullable for these SQL responses, but Orval drops it.
+    // Keep rewrites scoped to the SQL declarations and fail if the source
+    // shape changes; never hand-edit the generated client.
+    for (const [name, field, type, optional] of [
+      ["SQLExecutionApi", "finished_at", "string", false],
+      ["SQLResultApi", "next_offset", "number", true],
+      ["SQLEstimateSourceApi", "parts", "number", false],
+      ["SQLEstimateSourceApi", "marks", "number", false],
+      ["SQLEstimateSourceApi", "max_rows", "number", false],
+      ["SQLEstimateApi", "exceeds_scan_bound", "boolean", false],
+    ]) {
+      const marker = optional ? "?" : "";
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${name} {`,
+        `${field}${marker}: ${type};`,
+        `${field}${marker}: ${type} | null;`,
+        `${name}.${field} nullable`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SQLResultApiRowsItemItem = { [key: string]: unknown };",
+      "export type SQLResultApiRowsItemItem = JsonValueApi;",
+      "SQL result cells support JSON scalars and null",
+    );
+
     for (const rowType of [
       "TracePrototypeListResultApiTableItem",
       "TraceObserveListResultApiTableItem",
@@ -1139,6 +1166,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "expires_at: string | null;",
       "APIKeyBulkItemApi.expires_at nullable",
     );
+    // An organization API key without expiry is created with, and returned
+    // with, expires_at: null.
+    for (const [type, anchor] of [
+      ["CreateSecretKeyApi", "expires_at?: string;"],
+      ["SecretKeyCreateResultApi", "expires_at: string;"],
+      ["SecretKeyListItemApi", "expires_at: string;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${type} {`,
+        anchor,
+        anchor.replace("string;", "string | null;"),
+        `${type}.expires_at nullable`,
+      );
+    }
 
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
@@ -2180,6 +2222,20 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         / =[\s\S]*/,
         ` = ${getName};\n\n`,
         postName,
+      );
+    }
+    // The same organization API key expiry fields, in the zod schemas.
+    for (const name of [
+      "AccountsKeyGenerateSecretKeyBody",
+      "AccountsKeyGenerateSecretKeyResponse",
+      "AccountsKeyGetSecretKeysResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${name} =`,
+        /("expires_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+        "$1.nullable()",
+        `${name}.expires_at nullable`,
       );
     }
     fs.writeFileSync(zodOutputPath, zod);

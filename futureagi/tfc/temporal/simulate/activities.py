@@ -2445,6 +2445,10 @@ def _create_graph_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
+        agent_definition_id = validated_data.get("agent_definition_id")
+        source_type = validated_data.get("source_type", "agent_definition")
+        generate_graph = validated_data.get("generate_graph", False)
+        graph_data = validated_data.get("graph")
         no_of_rows = validated_data.get("no_of_rows", 20)
         persona_ids = validated_data.get("personas", [])
         custom_columns = validated_data.get("custom_columns", [])
@@ -2508,6 +2512,10 @@ def _create_graph_scenario_sync(
                 workspace=scenario.workspace,
             )
         else:
+            if agent_definition_id is None:
+                raise AgentDefinition.DoesNotExist(
+                    "A graph scenario needs an agent definition"
+                )
             agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id
             )
@@ -2600,6 +2608,11 @@ def _create_graph_scenario_sync(
             branches = None
             graph_id = str(scenario_graph.id) if scenario_graph else None
             if graph_id:
+                if not generate_graph:
+                    graph_generator = ConversationGraphGenerator(
+                        scenario=scenario,
+                        agent_definition=agent_definition,
+                    )
                 branches = graph_generator.get_branches(graph_id=graph_id)
 
             if branches:

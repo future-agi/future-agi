@@ -952,7 +952,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               Live Preview
             </Typography>

@@ -58,6 +58,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
+import SQLQueryWidget from "src/sections/projects/SQLQuery/SQLQueryWidget";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import TruncatedTooltipText from "./TruncatedTooltipText";
@@ -94,6 +95,11 @@ function computeRows(widgets) {
 
   return rows;
 }
+
+const widgetEditPath = (widget, dashboardId, datePreset) =>
+  widget.query_config?.source === "sql"
+    ? `/dashboard/observe/${encodeURIComponent(widget.query_config.project_id)}/query?saved=${encodeURIComponent(widget.query_config.saved_query_id)}`
+    : `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`;
 
 const widgetPropType = PropTypes.shape({
   id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -571,9 +577,7 @@ function DraggableWidgetCard({
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() =>
-                  navigate(
-                    `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                  )
+                  navigate(widgetEditPath(widget, dashboardId, datePreset))
                 }
               >
                 {widget.name}
@@ -593,7 +597,7 @@ function DraggableWidgetCard({
                       size="small"
                       onClick={() =>
                         navigate(
-                          `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                          widgetEditPath(widget, dashboardId, datePreset),
                         )
                       }
                     >
@@ -640,18 +644,28 @@ function DraggableWidgetCard({
 
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
-                globalDateRange
-                  ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
-              }`}
-              widget={widget}
-              dashboardId={dashboardId}
-              globalDateRange={globalDateRange}
-              refreshRequestId={refreshRequestId}
-              onQuerySettled={onQuerySettled}
-            />
+            {widget.query_config?.source === "sql" ? (
+              <SQLQueryWidget
+                widget={widget}
+                dashboardId={dashboardId}
+                onQuerySettled={onQuerySettled}
+                globalDateRange={globalDateRange}
+                refreshRequestId={refreshRequestId}
+              />
+            ) : (
+              <WidgetChart
+                key={`${widget.id}:${datePreset || "default"}${
+                  globalDateRange
+                    ? `:${globalDateRange.start}:${globalDateRange.end}`
+                    : ""
+                }`}
+                widget={widget}
+                dashboardId={dashboardId}
+                globalDateRange={globalDateRange}
+                refreshRequestId={refreshRequestId}
+                onQuerySettled={onQuerySettled}
+              />
+            )}
           </Box>
         </Box>
       </Section>
@@ -824,7 +838,11 @@ export default function DashboardDetailView() {
 
   const handleRefreshDashboard = useCallback(() => {
     const queryableWidgetIds = widgets
-      .filter((widget) => widget.query_config?.metrics?.length > 0)
+      .filter(
+        (widget) =>
+          widget.query_config?.metrics?.length > 0 ||
+          widget.query_config?.source === "sql",
+      )
       .map((widget) => widget.id);
     if (!queryableWidgetIds.length) return;
 
@@ -1250,12 +1268,12 @@ export default function DashboardDetailView() {
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
           </Link>
-          <Typography color="text.primary" fontSize="13px">
+          <Typography color="text.primary" fontSize="12px">
             {dashboard.name}
           </Typography>
         </Breadcrumbs>
@@ -1433,7 +1451,7 @@ export default function DashboardDetailView() {
             sx: {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
-              fontSize: "13px",
+              fontSize: "12px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             },
@@ -1660,9 +1678,7 @@ export default function DashboardDetailView() {
         <MenuItem
           onClick={() => {
             if (menuWidget) {
-              navigate(
-                `/dashboard/dashboards/${dashboardId}/widget/${menuWidget.id}`,
-              );
+              navigate(widgetEditPath(menuWidget, dashboardId, datePreset));
             }
             closeWidgetMenu();
           }}

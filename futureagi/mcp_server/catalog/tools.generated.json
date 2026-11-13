@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "146925705d61613e6c1e06a75bcae15768ee0bd645ec32014ea3fb6fbcdf9209",
-  "tool_count": 107,
+  "source_contract_sha256": "4200caa6fdf714a0ab38682436f8e4a8d365935a27f809a86672e06cd91874cf",
+  "tool_count": 111,
   "tools": [
     {
       "name": "whoami",
@@ -197,7 +197,7 @@
           },
           "search": {
             "type": "string",
-            "default": {}
+            "default": "{}"
           },
           "page_size": {
             "type": "integer",
@@ -5310,7 +5310,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -5332,6 +5332,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -5343,6 +5344,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -5351,6 +5353,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -8817,6 +8820,7 @@
           "simulation_type": {
             "type": "string",
             "enum": [
+              "",
               "agent_definition",
               "prompt"
             ],
@@ -10799,7 +10803,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -10821,6 +10825,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -10832,6 +10837,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -10840,6 +10846,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -11072,6 +11079,226 @@
       },
       "source": {
         "operationId": "usage_v2_usage-overview_list"
+      }
+    },
+    {
+      "name": "run_sql",
+      "description": "Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1
+          },
+          "start": {
+            "title": "Start",
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "title": "End",
+            "type": "string",
+            "format": "date-time"
+          },
+          "reuse": {
+            "title": "Reuse",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "sql",
+          "start",
+          "end"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/run/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "project_id",
+            "sql",
+            "start",
+            "end",
+            "reuse"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_run"
+      }
+    },
+    {
+      "name": "get_sql_result",
+      "description": "Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id",
+            "offset",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_read"
+      }
+    },
+    {
+      "name": "cancel_sql",
+      "description": "Cancel a SQL job owned by the caller without changing project data.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/{id}/cancel/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "project_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_cancel"
+      }
+    },
+    {
+      "name": "get_sql_catalog",
+      "description": "List the stable scoped SQL datasets and columns available in a project.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/catalog/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_catalog"
       }
     }
   ]

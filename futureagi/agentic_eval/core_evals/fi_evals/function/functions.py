@@ -146,6 +146,7 @@ def contains_all(keywords, text, case_sensitive=False, **kwargs):
     return {"result": result, "reason": reason}
 
 
+
 def calculate_bleu(reference, hypothesis, **kwargs):
     """
     Calculate BLEU score between a reference and a hypothesis sentence.
@@ -156,14 +157,13 @@ def calculate_bleu(reference, hypothesis, **kwargs):
         float: BLEU score (0 to 1).
     """
     from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu  # lazy
-
     reference_tokens = [reference.split()]
     hypothesis_tokens = hypothesis.split()
     smoothie = SmoothingFunction().method4
-    score = sentence_bleu(
-        reference_tokens, hypothesis_tokens, smoothing_function=smoothie
-    )
+    score = sentence_bleu(reference_tokens, hypothesis_tokens, smoothing_function=smoothie)
     return {"result": score, "reason": f"BLEU score: {score}"}
+
+
 
 
 def calculate_rouge(reference, hypothesis):
@@ -177,15 +177,13 @@ def calculate_rouge(reference, hypothesis):
     """
 
     from rouge_score import rouge_scorer  # lazy
-
-    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     scores = scorer.score(reference, hypothesis)
 
     # Parse rouge1 score and store as string
     rouge1_score = f"ROUGE-1: P={scores['rouge1'].precision:.3f}, R={scores['rouge1'].recall:.3f}, F={scores['rouge1'].fmeasure:.3f}"
-    score = f"{scores['rouge1'].fmeasure:.3f}"
+    score = f'{scores["rouge1"].fmeasure:.3f}'
     return {"result": score, "reason": f"ROUGE score: {rouge1_score}"}
-
 
 def _pil_to_uint8_tensor(img, size: int = 299):
     """
@@ -289,14 +287,13 @@ def calculate_fid(
     try:
         import torch
         from torchmetrics.image.fid import FrechetInceptionDistance
-
         logger.debug("torch imports successful")
     except ImportError as e:
         logger.error(f"torch import failed: {e}")
         logger.error(traceback.format_exc())
         return {
             "result": None,
-            "reason": f"FID requires torch, torchvision, and torchmetrics: {e}",
+            "reason": f"FID requires torch, torchvision, and torchmetrics: {e}"
         }
 
     # Parse and convert inputs to PIL Images
@@ -305,51 +302,54 @@ def calculate_fid(
         logger.debug(f"Parsed {len(real_images)} real images")
     except Exception as e:
         logger.error(f"Failed to parse real_images: {e}")
-        return {"result": None, "reason": f"Failed to parse real_images: {e}"}
+        return {
+            "result": None,
+            "reason": f"Failed to parse real_images: {e}"
+        }
 
     try:
         fake_images = _parse_image_list(fake_images)
         logger.debug(f"Parsed {len(fake_images)} fake images")
     except Exception as e:
         logger.error(f"Failed to parse fake_images: {e}")
-        return {"result": None, "reason": f"Failed to parse fake_images: {e}"}
+        return {
+            "result": None,
+            "reason": f"Failed to parse fake_images: {e}"
+        }
 
     if len(real_images) < 2 or len(fake_images) < 2:
         return {
             "result": None,
-            "reason": "Need at least 2 images in each list to compute FID.",
+            "reason": "Need at least 2 images in each list to compute FID."
         }
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     logger.debug(f"Using device: {device}")
-    logger.debug(
-        f"Creating FID metric with {len(real_images)} real and {len(fake_images)} fake images"
-    )
+    logger.debug(f"Creating FID metric with {len(real_images)} real and {len(fake_images)} fake images")
 
     fid = FrechetInceptionDistance(feature=2048).to(device)
 
     # Update real distribution in batches
     for i in range(0, len(real_images), batch_size):
         batch = real_images[i : i + batch_size]
-        x = torch.cat(
-            [_pil_to_uint8_tensor(img, size=size) for img in batch], dim=0
-        ).to(device)
+        x = torch.cat([_pil_to_uint8_tensor(img, size=size) for img in batch], dim=0).to(device)
         fid.update(x, real=True)
 
     # Update fake distribution in batches
     for i in range(0, len(fake_images), batch_size):
         batch = fake_images[i : i + batch_size]
-        x = torch.cat(
-            [_pil_to_uint8_tensor(img, size=size) for img in batch], dim=0
-        ).to(device)
+        x = torch.cat([_pil_to_uint8_tensor(img, size=size) for img in batch], dim=0).to(device)
         fid.update(x, real=False)
     try:
         score = float(fid.compute().detach().cpu())
     except Exception as e:
         logger.error(f"Failed to compute FID score: {e}")
-        return {"result": None, "reason": f"Failed to compute FID score: {e}"}
+        return {
+            "result": None,
+            "reason": f"Failed to compute FID score: {e}"
+        }
     return {"result": score, "reason": f"FID score: {score:.3f}"}
 
 
@@ -417,7 +417,10 @@ def calculate_clip_score(
     except Exception as e:
         logger.error(f"Failed to parse images: {e}")
         logger.error(traceback.format_exc())
-        return {"result": None, "reason": f"Failed to parse images: {e}"}
+        return {
+            "result": None,
+            "reason": f"Failed to parse images: {e}"
+        }
 
     # Parse text input
     try:
@@ -443,18 +446,21 @@ def calculate_clip_score(
         elif len(text_list) != len(images_list):
             return {
                 "result": None,
-                "reason": f"Number of text prompts ({len(text_list)}) must match number of images ({len(images_list)})",
+                "reason": f"Number of text prompts ({len(text_list)}) must match number of images ({len(images_list)})"
             }
         logger.debug(f"Parsed {len(text_list)} text prompts")
     except Exception as e:
         logger.error(f"Failed to parse text: {e}")
         logger.error(traceback.format_exc())
-        return {"result": None, "reason": f"Failed to parse text: {e}"}
+        return {
+            "result": None,
+            "reason": f"Failed to parse text: {e}"
+        }
 
     if len(images_list) < 1:
         return {
             "result": None,
-            "reason": "Need at least 1 image to compute CLIP score.",
+            "reason": "Need at least 1 image to compute CLIP score."
         }
 
     try:
@@ -464,7 +470,7 @@ def calculate_clip_score(
         if image_text_model is None:
             return {
                 "result": None,
-                "reason": "Image-text embedding model is not available",
+                "reason": "Image-text embedding model is not available"
             }
 
         # Compute CLIP scores for each image-text pair
@@ -496,7 +502,7 @@ def calculate_clip_score(
         if not scores:
             return {
                 "result": None,
-                "reason": "Failed to compute CLIP scores for any image-text pairs",
+                "reason": "Failed to compute CLIP scores for any image-text pairs"
             }
 
         # Return mean score across all pairs
@@ -507,7 +513,10 @@ def calculate_clip_score(
     except Exception as e:
         logger.error(f"Error computing CLIP score: {e}")
         logger.error(traceback.format_exc())
-        return {"result": None, "reason": f"Error computing CLIP score: {e}"}
+        return {
+            "result": None,
+            "reason": f"Error computing CLIP score: {e}"
+        }
 
 
 def _parse_reference_and_hypothesis(reference, hypothesis):
@@ -522,7 +531,6 @@ def _parse_reference_and_hypothesis(reference, hypothesis):
 
                 try:
                     import ast
-
                     reference = ast.literal_eval(reference)
                 except Exception:
                     if reference is not None and not isinstance(reference, list):
@@ -540,7 +548,6 @@ def _parse_reference_and_hypothesis(reference, hypothesis):
                 # If JSON parsing fails, try to evaluate as Python literal
                 try:
                     import ast
-
                     hypothesis = ast.literal_eval(hypothesis)
                 except Exception:
                     if hypothesis is not None and not isinstance(hypothesis, list):
@@ -943,21 +950,18 @@ def hit_rate(reference, hypothesis):
     return {"result": score, "reason": f"Hit Rate: {score}"}
 
 
-def calculate_levenshtein_similarity(
-    output, expected, case_insensitive=True, remove_punctuation=True
-):
+def calculate_levenshtein_similarity(output, expected, case_insensitive=True, remove_punctuation=True):
     """
     Calculates the normalized Levenshtein similarity between two strings and provides a descriptive reason.
     If calculation fails, raises an exception.
     """
-
     def _preprocess(text):
         if not isinstance(text, str):
             text = str(text) if text is not None else ""
         if case_insensitive:
             text = text.lower()
         if remove_punctuation:
-            text = text.translate(str.maketrans("", "", string.punctuation))
+            text = text.translate(str.maketrans('', '', string.punctuation))
         return text
 
     try:
@@ -1001,18 +1005,18 @@ def _to_number(value, name):
         return None, f"{name} is empty"
 
     # Try to extract numeric value
-    match = re.search(r"-?\d+\.?\d*", value_str)
+    match = re.search(r'-?\d+\.?\d*', value_str)
     if match:
         try:
             return float(match.group()), None
         except (ValueError, OverflowError) as e:
-            logger.error(
-                f"DEBUG: Error converting {name} to number: {value} contains invalid numeric value: {e}"
-            )
+            logger.error(f"DEBUG: Error converting {name} to number: {value} contains invalid numeric value: {e}")
             return None, f"{name} contains invalid numeric value: {e}"
 
-    # No numeric value found
+    # No numeric value found    
     return None, f"No numeric value found in {name}: '{value_str}'"
+
+
 
 
 def calculate_numeric_similarity(output: str, expected: str):
@@ -1035,22 +1039,19 @@ def calculate_numeric_similarity(output: str, expected: str):
         # Return failure result with clear error message
         return {
             "result": 0.0,  # or False, depending on desired failure representation
-            "reason": f"Cannot calculate numeric similarity: {'; '.join(errors)}",
+            "reason": f"Cannot calculate numeric similarity: {'; '.join(errors)}"
         }
     diff = abs(pred_num - ref_num)
     normalized_diff = diff / max(pred_num, ref_num, 1)
     similarity = 1.0 - normalized_diff
     reason = f"Numeric Diff: |{pred_num} - {ref_num}| = {diff}, Normalized Diff: {normalized_diff:.3f}, Similarity: {similarity:.3f}"
-    return {"result": similarity, "reason": reason}
+    return {
+        "result": similarity,
+        "reason": reason
+    }
 
 
-def calculate_embedding_similarity(
-    output: str,
-    expected: str,
-    similarity_method="cosine",
-    normalize=True,
-    model_name="all-MiniLM-L6-v2",
-):
+def calculate_embedding_similarity(output:str, expected: str, similarity_method="cosine", normalize=True, model_name="all-MiniLM-L6-v2"):
     """
     Calculates semantic similarity between two texts using sentence embeddings,
     and provides a descriptive reason string. If embedding or similarity computation fails,
@@ -1059,7 +1060,6 @@ def calculate_embedding_similarity(
     from scipy.spatial.distance import cityblock, cosine, euclidean  # lazy
 
     from agentic_eval.core.embeddings.embedding_manager import model_manager
-
     model = model_manager.text_model
     emb1, emb2 = model([str(output)]), model([str(expected)])
     if similarity_method == "cosine":
@@ -1075,41 +1075,34 @@ def calculate_embedding_similarity(
         reason = f"Manhattan Similarity: {similarity:.3f} (distance={dist:.3f})"
     else:
         raise ValueError(f"Unsupported similarity method: {similarity_method}")
-    return {"result": similarity, "reason": reason}
+    return {
+        "result": similarity,
+        "reason": reason
+    }
 
 
-def calculate_semantic_list_contains(
-    output: str,
-    expected: str,
-    case_insensitive=True,
-    remove_punctuation=True,
-    match_all=False,
-    similarity_threshold=0.7,
-    model_name="all-MiniLM-L6-v2",
-):
+def calculate_semantic_list_contains(output:str, expected:str, case_insensitive=True, remove_punctuation=True, match_all=False, similarity_threshold=0.7, model_name="all-MiniLM-L6-v2"):
     """
     Checks if the output contains phrases semantically similar to the expected phrases,
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
     from scipy.spatial.distance import cosine  # lazy
-
     def _preprocess(text):
         if not isinstance(text, str):
             text = str(text)
         if case_insensitive:
             text = text.lower()
         if remove_punctuation:
-            text = text.translate(str.maketrans("", "", string.punctuation))
+            text = text.translate(str.maketrans('', '', string.punctuation))
         return text.strip()
 
     def _get_expected_phrases(expected):
         if expected is None:
             return []
         if isinstance(expected, str):
-            if (expected.startswith("[") and expected.endswith("]")) or (
-                expected.startswith("{") and expected.endswith("}")
-            ):
+            if (expected.startswith('[') and expected.endswith(']')) or \
+               (expected.startswith('{') and expected.endswith('}')):
                 try:
                     parsed = json.loads(expected)
                     if isinstance(parsed, list):
@@ -1122,7 +1115,6 @@ def calculate_semantic_list_contains(
             return expected
         else:
             return [str(expected)]
-
     from agentic_eval.core.embeddings.embedding_manager import model_manager
 
     model = model_manager.text_model
@@ -1157,7 +1149,10 @@ def calculate_semantic_list_contains(
         f"Similarities: {json.dumps(similarities, default=float)}. "
         f"Threshold: {similarity_threshold}, Match all: {match_all}"
     )
-    return {"result": result, "reason": reason}
+    return {
+        "result": result,
+        "reason": reason
+    }
 
 
 def contains(keyword, text, case_sensitive=False, **kwargs):
@@ -1376,9 +1371,7 @@ def no_invalid_links(text, **kwargs):
     Returns:
         dict: A dictionary containing the result of the link check and the reason for the result.
     """
-    pattern = (
-        r"(?!.*@)(?:https?://)?(?:htp?://)?(?://?)?(?:http?://)?(?:www\.)?\S+\.\S+"
-    )
+    pattern = r"(?!.*@)(?:https?://)?(?:htp?://)?(?://?)?(?:http?://)?(?:www\.)?\S+\.\S+"
     link_match = re.search(pattern=pattern, string=text)
     if link_match:
         matched_url = link_match.group()
@@ -1585,7 +1578,6 @@ def length_greater_than(min_length, text, **kwargs):
             "reason": f"output length is less than {min_length} characters",
         }
 
-
 def length_between(min_length, max_length, text, **kwargs):
     """
     Check if the length of the text is between a specified minimum and maximum length.
@@ -1609,7 +1601,6 @@ def length_between(min_length, max_length, text, **kwargs):
             "reason": f"output length is not between {min_length} and {max_length} characters",
         }
 
-
 def one_line(text, **kwargs):
     """
     Check if the text is a single line.
@@ -1625,8 +1616,10 @@ def one_line(text, **kwargs):
     else:
         return {"result": True, "reason": "output is a single line"}
 
-
-def json_schema(actual_json: dict | str, **kwargs) -> dict[str, Any]:
+def json_schema(
+    actual_json: dict | str,
+    **kwargs
+) -> dict[str, Any]:
     """
     Check if the actual_json matched the schema definition.
 
@@ -1656,9 +1649,10 @@ def json_schema(actual_json: dict | str, **kwargs) -> dict[str, Any]:
         logger.error(f"Error occurred during JSON schema validation: {e}")
         raise e
 
-
 def json_validation(
-    actual_json: dict | str, expected_json: dict | str, **kwargs
+    actual_json: dict | str,
+    expected_json: dict | str,
+    **kwargs
 ) -> dict[str, Any]:
     """
     Check if the actual JSON and expected JSON match the validation rules.
@@ -1674,9 +1668,7 @@ def json_validation(
         validations = kwargs.get("validations", [])
         if validations:
             for validation in validations:
-                validation_passed, validation_reason = _apply_validation(
-                    actual_json, expected_json, validation
-                )
+                validation_passed, validation_reason = _apply_validation(actual_json, expected_json, validation)
                 if not validation_passed:
                     return {"result": False, "reason": validation_reason}
 
@@ -1685,26 +1677,24 @@ def json_validation(
         logger.error(f"Error occurred during Json validation eval: {e}")
         raise e
 
-
 def _bandit_check(code: str) -> str | None:
     """
     Run Bandit security check on the provided code.
     """
     with tempfile.NamedTemporaryFile(delete=False, suffix=".py") as temp_file:
-        temp_file.write(code.encode("utf-8"))
+        temp_file.write(code.encode('utf-8'))
         temp_file_path = temp_file.name
     try:
         result = subprocess.run(
             ["bandit", "-r", temp_file_path, "-f", "json", "-c", "bandit.yml"],
             capture_output=True,
-            text=True,
+            text=True
         )
         if result.returncode != 0:
             return json.dumps(result.stdout)
     finally:
         os.remove(temp_file_path)
     return None
-
 
 def custom_code_eval(code, language=None, **kwargs):
     """
@@ -1748,9 +1738,7 @@ def custom_code_eval(code, language=None, **kwargs):
         elif "score" in data:
             result_val = data["score"]
         else:
-            raise ValueError(
-                "Code eval dict return must include a 'result' or 'score' key"
-            )
+            raise ValueError("Code eval dict return must include a 'result' or 'score' key")
         reason = data.get("reason", "Custom code eval completed")
         if isinstance(result_val, bool):
             return {"result": float(result_val), "reason": reason}
@@ -1779,53 +1767,35 @@ def _load_json(json_data: dict | str) -> dict:
         return json.loads(json_data)
     return json_data
 
-
 def _get_schema(kwargs: dict[str, Any]) -> dict | None:
     schema = kwargs.get("schema")
     if schema and isinstance(schema, str):
         return json.loads(schema.replace("\n", "").replace("\t", ""))
     return schema
 
-
 def _validate_json_with_schema(json_data: dict, schema: dict) -> tuple[bool, str]:
     return validate_json(json_data, schema)
 
-
-def _apply_validation(
-    actual_json: dict, expected_json: dict, validation: dict
-) -> tuple[bool, str]:
+def _apply_validation(actual_json: dict, expected_json: dict, validation: dict) -> tuple[bool, str]:
     validating_function = validation.get("validating_function")
     json_path = validation.get("json_path", "")
     actual_value = extract_json_path(actual_json, json_path)
     expected_value = extract_json_path(expected_json, json_path)
 
     if validating_function == "Equals":
-        return _validate_equals(
-            actual_value, expected_value, validation, json_path or ""
-        )
+        return _validate_equals(actual_value, expected_value, validation, json_path or "")
     elif validating_function == "Cosine Similarity":
-        return _validate_cosine_similarity(
-            actual_value, expected_value, validation, json_path or ""
-        )
+        return _validate_cosine_similarity(actual_value, expected_value, validation, json_path or "")
     elif validating_function == "LLM Similarity":
-        return _validate_llm_similarity(
-            actual_value, expected_value, validation, json_path or ""
-        )
+        return _validate_llm_similarity(actual_value, expected_value, validation, json_path or "")
     else:
         error_message = f"Validation function {validating_function} not supported"
         logger.error(error_message)
         return False, error_message
 
-
-def _validate_equals(
-    actual_value: Any, expected_value: Any, validation: dict, json_path: str
-) -> tuple[bool, str]:
+def _validate_equals(actual_value: Any, expected_value: Any, validation: dict, json_path: str) -> tuple[bool, str]:
     case_sensitive = validation.get("case_sensitive", False)
-    if (
-        not case_sensitive
-        and isinstance(actual_value, str)
-        and isinstance(expected_value, str)
-    ):
+    if not case_sensitive and isinstance(actual_value, str) and isinstance(expected_value, str):
         actual_value = str(actual_value).lower()
         expected_value = str(expected_value).lower()
     if actual_value != expected_value:
@@ -1834,29 +1804,17 @@ def _validate_equals(
         return False, error_message
     return True, ""
 
-
-def _validate_cosine_similarity(
-    actual_value: str, expected_value: str, validation: dict, json_path: str
-) -> tuple[bool, str]:
+def _validate_cosine_similarity(actual_value: str, expected_value: str, validation: dict, json_path: str) -> tuple[bool, str]:
     threshold = validation.get("pass_threshold", 0.8)
-    cosine_similarity = CosineSimilarity().compare(
-        str(actual_value), str(expected_value)
-    )
+    cosine_similarity = CosineSimilarity().compare(str(actual_value), str(expected_value))
     if cosine_similarity < threshold:
         error_message = f"Cosine similarity score of {round(cosine_similarity, 2)} for {json_path} is less than the threshold ({threshold})."
         logger.error(error_message)
         return False, error_message
     return True, ""
 
-
-def _validate_llm_similarity(
-    actual_value: str, expected_value: str, validation: dict, json_path: str
-) -> tuple[bool, str]:
-    open_ai_api_key = (
-        validation.get("open_ai_api_key")
-        or OpenAiApiKey.get_key()
-        or os.environ.get("OPENAI_API_KEY")
-    )
+def _validate_llm_similarity(actual_value: str, expected_value: str, validation: dict, json_path: str) -> tuple[bool, str]:
+    open_ai_api_key = validation.get("open_ai_api_key") or OpenAiApiKey.get_key() or os.environ.get("OPENAI_API_KEY")
     if not open_ai_api_key:
         raise NoOpenAiApiKeyException()
 
@@ -1879,27 +1837,20 @@ def _validate_llm_similarity(
             return False, error_message
         return True, ""
     except Exception:
-        error_message = (
-            f"Error occurred during LLM similarity validation for {json_path}"
-        )
+        error_message = f"Error occurred during LLM similarity validation for {json_path}"
         logger.error(error_message)
         return False, error_message
-
 
 def _get_messages(validation: dict, actual_value: Any, expected_value: Any) -> list:
     if validation.get("system_message") and validation.get("user_message"):
         env = SandboxedEnvironment(
-            variable_start_string="{{",
-            variable_end_string="}}",
-            undefined=PreserveUndefined,
+            variable_start_string='{{',
+            variable_end_string='}}',
+            undefined=PreserveUndefined
         )
         render_context = {"actual": actual_value, "expected": expected_value}
-        system_message = env.from_string(validation.get("system_message")).render(
-            render_context
-        )
-        user_message = env.from_string(validation.get("user_message")).render(
-            render_context
-        )
+        system_message = env.from_string(validation.get("system_message")).render(render_context)
+        user_message = env.from_string(validation.get("user_message")).render(render_context)
         return [
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message},
@@ -1945,31 +1896,9 @@ def calculate_meteor(reference, hypothesis, **kwargs):
 
     def _simple_stem(word):
         """Basic suffix-stripping stemmer."""
-        for suffix in [
-            "ingly",
-            "edly",
-            "tion",
-            "sion",
-            "ment",
-            "ness",
-            "able",
-            "ible",
-            "ing",
-            "ous",
-            "ful",
-            "ive",
-            "ize",
-            "ise",
-            "ent",
-            "ant",
-            "ly",
-            "ed",
-            "er",
-            "es",
-            "al",
-            "en",
-            "s",
-        ]:
+        for suffix in ["ingly", "edly", "tion", "sion", "ment", "ness", "able", "ible",
+                        "ing", "ous", "ful", "ive", "ize", "ise", "ent", "ant",
+                        "ly", "ed", "er", "es", "al", "en", "s"]:
             if len(word) > len(suffix) + 2 and word.endswith(suffix):
                 return word[: -len(suffix)]
         return word
@@ -2026,10 +1955,7 @@ def calculate_meteor(reference, hypothesis, **kwargs):
     penalty = 0.5 * (chunks / matches) ** 3 if matches > 0 else 0
     score = f_mean * (1 - penalty)
     score = max(0.0, min(1.0, score))
-    return {
-        "result": score,
-        "reason": f"METEOR: {score:.4f} (P={precision:.3f}, R={recall:.3f}, chunks={chunks})",
-    }
+    return {"result": score, "reason": f"METEOR: {score:.4f} (P={precision:.3f}, R={recall:.3f}, chunks={chunks})"}
 
 
 def calculate_gleu(reference, hypothesis, **kwargs):
@@ -2135,13 +2061,10 @@ def calculate_chrf(reference, hypothesis, n=6, beta=2.0, **kwargs):
     if avg_prec + avg_rec == 0:
         return {"result": 0.0, "reason": "ChrF: 0.0"}
 
-    beta_sq = beta**2
+    beta_sq = beta ** 2
     score = (1 + beta_sq) * avg_prec * avg_rec / (beta_sq * avg_prec + avg_rec)
     score = max(0.0, min(1.0, score))
-    return {
-        "result": score,
-        "reason": f"ChrF{n}: {score:.4f} (P={avg_prec:.3f}, R={avg_rec:.3f})",
-    }
+    return {"result": score, "reason": f"ChrF{n}: {score:.4f} (P={avg_prec:.3f}, R={avg_rec:.3f})"}
 
 
 def calculate_f1_score(output, expected, case_insensitive=True, **kwargs):
@@ -2172,7 +2095,6 @@ def calculate_f1_score(output, expected, case_insensitive=True, **kwargs):
         return {"result": 0.0, "reason": "F1: 0.0 (one side is empty)"}
 
     from collections import Counter
-
     out_counts = Counter(out_tokens)
     exp_counts = Counter(exp_tokens)
     overlap = sum((out_counts & exp_counts).values())
@@ -2218,15 +2140,10 @@ def calculate_jaccard_similarity(output, expected, case_insensitive=True, **kwar
         return {"result": 0.0, "reason": "Jaccard: 0.0"}
 
     score = len(intersection) / len(union)
-    return {
-        "result": score,
-        "reason": f"Jaccard: {score:.4f} (|intersection|={len(intersection)}, |union|={len(union)})",
-    }
+    return {"result": score, "reason": f"Jaccard: {score:.4f} (|intersection|={len(intersection)}, |union|={len(union)})"}
 
 
-def calculate_jaro_winkler_similarity(
-    output, expected, case_insensitive=True, prefix_weight=0.1, **kwargs
-):
+def calculate_jaro_winkler_similarity(output, expected, case_insensitive=True, prefix_weight=0.1, **kwargs):
     """
     Compute Jaro-Winkler similarity between two strings.
     Particularly effective for short strings (names, labels).
@@ -2286,9 +2203,7 @@ def calculate_jaro_winkler_similarity(
             transpositions += 1
         k += 1
 
-    jaro = (
-        matches / len1 + matches / len2 + (matches - transpositions / 2) / matches
-    ) / 3
+    jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3
 
     # Winkler modification: boost for common prefix
     prefix = 0
@@ -2301,10 +2216,7 @@ def calculate_jaro_winkler_similarity(
     pw = min(prefix_weight, 0.25)
     score = jaro + prefix * pw * (1 - jaro)
     score = max(0.0, min(1.0, score))
-    return {
-        "result": score,
-        "reason": f"Jaro-Winkler: {score:.4f} (Jaro={jaro:.4f}, prefix={prefix})",
-    }
+    return {"result": score, "reason": f"Jaro-Winkler: {score:.4f} (Jaro={jaro:.4f}, prefix={prefix})"}
 
 
 def calculate_hamming_similarity(output, expected, case_insensitive=True, **kwargs):
@@ -2331,15 +2243,12 @@ def calculate_hamming_similarity(output, expected, case_insensitive=True, **kwar
         return {"result": 1.0, "reason": "Hamming: 1.0 (both empty)"}
 
     max_len = max(len(s1), len(s2))
-    s1_padded = s1.ljust(max_len, "\0")
-    s2_padded = s2.ljust(max_len, "\0")
+    s1_padded = s1.ljust(max_len, '\0')
+    s2_padded = s2.ljust(max_len, '\0')
 
     mismatches = sum(c1 != c2 for c1, c2 in zip(s1_padded, s2_padded))
     similarity = 1.0 - (mismatches / max_len)
-    return {
-        "result": similarity,
-        "reason": f"Hamming: {similarity:.4f} ({mismatches} mismatches out of {max_len} chars)",
-    }
+    return {"result": similarity, "reason": f"Hamming: {similarity:.4f} ({mismatches} mismatches out of {max_len} chars)"}
 
 
 def calculate_fuzzy_match(output, expected, case_insensitive=True, **kwargs):
@@ -2412,34 +2321,13 @@ def is_sql(text, **kwargs):
 
     # Check for common SQL statement starters
     sql_starters = [
-        "SELECT",
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "CREATE",
-        "ALTER",
-        "DROP",
-        "WITH",
-        "EXPLAIN",
-        "MERGE",
-        "REPLACE",
-        "TRUNCATE",
-        "GRANT",
-        "REVOKE",
-        "BEGIN",
-        "COMMIT",
-        "ROLLBACK",
-        "SET",
-        "SHOW",
-        "DESCRIBE",
-        "USE",
+        "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP",
+        "WITH", "EXPLAIN", "MERGE", "REPLACE", "TRUNCATE", "GRANT", "REVOKE",
+        "BEGIN", "COMMIT", "ROLLBACK", "SET", "SHOW", "DESCRIBE", "USE",
     ]
     starts_with_sql = any(sql_upper.startswith(kw) for kw in sql_starters)
     if not starts_with_sql:
-        return {
-            "result": False,
-            "reason": "Text does not start with a recognized SQL keyword",
-        }
+        return {"result": False, "reason": "Text does not start with a recognized SQL keyword"}
 
     # Check balanced parentheses
     depth = 0
@@ -2449,10 +2337,7 @@ def is_sql(text, **kwargs):
         elif ch == ")":
             depth -= 1
         if depth < 0:
-            return {
-                "result": False,
-                "reason": "Unbalanced parentheses in SQL (extra closing)",
-            }
+            return {"result": False, "reason": "Unbalanced parentheses in SQL (extra closing)"}
     if depth != 0:
         return {"result": False, "reason": "Unbalanced parentheses in SQL (unclosed)"}
 
@@ -2483,10 +2368,7 @@ def is_url(text, **kwargs):
 
     try:
         parsed = urlparse(text)
-        if (
-            parsed.scheme in ("http", "https", "ftp", "ftps", "ssh", "mailto")
-            and parsed.netloc
-        ):
+        if parsed.scheme in ("http", "https", "ftp", "ftps", "ssh", "mailto") and parsed.netloc:
             return {"result": True, "reason": f"Valid URL with scheme={parsed.scheme}"}
         elif parsed.scheme and parsed.netloc:
             return {"result": True, "reason": f"Valid URL with scheme={parsed.scheme}"}
@@ -2516,15 +2398,9 @@ def word_count_in_range(text, min_words=None, max_words=None, **kwargs):
         min_w = int(min_words)
         max_w = int(max_words)
         if min_w <= count <= max_w:
-            return {
-                "result": True,
-                "reason": f"Word count {count} is within range [{min_w}, {max_w}]",
-            }
+            return {"result": True, "reason": f"Word count {count} is within range [{min_w}, {max_w}]"}
         else:
-            return {
-                "result": False,
-                "reason": f"Word count {count} is outside range [{min_w}, {max_w}]",
-            }
+            return {"result": False, "reason": f"Word count {count} is outside range [{min_w}, {max_w}]"}
     elif min_words is not None:
         min_w = int(min_words)
         if count >= min_w:
@@ -2538,10 +2414,7 @@ def word_count_in_range(text, min_words=None, max_words=None, **kwargs):
         else:
             return {"result": False, "reason": f"Word count {count} > {max_w}"}
     else:
-        return {
-            "result": True,
-            "reason": f"Word count: {count} (no constraints specified)",
-        }
+        return {"result": True, "reason": f"Word count: {count} (no constraints specified)"}
 
 
 def calculate_readability_score(text, **kwargs):
@@ -2562,7 +2435,7 @@ def calculate_readability_score(text, **kwargs):
         return {"result": 0.0, "reason": "Empty text"}
 
     # Count sentences
-    sentences = _re.split(r"[.!?]+", text)
+    sentences = _re.split(r'[.!?]+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
     num_sentences = max(len(sentences), 1)
 
@@ -2592,19 +2465,11 @@ def calculate_readability_score(text, **kwargs):
     total_syllables = sum(_count_syllables(w) for w in words)
 
     # Flesch Reading Ease = 206.835 - 1.015*(words/sentences) - 84.6*(syllables/words)
-    fre = (
-        206.835
-        - 1.015 * (num_words / num_sentences)
-        - 84.6 * (total_syllables / num_words)
-    )
+    fre = 206.835 - 1.015 * (num_words / num_sentences) - 84.6 * (total_syllables / num_words)
     fre = max(0.0, min(100.0, fre))
 
     # Flesch-Kincaid Grade Level
-    fkgl = (
-        0.39 * (num_words / num_sentences)
-        + 11.8 * (total_syllables / num_words)
-        - 15.59
-    )
+    fkgl = 0.39 * (num_words / num_sentences) + 11.8 * (total_syllables / num_words) - 15.59
     fkgl = max(0.0, fkgl)
 
     # Normalize FRE to 0-1 (higher = more readable)
@@ -2633,7 +2498,7 @@ def sentence_count(text, min_sentences=None, max_sentences=None, **kwargs):
     if not text:
         count = 0
     else:
-        sentences = _re.split(r"(?<=[.!?])\s+", text)
+        sentences = _re.split(r'(?<=[.!?])\s+', text)
         count = len([s for s in sentences if s.strip()])
 
     if min_sentences is not None and max_sentences is not None:
@@ -2647,20 +2512,12 @@ def sentence_count(text, min_sentences=None, max_sentences=None, **kwargs):
     elif min_sentences is not None:
         min_s = int(min_sentences)
         passed = count >= min_s
-        reason = (
-            f"Sentence count {count} >= {min_s}"
-            if passed
-            else f"Sentence count {count} < {min_s}"
-        )
+        reason = f"Sentence count {count} >= {min_s}" if passed else f"Sentence count {count} < {min_s}"
         return {"result": passed, "reason": reason}
     elif max_sentences is not None:
         max_s = int(max_sentences)
         passed = count <= max_s
-        reason = (
-            f"Sentence count {count} <= {max_s}"
-            if passed
-            else f"Sentence count {count} > {max_s}"
-        )
+        reason = f"Sentence count {count} <= {max_s}" if passed else f"Sentence count {count} > {max_s}"
         return {"result": passed, "reason": reason}
     else:
         return {"result": True, "reason": f"Sentence count: {count}"}
@@ -2683,7 +2540,6 @@ def tool_call_accuracy(output, expected, **kwargs):
     Returns:
         dict: {"result": float, "reason": str}
     """
-
     def _parse_calls(val):
         if val is None:
             return []
@@ -2704,19 +2560,15 @@ def tool_call_accuracy(output, expected, **kwargs):
             # Handle OpenAI format: {"function": {"name": ..., "arguments": ...}}
             if "function" in item and isinstance(item["function"], dict):
                 func = item["function"]
-                calls.append(
-                    {
-                        "name": func.get("name", ""),
-                        "arguments": func.get("arguments", {}),
-                    }
-                )
+                calls.append({
+                    "name": func.get("name", ""),
+                    "arguments": func.get("arguments", {}),
+                })
             else:
-                calls.append(
-                    {
-                        "name": item.get("name", ""),
-                        "arguments": item.get("arguments", {}),
-                    }
-                )
+                calls.append({
+                    "name": item.get("name", ""),
+                    "arguments": item.get("arguments", {}),
+                })
         return calls
 
     def _normalize_args(args):
@@ -2733,16 +2585,10 @@ def tool_call_accuracy(output, expected, **kwargs):
     if not expected_calls:
         if not actual_calls:
             return {"result": 1.0, "reason": "No tool calls expected or made"}
-        return {
-            "result": 0.0,
-            "reason": f"No tool calls expected but {len(actual_calls)} were made",
-        }
+        return {"result": 0.0, "reason": f"No tool calls expected but {len(actual_calls)} were made"}
 
     if not actual_calls:
-        return {
-            "result": 0.0,
-            "reason": f"{len(expected_calls)} tool calls expected but none were made",
-        }
+        return {"result": 0.0, "reason": f"{len(expected_calls)} tool calls expected but none were made"}
 
     # Match actual calls to expected calls (greedy matching)
     matched = 0
@@ -2837,7 +2683,7 @@ def calculate_ssim(output, expected, **kwargs):
         sigma12 = ((arr1 - mu1) * (arr2 - mu2)).mean()
 
         ssim_val = ((2 * mu1 * mu2 + C1) * (2 * sigma12 + C2)) / (
-            (mu1**2 + mu2**2 + C1) * (sigma1_sq + sigma2_sq + C2)
+            (mu1 ** 2 + mu2 ** 2 + C1) * (sigma1_sq + sigma2_sq + C2)
         )
         ssim_val = max(0.0, min(1.0, float(ssim_val)))
         return {"result": ssim_val, "reason": f"SSIM: {ssim_val:.4f}"}
@@ -2890,27 +2736,16 @@ def calculate_psnr(output, expected, **kwargs):
         if mse == 0:
             return {"result": 1.0, "reason": "PSNR: inf (identical images), score=1.0"}
 
-        psnr_db = 10 * np.log10(255.0**2 / mse)
+        psnr_db = 10 * np.log10(255.0 ** 2 / mse)
         # Normalize: PSNR typically 20-50 dB for decent images. Map to 0-1.
         score = max(0.0, min(1.0, psnr_db / 50.0))
-        return {
-            "result": score,
-            "reason": f"PSNR: {psnr_db:.2f} dB, normalized score={score:.4f}",
-        }
+        return {"result": score, "reason": f"PSNR: {psnr_db:.2f} dB, normalized score={score:.4f}"}
     except Exception as e:
         return {"result": 0.0, "reason": f"PSNR error: {e}"}
 
 
-def image_properties(
-    text,
-    expected_width=None,
-    expected_height=None,
-    max_file_size_kb=None,
-    expected_format=None,
-    min_width=None,
-    min_height=None,
-    **kwargs,
-):
+def image_properties(text, expected_width=None, expected_height=None, max_file_size_kb=None,
+                     expected_format=None, min_width=None, min_height=None, **kwargs):
     """
     Validate image properties: dimensions, format, file size.
 
@@ -2951,21 +2786,13 @@ def image_properties(
         if min_height is not None and height < int(min_height):
             issues.append(f"height {height} < min {min_height}")
         if max_file_size_kb is not None and file_size > int(max_file_size_kb) * 1024:
-            issues.append(
-                f"file size {file_size / 1024:.1f}KB > max {max_file_size_kb}KB"
-            )
+            issues.append(f"file size {file_size/1024:.1f}KB > max {max_file_size_kb}KB")
         if expected_format is not None and fmt.upper() != str(expected_format).upper():
             issues.append(f"format {fmt} != expected {expected_format}")
 
         if issues:
-            return {
-                "result": False,
-                "reason": f"Image validation failed: {'; '.join(issues)}",
-            }
-        return {
-            "result": True,
-            "reason": f"Image OK: {width}x{height}, {fmt}, {file_size / 1024:.1f}KB",
-        }
+            return {"result": False, "reason": f"Image validation failed: {'; '.join(issues)}"}
+        return {"result": True, "reason": f"Image OK: {width}x{height}, {fmt}, {file_size/1024:.1f}KB"}
     except Exception as e:
         return {"result": False, "reason": f"Image properties error: {e}"}
 
@@ -3033,18 +2860,12 @@ def calculate_word_error_rate(reference, hypothesis, **kwargs):
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WER: 0.0% (both empty)"}
     if not ref_words:
-        return {
-            "result": 0.0,
-            "reason": f"WER: 100%+ ({len(hyp_words)} insertions, empty reference)",
-        }
+        return {"result": 0.0, "reason": f"WER: 100%+ ({len(hyp_words)} insertions, empty reference)"}
 
     distance = _levenshtein_distance_list(ref_words, hyp_words)
     wer = distance / len(ref_words)
     score = max(0.0, 1.0 - wer)
-    return {
-        "result": score,
-        "reason": f"WER: {wer * 100:.1f}% ({distance} edits / {len(ref_words)} ref words), score={score:.4f}",
-    }
+    return {"result": score, "reason": f"WER: {wer*100:.1f}% ({distance} edits / {len(ref_words)} ref words), score={score:.4f}"}
 
 
 def calculate_character_error_rate(reference, hypothesis, **kwargs):
@@ -3066,18 +2887,12 @@ def calculate_character_error_rate(reference, hypothesis, **kwargs):
     if not ref_chars and not hyp_chars:
         return {"result": 1.0, "reason": "CER: 0.0% (both empty)"}
     if not ref_chars:
-        return {
-            "result": 0.0,
-            "reason": f"CER: 100%+ ({len(hyp_chars)} insertions, empty reference)",
-        }
+        return {"result": 0.0, "reason": f"CER: 100%+ ({len(hyp_chars)} insertions, empty reference)"}
 
     distance = Levenshtein.distance("".join(ref_chars), "".join(hyp_chars))
     cer = distance / len(ref_chars)
     score = max(0.0, 1.0 - cer)
-    return {
-        "result": score,
-        "reason": f"CER: {cer * 100:.1f}% ({distance} edits / {len(ref_chars)} ref chars), score={score:.4f}",
-    }
+    return {"result": score, "reason": f"CER: {cer*100:.1f}% ({distance} edits / {len(ref_chars)} ref chars), score={score:.4f}"}
 
 
 def syntax_validation(text, language="python", **kwargs):
@@ -3105,10 +2920,7 @@ def syntax_validation(text, language="python", **kwargs):
             ast.parse(text)
             return {"result": True, "reason": "Valid Python syntax"}
         except SyntaxError as e:
-            return {
-                "result": False,
-                "reason": f"Python syntax error at line {e.lineno}: {e.msg}",
-            }
+            return {"result": False, "reason": f"Python syntax error at line {e.lineno}: {e.msg}"}
     elif lang == "json":
         try:
             json.loads(text)
@@ -3121,18 +2933,12 @@ def syntax_validation(text, language="python", **kwargs):
         depth_brace = 0
         depth_bracket = 0
         for ch in text:
-            if ch == "(":
-                depth_paren += 1
-            elif ch == ")":
-                depth_paren -= 1
-            elif ch == "{":
-                depth_brace += 1
-            elif ch == "}":
-                depth_brace -= 1
-            elif ch == "[":
-                depth_bracket += 1
-            elif ch == "]":
-                depth_bracket -= 1
+            if ch == "(": depth_paren += 1
+            elif ch == ")": depth_paren -= 1
+            elif ch == "{": depth_brace += 1
+            elif ch == "}": depth_brace -= 1
+            elif ch == "[": depth_bracket += 1
+            elif ch == "]": depth_bracket -= 1
             if depth_paren < 0 or depth_brace < 0 or depth_bracket < 0:
                 return {"result": False, "reason": "Unbalanced brackets in JavaScript"}
         if depth_paren != 0 or depth_brace != 0 or depth_bracket != 0:
@@ -3193,10 +2999,7 @@ def code_complexity(text, **kwargs):
     else:
         score = max(0.0, 0.2 - (complexity - 21) * 0.01)
 
-    return {
-        "result": score,
-        "reason": f"Cyclomatic complexity: {complexity}, score={score:.3f}",
-    }
+    return {"result": score, "reason": f"Cyclomatic complexity: {complexity}, score={score:.3f}"}
 
 
 def calculate_code_bleu(reference, hypothesis, **kwargs):
@@ -3227,7 +3030,7 @@ def calculate_code_bleu(reference, hypothesis, **kwargs):
 
     # Standard BLEU component
     def _ngrams(tokens, n):
-        return [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+        return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
 
     weights = [0.25, 0.25, 0.25, 0.25]
     log_precisions = []
@@ -3242,59 +3045,16 @@ def calculate_code_bleu(reference, hypothesis, **kwargs):
             precision = (clipped + 1) / (total + 1)
         log_precisions.append(math.log(precision))
 
-    bp = (
-        1.0
-        if len(hyp_tokens) >= len(ref_tokens)
-        else math.exp(1 - len(ref_tokens) / max(len(hyp_tokens), 1))
-    )
+    bp = 1.0 if len(hyp_tokens) >= len(ref_tokens) else math.exp(1 - len(ref_tokens) / max(len(hyp_tokens), 1))
     bleu = bp * math.exp(sum(w * lp for w, lp in zip(weights, log_precisions)))
 
     # Keyword match component
     code_keywords = {
-        "def",
-        "class",
-        "return",
-        "if",
-        "else",
-        "elif",
-        "for",
-        "while",
-        "try",
-        "except",
-        "finally",
-        "with",
-        "import",
-        "from",
-        "as",
-        "in",
-        "not",
-        "and",
-        "or",
-        "is",
-        "None",
-        "True",
-        "False",
-        "lambda",
-        "yield",
-        "async",
-        "await",
-        "function",
-        "const",
-        "let",
-        "var",
-        "=>",
-        "===",
-        "!==",
-        "typeof",
-        "instanceof",
-        "SELECT",
-        "FROM",
-        "WHERE",
-        "JOIN",
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "CREATE",
+        "def", "class", "return", "if", "else", "elif", "for", "while", "try",
+        "except", "finally", "with", "import", "from", "as", "in", "not", "and",
+        "or", "is", "None", "True", "False", "lambda", "yield", "async", "await",
+        "function", "const", "let", "var", "=>", "===", "!==", "typeof", "instanceof",
+        "SELECT", "FROM", "WHERE", "JOIN", "INSERT", "UPDATE", "DELETE", "CREATE",
     }
     ref_kw = set(t for t in ref_tokens if t in code_keywords)
     hyp_kw = set(t for t in hyp_tokens if t in code_keywords)
@@ -3306,10 +3066,7 @@ def calculate_code_bleu(reference, hypothesis, **kwargs):
     # Combined score (weighted average)
     score = 0.7 * bleu + 0.3 * kw_score
     score = max(0.0, min(1.0, score))
-    return {
-        "result": score,
-        "reason": f"CodeBLEU: {score:.4f} (BLEU={bleu:.4f}, keyword={kw_score:.4f})",
-    }
+    return {"result": score, "reason": f"CodeBLEU: {score:.4f} (BLEU={bleu:.4f}, keyword={kw_score:.4f})"}
 
 
 def calculate_accuracy(output, expected, **kwargs):
@@ -3324,7 +3081,6 @@ def calculate_accuracy(output, expected, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse(val):
         if val is None:
             return []
@@ -3344,20 +3100,14 @@ def calculate_accuracy(output, expected, **kwargs):
     labels = _parse(expected)
 
     if len(preds) != len(labels):
-        return {
-            "result": 0.0,
-            "reason": f"Length mismatch: {len(preds)} predictions vs {len(labels)} labels",
-        }
+        return {"result": 0.0, "reason": f"Length mismatch: {len(preds)} predictions vs {len(labels)} labels"}
 
     if not labels:
         return {"result": 1.0, "reason": "Accuracy: 1.0 (both empty)"}
 
     correct = sum(1 for p, l in zip(preds, labels) if p.lower() == l.lower())
     accuracy = correct / len(labels)
-    return {
-        "result": accuracy,
-        "reason": f"Accuracy: {accuracy:.4f} ({correct}/{len(labels)} correct)",
-    }
+    return {"result": accuracy, "reason": f"Accuracy: {accuracy:.4f} ({correct}/{len(labels)} correct)"}
 
 
 def calculate_precision_score(output, expected, positive_label=None, **kwargs):
@@ -3373,7 +3123,6 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse(val):
         if val is None:
             return []
@@ -3393,10 +3142,7 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     labels = _parse(expected)
 
     if len(preds) != len(labels) or not labels:
-        return {
-            "result": 0.0,
-            "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels",
-        }
+        return {"result": 0.0, "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels"}
 
     if positive_label is not None:
         pos = str(positive_label).lower()
@@ -3408,16 +3154,10 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
 
     if tp + fp == 0:
-        return {
-            "result": 0.0,
-            "reason": f"Precision: 0.0 (no positive predictions for label '{pos}')",
-        }
+        return {"result": 0.0, "reason": f"Precision: 0.0 (no positive predictions for label '{pos}')"}
 
     precision = tp / (tp + fp)
-    return {
-        "result": precision,
-        "reason": f"Precision: {precision:.4f} (TP={tp}, FP={fp}, positive='{pos}')",
-    }
+    return {"result": precision, "reason": f"Precision: {precision:.4f} (TP={tp}, FP={fp}, positive='{pos}')"}
 
 
 def calculate_cohen_kappa(output, expected, **kwargs):
@@ -3433,7 +3173,6 @@ def calculate_cohen_kappa(output, expected, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse(val):
         if val is None:
             return []
@@ -3460,10 +3199,7 @@ def calculate_cohen_kappa(output, expected, **kwargs):
     if len(categories) < 2:
         # Perfect agreement or single class
         observed_agreement = sum(1 for p, l in zip(preds, labels) if p == l) / n
-        return {
-            "result": observed_agreement,
-            "reason": f"Cohen's Kappa: N/A (single class), agreement={observed_agreement:.4f}",
-        }
+        return {"result": observed_agreement, "reason": f"Cohen's Kappa: N/A (single class), agreement={observed_agreement:.4f}"}
 
     # Observed agreement
     po = sum(1 for p, l in zip(preds, labels) if p == l) / n
@@ -3482,10 +3218,7 @@ def calculate_cohen_kappa(output, expected, **kwargs):
 
     # Normalize kappa from [-1, 1] to [0, 1]
     score = (kappa + 1) / 2
-    return {
-        "result": score,
-        "reason": f"Cohen's Kappa: {kappa:.4f} (po={po:.4f}, pe={pe:.4f}), normalized={score:.4f}",
-    }
+    return {"result": score, "reason": f"Cohen's Kappa: {kappa:.4f} (po={po:.4f}, pe={pe:.4f}), normalized={score:.4f}"}
 
 
 def calculate_matthews_correlation(output, expected, **kwargs):
@@ -3501,7 +3234,6 @@ def calculate_matthews_correlation(output, expected, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse(val):
         if val is None:
             return []
@@ -3542,11 +3274,7 @@ def calculate_matthews_correlation(output, expected, **kwargs):
         # Multiclass MCC (using confusion matrix)
         n = len(labels)
         correct = sum(1 for p, l in zip(preds, labels) if p == l)
-        mcc = (
-            (correct / n - 1 / len(categories)) / (1 - 1 / len(categories))
-            if len(categories) > 1
-            else 0.0
-        )
+        mcc = (correct / n - 1 / len(categories)) / (1 - 1 / len(categories)) if len(categories) > 1 else 0.0
 
     # Normalize from [-1, 1] to [0, 1]
     score = (mcc + 1) / 2
@@ -3565,7 +3293,6 @@ def json_diff(output, expected, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse_json(val):
         if isinstance(val, str):
             return json.loads(val)
@@ -3607,10 +3334,7 @@ def json_diff(output, expected, **kwargs):
 
     matches, total = _compare(actual, exp)
     score = matches / total if total > 0 else 1.0
-    return {
-        "result": score,
-        "reason": f"JSON Diff: {score:.4f} ({matches}/{total} matching nodes)",
-    }
+    return {"result": score, "reason": f"JSON Diff: {score:.4f} ({matches}/{total} matching nodes)"}
 
 
 def is_html(text, **kwargs):
@@ -3638,22 +3362,8 @@ def is_html(text, **kwargs):
 
         def handle_starttag(self, tag, attrs):
             self.has_tags = True
-            void_elements = {
-                "area",
-                "base",
-                "br",
-                "col",
-                "embed",
-                "hr",
-                "img",
-                "input",
-                "link",
-                "meta",
-                "param",
-                "source",
-                "track",
-                "wbr",
-            }
+            void_elements = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                             "link", "meta", "param", "source", "track", "wbr"}
             if tag.lower() not in void_elements:
                 self.tag_stack.append(tag.lower())
 
@@ -3670,10 +3380,7 @@ def is_html(text, **kwargs):
         if not validator.has_tags:
             return {"result": False, "reason": "Text contains no HTML tags"}
         if validator.tag_stack:
-            return {
-                "result": False,
-                "reason": f"Unclosed HTML tags: {', '.join(validator.tag_stack)}",
-            }
+            return {"result": False, "reason": f"Unclosed HTML tags: {', '.join(validator.tag_stack)}"}
         return {"result": True, "reason": "Text is valid HTML"}
     except Exception as e:
         return {"result": False, "reason": f"HTML parse error: {e}"}
@@ -3698,19 +3405,13 @@ def calculate_translation_edit_rate(reference, hypothesis, **kwargs):
     if not ref_tokens and not hyp_tokens:
         return {"result": 1.0, "reason": "TER: 0.0 (both empty)"}
     if not ref_tokens:
-        return {
-            "result": 0.0,
-            "reason": f"TER: {len(hyp_tokens) / 1:.1f} (empty reference)",
-        }
+        return {"result": 0.0, "reason": f"TER: {len(hyp_tokens)/1:.1f} (empty reference)"}
 
     # Standard edit distance
     edit_dist = _levenshtein_distance_list(ref_tokens, hyp_tokens)
     ter = edit_dist / len(ref_tokens)
     score = max(0.0, min(1.0, 1.0 - ter))
-    return {
-        "result": score,
-        "reason": f"TER: {ter:.4f} ({edit_dist} edits / {len(ref_tokens)} ref words), score={score:.4f}",
-    }
+    return {"result": score, "reason": f"TER: {ter:.4f} ({edit_dist} edits / {len(ref_tokens)} ref words), score={score:.4f}"}
 
 
 def trajectory_match(output, expected, mode="strict", **kwargs):
@@ -3731,7 +3432,6 @@ def trajectory_match(output, expected, mode="strict", **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-
     def _parse_actions(val):
         if val is None:
             return []
@@ -3754,19 +3454,13 @@ def trajectory_match(output, expected, mode="strict", **kwargs):
     exp = _parse_actions(expected)
 
     if not exp:
-        return {
-            "result": 1.0 if not actual else 0.0,
-            "reason": f"No expected actions, {'none made' if not actual else f'{len(actual)} made'}",
-        }
+        return {"result": 1.0 if not actual else 0.0, "reason": f"No expected actions, {'none made' if not actual else f'{len(actual)} made'}"}
 
     mode = str(mode).lower()
 
     if mode == "strict":
         if actual == exp:
-            return {
-                "result": 1.0,
-                "reason": f"Trajectory strict match: {len(exp)} actions matched in order",
-            }
+            return {"result": 1.0, "reason": f"Trajectory strict match: {len(exp)} actions matched in order"}
         # Partial score based on longest common prefix
         common = 0
         for a, e in zip(actual, exp):
@@ -3775,10 +3469,7 @@ def trajectory_match(output, expected, mode="strict", **kwargs):
             else:
                 break
         score = common / max(len(exp), len(actual))
-        return {
-            "result": score,
-            "reason": f"Trajectory strict: {common}/{len(exp)} prefix match, score={score:.4f}",
-        }
+        return {"result": score, "reason": f"Trajectory strict: {common}/{len(exp)} prefix match, score={score:.4f}"}
 
     elif mode == "unordered":
         actual_set = set(actual)
@@ -3786,40 +3477,25 @@ def trajectory_match(output, expected, mode="strict", **kwargs):
         intersection = actual_set & exp_set
         union = actual_set | exp_set
         score = len(intersection) / len(union) if union else 1.0
-        return {
-            "result": score,
-            "reason": f"Trajectory unordered: {len(intersection)}/{len(union)} matched",
-        }
+        return {"result": score, "reason": f"Trajectory unordered: {len(intersection)}/{len(union)} matched"}
 
     elif mode == "subset":
         exp_set = set(exp)
         actual_set = set(actual)
         if exp_set.issubset(actual_set):
-            return {
-                "result": 1.0,
-                "reason": f"All {len(exp_set)} expected actions found in actual",
-            }
+            return {"result": 1.0, "reason": f"All {len(exp_set)} expected actions found in actual"}
         missing = exp_set - actual_set
         score = 1.0 - len(missing) / len(exp_set)
-        return {
-            "result": score,
-            "reason": f"Subset: {len(exp_set) - len(missing)}/{len(exp_set)} expected found, missing: {missing}",
-        }
+        return {"result": score, "reason": f"Subset: {len(exp_set) - len(missing)}/{len(exp_set)} expected found, missing: {missing}"}
 
     elif mode == "superset":
         actual_set = set(actual)
         exp_set = set(exp)
         if actual_set.issubset(exp_set):
-            return {
-                "result": 1.0,
-                "reason": f"All {len(actual_set)} actual actions within expected",
-            }
+            return {"result": 1.0, "reason": f"All {len(actual_set)} actual actions within expected"}
         extra = actual_set - exp_set
         score = 1.0 - len(extra) / len(actual_set)
-        return {
-            "result": score,
-            "reason": f"Superset: {len(extra)} unexpected actions: {extra}",
-        }
+        return {"result": score, "reason": f"Superset: {len(extra)} unexpected actions: {extra}"}
 
     return {"result": 0.0, "reason": f"Unknown trajectory match mode: {mode}"}
 
@@ -3837,7 +3513,6 @@ def step_count(output, min_steps=None, max_steps=None, expected_steps=None, **kw
     Returns:
         dict: {"result": bool, "reason": str}
     """
-
     def _parse(val):
         if val is None:
             return []
@@ -3856,35 +3531,21 @@ def step_count(output, min_steps=None, max_steps=None, expected_steps=None, **kw
     if expected_steps is not None:
         expected = int(expected_steps)
         passed = count == expected
-        return {
-            "result": passed,
-            "reason": f"Step count {count} {'==' if passed else '!='} expected {expected}",
-        }
+        return {"result": passed, "reason": f"Step count {count} {'==' if passed else '!='} expected {expected}"}
 
     if min_steps is not None and max_steps is not None:
         min_s, max_s = int(min_steps), int(max_steps)
         passed = min_s <= count <= max_s
-        return {
-            "result": passed,
-            "reason": f"Step count {count} {'within' if passed else 'outside'} [{min_s}, {max_s}]",
-        }
+        return {"result": passed, "reason": f"Step count {count} {'within' if passed else 'outside'} [{min_s}, {max_s}]"}
     elif min_steps is not None:
         min_s = int(min_steps)
         passed = count >= min_s
-        reason = (
-            f"Step count {count} >= {min_s}"
-            if passed
-            else f"Step count {count} < {min_s}"
-        )
+        reason = f"Step count {count} >= {min_s}" if passed else f"Step count {count} < {min_s}"
         return {"result": passed, "reason": reason}
     elif max_steps is not None:
         max_s = int(max_steps)
         passed = count <= max_s
-        reason = (
-            f"Step count {count} <= {max_s}"
-            if passed
-            else f"Step count {count} > {max_s}"
-        )
+        reason = f"Step count {count} <= {max_s}" if passed else f"Step count {count} > {max_s}"
         return {"result": passed, "reason": reason}
 
     return {"result": True, "reason": f"Step count: {count}"}
@@ -3910,18 +3571,9 @@ def regex_pii_detection(text, detect_types=None, **kwargs):
     patterns = {
         "ssn": (r"\b\d{3}-\d{2}-\d{4}\b", "SSN"),
         "credit_card": (r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "Credit Card"),
-        "phone": (
-            r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
-            "Phone Number",
-        ),
-        "email": (
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
-            "Email Address",
-        ),
-        "ip_address": (
-            r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
-            "IP Address",
-        ),
+        "phone": (r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", "Phone Number"),
+        "email": (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "Email Address"),
+        "ip_address": (r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b", "IP Address"),
     }
 
     if detect_types:
@@ -3942,10 +3594,7 @@ def regex_pii_detection(text, detect_types=None, **kwargs):
 
     if found:
         return {"result": False, "reason": f"PII detected: {'; '.join(found)}"}
-    return {
-        "result": True,
-        "reason": f"No PII detected (checked: {', '.join(active_patterns.keys())})",
-    }
+    return {"result": True, "reason": f"No PII detected (checked: {', '.join(active_patterns.keys())})"}
 
 
 def _parse_number_list(val):
@@ -3970,10 +3619,7 @@ def calculate_pearson_correlation(output, expected, **kwargs):
     x = _parse_number_list(output)
     y = _parse_number_list(expected)
     if len(x) != len(y) or len(x) < 2:
-        return {
-            "result": 0.0,
-            "reason": f"Invalid input: {len(x)} vs {len(y)} values (need >=2)",
-        }
+        return {"result": 0.0, "reason": f"Invalid input: {len(x)} vs {len(y)} values (need >=2)"}
     n = len(x)
     mx, my = sum(x) / n, sum(y) / n
     ss_x = sum((xi - mx) ** 2 for xi in x)
@@ -4008,13 +3654,17 @@ def calculate_spearman_correlation(output, expected, **kwargs):
         return ranks
 
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n**2 - 1))
+    # Pearson's r over the midranks: the 1 - 6*sum(d^2)/(n*(n^2-1)) shortcut
+    # is only exact when neither input has ties.
+    mx, my = sum(rx) / n, sum(ry) / n
+    ss_x = sum((rxi - mx) ** 2 for rxi in rx)
+    ss_y = sum((ryi - my) ** 2 for ryi in ry)
+    if ss_x == 0 or ss_y == 0:
+        # A constant input has no rank correlation; score it as none, not perfect.
+        return {"result": 0.5, "reason": "Zero variance in one or both inputs"}
+    rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry, strict=True)) / (ss_x * ss_y) ** 0.5
     score = (rho + 1) / 2
-    return {
-        "result": score,
-        "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}",
-    }
+    return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
 
 def calculate_r2_score(output, expected, **kwargs):
@@ -4041,10 +3691,7 @@ def calculate_r2_score(output, expected, **kwargs):
     ss_res = sum((yt - yp) ** 2 for yt, yp in zip(y_true, y_pred))
     ss_tot = sum((yt - mean_true) ** 2 for yt in y_true)
     if ss_tot == 0:
-        return {
-            "result": 1.0 if ss_res == 0 else 0.0,
-            "reason": "Zero variance in target",
-        }
+        return {"result": 1.0 if ss_res == 0 else 0.0, "reason": "Zero variance in target"}
     r2 = 1 - ss_res / ss_tot
     score = max(0.0, min(1.0, (r2 + 1) / 2))  # R2 can be negative, normalize
     return {"result": score, "reason": f"R2={r2:.4f}, normalized={score:.4f}"}
@@ -4057,14 +3704,13 @@ def calculate_rmse(output, expected, **kwargs):
     if len(y_pred) != len(y_true) or not y_true:
         return {"result": 0.0, "reason": "Invalid input"}
     mse = sum((yt - yp) ** 2 for yt, yp in zip(y_true, y_pred)) / len(y_true)
-    rmse = mse**0.5
+    rmse = mse ** 0.5
     score = 1.0 / (1.0 + rmse)
     return {"result": score, "reason": f"RMSE={rmse:.4f}, score={score:.4f}"}
 
 
 def calculate_balanced_accuracy(output, expected, **kwargs):
     """Compute balanced accuracy (average recall per class)."""
-
     def _parse(val):
         if isinstance(val, list):
             return [str(v).lower() for v in val]
@@ -4077,7 +3723,6 @@ def calculate_balanced_accuracy(output, expected, **kwargs):
                 pass
             return [val.strip().lower()]
         return [str(val).lower()]
-
     preds = _parse(output)
     labels = _parse(expected)
     if len(preds) != len(labels) or not labels:
@@ -4089,15 +3734,11 @@ def calculate_balanced_accuracy(output, expected, **kwargs):
         total = sum(1 for l in labels if l == cls)
         recalls.append(tp / total if total > 0 else 0.0)
     ba = sum(recalls) / len(recalls) if recalls else 0.0
-    return {
-        "result": ba,
-        "reason": f"Balanced Accuracy: {ba:.4f} (avg recall across {len(classes)} classes)",
-    }
+    return {"result": ba, "reason": f"Balanced Accuracy: {ba:.4f} (avg recall across {len(classes)} classes)"}
 
 
 def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kwargs):
     """Compute F-beta score with configurable beta."""
-
     def _parse(val):
         if isinstance(val, list):
             return [str(v).lower() for v in val]
@@ -4110,7 +3751,6 @@ def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kw
                 pass
             return [val.strip().lower()]
         return [str(val).lower()]
-
     preds = _parse(output)
     labels = _parse(expected)
     if len(preds) != len(labels) or not labels:
@@ -4124,28 +3764,21 @@ def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kw
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     if precision + recall == 0:
         return {"result": 0.0, "reason": f"F{beta}: 0.0 (no TP)"}
-    b2 = beta**2
+    b2 = beta ** 2
     fb = (1 + b2) * precision * recall / (b2 * precision + recall)
-    return {
-        "result": fb,
-        "reason": f"F{beta}: {fb:.4f} (P={precision:.4f}, R={recall:.4f})",
-    }
+    return {"result": fb, "reason": f"F{beta}: {fb:.4f} (P={precision:.4f}, R={recall:.4f})"}
 
 
 def calculate_log_loss(output, expected, **kwargs):
     """Compute log loss (cross-entropy). Returns 1/(1+logloss) as score."""
     import math
-
     y_pred = _parse_number_list(output)
     y_true = _parse_number_list(expected)
     if len(y_pred) != len(y_true) or not y_true:
         return {"result": 0.0, "reason": "Invalid input"}
     eps = 1e-15
-    loss = -sum(
-        yt * math.log(max(min(yp, 1 - eps), eps))
-        + (1 - yt) * math.log(max(min(1 - yp, 1 - eps), eps))
-        for yt, yp in zip(y_true, y_pred)
-    ) / len(y_true)
+    loss = -sum(yt * math.log(max(min(yp, 1 - eps), eps)) + (1 - yt) * math.log(max(min(1 - yp, 1 - eps), eps))
+               for yt, yp in zip(y_true, y_pred)) / len(y_true)
     score = 1.0 / (1.0 + loss)
     return {"result": score, "reason": f"Log Loss={loss:.4f}, score={score:.4f}"}
 
@@ -4154,12 +3787,8 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
     """Compute Mean Average Precision for retrieval."""
     reference, hypothesis = _parse_reference_and_hypothesis(reference, hypothesis)
     ground_truth, retrieved = reference, hypothesis
-    is_nested_ref = len(ground_truth) > 0 and all(
-        isinstance(i, (list, tuple, set)) for i in ground_truth
-    )
-    is_nested_hyp = len(retrieved) > 0 and all(
-        isinstance(i, (list, tuple, set)) for i in retrieved
-    )
+    is_nested_ref = len(ground_truth) > 0 and all(isinstance(i, (list, tuple, set)) for i in ground_truth)
+    is_nested_hyp = len(retrieved) > 0 and all(isinstance(i, (list, tuple, set)) for i in retrieved)
     if is_nested_ref and is_nested_hyp:
         if len(ground_truth) != len(retrieved):
             raise ValueError("MAP requires equal number of queries")
@@ -4175,10 +3804,7 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
             ap = sum_prec / len(gt_set) if gt_set else 0.0
             aps.append(ap)
         score = sum(aps) / len(aps) if aps else 0.0
-        return {
-            "result": score,
-            "reason": f"MAP: {score:.4f} across {len(aps)} queries",
-        }
+        return {"result": score, "reason": f"MAP: {score:.4f} across {len(aps)} queries"}
     # Single query
     gt_set = set(str(x) for x in ground_truth)
     if not gt_set:
@@ -4190,10 +3816,7 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
             hits += 1
             sum_prec += hits / rank
     ap = sum_prec / len(gt_set)
-    return {
-        "result": ap,
-        "reason": f"AP: {ap:.4f} ({hits} relevant in {len(retrieved)} retrieved)",
-    }
+    return {"result": ap, "reason": f"AP: {ap:.4f} ({hits} relevant in {len(retrieved)} retrieved)"}
 
 
 def calculate_squad_score(output, expected, **kwargs):
@@ -4203,9 +3826,9 @@ def calculate_squad_score(output, expected, **kwargs):
 
     def _normalize(text):
         text = str(text).lower().strip()
-        text = _re.sub(r"\b(a|an|the)\b", " ", text)
-        text = _re.sub(r"[^\w\s]", "", text)
-        return " ".join(text.split())
+        text = _re.sub(r'\b(a|an|the)\b', ' ', text)
+        text = _re.sub(r'[^\w\s]', '', text)
+        return ' '.join(text.split())
 
     pred = _normalize(output)
     gold = _normalize(expected)
@@ -4223,10 +3846,7 @@ def calculate_squad_score(output, expected, **kwargs):
             r = common / len(gold_tokens)
             f1 = 2 * p * r / (p + r)
     score = (em + f1) / 2
-    return {
-        "result": score,
-        "reason": f"SQuAD: EM={em:.0f}, F1={f1:.4f}, combined={score:.4f}",
-    }
+    return {"result": score, "reason": f"SQuAD: EM={em:.0f}, F1={f1:.4f}, combined={score:.4f}"}
 
 
 def calculate_match_error_rate(reference, hypothesis, **kwargs):
@@ -4241,25 +3861,19 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
     hits = len(ref_words) - distance if distance <= len(ref_words) else 0
     mer = distance / (hits + distance) if (hits + distance) > 0 else 1.0
     score = max(0.0, 1.0 - mer)
-    return {"result": score, "reason": f"MER: {mer * 100:.1f}%, score={score:.4f}"}
+    return {"result": score, "reason": f"MER: {mer*100:.1f}%, score={score:.4f}"}
 
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
     ref_words = str(reference if reference is not None else "").strip().lower().split()
-    hyp_words = (
-        str(hypothesis if hypothesis is not None else "").strip().lower().split()
-    )
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIL: 1.0 (one side empty)"}
     hits, _, _, _ = _align_counts(ref_words, hyp_words)
-    wil = (
-        1.0 - (hits / len(ref_words)) * (hits / len(hyp_words))
-        if len(ref_words) > 0 and len(hyp_words) > 0
-        else 1.0
-    )
+    wil = 1.0 - (hits / len(ref_words)) * (hits / len(hyp_words)) if len(ref_words) > 0 and len(hyp_words) > 0 else 1.0
     score = max(0.0, 1.0 - wil)
     return {"result": score, "reason": f"WIL: {wil:.4f}, score={score:.4f}"}
 
@@ -4267,9 +3881,7 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
     ref_words = str(reference if reference is not None else "").strip().lower().split()
-    hyp_words = (
-        str(hypothesis if hypothesis is not None else "").strip().lower().split()
-    )
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:
@@ -4281,7 +3893,6 @@ def calculate_word_info_preserved(reference, hypothesis, **kwargs):
 
 def non_llm_context_precision(output, expected, **kwargs):
     """Non-LLM context precision: what fraction of retrieved contexts match reference contexts."""
-
     def _parse(val):
         if isinstance(val, str):
             try:
@@ -4291,7 +3902,6 @@ def non_llm_context_precision(output, expected, **kwargs):
         if isinstance(val, list):
             return val
         return [str(val)]
-
     retrieved = _parse(output)
     reference = _parse(expected)
     if not retrieved:
@@ -4299,15 +3909,11 @@ def non_llm_context_precision(output, expected, **kwargs):
     ref_set = set(str(r).lower().strip() for r in reference)
     hits = sum(1 for ctx in retrieved if str(ctx).lower().strip() in ref_set)
     precision = hits / len(retrieved)
-    return {
-        "result": precision,
-        "reason": f"Context Precision: {precision:.4f} ({hits}/{len(retrieved)} relevant)",
-    }
+    return {"result": precision, "reason": f"Context Precision: {precision:.4f} ({hits}/{len(retrieved)} relevant)"}
 
 
 def non_llm_context_recall(output, expected, **kwargs):
     """Non-LLM context recall: what fraction of reference contexts were retrieved."""
-
     def _parse(val):
         if isinstance(val, str):
             try:
@@ -4317,21 +3923,14 @@ def non_llm_context_recall(output, expected, **kwargs):
         if isinstance(val, list):
             return val
         return [str(val)]
-
     retrieved = _parse(output)
     reference = _parse(expected)
     if not reference:
-        return {
-            "result": 1.0 if not retrieved else 0.0,
-            "reason": "No reference contexts",
-        }
+        return {"result": 1.0 if not retrieved else 0.0, "reason": "No reference contexts"}
     ret_set = set(str(r).lower().strip() for r in retrieved)
     hits = sum(1 for ctx in reference if str(ctx).lower().strip() in ret_set)
     recall = hits / len(reference)
-    return {
-        "result": recall,
-        "reason": f"Context Recall: {recall:.4f} ({hits}/{len(reference)} found)",
-    }
+    return {"result": recall, "reason": f"Context Recall: {recall:.4f} ({hits}/{len(reference)} found)"}
 
 
 def calculate_distinct_n(text, n=1, **kwargs):
@@ -4340,14 +3939,11 @@ def calculate_distinct_n(text, n=1, **kwargs):
     tokens = text.split()
     if len(tokens) < n:
         return {"result": 0.0, "reason": f"Text too short for {n}-grams"}
-    ngrams = [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+    ngrams = [tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)]
     if not ngrams:
         return {"result": 0.0, "reason": "No n-grams"}
     score = len(set(ngrams)) / len(ngrams)
-    return {
-        "result": score,
-        "reason": f"Distinct-{n}: {score:.4f} ({len(set(ngrams))} unique / {len(ngrams)} total)",
-    }
+    return {"result": score, "reason": f"Distinct-{n}: {score:.4f} ({len(set(ngrams))} unique / {len(ngrams)} total)"}
 
 
 def calculate_type_token_ratio(text, **kwargs):
@@ -4357,10 +3953,7 @@ def calculate_type_token_ratio(text, **kwargs):
     if not tokens:
         return {"result": 0.0, "reason": "Empty text"}
     score = len(set(tokens)) / len(tokens)
-    return {
-        "result": score,
-        "reason": f"TTR: {score:.4f} ({len(set(tokens))} types / {len(tokens)} tokens)",
-    }
+    return {"result": score, "reason": f"TTR: {score:.4f} ({len(set(tokens))} types / {len(tokens)} tokens)"}
 
 
 def calculate_repetition_rate(text, n=3, **kwargs):
@@ -4370,17 +3963,13 @@ def calculate_repetition_rate(text, n=3, **kwargs):
     n = int(n)
     if len(tokens) < n:
         return {"result": 1.0, "reason": "Text too short"}
-    ngrams = [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+    ngrams = [tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)]
     from collections import Counter
-
     counts = Counter(ngrams)
     repeated = sum(c - 1 for c in counts.values() if c > 1)
     rate = repeated / len(ngrams) if ngrams else 0.0
     score = max(0.0, 1.0 - rate)  # Higher = less repetitive = better
-    return {
-        "result": score,
-        "reason": f"Repetition Rate: {rate:.4f} (score={score:.4f}, {repeated} repeated {n}-grams)",
-    }
+    return {"result": score, "reason": f"Repetition Rate: {rate:.4f} (score={score:.4f}, {repeated} repeated {n}-grams)"}
 
 
 def is_refusal(text, **kwargs):
@@ -4389,29 +3978,14 @@ def is_refusal(text, **kwargs):
     if not text:
         return {"result": True, "reason": "Empty response (likely refusal)"}
     refusal_patterns = [
-        "i cannot",
-        "i can't",
-        "i'm unable to",
-        "i am unable to",
-        "i'm not able to",
-        "i am not able to",
-        "i will not",
-        "i won't",
-        "i do not",
-        "i don't",
-        "i refuse",
-        "as an ai",
-        "as a language model",
-        "i'm sorry, but i can't",
-        "i apologize, but i cannot",
-        "it is not appropriate",
-        "it's not appropriate",
-        "i'm not comfortable",
-        "i am not comfortable",
-        "against my guidelines",
-        "against my programming",
-        "i must decline",
-        "i have to decline",
+        "i cannot", "i can't", "i'm unable to", "i am unable to",
+        "i'm not able to", "i am not able to", "i will not", "i won't",
+        "i do not", "i don't", "i refuse", "as an ai", "as a language model",
+        "i'm sorry, but i can't", "i apologize, but i cannot",
+        "it is not appropriate", "it's not appropriate",
+        "i'm not comfortable", "i am not comfortable",
+        "against my guidelines", "against my programming",
+        "i must decline", "i have to decline",
     ]
     for pattern in refusal_patterns:
         if pattern in text:
@@ -4428,14 +4002,8 @@ def latency_check(text, max_latency_ms=None, **kwargs):
     if max_latency_ms is not None:
         max_ms = float(max_latency_ms)
         if latency <= max_ms:
-            return {
-                "result": True,
-                "reason": f"Latency {latency:.1f}ms <= {max_ms:.1f}ms limit",
-            }
-        return {
-            "result": False,
-            "reason": f"Latency {latency:.1f}ms > {max_ms:.1f}ms limit",
-        }
+            return {"result": True, "reason": f"Latency {latency:.1f}ms <= {max_ms:.1f}ms limit"}
+        return {"result": False, "reason": f"Latency {latency:.1f}ms > {max_ms:.1f}ms limit"}
     return {"result": True, "reason": f"Latency: {latency:.1f}ms"}
 
 
@@ -4471,7 +4039,7 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
     for j in range(k):
         total = sum(matrix[i][j] for i in range(n))
         p_j_list.append(total / (n * N_raters))
-    P_e_bar = sum(pj**2 for pj in p_j_list)
+    P_e_bar = sum(pj ** 2 for pj in p_j_list)
 
     if P_e_bar >= 1.0:
         kappa = 1.0 if P_bar == 1.0 else 0.0
@@ -4479,10 +4047,7 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
         kappa = (P_bar - P_e_bar) / (1 - P_e_bar)
 
     score = (kappa + 1) / 2
-    return {
-        "result": score,
-        "reason": f"Fleiss' Kappa: {kappa:.4f}, normalized={score:.4f}",
-    }
+    return {"result": score, "reason": f"Fleiss' Kappa: {kappa:.4f}, normalized={score:.4f}"}
 
 
 """

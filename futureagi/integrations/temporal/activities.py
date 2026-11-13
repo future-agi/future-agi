@@ -657,7 +657,6 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
                 f"model:{log.model}",
                 f"provider:{log.provider}",
                 f"status_code:{log.status_code}",
-                f"gateway:{log.gateway_id}",
             ]
             if log.is_error:
                 tags.append("error:true")
