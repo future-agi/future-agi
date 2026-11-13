@@ -21,12 +21,12 @@ class SamlSocketGuard:
     def __init__(self, consumer):
         self.consumer = consumer
         self.revoked = False
-        self._last_validated_at = 0.0
+        self._last_validated_at: float | None = None
 
     def expire(self) -> None:
         """Make the next push revalidate instead of reusing a recent result."""
 
-        self._last_validated_at = 0.0
+        self._last_validated_at = None
 
     async def ensure_live(self, *, inbound: bool) -> bool:
         """Return whether the socket remains usable, closing revoked sessions."""
@@ -39,7 +39,11 @@ class SamlSocketGuard:
 
         now_monotonic = time.monotonic()
         interval = getattr(settings, "SAML_SOCKET_REVALIDATE_SECONDS", 30)
-        if not inbound and now_monotonic - self._last_validated_at < interval:
+        if (
+            not inbound
+            and self._last_validated_at is not None
+            and now_monotonic - self._last_validated_at < interval
+        ):
             return True
 
         try:
