@@ -91,7 +91,7 @@ def _authenticate_and_set_context(
     from accounts.models.workspace import Workspace
 
     try:
-        # Use .all() to bypass BaseModelManager workspace filtering. Not
+        # Use .all() to skip BaseModelManager workspace filtering. Not
         # filtered on enabled: REST auth disables a key once it expires, and
         # that key must still read as expired here, not as a wrong key.
         org_api_key = (
