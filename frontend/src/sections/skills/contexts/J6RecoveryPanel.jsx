@@ -701,7 +701,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   if (previewState === 'error' || query.error || !data)
     return (
       <ErrorState
-        title="Recovery view unavailable"
+        title="Couldn't load recovery"
         detail="The release, safety or consumer facts could not be read completely. No partial recovery choice is shown."
         onRetry={query.refetch}
       />

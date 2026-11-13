@@ -179,7 +179,8 @@ it('starts editing from the explicitly viewed release, recognizing normalized mi
   await screen.findByText('# Exact policy');
   fireEvent.click(screen.getByRole('button', { name: 'Edit viewed v4' }));
   expect(await screen.findByRole('button', { name: 'Start selected draft' })).toBeEnabled();
-  expect(screen.getByText(/exact viewed version v4/)).toBeVisible();
+  expect(screen.getByText(/Start a draft from v4/)).toBeVisible();
+  expect(screen.getByText(/starts from exactly v4; it is never swapped for the latest version/)).toBeVisible();
   expect(axios.post).not.toHaveBeenCalled();
 });
 it('loads the production draft review and sends the exact head acknowledgment', async () => {

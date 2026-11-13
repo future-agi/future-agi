@@ -17,6 +17,10 @@ import { contextSkillChoices } from './context-skill-choices';
 import { productionBaseline } from './production-baseline';
 import ContextTargetRegistration from './ContextTargetRegistration';
 import J6RecoveryPanel from './J6RecoveryPanel';
+
+// These panels design their own ?state= previews; a panel state never replaces the whole detail (header actions stay live).
+const PANEL_STATE_TABS = ['tests', 'consumers', 'recovery'];
+const PREVIEW_STATES = ['loading', 'error', 'empty', 'off', 'denied'];
 import { publicApiOrigin } from '../utils/origin';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
@@ -68,14 +72,14 @@ function Detail() {
     {requested !== null && number === null && <Alert severity="error">Choose a positive, explicit release number. No latest-version substitution was made.</Alert>}
     <ContextDetailView initialTab={params.get('tab')} scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
-      onStartDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onReviewDraft={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined} state={params.get('tab') === 'tests' ? undefined : params.get('state')}
+      onStartDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onReviewDraft={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined} state={PANEL_STATE_TABS.includes(params.get('tab')) ? undefined : params.get('state')}
       sections={{
         tests: <ContextTestsPanel contextName={query.data?.context?.name} contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={productionVersion} seed={testSeed}
           canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} state={params.get('state')} draft={testingDraft ? draft.data : undefined}
           source={{ testingDraft, draftAvailable: Boolean(query.data?.ownDraft), releaseAvailable: Boolean(selectedVersion), isLoading: testingDraft && draft.isLoading, isError: testingDraft && draft.isError, onRetry: draft.refetch,
             onSelect: (useDraft) => setParams((current) => { const next = new URLSearchParams(current); if (useDraft) next.set('draft', '1'); else next.delete('draft'); return next; }) }} />,
         versions: <Stack spacing={2}><ContextLabelRequestPanel contextId={contextId} version={selectedVersion} /><Typography variant="s3" color="text.secondary">Choose an exact release above. Editing does not move production.</Typography><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Newer releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
-        consumers: <Stack spacing={1.5}><ContextConsumersView registrationAction={<ContextTargetRegistration contextId={contextId} canRegister={!query.isError && query.data?.releaseState.permissions.canPublish === true} />} scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} versionNumbers={Object.fromEntries(allChoices.map((row) => [row.id, row.number]))} /></Stack>,
+        consumers: <Stack spacing={1.5}><ContextConsumersView registrationAction={<ContextTargetRegistration contextId={contextId} canRegister={!query.isError && query.data?.releaseState.permissions.canPublish === true} />} scopeKey={scopeKey} state={params.get('tab') === 'consumers' && PREVIEW_STATES.includes(params.get('state')) ? params.get('state') : consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} versionNumbers={Object.fromEntries(allChoices.map((row) => [row.id, row.number]))} /></Stack>,
         // J6: incident recovery choice and local/application recovery guidance.
         recovery: query.data?.context ? <J6RecoveryPanel contextId={contextId} contextName={query.data.context.name} /> : null,
         use: <Stack spacing={2}>

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Alert, Button, Stack } from '@mui/material';
+import { Link as RouterLink, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Alert, Button, Stack, Typography } from '@mui/material';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { contextAuthoringReady, useContexts, useCreateContext, useContextDetail, useContextDraft, useStartContextDraft, useSaveContextDraft, useDiscardContextDraft, usePreviewContextDependencies, useApplyContextDependencies } from 'src/api/skills/context-authoring';
 import { useCheckpointDraft, checkpointsReady } from 'src/api/skills/r3-intake';
@@ -107,13 +107,19 @@ function Editor({ scopeKey, contextId }) {
   const absent = (draft.error?.code || draft.error?.response?.data?.code) === 'draft_not_found';
   if (!absent) return <ErrorState title="Draft unavailable" detail="No empty-draft assumption was made. Retry the authorized read." onRetry={draft.refetch} />;
   const canStart = origin !== undefined && (origin !== null || detail.data.context.latestVersion === null);
-  return <Stack spacing={1.5}>
-    <Alert severity="info">{canStart ? `Start from ${origin === null ? 'a blank unpublished context' : `the exact viewed version v${origin}`}? No latest-version substitution is made.` : 'Choose an explicit published version on the context detail page before starting a draft.'}</Alert>
+  const latest = detail.data.context.latestVersion;
+  // A small decision, not a page: which version the draft starts from, stated once, with a way back.
+  return <Stack spacing={1.5} sx={{ maxWidth: 560, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+    <Typography variant="m3" component="h2">{!canStart ? 'Choose a version first' : origin === null ? 'Start a new draft?' : `Start a draft from v${origin}${latest && latest !== origin ? ` (latest is v${latest})` : ''}?`}</Typography>
+    <Typography variant="s1" color="text.secondary">{canStart ? (origin === null ? 'The draft starts blank and stays private until you publish it.' : `Your draft starts from exactly v${origin}; it is never swapped for the latest version.`) : 'Choose an explicit published version on the context detail page before starting a draft.'}</Typography>
     <AuthoringError error={operation.error} />
-    <Button color="primary" variant="contained" disabled={!canStart || operation.pending} onClick={async () => {
-      const result = await operation.run((input, options) => start.mutateAsync({ ...input, ...options }), { revision: 0, fromVersion: origin });
-      if (result) setInitial(result);
-    }}>Start selected draft</Button>
+    <Stack direction="row" spacing={1}>
+      <Button color="primary" variant="contained" disabled={!canStart || operation.pending} onClick={async () => {
+        const result = await operation.run((input, options) => start.mutateAsync({ ...input, ...options }), { revision: 0, fromVersion: origin });
+        if (result) setInitial(result);
+      }}>Start selected draft</Button>
+      <Button color="primary" variant="outlined" component={RouterLink} to={paths.dashboard.skills.contextDetail(contextId)}>Cancel</Button>
+    </Stack>
   </Stack>;
 }
 Editor.propTypes = { scopeKey: PropTypes.string.isRequired, contextId: PropTypes.string.isRequired };
