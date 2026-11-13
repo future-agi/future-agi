@@ -39,7 +39,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -198,6 +197,26 @@ def changed_files(repo: Path, base: str) -> dict[str, str | None]:
     return result
 
 
+def ruff_section(tree: Path, path: str) -> object:
+    """Read a pyproject's Ruff table, or None when its path is absent."""
+    try:
+        data = (tree / path).read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    try:
+        tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        # Invalid TOML cannot prove settings unchanged. Ruff will
+        # report an included invalid config when it reads the tree.
+        return data
+    if not isinstance(tool, dict):
+        raise GateError(f"{path}: tool must be a table")
+    ruff = tool.get("ruff")
+    if ruff is not None and not isinstance(ruff, dict):
+        raise GateError(f"{path}: tool.ruff must be a table")
+    return ruff
+
+
 def changed_lint_configs(repo: Path, base_tree: Path, base: str) -> set[str]:
     """Find changed Ruff settings, ignoring unrelated pyproject metadata."""
     changed = run(
@@ -216,52 +235,74 @@ def changed_lint_configs(repo: Path, base_tree: Path, base: str) -> set[str]:
     result = set()
     for path in changed:
         name = PurePosixPath(path).name
-        if name in {"ruff.toml", ".ruff.toml"}:
+        if name in {"ruff.toml", ".ruff.toml"} or (
+            name == "pyproject.toml"
+            and ruff_section(base_tree, path) != ruff_section(repo, path)
+        ):
             result.add(path)
-        elif name == "pyproject.toml":
-
-            def ruff_section(tree: Path) -> object:
-                try:
-                    data = (tree / path).read_bytes()
-                except FileNotFoundError:
-                    return None
-                try:
-                    tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
-                except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-                    # Invalid TOML cannot prove settings unchanged. Ruff will
-                    # report an included invalid config when it reads the tree.
-                    return data
-                if not isinstance(tool, dict):
-                    raise GateError(f"{path}: tool must be a table")
-                ruff = tool.get("ruff")
-                if ruff is not None and not isinstance(ruff, dict):
-                    raise GateError(f"{path}: tool.ruff must be a table")
-                return ruff
-
-            if ruff_section(base_tree) != ruff_section(repo):
-                result.add(path)
     return result
 
 
-def trusted_head_tree(base_tree: Path, head_tree: Path) -> None:
-    """Replace head settings with base settings without removing any head source.
+def trusted_head_tree(base_tree: Path, head_tree: Path, base: str) -> None:
+    """Replace head settings with committed base settings without removing head source.
 
     Both worktrees are full commits: Ruff uses sibling packages and __init__.py
     files to resolve imports. A global --config would flatten nested settings
-    and per-file path rules, so copy the base's complete config layout instead.
+    and per-file path rules, so overlay the base's complete config layout instead.
     """
     names = {"pyproject.toml", "ruff.toml", ".ruff.toml"}
-    head_configs = run(["git", "ls-files", "-z"], head_tree).stdout.split("\0")
-    for path in head_configs:
-        if PurePosixPath(path).name in names:
-            (head_tree / path).unlink()
-    base_configs = run(["git", "ls-files", "-z"], base_tree).stdout.split("\0")
+    root = head_tree.resolve()
+
+    def destination(path: str) -> Path:
+        relative = PurePosixPath(path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise GateError(f"{path}: config path is outside the head tree")
+        dest = head_tree
+        for part in relative.parts:
+            dest /= part
+            if dest.is_symlink():
+                raise GateError(f"{path}: config path is a symlink in the head tree")
+        if not dest.resolve().is_relative_to(root):
+            raise GateError(f"{path}: config path resolves outside the head tree")
+        return dest
+
+    head_configs = [
+        path
+        for path in run(["git", "ls-files", "-z"], head_tree).stdout.split("\0")
+        if PurePosixPath(path).name in names
+    ]
+    base_configs = [
+        path
+        for path in run(["git", "ls-files", "-z"], base_tree).stdout.split("\0")
+        if PurePosixPath(path).name in names
+    ]
+    # Check all paths before changing the tree. A tracked directory may have
+    # become a symlink even when no head config is tracked under that directory.
+    for path in set(head_configs + base_configs):
+        destination(path)
+
+    base_contents = {}
     for path in base_configs:
-        if PurePosixPath(path).name in names:
-            source = base_tree / path
-            dest = head_tree / path
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, dest, follow_symlinks=False)
+        entry = run(["git", "ls-tree", "-z", base, "--", path], head_tree).stdout
+        if not entry.startswith(("100644 blob ", "100755 blob ")):
+            raise GateError(f"{path}: base config is not a regular file")
+        proc = subprocess.run(
+            ["git", "show", f"{base}:{path}"],
+            cwd=head_tree,
+            check=False,
+            capture_output=True,
+        )
+        if proc.returncode:
+            error = proc.stderr.decode("utf-8", errors="replace").strip()[:2000]
+            raise GateError(f"cannot read committed config {path}: {error}")
+        base_contents[path] = proc.stdout
+
+    for path in head_configs:
+        destination(path).unlink()
+    for path, content in base_contents.items():
+        dest = destination(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        destination(path).write_bytes(content)
 
 
 def line_ranks(diff: str) -> dict[int, int]:
@@ -619,7 +660,7 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
                     repo,
                 )
                 head_tree = full_head
-                trusted_head_tree(base_tree, head_tree)
+                trusted_head_tree(base_tree, head_tree, base)
             head = dedupe(
                 ruff_check(ruff, head_tree, head_paths, None)
                 + ruff_check(ruff, head_tree, app_head, BANNED_RULES)

@@ -839,24 +839,138 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
                 self.write("futureagi/app/pyproject.toml", content)
                 self.write("futureagi/app/new.py", 'print("new")\n')
                 self.commit()
-                code, found, proc = self.gate(base)
+                code, _, proc = self.gate(base)
                 self.assertEqual(code, 2, proc.stdout + proc.stderr)
                 self.assertIn("title=Python lint gate", proc.stdout)
                 self.assertNotIn("Traceback", proc.stderr)
                 self.git("reset", "--hard", base)
 
+    def test_overlay_stops_at_a_symlinked_config_directory(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/legacy/pyproject.toml", '[project]\nname = "legacy"\n')
+        self.write("futureagi/legacy/old.py", "VALUE = 1\n")
+        base = self.commit()
+
+        for layout in ("deleted", "moved", "extra_finding", "absolute"):
+            with self.subTest(layout=layout):
+                self.git("reset", "--hard", base)
+                self.git("clean", "-fdx")
+                if layout in ("moved", "extra_finding"):
+                    self.git("mv", "futureagi/legacy", "futureagi/legacy_app")
+                else:
+                    self.git("rm", "-r", "-q", "futureagi/legacy")
+                if layout == "absolute":
+                    target = self.repo / "outside"
+                    target.mkdir()
+                else:
+                    target = "../../base/futureagi"
+                (self.repo / "futureagi/legacy").symlink_to(
+                    target, target_is_directory=True
+                )
+                self.write(
+                    "futureagi/pyproject.toml",
+                    config.replace("Use another API.", "Use a reviewed API."),
+                )
+                self.write(
+                    "futureagi/app/new.py", "from library import old_api\n\nold_api()\n"
+                )
+                if layout == "extra_finding":
+                    self.write("futureagi/app/printed.py", 'print("new")\n')
+                self.commit()
+
+                code, _, proc = self.gate(base)
+                self.assertEqual(code, 2, proc.stdout + proc.stderr)
+                self.assertIn("title=Python lint gate", proc.stdout)
+                self.assertIn("futureagi/legacy/pyproject.toml", proc.stdout)
+                self.assertNotIn("Traceback", proc.stderr)
+                if layout == "absolute":
+                    self.assertEqual(list(target.iterdir()), [])
+                self.git("reset", "--hard", base)
+
+    def test_overlay_stops_before_copying_a_nested_config_via_a_symlink(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write(
+            "futureagi/legacy/ruff.toml",
+            'extend = "../pyproject.toml"\n\n[lint]\nignore = ["TID251"]\n',
+        )
+        self.write("futureagi/legacy/old.py", "VALUE = 1\n")
+        base = self.commit()
+
+        self.git("rm", "-r", "-q", "futureagi/legacy")
+        (self.repo / "futureagi/legacy").symlink_to("app", target_is_directory=True)
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("futureagi/legacy/ruff.toml", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_config_parent_replaced_by_a_file_keeps_ordinary_verdicts(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/legacy/pyproject.toml", '[project]\nname = "legacy"\n')
+        base = self.commit()
+        for source, expected in (
+            ("VALUE = 1\n", (0, [])),
+            (
+                "from library import old_api\n\nold_api()\n",
+                (1, [("futureagi/app/new.py", 1, "TID251")]),
+            ),
+        ):
+            with self.subTest(source=source):
+                self.git("reset", "--hard", base)
+                self.git("rm", "-r", "-q", "futureagi/legacy")
+                self.write("futureagi/legacy", "replaced\n")
+                self.write("futureagi/app/new.py", source)
+                self.commit()
+                code, found, proc = self.gate(base)
+                self.assertEqual((code, found), expected, proc.stdout + proc.stderr)
+
+    def test_overlay_stops_at_a_symlinked_config_file(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        self.write(
+            "futureagi/alternate.toml",
+            CONFIG.replace("line-length = 88", "line-length = 89"),
+        )
+        (self.repo / "futureagi/pyproject.toml").symlink_to("alternate.toml")
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("futureagi/pyproject.toml", proc.stdout)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
     def test_symlinked_python_file_with_config_edit_keeps_its_target(self):
         self.write("futureagi/pyproject.toml", CONFIG)
-        self.write("futureagi/app/real.py", 'print("old")\n')
+        self.write("futureagi/app/real.py", "VALUE = 1\n")
         base = self.commit()
+        self.write("futureagi/app/real.py", 'print("new")\n')
         (self.repo / "futureagi/app/link.py").symlink_to("real.py")
         self.write(
             "futureagi/pyproject.toml",
             CONFIG.replace("line-length = 88", "line-length = 89"),
         )
         self.commit()
-        code, _, proc = self.gate(base)
-        self.assertIn(code, (0, 1), proc.stdout + proc.stderr)
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn(("futureagi/app/real.py", 1, "T201"), found, proc.stdout)
         self.assertNotIn("title=Python lint gate", proc.stdout)
 
     def test_config_edit_and_exact_reformat_keep_old_counts(self):
