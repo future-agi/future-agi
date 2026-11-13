@@ -16,6 +16,22 @@ type ImageRequest struct {
 type ImageResponse struct {
 	Created int64       `json:"created"`
 	Data    []ImageData `json:"data"`
+	Usage   *ImageUsage `json:"usage,omitempty"`
+}
+
+// ImageUsage is the token usage the gpt-image models report, which is what
+// they are billed by.
+type ImageUsage struct {
+	InputTokens        int                `json:"input_tokens"`
+	OutputTokens       int                `json:"output_tokens"`
+	TotalTokens        int                `json:"total_tokens"`
+	InputTokensDetails *ImageInputDetails `json:"input_tokens_details,omitempty"`
+}
+
+// ImageInputDetails splits an image call's input tokens into text and image.
+type ImageInputDetails struct {
+	TextTokens  int `json:"text_tokens"`
+	ImageTokens int `json:"image_tokens"`
 }
 
 // ImageData is a single generated image.

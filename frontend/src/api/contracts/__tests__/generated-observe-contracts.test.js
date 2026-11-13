@@ -35,6 +35,8 @@ const column = {
   annotators: ["reviewer-1"],
   source_field: null,
   parent_eval_id: null,
+  // Non-eval columns serialize target_type as an explicit null.
+  target_type: null,
 };
 
 const metadata = {
@@ -99,6 +101,21 @@ describe("generated Observe response contracts", () => {
       expect(parsed.data.result.table[0]).toEqual(recursiveRow);
     },
   );
+
+  it.each([
+    ["Observe traces", TracerTraceListTracesOfSessionResponse],
+    ["Observe spans", TracerObservationSpanListSpansObserveResponse],
+  ])("keeps an eval column's target_type on %s", (_name, schema) => {
+    const evalColumn = { ...column, id: "eval-1", target_type: "trace" };
+    const parsed = schema.parse({
+      status: true,
+      result: { config: [column, evalColumn], metadata, table: [] },
+    });
+    expect(parsed.result.config.map((c) => c.target_type)).toEqual([
+      null,
+      "trace",
+    ]);
+  });
 
   it("preserves dynamic session cells and explicit-null typed cells", () => {
     const sessionRow = {
@@ -248,4 +265,17 @@ describe("generated Observe response contracts", () => {
       }),
     ).toMatchObject({ success: true });
   });
+});
+
+
+it("retains the generated optional cost coverage through the nullable graph adapter", async () => {
+  const { parseTraceGraphResponse } = await import("src/api/project/observe-contracts");
+  const cost_coverage = { status: "partial", known_subtotal: 1.25, known_fact_count: 1, unknown_fact_count: 1 };
+  const result = parseTraceGraphResponse({ status: true, result: {
+    metric_name: "cost", data: [{ timestamp: "2026-10-20T12:00:00Z", value: 0.625, primary_traffic: 2, cost_coverage }],
+  } });
+  expect(result.data[0]).toEqual({ timestamp: "2026-10-20T12:00:00Z", value: 0.625, primary_traffic: 2, cost_coverage });
+  expect(() => parseTraceGraphResponse({ status: true, result: {
+    metric_name: "cost", data: [{ timestamp: "2026-10-20T12:00:00Z", value: null, cost_coverage: { ...cost_coverage, known_subtotal: "1.25" } }],
+  } })).toThrow();
 });

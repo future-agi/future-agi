@@ -8,6 +8,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.serializers.chat_message import ChatMessageSerializer
 from tracer.models.trace import Trace
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 
 RECORDING_ATTR_KEYS = {
@@ -393,8 +394,7 @@ def parse_voice_span_transcripts(attrs: dict) -> list[dict]:
 
     # Final fallback: read from raw_log.messages (full Vapi/Retell response)
     if not transcripts or all(t["role"] == "user" for t in transcripts):
-        raw_log = attrs.get("raw_log", {})
-        raw_messages = raw_log.get("messages", []) if isinstance(raw_log, dict) else []
+        raw_messages = span_raw_log(attrs).get("messages", [])
         if raw_messages:
             from_raw = []
             for msg in raw_messages:

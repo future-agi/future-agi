@@ -1,3 +1,5 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import PropTypes from "prop-types";
 import React, {
   useState,
@@ -36,12 +38,28 @@ import {
   validateFilter,
   transformFilter,
 } from "src/sections/develop-detail/DataTab/DevelopFilters/common";
-import DevelopFilterRow from "src/sections/develop-detail/DataTab/DevelopFilters/DevelopFilterRow";
+import { FilterButton } from "src/components/filter";
+import {
+  columnsToFields,
+  fromPanelValue as fromFilterPanelValue,
+  toPanelValue as toFilterPanelValue,
+} from "src/components/filter/datasetColumnAdapter";
+
+// Column data types the dataset rows endpoint can filter on.
+const FILTERABLE_DATA_TYPES = new Set([
+  "text",
+  "integer",
+  "float",
+  "boolean",
+  "datetime",
+  "array",
+  "audio",
+]);
 import { getRandomId } from "src/utils/utils";
 import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
 import SvgColor from "src/components/svg-color";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -117,6 +135,18 @@ import {
   traceSelectorRowsFromResponse,
 } from "./telemetry-selector-contract";
 import { spanSourceIdsFromPhysicalRowIds } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -141,10 +171,8 @@ export function SelectionCheckboxNudge({ selectionCount }) {
     <Alert
       severity="info"
       variant="outlined"
-      icon={<Iconify icon="mdi:checkbox-marked-outline" width={18} />}
       sx={{
         mt: 2,
-        borderRadius: 0.75,
         "& .MuiAlert-message": {
           width: "100%",
         },
@@ -186,11 +214,7 @@ function renderProjectAutocompleteOption(props, option, state) {
     >
       {option?.name}
       {option?.trace_type === "experiment" && (
-        <Chip
-          label="Prototype"
-          size="small"
-          sx={{ ml: 1, height: 20, fontSize: 10 }}
-        />
+        <Chip label="Prototype" size="small" sx={{ ml: 1 }} />
       )}
     </li>
   );
@@ -387,11 +411,11 @@ const SOURCE_TYPES = [
 ];
 
 const SIMULATION_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System Metrics", icon: "mdi:tune-variant" },
-  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:tag-multiple-outline" },
-  { key: "eval", label: "Evals", icon: "mdi:check-decagram-outline" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "system", label: "System Metrics", icon: "solar:tuning-2-linear" },
+  { key: "persona", label: "Persona", icon: "solar:user-linear" },
+  { key: "attribute", label: "Attributes", icon: "solar:tag-price-linear" },
+  { key: "eval", label: "Evals", icon: "solar:check-circle-linear" },
 ];
 
 const SIMULATION_STATIC_FILTER_FIELDS = [
@@ -856,8 +880,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       call_execution: "Choose a test and execution run to add calls from",
     }[sourceType] || "";
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={handleClose}
@@ -915,7 +942,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               }}
             >
               <IconButton size="small" onClick={handleBack}>
-                <Iconify icon="eva:arrow-ios-back-fill" width={20} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={20} />
               </IconButton>
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="h6" noWrap sx={{ minWidth: 0 }}>
@@ -928,7 +955,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <IconButton onClick={handleClose}>
-                <Iconify icon="mingcute:close-line" width={20} />
+                <Iconify icon="solar:close-linear" width={20} />
               </IconButton>
             </Box>
           </Box>
@@ -1128,13 +1155,13 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
               onClick={src.enabled ? () => onSelect(src.value) : undefined}
               sx={{
                 border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-                px: 2.5,
-                py: 2,
+                borderColor: "border.default",
+                borderRadius: "8px",
+                px: 1.5,
+                py: 1,
                 display: "flex",
                 alignItems: "center",
-                gap: 2,
+                gap: 1.5,
                 cursor: src.enabled ? "pointer" : "not-allowed",
                 opacity: src.enabled ? 1 : 0.9,
                 transition: "all 0.15s",
@@ -1148,9 +1175,9 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: 40,
-                  height: 40,
-                  borderRadius: 0.5,
+                  width: 28,
+                  height: 28,
+                  borderRadius: "6px",
                   bgcolor: "action.hover",
                   color: "primary.main",
                 }}
@@ -1159,31 +1186,29 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
                   <SvgColor
                     src={src.icon}
                     sx={{
-                      width: 24,
-                      height: 24,
+                      width: 16,
+                      height: 16,
                       color: "primary.main",
                     }}
                   />
                 ) : (
-                  <Iconify icon={src.icon} width={24} color="primary.main" />
+                  <Iconify icon={src.icon} width={16} color="primary.main" />
                 )}
               </Box>
               <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle2">{src.label}</Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+                  {src.label}
+                </Typography>
+                <Typography variant="caption" color="text.tertiary">
                   {src.description}
                 </Typography>
                 {!src.enabled && (
-                  <Chip
-                    label="Coming soon"
-                    size="small"
-                    sx={{ ml: 1, height: 20, fontSize: 10 }}
-                  />
+                  <Chip label="Coming soon" size="small" sx={{ ml: 1 }} />
                 )}
               </Box>
               {src.enabled && (
                 <Iconify
-                  icon="eva:arrow-ios-forward-fill"
+                  icon="solar:alt-arrow-right-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
@@ -1345,27 +1370,22 @@ export function ExactSelectorReadFailureNotice({ failed, onRetry }) {
   if (!failed) return null;
 
   return (
-    <Box
+    <Alert
+      severity="warning"
       role="status"
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 1,
-        px: 1.5,
-        py: 0.75,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        bgcolor: "action.hover",
-      }}
+      action={
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      }
     >
-      <Typography variant="caption" color="text.secondary">
-        Rows are temporarily unavailable.
-      </Typography>
-      <Button size="small" variant="outlined" onClick={onRetry}>
-        Retry
-      </Button>
-    </Box>
+      Rows are temporarily unavailable.
+    </Alert>
   );
 }
 
@@ -1408,7 +1428,7 @@ function SelectorEmptyState({
       }}
     >
       {loading ? (
-        <CircularProgress size={28} sx={{ mb: 2 }} />
+        <ContentSkeleton variant="panel" />
       ) : (
         <Box
           sx={{
@@ -1424,7 +1444,7 @@ function SelectorEmptyState({
             color: "text.secondary",
           }}
         >
-          <Typography component="span" color="error.main" fontWeight={700}>
+          <Typography component="span" color="error.main" fontWeight={600}>
             *
           </Typography>
         </Box>
@@ -1648,24 +1668,37 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     [filters, refreshGrid],
   );
 
-  // Build allColumns for filter row (same shape DevelopFilterRow expects)
-  const allColumns = useMemo(
+  // Filter panel fields: the dataset's filterable columns.
+  const filterFields = useMemo(
     () =>
-      columnDefs.map((cd) => ({
-        field: cd.field,
-        headerName: cd.headerName,
-        col: cd.col || { dataType: "text" },
-      })),
+      columnsToFields(columnDefs, (cd) => {
+        const dataType = cd.col?.data_type;
+        return {
+          id: FILTERABLE_DATA_TYPES.has(dataType) ? cd.field : undefined,
+          // Audio columns filter on their duration, a number. Mapped here so
+          // other filters that share the adapter keep treating audio as text.
+          label:
+            dataType === "audio" ? `${cd.headerName} duration` : cd.headerName,
+          dataType: dataType === "audio" ? "float" : dataType,
+        };
+      }),
     [columnDefs],
   );
-
-  const isFilterApplied = useMemo(
-    () =>
-      filters.some((f) =>
-        f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-          ? f.filterConfig.filterValue.length > 0
-          : f.filterConfig.filterValue !== "",
-      ),
+  const filterValue = useMemo(
+    () => toFilterPanelValue(filters, filterFields),
+    [filters, filterFields],
+  );
+  const handleFilterChange = useCallback(
+    (rows) => {
+      const next = fromFilterPanelValue(rows);
+      setFilters(() =>
+        next.length ? next : [{ ...DefaultFilter, id: getRandomId() }],
+      );
+    },
+    [setFilters],
+  );
+  const activeFilterCount = useMemo(
+    () => filters.filter(validateFilter).length,
     [filters],
   );
 
@@ -1747,29 +1780,14 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         {datasetId && (
           <>
             <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
-            <IconButton
-              size="small"
-              onClick={() => setFilterOpen((v) => !v)}
-              sx={{
-                border: "1px solid",
-                borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
-                p: 0.75,
-                bgcolor: (theme) =>
-                  isFilterApplied
-                    ? alpha(theme.palette.primary.main, 0.12)
-                    : "transparent",
-              }}
-            >
-              <SvgColor
-                src="/assets/icons/action_buttons/ic_filter.svg"
-                sx={{
-                  width: 16,
-                  height: 16,
-                  color: isFilterApplied ? "primary.main" : "text.primary",
-                }}
-              />
-            </IconButton>
+            <FilterButton
+              fields={filterFields}
+              value={filterValue}
+              onChange={handleFilterChange}
+              count={activeFilterCount}
+              open={filterOpen}
+              onOpenChange={setFilterOpen}
+            />
             <TextField
               size="small"
               placeholder="Search in dataset"
@@ -1781,9 +1799,9 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear"
                       sx={{ color: "text.disabled" }}
-                      width={18}
+                      width={16}
                     />
                   </InputAdornment>
                 ),
@@ -1792,53 +1810,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           </>
         )}
       </Box>
-
-      {/* Filter box */}
-      {datasetId && filterOpen && (
-        <Box sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-            }}
-          >
-            {filters.map((filter, index) => (
-              <DevelopFilterRow
-                key={filter.id}
-                index={index}
-                filter={filter}
-                allColumns={allColumns}
-                removeFilter={(id) => {
-                  if (filters.length === 1) {
-                    setFilterOpen(false);
-                    setFilters([{ ...DefaultFilter, id: getRandomId() }]);
-                  } else {
-                    setFilters((prev) => prev.filter((f) => f.id !== id));
-                  }
-                }}
-                addFilter={() => {
-                  setFilters((prev) => [
-                    ...prev,
-                    { ...DefaultFilter, id: getRandomId() },
-                  ]);
-                }}
-                updateFilter={(id, newFilter) => {
-                  setFilters((prev) =>
-                    prev.map((f) =>
-                      f.id === id
-                        ? typeof newFilter === "function"
-                          ? newFilter(f)
-                          : newFilter
-                        : f,
-                    ),
-                  );
-                }}
-              />
-            ))}
-          </Box>
-        </Box>
-      )}
 
       {/* Empty state */}
       {!datasetId && (
@@ -2119,7 +2090,7 @@ function TraceSelector({
   );
   const requestTracePage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.getTracesForObserveProject(), {
+      readQuery(endpoints.project.getTracesForObserveProject(), {
         params: requestParams,
         signal,
       }),
@@ -2456,7 +2427,6 @@ function TraceSelector({
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -2673,7 +2643,7 @@ function TraceSelector({
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={40}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -2837,7 +2807,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   );
   const requestSpanPage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.getSpansForObserveProject(), {
+      readQuery(endpoints.project.getSpansForObserveProject(), {
         params: requestParams,
         signal,
       }),
@@ -3154,7 +3124,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -3295,7 +3264,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={40}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -3448,7 +3417,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   );
   const requestSessionPage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.projectSessionList(), {
+      readQuery(endpoints.project.projectSessionList(), {
         params: requestParams,
         signal,
       }),
@@ -3505,7 +3474,13 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           flex: 1,
           minWidth: 200,
         },
-        { field: "duration", headerName: "Duration", flex: 1, minWidth: 200 },
+        {
+          field: "duration",
+          headerName: "Duration",
+          flex: 1,
+          minWidth: 200,
+          cellStyle: { fontVariantNumeric: "tabular-nums" },
+        },
         {
           field: "startTime",
           headerName: "Start Time",
@@ -3515,6 +3490,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         {
           field: "totalCost",
           headerName: "Total Cost",
+          cellStyle: { fontVariantNumeric: "tabular-nums" },
           flex: 1,
           minWidth: 200,
         },
@@ -3534,7 +3510,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       suppressSizeToFit: false,
       cellStyle: {
         padding: "0px 20px",
-        fontSize: "14px",
+        fontSize: "13px",
         height: "100%",
       },
     }),
@@ -3773,10 +3749,8 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
               }}
               sx={{
                 width: 36,
-                height: 36,
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -3918,7 +3892,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={50}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -4163,12 +4137,10 @@ function CallStatusCellRenderer({ data }) {
   };
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip
-        label={status}
-        size="small"
-        color={colorMap[status] || "default"}
-        variant="outlined"
-        sx={{ height: 24, fontSize: 12, textTransform: "capitalize" }}
+      <StatusBadge
+        status={status}
+        label={String(status)}
+        role={CHIP_ROLE[colorMap[status] || "default"]}
       />
     </Box>
   );
@@ -4889,7 +4861,6 @@ function SimulationSelector({ onSetSelection }) {
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -5016,7 +4987,7 @@ function SimulationSelector({ onSetSelection }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={56}
+              rowHeight={ROW_HEIGHT.twoLine}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}

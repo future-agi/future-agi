@@ -46,7 +46,7 @@ const CompareExperimentRightSection = ({
           renderValue={(value) => (
             <Typography
               color="text.primary"
-              fontSize="14px"
+              fontSize="13px"
               lineHeight={"22px"}
               fontWeight={400}
             >
@@ -79,7 +79,7 @@ const CompareExperimentRightSection = ({
             renderValue={(value) => (
               <Typography
                 color="text.primary"
-                fontSize="14px"
+                fontSize="13px"
                 lineHeight={"22px"}
                 fontWeight={400}
               >
@@ -94,30 +94,30 @@ const CompareExperimentRightSection = ({
         <OutlinedButton
           variant="outlined"
           startIcon={
-            <Iconify icon="oui:apm-trace" sx={{ color: "text.disabled", width: "14px", height: "14px" }} />
+            <Iconify icon="solar:routing-2-linear" sx={{ color: "text.disabled", width: "14px", height: "14px" }} />
           }
           onClick={() => {
             setIsTraceOpen((v) => !v);
             if (!isTraceOpen) setIsAnnotateOpen(false);
           }}
-          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "14px", backgroundColor: isTraceOpen ? "divider" : "" }}
+          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "13px", backgroundColor: isTraceOpen ? "divider" : "" }}
         >
           Trace
         </OutlinedButton>
         <OutlinedButton
           variant="outlined"
-          startIcon={<Iconify icon="line-md:star" sx={{ color: "text.disabled", width: "16px", height: "16px" }} />}
+          startIcon={<Iconify icon="solar:star-linear" sx={{ color: "text.disabled", width: "16px", height: "16px" }} />}
           onClick={() => {
             setIsAnnotateOpen((v) => !v);
             if (!isAnnotateOpen) setIsTraceOpen(false);
           }}
-          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "14px", backgroundColor: isAnnotateOpen ? "divider" : "" }}
+          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "13px", backgroundColor: isAnnotateOpen ? "divider" : "" }}
         >
           Annotate
         </OutlinedButton>
       </Box> */}
-      <IconButton onClick={onClose} size="small" sx={{ padding: "0px" }}>
-        <Iconify icon="akar-icons:cross" color="text.primary" />
+      <IconButton onClick={onClose} size="small">
+        <Iconify icon="solar:close-linear" color="text.primary" />
       </IconButton>
     </Box>
   );

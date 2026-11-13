@@ -1,4 +1,5 @@
-import { Box, Card, LinearProgress, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, LinearProgress, Tab, Tabs } from "@mui/material";
+import Section from "src/components/section";
 import React, { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import PropTypes from "prop-types";
@@ -26,8 +27,6 @@ const SyncView = () => {
     navigate(`/dashboard/sync/${newValue}`);
   };
 
-  const theme = useTheme();
-
   const links = useMemo(() => {
     const l = [{ name: "Sync Data", href: "/dashboard/sync" }];
 
@@ -46,7 +45,8 @@ const SyncView = () => {
     <>
       <HeaderComponent routeDepth={3} links={links} />
       <Box sx={{ paddingX: "20px" }}>
-        <Card
+        <Section
+          variant="panel"
           sx={{
             height: "calc(100vh - 90px)",
             display: "flex",
@@ -63,18 +63,13 @@ const SyncView = () => {
               onChange={handleChange}
               aria-label="basic tabs example"
               textColor="primary"
-              TabIndicatorProps={{
-                style: {
-                  backgroundColor: theme.palette.primary.main,
-                },
-              }}
             >
               <Tab label="Connectors" value="connectors" />
               <Tab label="Job Status" value="job-status" />
             </Tabs>
           </Box>
           <Outlet />
-        </Card>
+        </Section>
       </Box>
     </>
   );

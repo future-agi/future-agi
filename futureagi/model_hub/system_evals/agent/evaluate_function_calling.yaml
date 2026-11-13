@@ -17,7 +17,9 @@ criteria: "You are evaluating whether the model correctly selects and invokes fu
   \n<output>{{output}}</output>"
 eval_tags:
 - Code
-- Agents
+- Function Calling
+- Tools
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

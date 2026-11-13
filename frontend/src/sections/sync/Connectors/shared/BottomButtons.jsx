@@ -32,8 +32,8 @@ const BottomButtons = ({
       {onCancelClick ? (
         <Button
           onClick={onCancelClick}
-          color="error"
-          variant="contained"
+          color="inherit"
+          variant="outlined"
           size="small"
           disabled={isCancelDisable}
         >
@@ -44,7 +44,7 @@ const BottomButtons = ({
         <LoadingButton
           onClick={onTestClick}
           color="primary"
-          variant="contained"
+          variant="outlined"
           size="small"
           disabled={isTestDisabled}
           loading={testLoading}
@@ -56,7 +56,7 @@ const BottomButtons = ({
         <LoadingButton
           onClick={onBackClick}
           color="primary"
-          variant="contained"
+          variant="outlined"
           size="small"
           disabled={isBackDisabled}
         >

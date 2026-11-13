@@ -1,12 +1,12 @@
 import {
   Box,
-  Paper,
   Radio,
   RadioGroup,
   Skeleton,
   Stack,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import React, { useMemo } from "react";
 import { StyledBox } from "./CreateScenariosForm";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -19,21 +19,9 @@ import SvgColor from "../../../../components/svg-color/svg-color";
 import { SCENARIO_TYPES } from "../../../../pages/dashboard/scenarios/common";
 const ScenarioGroupCard = ({ group, selectedGroup, setSelectedGroup }) => {
   return (
-    <Paper
-      elevation={0}
-      sx={{
-        p: (theme) => theme.spacing(1, 1.5),
-        mb: 1,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px !important",
-        cursor: "pointer",
-        transition: "all 0.2s",
-        backgroundColor: "background.paper",
-        "&:hover": {
-          borderColor: "primary.main",
-        },
-      }}
+    <Section
+      variant="panel"
+      sx={{ p: (theme) => theme.spacing(1, 1.5), mb: 1, cursor: "pointer" }}
       onClick={() => setSelectedGroup(group.id)}
     >
       <Stack direction="row" alignItems="center" spacing={1.5}>
@@ -80,7 +68,7 @@ const ScenarioGroupCard = ({ group, selectedGroup, setSelectedGroup }) => {
           </Typography>
         </Stack>
       </Stack>
-    </Paper>
+    </Section>
   );
 };
 
