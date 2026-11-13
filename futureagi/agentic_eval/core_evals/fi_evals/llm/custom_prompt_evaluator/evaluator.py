@@ -397,12 +397,10 @@ class CustomPromptEvaluator(LLM):
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
         if row_context and not required_keys:
-            from .context_window import fit_row_to_context
-
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
-                rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=_MAX_CONTEXT_CHARS
+                rendered_prompt += fit_to_context(
+                    row_context, max_total_chars=_MAX_CONTEXT_CHARS
                 )
             else:
                 ctx_str = str(row_context)
