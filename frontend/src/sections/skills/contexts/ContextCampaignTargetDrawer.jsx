@@ -81,7 +81,7 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         })}</Stack>}
       </Section>
     </Stack>}
-    {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography>{onNext && <Button variant="contained" onClick={onNext}>Next target needing review</Button>}</Stack>}
+    {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography>{onNext && <Button color="primary" variant="contained" onClick={onNext}>Next target needing review</Button>}</Stack>}
   </Drawer>;
 }
 ContextCampaignTargetDrawer.propTypes = {

@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import { Alert, Button, Stack, Typography } from '@mui/material';
 import { getSkillErrorCode, isDefiniteRejection, operationStatus } from 'src/api/skills/operation-errors';
+import { paths } from 'src/routes/paths';
 import TechnicalDetails from './TechnicalDetails';
 
 const staleCodes = new Set([
@@ -19,12 +20,17 @@ export default function OperationFeedback({ error, onRefresh, onRetry, onReconci
   let message;
   let label;
   let handler;
+  let link;
   // A denial during reconciliation cannot disprove an earlier successful send.
   const uncertain = error.uncertain === true || ['uncertain_outcome', 'outcome_unknown'].includes(code);
   if (uncertain) {
     message = "We couldn't confirm whether this went through. Check before trying again.";
     label = 'Check status';
     handler = onReconcile;
+  } else if (code === 'spend_policy_required') {
+    // A missing workspace allowance is a prerequisite, not a lost permission: say what to set and where.
+    message = 'No spending allowance is set for this workspace. An admin can set one in Workspace allowance.';
+    link = { label: 'Workspace allowance', href: paths.dashboard.skills.allowance };
   } else if (staleCodes.has(code) || status === 409 || status === 412) {
     message = 'This changed since you opened it. Refresh and review again.';
     label = 'Refresh';
@@ -51,7 +57,7 @@ export default function OperationFeedback({ error, onRefresh, onRetry, onReconci
     else handler();
   };
   const technicalMessage = error.response?.data?.message || error.message;
-  return <Alert severity="error" role="alert" action={handler && <Button size="small" color="inherit" onClick={run}>{label}</Button>}>
+  return <Alert severity="error" role="alert" action={handler ? <Button size="small" color="inherit" onClick={run}>{label}</Button> : link && <Button size="small" color="inherit" href={link.href}>{link.label}</Button>}>
     <Stack spacing={1}>
       <Typography variant="s1">{message}</Typography>
       {(code || technicalMessage) && <TechnicalDetails>

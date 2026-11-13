@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
-  Alert, Box, Button, Checkbox, Drawer, FormControl, FormControlLabel, FormLabel, IconButton, LinearProgress, MenuItem, Radio, RadioGroup, Stack, Table, TableBody,
+  Alert, Box, Button, Checkbox, Drawer, FormControl, FormControlLabel, FormLabel, IconButton, LinearProgress, Link, MenuItem, Radio, RadioGroup, Stack, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import {
@@ -15,6 +15,9 @@ import { useContextDetail } from 'src/api/skills/context-authoring';
 import { fDateTime } from 'src/utils/format-time';
 import { useRecoveryReviewers } from 'src/api/skills/j6-recovery';
 import { paths } from 'src/routes/paths';
+import { useSkillsSpendPolicy } from 'src/api/skills/r3-spend';
+import { getSkillErrorCode } from 'src/api/skills/operation-errors';
+import OperationFeedback from '../components/OperationFeedback';
 import { useAppendEvidenceAnnotation, useAllEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
@@ -39,6 +42,10 @@ const ARM = { candidate: 'Candidate', reference: 'Recorded', production: 'Produc
 const FAMILIES = [['selection', 'Skill selected'], ['delivery', 'File delivered'], ['tools', 'Business tool'], ['answer', 'Answer']];
 const localTime = (value) => value ? fDateTime(value, 'MMM d, h:mm a') : 'Time not reported';
 const disagreementLabel = (count) => `${count} disagreement${count === 1 ? '' : 's'}`;
+const ACTIVE_STATES = ['queued', 'provisioning', 'preparing', 'running'];
+const httpStatus = (error) => error?.response?.status ?? error?.statusCode ?? error?.status;
+// A finished run whose review record does not exist yet has no human reviews; only a real failure is an error.
+export const noReviewsYet = (query) => (query.isError && httpStatus(query.error) === 404 ? { ...query, isError: false, error: null, data: { results: [] } } : query);
 const VERDICTS = [['agree', 'Agree with the automatic outcome'], ['disagree', 'Disagree with the automatic outcome'], ['cannot_assess', 'Cannot assess']];
 
 function Verdict({ value, status }) {
@@ -83,7 +90,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
         {error && <Alert severity="error">{error}</Alert>}
         <Stack direction="row" justifyContent="flex-end" spacing={1}>
           <Button onClick={() => setReview(null)}>Cancel</Button>
-          <Button variant="contained" disabled={!configuration.data || qualify.isPending} onClick={pin}>Pin this configuration</Button>
+          <Button color="primary" variant="contained" disabled={!configuration.data || qualify.isPending} onClick={pin}>Pin this configuration</Button>
         </Stack>
       </Stack>
     </ClosableDialog>}
@@ -147,7 +154,7 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
           {error && <Alert severity="error">{error}</Alert>}
           {(!canWrite || !verdict || !reference.data || append.isPending) && <Typography id="review-disabled-reason" variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can record a review.' : !reference.data ? 'Waiting for the current evidence revision.' : append.isPending ? 'Recording your review…' : 'Choose your assessment to record a review.'}</Typography>}
           {reference.isError && <ErrorState title="Couldn't load the evidence revision" onRetry={reference.refetch} />}
-          <Button variant="contained" sx={{ alignSelf: 'flex-end' }} aria-describedby={(!canWrite || !verdict || !reference.data || append.isPending) ? 'review-disabled-reason' : undefined} disabled={!canWrite || !verdict || !reference.data || append.isPending} onClick={submit}>Record review</Button>
+          <Button color="primary" variant="contained" sx={{ alignSelf: 'flex-end' }} aria-describedby={(!canWrite || !verdict || !reference.data || append.isPending) ? 'review-disabled-reason' : undefined} disabled={!canWrite || !verdict || !reference.data || append.isPending} onClick={submit}>Record review</Button>
         </Stack>
   </Drawer>;
 }
@@ -173,11 +180,11 @@ function ReleasePacket({ contextId, run, target, canWrite, earlier, onReady }) {
       {prepare.isError && <Alert severity="error">{prepare.error?.response?.data?.error?.message || 'The packet could not be prepared. Check the shared evidence, target and pipeline record.'}</Alert>}
       {prepare.data && <>
         <Alert severity="success">Packet ready — this run is shared with your workspace.</Alert>
-        <Button variant={earlier ? "outlined" : "contained"} href={reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: context.data?.name, candidateId: candidate?.versionId, number: candidate?.version, digest: candidate?.digest, label: 'production', evidence: [{ source: 'simulation_native', sourceId: run.id }], target: target?.bindingId })}>Continue to release review</Button>
+        <Button color="primary" variant={earlier ? "outlined" : "contained"} href={reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: context.data?.name, candidateId: candidate?.versionId, number: candidate?.version, digest: candidate?.digest, label: 'production', evidence: [{ source: 'simulation_native', sourceId: run.id }], target: target?.bindingId })}>Continue to release review</Button>
         <TechnicalDetails title="Packet details"><IdentityChip value={prepare.data.fingerprint} label="Packet fingerprint" /><IdentityChip value={prepare.data.targetDigest} label="Target configuration" /></TechnicalDetails>
       </>}
       {earlier && <Typography variant="s3">This packet applies to the earlier run, not your current selection.</Typography>}
-      <Box><Button variant={!earlier && !prepare.data ? 'contained' : 'outlined'} size="small" disabled={!canWrite || !target || !valid || prepare.isPending} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button></Box>
+      <Box><Button color="primary" variant={!earlier && !prepare.data ? 'contained' : 'outlined'} size="small" disabled={!canWrite || !target || !valid || prepare.isPending} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button></Box>
       <Typography variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can share this run.' : !target ? 'Add an application target to share this run.' : !valid ? 'Fill the three CI fields to share this run.' : prepare.isPending ? 'Preparing the packet…' : 'The packet needs a separate release review; nothing is released here.'}</Typography>
     </Stack>
   </Section>;
@@ -187,7 +194,12 @@ ReleasePacket.propTypes = { earlier: PropTypes.bool, onReady: PropTypes.func, co
 function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, currentForm }) {
   const query = useNativeRun(contextId, evidenceId);
   const navigate = useNavigate();
-  const annotations = useAllEvidenceAnnotations('simulation_native', evidenceId);
+  // Human reviews attach to finished evidence. Read them only once the run detail says the run
+  // is finished, so a request made while it was still running can never show an error over a
+  // valid result; a finished run with no review record yet reads as "no human reviews".
+  const finished = Boolean(query.data) && !ACTIVE_STATES.includes(query.data.jobState || query.data.status);
+  const annotationQuery = useAllEvidenceAnnotations('simulation_native', finished ? evidenceId : null);
+  const annotations = noReviewsYet(annotationQuery);
   const origin = useRef(null);
   const [open, setOpen] = useState(null);
   const selectedCandidate = query.data?.arms.find((arm) => arm.variant === 'candidate');
@@ -199,7 +211,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   if (!run) return null;
   const titles = Object.fromEntries((run.cases || []).map((item) => [item.id, item.title]));
   const jobState = run.jobState || run.status;
-  const active = ['queued', 'provisioning', 'preparing', 'running'].includes(jobState);
+  const active = ACTIVE_STATES.includes(jobState);
   const received = run.received || 0;
   const status = active && received > 0 ? 'running' : jobState === 'provisioning' ? 'preparing' : jobState;
   const candidate = run.arms.find((arm) => arm.variant === 'candidate');
@@ -225,7 +237,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     </Stack>
     <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center"><Typography variant="s3">v{candidate?.version}{referenceArm ? ` vs recorded v${referenceArm.version}` : ''} · {runCases.length} of {cases.length} cases · {untested} not tested · {localTime(run.createdAt)}</Typography><IdentityChip value={run.configurationDigest} label="Configuration" /></Stack>
     {active && <LinearProgress aria-label="Application run progress" variant={run.planned ? "determinate" : "indeterminate"} value={run.planned ? Math.min(100, received / run.planned * 100) : 0} />}
-    {earlier && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}><StatusBadge status="unknown" label="Earlier result" sx={{ alignSelf: 'flex-start' }} /><Typography variant="s1">This result is for v{candidate?.version} with {runCases.length} case{runCases.length === 1 ? '' : 's'}; your current selection is different.</Typography><Button variant={currentForm ? "outlined" : "contained"} onClick={onRunCurrent} sx={{ alignSelf: 'flex-start' }}>Run on current selection</Button></Stack>}
+    {earlier && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}><StatusBadge status="unknown" label="Earlier result" sx={{ alignSelf: 'flex-start' }} /><Typography variant="s1">This result is for v{candidate?.version} with {runCases.length} case{runCases.length === 1 ? '' : 's'}; your current selection is different.</Typography><Button color="primary" variant={currentForm ? "outlined" : "contained"} onClick={onRunCurrent} sx={{ alignSelf: 'flex-start' }}>Run on current selection</Button></Stack>}
     {run.failure && <Alert severity="error">The run stopped: {run.failure.replaceAll('_', ' ')}. No outcome is inferred.</Alert>}
     {!active && (run.result || run.decision) && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
       <Typography variant="m3" component="p" sx={{ m: 0 }}>
@@ -288,7 +300,10 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   const [fresh, setFresh] = useState('');
   const [ack, setAck] = useState(false);
   const [key, setKey] = useState(uuid);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+  // The paid run needs a workspace allowance; say so beside the button before anyone clicks.
+  const spend = useSkillsSpendPolicy();
+  const allowanceMissing = Boolean(spend?.data) && (!spend.data.enabled || spend.data.periodLimitUsd == null);
   const caseIds = reviewed.filter((item) => isChosen(item.id)).map((item) => item.id);
   const duplicateBaseline = reference !== '' && production !== '' && Number(reference) === Number(production);
   const candidateIsReference = reference !== '' && Number(reference) === Number(candidate);
@@ -312,16 +327,20 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   const result = ready ? preview.data : undefined;
   const current = Boolean(result) && fresh === planKey;
   const run = async () => {
-    setError('');
+    setError(null);
     try { onStarted(await create.mutateAsync({ idempotencyKey: key, plan, executionFingerprint: result.executionFingerprint, acknowledgeSpend: ack })); setKey(uuid()); setFresh(''); setAck(false); preview.reset(); }
-    catch (reason) { setError(reason?.response?.data?.error?.message || 'The verification did not start. Review the plan again before retrying.'); }
+    catch (reason) {
+      // The same operation key is kept until a run starts, so a retry reconciles instead of starting twice.
+      setError(reason || new Error('The verification did not start.'));
+      if (getSkillErrorCode(reason) === 'spend_policy_required') spend?.refetch?.();
+    }
   };
   const versionOptions = numbers.map((number) => <MenuItem key={number} value={number}>v{number}</MenuItem>);
   return <Section title={<Typography component="span" variant="m3">Verify on the application</Typography>} description="Runs reviewed cases on the pinned application. Checks skill selection, file delivery, business actions and answers.">
     <Stack spacing={1.5}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
         <TextField select size="small" label="Candidate version" value={candidate} onChange={(event) => setOver({ ...over, candidate: event.target.value })} sx={{ minWidth: 170 }}>{versionOptions}</TextField>
-        <TextField select size="small" label="Recorded reference version" error={candidateIsReference} helperText={candidateIsReference ? 'Choose a reference different from the candidate.' : duplicateBaseline ? `Recorded reference v${reference} · also production` : undefined} value={reference} onChange={(event) => setOver({ ...over, reference: event.target.value })} sx={{ minWidth: 210 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
+        <TextField select size="small" label="Recorded reference version" error={candidateIsReference && ('candidate' in over || 'reference' in over)} helperText={candidateIsReference ? ('candidate' in over || 'reference' in over ? 'Choose a reference different from the candidate.' : `v${reference} is the recorded version. Choose the candidate version that should fix it.`) : duplicateBaseline ? `Recorded reference v${reference} · also production` : undefined} value={reference} onChange={(event) => setOver({ ...over, reference: event.target.value })} sx={{ minWidth: 210 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
         <TextField select size="small" label="Production version" InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }} error={candidateIsProduction} helperText={candidateIsProduction ? 'Choose production different from the candidate, or None.' : production === '' && Number(productionVersion) === Number(candidate) ? `v${candidate} is production, so it runs once as the candidate.` : undefined} value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 170 }}><MenuItem value="">None (no production comparison)</MenuItem>{versionOptions}</TextField>
         <TextField select size="small" label="Repetitions" value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))} sx={{ minWidth: 130 }}><MenuItem value={1}>1 each</MenuItem><MenuItem value={3}>3 each</MenuItem></TextField>
       </Stack>
@@ -341,8 +360,11 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
         </Alert> : <Typography variant="s3">Up to {result.cells} runs · at most ${result.ceilingUsd} · {result.arms.map((arm) => `${ARM[arm.variant]} v${arm.version}`).join(' · ')}</Typography>}
         {/* The plan is made for the reviewer; the paid run still needs the reviewer's own acceptance of its ceiling. */}
         <FormControlLabel control={<Checkbox size="small" checked={ack} disabled={!result.reproducible || !current} onChange={(event) => setAck(event.target.checked)} />} label={<Typography variant="s1">I accept up to ${result.ceilingUsd} in provider charges for this run.</Typography>} />
-        {error && <Alert severity="error">{error}</Alert>}
-        <Box><Button variant={primary ? "contained" : "outlined"} size="small" disabled={!canWrite || !result.reproducible || !current || !ack || create.isPending} onClick={run}>Run on the application</Button></Box>
+        <OperationFeedback error={error} action="start this run" onRetry={run} onReconcile={run} onRefresh={() => { setError(null); setFresh(''); preview.mutate(plan, { onSuccess: () => setFresh(planKey) }); }} />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+          <Button variant={primary ? "contained" : "outlined"} color="primary" size="small" disabled={!canWrite || !result.reproducible || !current || !ack || create.isPending} onClick={run}>Run on the application</Button>
+          {allowanceMissing && <Typography variant="s3" color="text.secondary">No spending allowance is set for this workspace. <Link href={paths.dashboard.skills.allowance} color="inherit" underline="always">An admin can set one in Workspace allowance</Link>.</Typography>}
+        </Stack>
         {(!canWrite || !result.reproducible || !current || !ack || create.isPending) && <Typography variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can run this test.' : !result.reproducible ? 'Add the missing historical inputs to continue.' : !current ? 'Wait for the updated plan before confirming.' : create.isPending ? 'Starting the application run…' : 'Confirm the provider-charge acknowledgment to continue.'}</Typography>}
       </Stack>}
     </Stack>
@@ -390,7 +412,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   return <Stack spacing={3}>
     <Box ref={resultRegion} tabIndex={-1} role="region" aria-label="Latest result">
       <Section title={<Typography component="span" variant="m3">Latest result</Typography>}>
-        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} currentForm={currentForm} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or verify reviewed cases on your application. Neither changes production." action={firstRun ? <Button variant="contained" onClick={focusForm}>Run your first test</Button> : undefined} />}
+        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} currentForm={currentForm} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or verify reviewed cases on your application. Neither changes production." action={firstRun ? <Button color="primary" variant="contained" onClick={focusForm}>Run your first test</Button> : undefined} />}
       </Section>
     </Box>
     <Box ref={formRegion}>

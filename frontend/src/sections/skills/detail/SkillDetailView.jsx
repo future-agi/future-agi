@@ -134,11 +134,7 @@ function DetailContent({ skill, preview }) {
     <>
       <ObjectHeader
         crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.name }]}
-        title={
-          <Box component="span" sx={{ fontFamily: "monospace" }}>
-            {skill.name}
-          </Box>
-        }
+        title={skill.name}
         purpose={skill.description}
         identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}

@@ -220,7 +220,7 @@ it('loads later-page dependencies and reads linked/generated saved bytes through
   });
   mount(`/dashboard/skills/contexts/${id}/edit`);
   await screen.findByRole('textbox', { name: 'AGENTS.md' });
-  fireEvent.mouseDown(await screen.findByRole('combobox', { name: /Published leaf skill/ }));
+  fireEvent.mouseDown(await screen.findByRole('combobox', { name: /Add a published skill/ }));
   fireEvent.click(await screen.findByRole('option', { name: 'Later published skill' }));
   fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));
   expect(screen.getByText('Later published skill')).toBeVisible();

@@ -29,8 +29,8 @@ import {
   useIssueRecoveryCredential,
   usePreviewRecoveryRelease,
   useRecoveryClosure,
-  useRecoveryReviewers,
   useRefreshContextFacts,
+  DESCRIPTOR_PATH,
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
 import EmptyState from 'src/components/empty-state';
@@ -73,6 +73,7 @@ const reasonNames = {
   distribution_blocked: "Distribution blocked",
 };
 const uuid = () => crypto.randomUUID();
+export const recipientsOf = (options) => (options?.recipients ?? []).filter((person) => person?.id).map((person) => ({ id: String(person.id), name: person.name || person.email || 'Workspace member', ...(person.email ? { email: person.email } : {}) }));
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 
 function Cohort({ cohort, numbers, asOf }) {
@@ -199,7 +200,7 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                     )}
                     {row.lowerThanProduction && row.eligible && (
                       <Typography variant="s3">
-                        Lower-number rollback
+                        Earlier version
                       </Typography>
                     )}
                     {row.quarantineReason && (
@@ -257,36 +258,53 @@ const changeNames = {
 };
 const changeStatus = { added: "current_only", changed: "current_only", removed: "failed", unchanged: "completed" };
 
+const linkSentence = (links) => links.map((link) => (link.from == null ? `${link.name} v${link.to} added` : link.to == null ? `${link.name} v${link.from} removed` : `${link.name} v${link.from} → v${link.to}`)).join(', ');
+
 function ClosureReview({ candidate, production, closure }) {
   if (closure.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />;
   if (closure.error || !closure.data) {
     return (
       <ErrorState
-        title="Closure review unavailable"
-        detail="The complete release could not be read. No rollback can be requested from a partial review."
+        title={`Couldn't read everything in v${candidate.number}`}
+        detail="Every file must be read before a rollback can be requested. Nothing is requested from a partial review."
         onRetry={closure.refetch}
       />
     );
   }
   const { rows, changes } = closure.data;
   const counts = rows.reduce((total, row) => ({ ...total, [row.status]: (total[row.status] ?? 0) + 1 }), {});
+  const changedCount = rows.length - (counts.unchanged ?? 0);
+  const descriptor = changes.find((change) => change.path === DESCRIPTOR_PATH);
+  const content = changes.filter((change) => change.path !== DESCRIPTOR_PATH);
+  const links = descriptor?.links ?? [];
+  const diff = (change) => <TextDiff fromText={change.lines.filter((line) => line.kind !== 'added').map((line) => line.text).join('\n')} toText={change.lines.filter((line) => line.kind !== 'removed').map((line) => line.text).join('\n')} fromTitle={`Production v${production?.number ?? '?'}`} toTitle={`v${candidate.number}`} />;
   return (
-    <Section title={`Closure review: v${candidate.number} against production v${production?.number ?? "?"}`}>
+    <Section title={`What changes: everything in v${candidate.number} against production v${production?.number ?? '?'}`}>
       <Stack spacing={1.5}>
-        <Typography variant="s1" role="status">
-          {counts.changed ?? 0} file{counts.changed === 1 ? " changes" : "s change"}, {counts.unchanged ?? 0} stay{counts.unchanged === 1 ? "s" : ""} the same.
+        {/* Conclusion first: the readable consequence, then the files people read, then machine records. */}
+        <Typography variant="m3" role="status">
+          Roll back to v{candidate.number}{links.length ? `: ${linkSentence(links)}` : ''} ({changedCount} file{changedCount === 1 ? '' : 's'} change{changedCount === 1 ? 's' : ''})
+        </Typography>
+        <Typography variant="s3" color="text.secondary">
+          {counts.unchanged ?? 0} file{counts.unchanged === 1 ? ' stays' : 's stay'} the same.
           {counts.added > 0 && ` ${counts.added} added.`}
           {counts.removed > 0 && ` ${counts.removed} removed.`}
           {candidate.children.length > 0 && " Linked skills keep their pinned versions."}
-          {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are retained.`}
+          {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are kept.`}
         </Typography>
-        {changes.map((change) => <Stack key={change.path} spacing={0.5}>
+        {content.map((change) => <Stack key={change.path} spacing={0.5}>
           <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
-          <Box aria-label={`${change.path} change from production`} tabIndex={0}>
-            <TextDiff fromText={change.lines.filter((line) => line.kind !== 'added').map((line) => line.text).join('\n')} toText={change.lines.filter((line) => line.kind !== 'removed').map((line) => line.text).join('\n')} fromTitle={`Production v${production?.number ?? '?'}`} toTitle={`Recovery v${candidate.number}`} />
-          </Box>
+          <Box aria-label={`${change.path} change from production`} tabIndex={0}>{diff(change)}</Box>
         </Stack>)}
-        {/* Every unchanged row stays visible: the measured J6 review inspects the full closure. */}
+        {descriptor && <Stack spacing={0.5}>
+          <Typography variant="m3">Linked skill versions</Typography>
+          {/* The descriptor is a machine record: its readable meaning leads, its exact bytes stay one click away. */}
+          <Box aria-label={`${descriptor.path} change from production`} tabIndex={0}>
+            <Typography variant="s1">{links.length ? linkSentence(links) : descriptor.links === null ? 'The context description changed.' : 'No linked skill changes version.'}</Typography>
+            <TechnicalDetails title={`Raw ${descriptor.path} change`} keepMounted>{diff(descriptor)}</TechnicalDetails>
+          </Box>
+        </Stack>}
+        {/* Every unchanged row stays visible: the measured J6 review inspects every file. */}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery closure files">
             <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
@@ -331,8 +349,10 @@ function RollbackRequest({
   onRefresh,
   onSubmitted,
 }) {
-  const reviewers = useRecoveryReviewers();
   const options = useReviewOptions('agent_context', contextId, candidate.id);
+  // Reviewers come from the server's eligible recipients for this request (the same list the
+  // release composer uses), which any author can read; the author is never offered.
+  const reviewers = { data: recipientsOf(options.data), isLoading: options.isLoading, error: options.error, refetch: options.refetch };
   const [selectedEvidence, setSelectedEvidence] = useState([]);
   const matchingEvidence = (options.data?.evidence ?? []).filter((item) => item.subjectId === contextId && item.candidateDigest === candidate.digest);
   const evidence = matchingEvidence.filter((item) => item.visibility === 'workspace' && selectedEvidence.includes(`${item.source}:${item.sourceId}`));
@@ -407,15 +427,16 @@ function RollbackRequest({
         />}
         {!submit.data && !reviewed && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
         {preview.isPending && <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
-          <Button variant="contained" disabled>Submit rollback for review</Button>
+          <Button color="primary" variant="contained" disabled>Submit rollback for review</Button>
           <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>
         </Stack>}
         <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
         {packet && (
           <Stack spacing={1}>
-            <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />
+            {!submit.data && <Typography variant="s1" role="status">Rollback request ready. Choose who reviews it.</Typography>}
+            <TechnicalDetails title="Request details"><IdentityChip label="Packet fingerprint" value={packet.fingerprint} /></TechnicalDetails>
             {submit.data ? <Typography variant="s1">Requested from {reviewerName}</Typography> : <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The server checks review authority on submit." />}
-            {!submit.data && <Button
+            {!submit.data && <Button color="primary"
               sx={{ alignSelf: 'flex-start' }}
               variant="contained"
               disabled={
@@ -629,7 +650,6 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   // The reviewer stays selected across a restarted review (the release moved), so a
   // fresh packet is one acknowledgement and one submit. Until one is picked, the person
   // who last moved production (or the only reviewer) is suggested.
-  const reviewers = useRecoveryReviewers();
   const [reviewerId, setReviewerId] = useState("");
   const data = query.data;
   const liveProduction = data?.candidates.find((row) => row.isProduction);
@@ -638,10 +658,6 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     if (previousProduction.current && previousProduction.current.id !== liveProduction.id) movedFrom.current = previousProduction.current.number;
     previousProduction.current = liveProduction;
   }, [liveProduction]);
-  const suggestedReviewer = suggestReviewer({
-    reviewers: reviewers.data,
-    lastReleaserId: data?.lastReleaserId,
-  });
   // The newest eligible release before the failing one is preselected, never auto-submitted.
   const suggestion = useMemo(
     () => (data ? suggestRelease({ candidates: data.candidates, cohort: data.cohort }) : null),
@@ -654,6 +670,11 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   }, [suggestion, picked, liveProduction]);
   const chosen = picked ?? suggestion?.candidateId ?? liveProduction?.id ?? null;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
+  const reviewerOptions = useReviewOptions('agent_context', contextId, chosenCandidate && !chosenCandidate.isProduction ? chosenCandidate.id : undefined);
+  const suggestedReviewer = suggestReviewer({
+    reviewers: recipientsOf(reviewerOptions.data),
+    lastReleaserId: data?.lastReleaserId,
+  });
   const closure = useRecoveryClosure(
     contextId,
     chosenCandidate && !chosenCandidate.isProduction ? chosenCandidate : undefined,

@@ -44,7 +44,7 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
       {detail.isError && <ErrorState title="Context access unavailable" onRetry={detail.refetch} />}
       {contextId && detail.data && !detail.isFetching && !canCapture && <Alert severity="info">Only a workspace author can capture cases into this context.</Alert>}
     </Stack></DialogContent>
-    <DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" disabled={!contextId || !canCapture || contexts.isError} onClick={() => setReview(true)}>Review selected span</Button></DialogActions>
+    <DialogActions><Button onClick={onClose}>Cancel</Button><Button color="primary" variant="contained" disabled={!contextId || !canCapture || contexts.isError} onClick={() => setReview(true)}>Review selected span</Button></DialogActions>
   </ClosableDialog>;
 }
 ChooseContext.propTypes = { traceRef: PropTypes.object.isRequired, contextHint: PropTypes.string, onClose: PropTypes.func.isRequired };

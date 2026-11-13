@@ -332,7 +332,7 @@ export function TypedEvidenceList({
         title="Share evidence with workspace?"
         content="Share the frozen draft, example inputs, model answers and file receipts with workspace members. Sharing does not extend expiry, attach evidence or release content."
         action={
-          <Button
+          <Button color="primary"
             variant="contained"
             disabled={busy}
             onClick={async () => {

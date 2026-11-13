@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import ObjectHeader from "../components/ObjectHeader";
 import IdentityChip from "../components/IdentityChip";
+import TechnicalDetails from "../components/TechnicalDetails";
 import { paths } from "src/routes/paths";
 import Section from "src/components/section";
 import ChecksList from "../components/ChecksList";
@@ -26,7 +27,23 @@ import {
 } from "../review/ReleaseReviewBody";
 import CapabilityChanges from "../review/CapabilityChanges";
 
+const mountName = (mount) => String(mount || "").replace(/^skills\//, "").replace(/\/$/, "");
+// "Publishing creates billing-agent v2: refund-policy v2, no instruction changes".
+export function publishSentence(name, review) {
+  const next = (review.expectedHeadVersion ?? 0) + 1;
+  const paths = (review.changes || []).map((file) => file.path);
+  const instructions = paths.filter((path) => !path.startsWith("skills/") && !path.startsWith(".futureagi/")).length;
+  const skills = [...new Set(paths.filter((path) => path.startsWith("skills/")).map((path) => path.split("/")[1]))];
+  const locked = new Map((review.acceptedLock?.links || []).map((link) => [mountName(link.mount), link.version]));
+  const parts = [
+    ...skills.map((skill) => (locked.has(skill) ? `${skill} v${locked.get(skill)}` : `${skill} changes`)),
+    instructions ? `${instructions} instruction file${instructions === 1 ? "" : "s"} change${instructions === 1 ? "s" : ""}` : "no instruction changes",
+  ];
+  return `Publishing creates ${name || "this context"} v${next}: ${parts.join(", ")}`;
+}
+
 function DraftPublication({
+  name,
   carried,
   onCarry,
   draftReview,
@@ -99,41 +116,25 @@ function DraftPublication({
   };
   return (
     <Stack spacing={3}>
-      <Section title="Immutable candidate">
+      <Section title="What publishing creates">
         <Stack spacing={1}>
-          <IdentityValue
-            label={`Saved draft r${draftReview.revision}`}
-            value={draftReview.candidateDigest}
-          />
+          {/* Conclusion first: the version this creates and what changes in it, in words. */}
+          <Typography variant="m3" role="status">{publishSentence(name, draftReview)}</Typography>
           <Typography variant="s1">
-            Content origin{" "}
-            {draftReview.baseVersion === null
-              ? "new context"
-              : `v${draftReview.baseVersion}`}{" "}
-            · reviewed publication head{" "}
-            {draftReview.expectedHeadVersion === null
-              ? "none"
-              : `v${draftReview.expectedHeadVersion}`}
+            Based on {draftReview.baseVersion === null ? "a new context" : `v${draftReview.baseVersion}`}.
+            Production stays {draftReview.productionVersion ? `on v${draftReview.productionVersion}` : "unassigned"} until a separate review releases it.
           </Typography>
-          <IdentityValue
-            label="Reviewed head digest"
-            value={draftReview.headDigest ?? "Unpublished"}
-          />
-          <Alert severity="info">
-            Production stays{" "}
-            {draftReview.productionVersion
-              ? `on v${draftReview.productionVersion}`
-              : "unassigned"}
-            . Publication creates an immutable candidate; promotion requires a
-            separate authorized review.
-          </Alert>
           {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
             <Alert severity="warning">
-              This repair starts from historical content, not the latest
-              release. Publishing makes this repair the new latest without
-              incorporating unrelated head changes.
+              This repair starts from v{draftReview.baseVersion}, not the latest v{draftReview.expectedHeadVersion}. Publishing makes it the new latest without the other changes in v{draftReview.expectedHeadVersion}.
             </Alert>
           )}
+          <TechnicalDetails title="Exact identities">
+            <Stack spacing={1}>
+              <IdentityValue label="Saved draft" value={draftReview.candidateDigest} />
+              <IdentityValue label="Latest published version" value={draftReview.headDigest ?? "Unpublished"} />
+            </Stack>
+          </TechnicalDetails>
         </Stack>
       </Section>
       <Section id="review-files" title="Changes from content origin">
@@ -168,19 +169,27 @@ function DraftPublication({
           </Stack>
         </Section>
       )}
-      <Section id="review-dependencies" title="Accepted dependency lock">
+      <Section id="review-dependencies" title="Linked skills">
         <Stack spacing={1}>
-          {draftReview.acceptedLock?.links.map((link) => (
-            <IdentityValue
-              key={link.skillId}
-              label={`${link.mount} · included v${link.version}`}
-              value={`${link.versionId} · ${link.digest}`}
-            />
-          ))}
-          <Typography variant="s3">
-            Upstream changes do not replace this accepted lock. Refreshing
-            dependencies is an explicit draft mutation.
+          {draftReview.acceptedLock?.links.length ? (
+            <Typography variant="s1">{draftReview.acceptedLock.links.map((link) => `${mountName(link.mount)} v${link.version}`).join(" · ")}</Typography>
+          ) : (
+            <Typography variant="s1">No linked skills.</Typography>
+          )}
+          <Typography variant="s3" color="text.secondary">
+            Each linked skill is locked to the version shown. A newer upstream version never replaces it without your review.
           </Typography>
+          <TechnicalDetails title="Locked versions">
+            <Stack spacing={1}>
+              {draftReview.acceptedLock?.links.map((link) => (
+                <Stack key={link.skillId} spacing={0.5}>
+                  <Typography variant="s3">{link.mount} · v{link.version}</Typography>
+                  <IdentityChip label="Version" kind="id" value={link.versionId} />
+                  <IdentityChip label="Digest" value={link.digest} />
+                </Stack>
+              ))}
+            </Stack>
+          </TechnicalDetails>
         </Stack>
       </Section>
       <CapabilityChanges changes={draftReview.capabilities} />
@@ -236,9 +245,7 @@ function DraftPublication({
             />
           )}
           <Typography variant="s3">
-            Model evidence is not silently attached or shared by publishing.
-            Submit an exact release packet with the selected shared evidence
-            after publication.
+            Publishing doesn't attach or share test results. You choose the evidence when you request a release review.
           </Typography>
           <OperationFeedback operation={operation} />
           {oneStep !== operation && <OperationFeedback operation={oneStep} />}
@@ -252,7 +259,8 @@ function DraftPublication({
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             {draftReview.headAcknowledged ? (
               <Button
-                variant="contained"
+                variant={onPublishAndRequest ? "outlined" : "contained"}
+                color="primary"
                 disabled={!ready || !onPublish}
                 onClick={() =>
                   operation.run(onPublish, {
@@ -267,7 +275,8 @@ function DraftPublication({
               </Button>
             ) : (
               <Button
-                variant="contained"
+                variant={onPublishAndRequest ? "outlined" : "contained"}
+                color="primary"
                 disabled={
                   !ready ||
                   !onAcknowledgeHead ||
@@ -302,7 +311,8 @@ function DraftPublication({
                 is not moved; sharing and submission stay explicit. */}
             {onPublishAndRequest && (
               <Button
-                variant={draftReview.headAcknowledged ? "outlined" : "contained"}
+                variant="contained"
+                color="primary"
                 disabled={
                   !ready ||
                   (draftReview.baseVersion !==
@@ -324,11 +334,10 @@ function DraftPublication({
             )}
             {onRefresh && (
               <Button
-                variant="outlined"
                 disabled={operation.busy || operation.uncertain}
                 onClick={onRefresh}
               >
-                Inspect current draft
+                Reload draft
               </Button>
             )}
           </Stack>
@@ -338,6 +347,7 @@ function DraftPublication({
   );
 }
 DraftPublication.propTypes = {
+  name: PropTypes.string,
   carried: PropTypes.object,
   onCarry: PropTypes.func.isRequired,
   draftReview: PropTypes.object.isRequired,
@@ -363,7 +373,9 @@ export default function ContextReleaseReview({
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
       <ObjectHeader
-        crumbs={[{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
+        crumbs={draftReview?.subjectId
+          ? [{ label: "Agent contexts", to: paths.dashboard.skills.contexts }, { label: name || "Agent context", to: paths.dashboard.skills.contextDetail(draftReview.subjectId) }, { label: "Review" }]
+          : [{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
         title={name ? `Review ${name}` : "Review agent context"}
         purpose="Inspect the changes before making a release decision. Production stays unchanged until released."
       />
@@ -383,12 +395,8 @@ export default function ContextReleaseReview({
           }}
         >
           <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-            {draftReview
-              ? `Saved draft r${draftReview.revision}`
-              : `Candidate v${props.preview?.packet.transition.version ?? "unknown"}`}{" "}
-
+            {draftReview ? "Your saved draft" : `Candidate v${props.preview?.packet.transition.version ?? "unknown"}`}
           </Typography>
-          <IdentityChip label="Candidate digest" value={draftReview?.candidateDigest ?? props.preview?.packet.candidateDigest} />
           <Stack direction="row" flexWrap="wrap" gap={0.5}>
             <Button size="small" href="#review-files">
               Files
@@ -422,6 +430,7 @@ export default function ContextReleaseReview({
         <DraftPublication
           key={`${scopeKey}:${draftReview.subjectId}:${draftReview.headAcknowledged}`}
           {...props}
+          name={name}
           carried={carried}
           onCarry={setCarried}
           draftReview={draftReview}

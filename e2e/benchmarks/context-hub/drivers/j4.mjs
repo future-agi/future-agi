@@ -148,9 +148,9 @@ export async function createDriver({ jobId, runId, registration }) {
         const decision = decisionFor({ packet: preview.packet, fingerprint: preview.fingerprint, revision: preview.revision + 1 });
         const kept = preview.packet.evidence.map((ref) => ref.source_id);
         await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
-          for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
-          for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
-          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.length} results? for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
+          for (const item of items) await expect(dialog.locator(`tr[data-field="${item}"]`)).toBeVisible();
+          for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed request`))).toBeVisible();
+          await expect(dialog.getByText(kept.length ? new RegExp(`renewed request keeps ${kept.length} results? for the same candidate`) : /renewed request keeps no evidence/)).toBeVisible();
           for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
@@ -446,8 +446,8 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('durable-receipt', () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target: 'reopen-durable-receipt' }, () => reviewer.reload()));
           await op.review('pre-and-post-move', ['pre-move-currentness', 'post-move-pointer'], [], async () => {
             await expect(reviewer.getByText('Release receipt', { exact: true })).toBeVisible();
-            await expect(reviewer.getByText('Currentness before the move', { exact: true })).toBeVisible();
-            await expect(reviewer.getByText('Pointer state after the move', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('Before the move', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('After the move', { exact: true })).toBeVisible();
           });
           const durable = await read(`release-requests/${submitted.id}/receipt/`, signal);
           requireValue(digest(durable) === digest(receipt), 'Durable receipt differs');

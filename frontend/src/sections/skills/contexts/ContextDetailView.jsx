@@ -45,10 +45,10 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
     <ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: { xs: 'none', sm: 'block' } } }} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack spacing={0.5}>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {query.data.ownDraft && <Button variant={editPrimary ? 'contained' : 'outlined'} disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+          {query.data.ownDraft && <Button color="primary" variant={editPrimary ? 'contained' : 'outlined'} disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
           {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
-          {noRelease && !query.data.ownDraft && <Button variant="contained" disabled={!onStartDraft} onClick={onStartDraft}>Start draft</Button>}
-          {!noRelease && <Button variant={!query.data.ownDraft && editPrimary ? 'contained' : 'outlined'} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
+          {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={!onStartDraft} onClick={onStartDraft}>Start draft</Button>}
+          {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary ? 'contained' : 'outlined'} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
         </Stack>
         {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">Editing {viewed ? `v${viewed.number}` : 'a release'} first saves and suspends your current draft.</Typography>}
       </Stack>}

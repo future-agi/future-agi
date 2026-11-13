@@ -68,7 +68,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
       <TextField label="Purpose" size="small" fullWidth multiline minRows={2} value={description} disabled={locked} onChange={(event) => setDescription(event.target.value)} inputProps={{ maxLength: 1024 }} helperText="Versioned with the context; not a tool authorization policy." />
       {submitted && operation.uncertain && <Alert severity="info">The submitted identity and bytes are locked for a same-operation retry. Do not create another draft to work around an unknown response.</Alert>}
     </Stack></DialogContent>
-    <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button variant="contained" onClick={submit} disabled={!canSubmit || operation.pending || Boolean(operation.result)}>{submitted && operation.uncertain ? "Retry same operation" : mode === "upload" ? "Import as draft" : "Create draft"}</Button></DialogActions>
+    <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button color="primary" variant="contained" onClick={submit} disabled={!canSubmit || operation.pending || Boolean(operation.result)}>{submitted && operation.uncertain ? "Retry same operation" : mode === "upload" ? "Import as draft" : "Create draft"}</Button></DialogActions>
   </ClosableDialog>;
 }
 ImportContext.propTypes = { proposedLinkCount: PropTypes.number, scopeKey: PropTypes.string.isRequired, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, onPreview: PropTypes.func, onImport: PropTypes.func, onCreate: PropTypes.func, onCreated: PropTypes.func };

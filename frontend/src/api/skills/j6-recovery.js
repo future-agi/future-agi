@@ -91,7 +91,7 @@ export async function loadRecovery(contextId, config) {
     canIssueCredentials: state.permissions.can_issue_credentials === true,
     productionVersionId: production?.version_id ?? null,
     // Who last moved production: the natural first reviewer for a rollback request.
-    lastReleaserId: production?.updated_by?.id ?? null,
+    lastReleaserId: production?.updated_by?.id != null ? String(production.updated_by.id) : null,
     candidates: deriveCandidates({ versions, productionVersionId: production?.version_id ?? null, rows }),
     asOf: consumerPage.as_of,
     cohort: consumerPage.results.map((row) => ({
@@ -146,6 +146,32 @@ export function useIssueRecoveryCredential(contextId) {
 // is in production now. Unchanged files are listed by exact digest; every
 // changed, added or removed file is read in full from its immutable release.
 const REVIEW_CHANGED_LIMIT = 20;
+export const DESCRIPTOR_PATH = '.futureagi/context.json';
+
+const linkName = (mount) => String(mount || '').replace(/^skills\//, '').replace(/\/$/, '') || String(mount || '');
+// The machine descriptor, read as people describe it: which linked skill moves between which versions.
+// Returns null when either side is not a readable descriptor; the raw diff stays available either way.
+export function linkChanges(beforeText, afterText) {
+  const parse = (text) => {
+    if (text == null) return [];
+    const value = JSON.parse(text);
+    if (!value || !Array.isArray(value.links)) throw new Error('not a descriptor');
+    return value.links;
+  };
+  let before; let after;
+  try { before = parse(beforeText); after = parse(afterText); } catch { return null; }
+  const key = (link) => link.skill_id || link.mount;
+  const old = new Map(before.map((link) => [key(link), link]));
+  const now = new Map(after.map((link) => [key(link), link]));
+  const rows = [];
+  now.forEach((link, id) => {
+    const prior = old.get(id);
+    if (!prior) rows.push({ name: linkName(link.mount), from: null, to: link.version });
+    else if (prior.version !== link.version || prior.digest !== link.digest) rows.push({ name: linkName(link.mount), from: prior.version, to: link.version });
+  });
+  old.forEach((link, id) => { if (!now.has(id)) rows.push({ name: linkName(link.mount), from: link.version, to: null }); });
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
 
 async function readManifest(contextId, number, config) {
   let first;
@@ -182,7 +208,7 @@ export async function loadClosureReview({ contextId, candidate, production }, co
       row.status === 'removed' ? null : readContextText({ contextId, number: candidate.number, path: row.path, config, expectedDigest: target.digest, expectedSha256: row.sha256 }),
       row.status === 'added' ? null : readContextText({ contextId, number: production.number, path: row.path, config, expectedDigest: current.digest }),
     ]);
-    return { path: row.path, status: row.status, lines: lineDiff(before?.text ?? null, after?.text ?? null) };
+    return { path: row.path, status: row.status, lines: lineDiff(before?.text ?? null, after?.text ?? null), ...(row.path === DESCRIPTOR_PATH ? { links: linkChanges(before?.text, after?.text) } : {}) };
   }));
   return { targetDigest: target.digest, currentDigest: current?.digest ?? null, rows, changes };
 }

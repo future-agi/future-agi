@@ -36,7 +36,7 @@ function Started({ preserved, targetVersion, operation, start }) {
     <Alert severity="info">Your private draft is preserved. Starting from the exact viewed v{targetVersion}; newer latest files will not be copied.</Alert>
     <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>Checkpoint {preserved.checkpoint.id} · expires {preserved.checkpoint.expiresAt}</Typography>
     <AuthoringError error={operation.error} />
-    {operation.error && <Button variant="contained" disabled={operation.pending} onClick={start}>Start preserved-origin draft</Button>}
+    {operation.error && <Button color="primary" variant="contained" disabled={operation.pending} onClick={start}>Start preserved-origin draft</Button>}
   </Stack>;
 }
 Started.propTypes = { preserved: PropTypes.object.isRequired, targetVersion: PropTypes.number.isRequired, operation: PropTypes.object.isRequired, start: PropTypes.func.isRequired };

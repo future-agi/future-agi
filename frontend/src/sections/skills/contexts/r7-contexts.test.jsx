@@ -6,6 +6,7 @@ import ContextLibraryView from './ContextLibraryView';
 import ContextLinksPanel from './ContextLinksPanel';
 
 const state = vi.hoisted(() => ({ upstream: {} }));
+vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => state.upstream }));
 afterEach(cleanup);
 beforeEach(() => { state.upstream = {}; localStorage.clear(); });

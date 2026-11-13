@@ -3,6 +3,8 @@ import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, Stack, Typography } from "@mui/material";
 import { isDefiniteRejection, operationStatus } from "src/api/skills/operation-errors";
 import TextDiff from "../components/TextDiff";
+import IdentityChip from "../components/IdentityChip";
+import TechnicalDetails from "../components/TechnicalDetails";
 
 // Intent: a release author acknowledges the current head, not a silent rebase.
 // Hierarchy: origin/head consequence first, exact diffs second, one explicit action.
@@ -138,14 +140,14 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
     if (result) { setPreview(null); setConfirmed(false); onAcknowledged?.(result); }
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="m3" component="h2">Review publication head</Typography>
-    <Typography variant="s1">Content origin {session.baseVersion == null ? "is unpublished" : `is v${session.baseVersion}`}. Reviewing a newer head never copies its files into this draft.</Typography>
+    <Typography variant="m3" component="h2">Compare with the latest version</Typography>
+    <Typography variant="s1">Based on {session.baseVersion == null ? "an unpublished draft" : `v${session.baseVersion}`}. If a newer version was published, compare it before publishing; nothing is copied into your draft.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setPreview(null); setConfirmed(false); onAcknowledged?.(result); } }}>Retry head acknowledgment</Button>}
     <Button variant="outlined" onClick={prepare} disabled={!onPreview || operation.pending || Boolean(session.mutationError)}>Review against current latest</Button>
     {review && <>
       <Alert severity="warning">Publishing this {review.baseVersion == null ? "new" : `v${review.baseVersion}-derived`} candidate will make a new latest version after {review.expectedHeadVersion == null ? "the unpublished head" : `v${review.expectedHeadVersion}`}. Production does not move.</Alert>
-      <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Candidate {review.candidateDigest} · draft r{review.draftRevision}</Typography>
+      <TechnicalDetails title="Exact identities"><IdentityChip label="Saved draft" value={review.candidateDigest} /></TechnicalDetails>
       <FileChanges files={preview.originChanges} beforeTitle={`Origin v${review.baseVersion}`} afterTitle="Candidate" />
       <FileChanges files={preview.headChanges} beforeTitle={`Latest v${review.expectedHeadVersion}`} afterTitle="Candidate" />
       {!current && <Alert severity="info">{session.mutationError ? "Recover the original acknowledgment with Retry head acknowledgment before reviewing or publishing." : "The draft changed. Review the head again before acknowledging it."}</Alert>}

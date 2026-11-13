@@ -7,6 +7,7 @@ import ContextTestsPanel from './ContextTestsPanel';
 // Each section owns its loading and error states; neither hides the other.
 const h = vi.hoisted(() => ({ optionsError: false, suiteError: false, runtime: true, retry: () => {} }));
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
+vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ identity: 'org:workspace:author' }),
   useSkillTestingOptions: () => (h.optionsError ? { isError: true, refetch: () => {} } : { data: { enabled: true, models: [{ modelId: 'gpt-4o-mini', canRun: true }], limits: { profiles: { quick: { maxTotalTokens: 1000 } } } } }),

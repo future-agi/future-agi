@@ -26,10 +26,16 @@ it('shows every changed precondition and removed evidence before creating the ne
   useRenewalPreview.mockReturnValue({ data: preview, isLoading: false, isError: false });
   const onClose = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} />);
-  expect(screen.getByText('transition.expected_release_revision')).toBeVisible();
-  expect(screen.getByRole('cell', { name: 'transition.expected_release_revision', exact: true })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Field: transition.expected_release_revision' })).toHaveAttribute('tabindex', '0');
-  expect(screen.getByText(/is removed from the renewed packet/)).toBeVisible();
+  // Mapped label, cause and before/after values lead; the raw field path is a detail.
+  const row = document.querySelector('[data-field="transition.expected_release_revision"]');
+  expect(row).toBeVisible();
+  expect(row).toHaveTextContent('Release revision');
+  expect(row).toHaveTextContent('A label moved or label protection was edited.');
+  expect(row).toHaveTextContent('Revision 1');
+  expect(row).toHaveTextContent('Revision 3');
+  expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
+  expect(screen.getByText(/is removed from the renewed request/)).toBeVisible();
+  expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
   const create = screen.getByRole('button', { name: 'Approve renewed revision' });
   expect(create).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
@@ -63,7 +69,7 @@ it('approves exactly the renewed revision it created, bound to the inspected fin
   const onClose = vi.fn();
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
-  expect(screen.getByText(/renewed packet keeps no evidence/)).toBeVisible();
+  expect(screen.getByText(/renewed request keeps no evidence/)).toBeVisible();
   const approve = screen.getByRole('button', { name: 'Approve renewed revision' });
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));

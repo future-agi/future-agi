@@ -82,7 +82,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
   const Rows = compact ? Stack : TableBody;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Linked skills ({lock.length})</Typography>
-    <Typography variant="s1">{availableUpdates.length ? `${availableUpdates.join('; ')}. Review the update before changing this lock.` : 'Each skill is locked to one version.'}</Typography>
+    {availableUpdates.length > 0 && <Typography variant="s1">{`${availableUpdates.join('; ')}. Review the update before changing this lock.`}</Typography>}
     <Typography variant="s3" color="text.secondary">Each skill is locked to one version. Skills that follow production can be updated; pinned skills stay put.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
@@ -125,7 +125,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     {!readOnly && <>
       <TechnicalDetails title="Changing update policies"><Typography variant="s3">Remove from this context; keep the shared skill. To change a selector, remove and re-add the skill before previewing.</Typography></TechnicalDetails>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-        <TextField select fullWidth size="small" label="Published leaf skill" value={selected} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => setSelected(event.target.value)}>
+        <TextField select fullWidth size="small" label="Add a published skill" value={selected} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => setSelected(event.target.value)}>
           <MenuItem value="">Choose a skill</MenuItem>
           {remaining.map((skill) => <MenuItem key={skill.id} value={skill.id}>{skill.name}</MenuItem>)}
         </TextField>
@@ -143,7 +143,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         {preview.checks?.summary?.errors > 0 && <Alert severity="error">The compiled context has blocking checks. No partial dependency set can be applied.</Alert>}
         {!current && <Alert severity="warning">{session.mutationError ? "Recover the original dependency update with Retry dependency update before previewing or publishing." : "The draft changed. Preview again before applying."}</Alert>}
         <FormControlLabel control={<Checkbox checked={confirmed} disabled={!current || operation.pending} onChange={(event) => setConfirmed(event.target.checked)} />} label="Accept these exact resolved versions and selector policies." />
-        <Button variant="contained" disabled={!onApply || !current || !confirmed || operation.pending || preview.checks?.summary?.errors > 0} onClick={apply}>Apply selected updates to draft</Button>
+        <Button color="primary" variant="contained" disabled={!onApply || !current || !confirmed || operation.pending || preview.checks?.summary?.errors > 0} onClick={apply}>Apply selected updates to draft</Button>
       </>}
     </>}
   </Stack>;

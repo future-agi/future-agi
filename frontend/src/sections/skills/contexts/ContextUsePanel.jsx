@@ -78,7 +78,7 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
         <Typography variant="m3" component="h3">3. Plan and inspect</Typography>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
-          <CodeBlock label="Context install plan command" code={visibleCommand} action={<Button variant="contained" size="small" disabled={copyBusy} onClick={() => copyCommand(command)}>Copy plan command</Button>} />
+          <CodeBlock label="Context install plan command" code={visibleCommand} action={<Button color="primary" variant="contained" size="small" disabled={copyBusy} onClick={() => copyCommand(command)}>Copy plan command</Button>} />
           <TechnicalDetails title="Environment variables"><Typography variant="s3" color="text.secondary">Included when you copy the plan command.</Typography><Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box></TechnicalDetails>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
           {copyError && <Alert severity="error">{copyError}</Alert>}

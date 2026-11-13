@@ -9,13 +9,15 @@ let previewState = {};
 let submitState = {};
 let reviewers = [];
 let evidenceOptions = { data: { evidence: [] } };
-vi.mock("src/api/skills/review-authoring", () => ({ useReviewOptions: () => evidenceOptions }));
+// Reviewers are the server's eligible recipients for the request (readable by any author).
+vi.mock("src/api/skills/review-authoring", () => ({ useReviewOptions: () => ({ ...evidenceOptions, data: evidenceOptions.data && { ...evidenceOptions.data, recipients: reviewers } }) }));
+let closureData = { rows: [], changes: [] };
 let recovery = { candidates: [], cohort: [], releaseRevision: 1 };
 vi.mock("src/api/skills/j6-recovery", () => ({
   useContextRecovery: () => ({ isLoading: false, error: null, data: recovery }),
   useRefreshContextFacts: () => refresh,
-  useRecoveryClosure: () => ({ data: { rows: [], changes: [] } }),
-  useRecoveryReviewers: () => ({ data: reviewers }),
+  useRecoveryClosure: () => ({ data: closureData }),
+  DESCRIPTOR_PATH: ".futureagi/context.json",
   usePreviewRecoveryRelease: () => ({ mutate: previewMutate, ...previewState }),
   useSubmitRecoveryRequest: () => ({ mutate: submitMutate, ...submitState }),
   useIssueRecoveryCredential: () => ({}),
@@ -31,6 +33,7 @@ beforeEach(() => {
   reviewers = [];
   evidenceOptions = { data: { evidence: [] } };
   recovery = { candidates: [], cohort: [], releaseRevision: 1 };
+  closureData = { rows: [], changes: [] };
 });
 afterEach(() => vi.useRealTimers());
 
@@ -283,4 +286,45 @@ it('offers CLI restore, not retry or approval, for an over-limit context', () =>
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('checkbox')).toBeNull();
   } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it("lets a workspace member pick a reviewer from the request's eligible recipients", () => {
+  // Members cannot read the organization member list; the recovery picker never depends on it.
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, lastReleaserId: "maya-id", candidates: [rollbackCandidate] };
+  reviewers = [{ id: "maya-id", name: "Maya Chen" }, { id: "lee-id", name: "Lee Park" }];
+  previewState = { data: { fingerprint: "fp", packet: { p: 1 } } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  const picker = screen.getByRole("combobox", { name: "Reviewer" });
+  expect(picker).toHaveTextContent("Maya Chen");
+  expect(screen.queryByText("Couldn't load reviewers.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Submit rollback for review" })).toBeEnabled();
+  expect(screen.getByText("Rollback request ready. Choose who reviews it.")).toBeVisible();
+  // The fingerprint is a detail, not part of the decision.
+  expect(screen.queryByText("Packet fingerprint")).toBeNull();
+});
+
+it("leads the rollback review with its consequence and keeps the descriptor bytes in details", () => {
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, candidates: [{ ...rollbackCandidate, lowerThanProduction: true }] };
+  const json = '{"links":[{"mount":"skills/refund-policy/","version":1}]}';
+  closureData = {
+    rows: [{ path: ".futureagi/context.json", status: "changed", sizeBytes: 10, sha256: "a" }, { path: "skills/refund-policy/policy.md", status: "changed", sizeBytes: 10, sha256: "b" }, { path: "AGENTS.md", status: "unchanged", sizeBytes: 10, sha256: "c" }],
+    changes: [
+      { path: ".futureagi/context.json", status: "changed", links: [{ name: "refund-policy", from: 2, to: 1 }], lines: [{ kind: "removed", text: json.replace("1}", "2}") }, { kind: "added", text: json }] },
+      { path: "skills/refund-policy/policy.md", status: "changed", lines: [{ kind: "removed", text: "45 days" }, { kind: "added", text: "30 days" }] },
+    ],
+  };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
+  expect(screen.getByText("Roll back to v1: refund-policy v2 → v1 (2 files change)")).toBeVisible();
+  expect(screen.getAllByText("Earlier version")[0]).toBeVisible();
+  expect(screen.queryByText("Lower-number rollback")).toBeNull();
+  const readable = screen.getByLabelText("skills/refund-policy/policy.md change from production");
+  const descriptor = screen.getByLabelText(".futureagi/context.json change from production");
+  // People read the file diff first; the descriptor's raw JSON is collapsed but complete.
+  expect(readable.compareDocumentPosition(descriptor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(descriptor).toHaveTextContent("refund-policy v2 → v1");
+  expect(descriptor.textContent).toContain(json);
+  expect(screen.getByRole("button", { name: "Raw .futureagi/context.json change" })).toHaveAttribute("aria-expanded", "false");
 });

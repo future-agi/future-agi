@@ -13,6 +13,23 @@ import Section from "src/components/section";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
+import TechnicalDetails from "../components/TechnicalDetails";
+
+// Readable money: two decimals for people; the exact decimal strings stay in Details.
+const usd = (value) => {
+  const number = Number(value);
+  return value == null || value === '' || !Number.isFinite(number) ? null : `$${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+// "Nov 1–30": the end of a period is exclusive, so the last covered day is the day before it.
+export function periodLabel(startsAt, endsAt) {
+  const start = new Date(startsAt);
+  const end = new Date(new Date(endsAt).getTime() - 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const month = (date) => date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  return month(start) === month(end) && start.getUTCFullYear() === end.getUTCFullYear()
+    ? `${month(start)} ${start.getUTCDate()}–${end.getUTCDate()}`
+    : `${month(start)} ${start.getUTCDate()} – ${month(end)} ${end.getUTCDate()}`;
+}
 
 function PolicyForm({ policy, canManage, onSave, onRefresh }) {
   const [revision, setRevision] = useState(policy.revision);
@@ -27,63 +44,37 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
     (!enabled || /[1-9]/.test(amount));
   const locked =
     operation.busy || operation.uncertain || Boolean(operation.result);
+  const period = periodLabel(policy.startsAt, policy.endsAt);
+  const used = usd(policy.knownEstimateUsd) ?? '$0.00';
+  const limit = policy.enabled ? usd(policy.periodLimitUsd) : null;
+  const uncertain = Number(policy.unknownReservedUsd) > 0 ? usd(policy.unknownReservedUsd) : null;
   return (
-    <Section title="Workspace spending policy">
+    <Section title="Spending allowance">
       <Stack spacing={1.5}>
-        <Typography variant="s3">
-          One workspace allowance covers task, judge and approved charged-tool
-          calls. Provider estimates are not invoices. Existing Simulation plan
-          entitlements remain additional checks, not replacement budgets or a
-          second allowance.
+        {/* Conclusion first: what is allowed now and what has been used this period. */}
+        <Typography variant="m3" role="status">
+          {limit ? `${limit} allowance` : 'No spending allowance set'} · {used} used this period{period ? ` (${period})` : ''}
         </Typography>
-        <IdentityValue
-          label="Period (UTC)"
-          value={`${policy.startsAt} → ${policy.endsAt}`}
-        />
-        <IdentityValue
-          label="Configured period allowance (USD)"
-          value={policy.periodLimitUsd ?? "Not configured"}
-        />
-        <IdentityValue
-          label="Known estimated spend this period (USD)"
-          value={policy.knownEstimateUsd}
-        />
-        <IdentityValue
-          label="Committed allowance, including reservations (USD)"
-          value={policy.committedUsd}
-        />
-        <IdentityValue
-          label="Remaining allowance (USD)"
-          value={policy.remainingUsd ?? "Not configured"}
-        />
-        <IdentityValue
-          label="Uncertain reservations across periods (USD)"
-          value={policy.unknownReservedUsd}
-        />
-        <IdentityValue
-          label="Uncertain reservations from prior periods (USD)"
-          value={policy.priorPeriodUnknownUsd}
-        />
-        <Alert severity="info">
-          Cancellation stops new calls; it does not erase incurred or uncertain
-          spend. Reducing the allowance below committed usage blocks new
-          admissions without rewriting history.
-        </Alert>
+        {limit && usd(policy.remainingUsd) && <Typography variant="s1">{usd(policy.remainingUsd)} left this period.</Typography>}
+        {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}
+        <Typography variant="s3" color="text.secondary">
+          Paid test runs on the application and with a model stay blocked until an admin sets an allowance. Estimates are not invoices.
+        </Typography>
         {!canManage && (
           <Typography variant="s3">
-            An administrator must configure the allowance. No default spend is
-            authorized.
+            Only a workspace admin can change the allowance. No spending is allowed by default.
           </Typography>
         )}
         <TextField
           label="Period allowance (USD)"
           size="small"
+          sx={{ maxWidth: 320 }}
           value={amount}
           disabled={!canManage || locked}
           onChange={(event) => setAmount(event.target.value)}
           inputProps={{ inputMode: "decimal" }}
           error={amount !== "" && !valid}
-          helperText="Enter an explicit decimal amount with at most eight decimal places. No amount is preselected for a new policy."
+          helperText={amount !== "" && !valid ? "Enter an amount such as 25 or 25.50." : "No amount is filled in for you."}
         />
         <FormControlLabel
           control={
@@ -93,12 +84,12 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
               onChange={(_, value) => setEnabled(value)}
             />
           }
-          label="Enable paid-work admission under this allowance"
+          label="Allow paid test runs up to this amount"
         />
         {stale && (
           <Alert severity="warning">
-            Policy changed while you were editing. Review the current allowance
-            before applying your preserved input.
+            The allowance changed while you were editing. Review the current
+            allowance before saving your preserved input.
           </Alert>
         )}
         {stale && (
@@ -106,30 +97,47 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
             disabled={locked}
             onClick={() => setRevision(policy.revision)}
           >
-            I reviewed policy revision {policy.revision}
+            I reviewed the current allowance
           </Button>
         )}
         <OperationFeedback operation={operation} />
         {operation.result && (
-          <Alert severity="info">
-            Policy update recorded. Refresh accounting; existing reservations
-            are unchanged.
+          <Alert severity="success">
+            Allowance saved. Spending already recorded is unchanged.
           </Alert>
         )}
         <Stack direction="row" spacing={1}>
           <Button
-            variant="outlined"
+            variant="contained"
+            color="primary"
             disabled={!canManage || !onSave || !valid || stale || locked}
             onClick={() => setConfirm(true)}
           >
-            Review policy change
+            Save
           </Button>
           {onRefresh && (
             <Button disabled={operation.busy} onClick={onRefresh}>
-              Refresh accounting
+              Refresh
             </Button>
           )}
         </Stack>
+        <TechnicalDetails title="Accounting details">
+          <Stack spacing={1}>
+            <IdentityValue label="Period (UTC)" value={`${policy.startsAt} → ${policy.endsAt}`} />
+            <IdentityValue label="Configured allowance (USD)" value={policy.periodLimitUsd ?? "Not configured"} />
+            <IdentityValue label="Known estimated spend (USD)" value={policy.knownEstimateUsd} />
+            <IdentityValue label="Committed, including reservations (USD)" value={policy.committedUsd} />
+            <IdentityValue label="Remaining (USD)" value={policy.remainingUsd ?? "Not configured"} />
+            <IdentityValue label="Unsettled reservations, all periods (USD)" value={policy.unknownReservedUsd} />
+            <IdentityValue label="Unsettled reservations from earlier periods (USD)" value={policy.priorPeriodUnknownUsd} />
+            <Typography variant="s3">
+              One allowance covers task, judge and approved charged-tool calls. Existing Simulation plan
+              entitlements remain additional checks, not a second allowance. Cancelling a run stops new
+              calls; it does not erase incurred or unsettled spend. Lowering the allowance below what is
+              committed blocks new runs without rewriting history.
+            </Typography>
+          </Stack>
+        </TechnicalDetails>
       </Stack>
       <ConfirmDialog
         open={confirm}
@@ -138,10 +146,11 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
         }}
         closeDisabled={operation.busy}
         title="Change workspace allowance?"
-        content={`${enabled ? "Enable" : "Disable"} new paid-work admission with a period limit of USD ${amount}. Existing incurred and uncertain reservations remain accounted for. No model call is made by this change.`}
+        content={enabled ? `Allow paid test runs up to USD ${amount} this period. Spending already recorded stays recorded. Saving makes no model call.` : `Paid test runs stay blocked. The allowance is recorded as USD ${amount}. Spending already recorded stays recorded.`}
         action={
           <Button
             variant="contained"
+            color="primary"
             disabled={!valid || stale || locked || !canManage}
             onClick={async () => {
               const result = await operation.run(onSave, {
@@ -152,7 +161,7 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
               if (result) setConfirm(false);
             }}
           >
-            Apply policy change
+            Save allowance
           </Button>
         }
       />

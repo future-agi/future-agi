@@ -55,3 +55,22 @@ describe("captured example with the required application behavior", () => {
     expect(save.mock.calls[0][0].case.fixtures.some((item) => item.name === "fi.application.expectations")).toBe(false);
   });
 });
+describe("captured example provenance and next step", () => {
+  it("leads with readable provenance, keeps fingerprints in details and hands off to the reproduction after saving", async () => {
+    const save = vi.fn().mockResolvedValue({ revision: 4 });
+    render(<CaseImportDialog {...props} onSave={save} describeSource={() => "From a recorded trace · support-agent v3"}
+      renderSaved={() => ({ notice: null, action: <button type="button">Reproduce on the application</button> })} />);
+    expect(screen.getByText("From a recorded trace · support-agent v3")).toBeVisible();
+    expect(screen.queryByText("Source fingerprint")).not.toBeInTheDocument();
+    expect(screen.queryByText(/activation score/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Source details" })).toHaveAttribute("aria-expanded", "false");
+    review();
+    acknowledge();
+    click("Save reviewed example");
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Reviewed example saved: Refund failure/)).toBeVisible();
+    // The saved form no longer competes with the next step.
+    expect(screen.queryByRole("button", { name: "Save reviewed example" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reproduce on the application" })).toBeVisible();
+  });
+});

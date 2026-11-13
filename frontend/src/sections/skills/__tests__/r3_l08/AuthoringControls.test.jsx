@@ -96,7 +96,7 @@ describe("accepted dependency review", () => {
     const session = draft(); session.contextSpec.links[0].selector = { version: 8 };
     render(<ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={availableSkills} />);
     expect(screen.queryByRole("checkbox", { name: /Review update/ })).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Published leaf skill" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Add a published skill" }));
     expect(screen.queryByRole("option", { name: "other-context" })).not.toBeInTheDocument();
   });
   it("blocks applying a stale revision or failed compiled closure", async () => {

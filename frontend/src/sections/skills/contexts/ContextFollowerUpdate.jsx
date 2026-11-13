@@ -71,7 +71,7 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease 
     <Typography variant="s3" color="text.secondary">Creates a draft for each context that doesn&apos;t have one. Production doesn&apos;t change.</Typography>
     {!targets.length && <Typography variant="s3" color="text.secondary">Select at least one context to prepare updates.</Typography>}
     {selectionChanged && targets.length > 0 && <><Typography variant="s3" color="warning.main" role="status">Selection changed — prepare again.</Typography><Button variant="outlined" disabled sx={{ alignSelf: 'flex-start' }}>Apply selected updates</Button></>}
-    <Button sx={{ alignSelf: 'flex-start' }} variant={ready.length ? 'outlined' : 'contained'} disabled={!targets.length || busy} onClick={() => preview(targets)}>{targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates'}</Button>
+    <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={ready.length ? 'outlined' : 'contained'} disabled={!targets.length || busy} onClick={() => preview(targets)}>{targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates'}</Button>
     {phase === 'previewing' && <Typography variant="s3" role="status">Starting drafts and resolving exact versions…</Typography>}
     {items.map((item) => <Stack key={item.target.contextId} sx={{ border: 1, borderRadius: 1, borderColor: 'divider', p: 1.5, minWidth: 0 }} spacing={0.5}>
       {item.status !== 'ready' && <Typography variant="m3">{item.target.name}</Typography>}
@@ -90,7 +90,7 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease 
     {(phase === 'previewed' || phase === 'applying') && ready.length > 0 && <>
       <Typography variant="s3" color="text.secondary">{ready.length === 1 ? 'One context draft will be updated.' : `${ready.length} context drafts will be updated.`} Review the versions and update policies above before accepting these draft changes.</Typography>
       <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these exact resolved versions and selector policies for all ${ready.length} ${ready.length === 1 ? 'context' : 'contexts'}.`} />
-      <Button sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
+      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}
     {done.length > 0 && <OperationFeedback success={`Draft updated for ${done.length} ${done.length === 1 ? 'context' : 'contexts'}. Production unchanged.`}>
       {done.map((item) => <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>

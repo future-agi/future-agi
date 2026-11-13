@@ -25,7 +25,8 @@ export const useRefreshContextFacts = () => () => {};
 export const usePreviewRecoveryRelease = () => { const [data, setData] = useState(null); const [isPending, setPending] = useState(false); return { data, isPending, mutate: () => params.get('screen') === 'recovery-preparing' ? setPending(true) : setData({ fingerprint: 'sha256:' + 'f'.repeat(64), packet: {} }), reset: () => setData(null) }; };
 export const useSubmitRecoveryRequest = () => { const [data, setData] = useState(null); return { data, mutate: () => setData({ id: 'request-1' }) }; };
 export const useIssueRecoveryCredential = () => ({ mutate: () => {} });
-export const useReviewOptions = () => ({ data: { evidence: [] } });
+export const useReviewOptions = () => ({ data: { evidence: [], recipients: [{ id: 'reviewer', name: 'Independent reviewer' }] } });
+export const DESCRIPTOR_PATH = '.futureagi/context.json';
 `;
 const entry = `
 import React, { useState } from 'react';

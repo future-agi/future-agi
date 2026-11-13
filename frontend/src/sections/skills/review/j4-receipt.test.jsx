@@ -14,10 +14,15 @@ it('renders a metadata-only receipt without requiring retained packet contents',
   expect(screen.getByText('Production moved to v2')).toBeVisible();
   expect(screen.queryByText('Recorded preconditions')).not.toBeInTheDocument();
   // Before/after state is the receipt's evidence and is visible without a disclosure.
-  expect(screen.getByText('Currentness before the move')).toBeVisible();
-  expect(screen.getByText('Pointer state after the move')).toBeVisible();
+  expect(screen.getByText('Before the move')).toBeVisible();
+  expect(screen.getByText('After the move')).toBeVisible();
+  expect(screen.getByText('Production v2')).toBeVisible();
+  // Compare-and-swap counters are audit details, not primary copy.
+  expect(screen.queryByText(/Currentness|Pointer state/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/release revision 1/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Audit details' }));
   expect(screen.getByText(/"release_revision": 1/)).toBeVisible();
+  expect(screen.getByText(/Before: release revision 1/)).toBeVisible();
   expect(screen.getByText(/"releaseRevision": 2/)).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();
   expect(screen.queryByText(/Review is stale or unavailable/)).not.toBeInTheDocument();

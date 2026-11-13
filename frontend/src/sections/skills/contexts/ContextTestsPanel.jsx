@@ -39,6 +39,8 @@ import ContextNativePanel from './ContextNativePanel';
 const lastTestKey = (identity) => `skills.contextTest.last:${identity}`;
 const readLastTest = (identity) => { try { const value = JSON.parse(window.localStorage.getItem(lastTestKey(identity)) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
 const writeLastTest = (identity, value) => { try { window.localStorage.setItem(lastTestKey(identity), JSON.stringify(value)); } catch { /* Storage is optional. */ } };
+const PROVIDERS = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', azure: 'Azure', bedrock: 'Amazon Bedrock', mistral: 'Mistral' };
+const providerName = (value) => PROVIDERS[String(value || '').toLowerCase()] || (value ? String(value).charAt(0).toUpperCase() + String(value).slice(1) : 'Not reported');
 const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] });
 
 
@@ -100,7 +102,22 @@ function SavedDraftHandoff({ onOpen, disabled }) {
 }
 SavedDraftHandoff.propTypes = { onOpen: PropTypes.func.isRequired, disabled: PropTypes.bool };
 
-function Results({ contextId, runId }) {
+const ARM_LABELS = { without_target: 'Without context', without_context: 'Without context', reference: 'Historical reference', production: 'Production' };
+const armLabel = (variant, subject) => (variant === 'candidate' ? `With ${subject}` : ARM_LABELS[variant] || variant.replaceAll('_', ' '));
+const passedAll = (variant) => Boolean(variant?.attempts?.length) && variant.attempts.every((item) => item.answer_verdict === 'pass');
+
+// One sentence that says what the answer check found, before any identifiers.
+export function answerConclusion({ status, subject, rows, complete }) {
+  if (isActiveSkillJob(status)) return `Answer check running for ${subject}.`;
+  if (status !== 'completed') return `Answer check ${String(status || 'stopped').replaceAll('_', ' ')} for ${subject}. No result is inferred.`;
+  if (!complete || !rows.length) return `Answer check finished for ${subject}.`;
+  const passed = rows.filter((row) => passedAll(row.variants.find((variant) => variant.variant === 'candidate'))).length;
+  const baseline = rows.every((row) => passedAll(row.variants.find((variant) => variant.variant !== 'candidate')));
+  const lead = passed === rows.length ? `Answer check passed for ${subject} on ${passed} of ${rows.length} case${rows.length === 1 ? '' : 's'}` : `Answer check failed for ${subject} on ${rows.length - passed} of ${rows.length} case${rows.length === 1 ? '' : 's'}`;
+  return `${lead}${baseline && rows.some((row) => row.variants.length > 1) ? ' (also passes without the context)' : ''}.`;
+}
+
+function Results({ contextId, runId, contextName }) {
   const [page, setPage] = useState(1);
   const [attemptId, setAttemptId] = useState(null);
   const run = useContextTestRun(contextId, runId);
@@ -110,17 +127,21 @@ function Results({ contextId, runId }) {
   if (run.isLoading) return <ContentSkeleton />;
   if (run.isError) return <ErrorState title="Context run unavailable" onRetry={run.refetch} />;
   if (!run.data) return null;
+  const candidate = run.data.candidate || {};
+  const version = candidate.version ? `v${candidate.version}` : 'the saved draft';
+  const subject = contextName ? `${contextName} ${version}` : version;
+  const rows = results.data?.results || [];
   return <Stack spacing={1.5}>
-    <Section title={<Typography component="span" variant="m3">Whole-context result</Typography>} description="Execution status is not an approval to release. Routing is not applicable to standing context." />
-    <StatusBadge status={run.data.status} sx={{ alignSelf: 'flex-start' }} />
-    <IdentityChip value={run.data.candidate.digest} label="Candidate" /><IdentityChip value={runId} label="Run" kind="id" />
-    {run.data.reference && <Stack spacing={0.5}><Typography variant="s3">Historical reference v{run.data.reference.version}</Typography><IdentityChip value={run.data.reference.digest} label="Reference" /></Stack>}
+    <Section title={<Typography component="span" variant="m3">Whole-context result</Typography>} />
+    <Typography variant="m3" component="p" role="status" sx={{ m: 0 }}>{answerConclusion({ status: run.data.status, subject: version, rows, complete: Boolean(results.data) && !(results.data.total_pages > 1) })}</Typography>
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap"><StatusBadge status={run.data.status} /><Typography variant="s3" color="text.secondary">A passing answer check is not a release approval.</Typography></Stack>
+    {run.data.reference && <Typography variant="s3">Historical reference v{run.data.reference.version}</Typography>}
     {isActiveSkillJob(run.data.status) && <Button variant="outlined" disabled={cancel.isPending} onClick={() => cancel.mutate({})}>Cancel context test</Button>}
     <AuthoringError error={cancel.error} />
-    {results.isLoading ? <ContentSkeleton /> : results.isError ? <ErrorState title="Case results unavailable" onRetry={results.refetch} /> : results.data?.results.map((row) => <Stack spacing={1} key={row.case_id} sx={{ py: 1, borderBottom: 1, borderColor: 'divider' }}>
+    {results.isLoading ? <ContentSkeleton /> : results.isError ? <ErrorState title="Case results unavailable" onRetry={results.refetch} /> : rows.map((row) => <Stack spacing={1} key={row.case_id} sx={{ py: 1, borderBottom: 1, borderColor: 'divider' }}>
       <Typography variant="m3">{row.title}</Typography>
       {row.variants.map((variant) => <Stack key={variant.variant} spacing={1}>
-        <Typography variant="s1">{variant.variant}</Typography>
+        <Typography variant="s1">{armLabel(variant.variant, subject)}</Typography>
         {variant.attempts.map((item) => <Stack key={item.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap">
           <StatusBadge status={item.status} /><StatusBadge status={item.answer_verdict} label={`Answer: ${item.answer_verdict}`} />
           <Button variant="text" onClick={() => setAttemptId(item.id)}>Inspect attempt {item.repeat_index + 1}</Button>
@@ -128,15 +149,21 @@ function Results({ contextId, runId }) {
       </Stack>)}
     </Stack>)}
     {results.data?.total_pages > 1 && <Pagination page={page} count={results.data.total_pages} onChange={(_, value) => { setPage(value); setAttemptId(null); }} />}
+    <TechnicalDetails title="Details">
+      <Stack spacing={1}>
+        <IdentityChip value={candidate.digest} label="Candidate" /><IdentityChip value={runId} label="Run" kind="id" />
+        {run.data.reference && <IdentityChip value={run.data.reference.digest} label="Reference" />}
+        <Typography variant="s3">Instructions apply to every request, so skill routing is not measured here.</Typography>
+      </Stack>
+    </TechnicalDetails>
     {attemptId && (attempt.isLoading ? <ContentSkeleton /> : attempt.isError ? <ErrorState title="Attempt unavailable" onRetry={attempt.refetch} /> : attempt.data && <Stack spacing={1}>
       <Typography variant="m3">Retained attempt evidence</Typography>
-      <Typography variant="s1">Standing root fully delivered: {attempt.data.root_fully_delivered ? 'yes' : 'no'}</Typography>
-      <Typography variant="s3">Receipts identify delivered bytes, not instruction adherence. An unread linked skill is not silently counted as delivered.</Typography>
-      <TechnicalDetails title="Attempt details"><Box component="pre" tabIndex={0} aria-label="Whole-context attempt evidence" sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(attempt.data, null, 2)}</Box></TechnicalDetails>
+      <Typography variant="s1">All instructions delivered to the model: {attempt.data.root_fully_delivered ? 'yes' : 'no'}</Typography>
+      <TechnicalDetails title="Attempt details"><Typography variant="s3">Delivery receipts identify the bytes sent, not whether the model followed them. A linked skill that was never read is not counted as delivered.</Typography><Box component="pre" tabIndex={0} aria-label="Whole-context attempt evidence" sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(attempt.data, null, 2)}</Box></TechnicalDetails>
     </Stack>)}
   </Stack>;
 }
-Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired };
+Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired, contextName: PropTypes.string };
 
 function WholeContextTests({ contextName, contextId, candidate, scopeKey, identity, state, source, primary, onStarted }) {
   const [last] = useState(() => readLastTest(identity));
@@ -199,16 +226,16 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
         <TextField size="small" label="Historical reference version (optional)" value={reference} onChange={change(setReference)} disabled={locked} error={!validReference} />
       </Stack>
       <AuthoringError error={prepare.error || operation.error} />
-      <Button sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview whole-context test</Button>
+      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview whole-context test</Button>
       <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : !prompt.trim() || !expected.trim() ? 'Add a request and the answer text to check.' : !reviewedCase ? 'Tick the reviewed-case acknowledgment to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Enter a valid published reference version.' : 'Preview the files before starting the test.'}</Typography>
     </Stack>
     {preview && <Stack spacing={1.5}>
       <Typography variant="m3">Up to {preview.attemptCount} runs · at most ${(Math.ceil(Number(preview.estimate.upperBoundUsd) * 100) / 100).toFixed(2)}</Typography>
-      <Typography variant="s3">Task provider: {preview.providerDisclosure.taskProvider}. Content remains private in this workspace but is sent to the selected provider.</Typography>
+      <Typography variant="s3">Task provider: {providerName(preview.providerDisclosure.taskProvider)}. Content remains private in this workspace but is sent to the selected provider.</Typography>
       {!currentCandidate && <Alert severity="warning">The saved candidate changed. Preview and review the new compiled context before running.</Alert>}
       <TestInventoryReview subjectName={contextName} subjectKind="agent_context" subjectId={contextId} preview={preview} value={inventory.review} onChange={setInventory} disabled={locked || !currentCandidate} />
       <FormControlLabel control={<Checkbox checked={providerConsent} disabled={locked || !currentCandidate} onChange={(event) => setProviderConsent(event.target.checked)} />} label="I acknowledge provider processing of this reviewed context and test request." />
-      <Button sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !inventory.complete || !providerConsent} onClick={launch}>Run whole-context test</Button>
+      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !inventory.complete || !providerConsent} onClick={launch}>Run whole-context test</Button>
       {(!inventory.complete || !providerConsent) && <Typography variant="s3" color="text.secondary">Review all files and findings, then confirm provider processing to run this test.</Typography>}
     </Stack>}
     {operation.uncertain && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const receipt = await operation.retry(); if (receipt) { onStarted(receipt.id); invalidate(); } }}>Recover original context test</Button>}
@@ -223,7 +250,7 @@ function Tests({ contextName, contextId, version, versions, canWrite, skills, pr
   const history = useContextTestRuns(contextId, historyPage);
   const latestAnswers = useContextTestRuns(contextId, 1);
   return <Stack spacing={3}>
-    <RegressionCases contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id) => <Results key={id} contextId={contextId} runId={id} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
+    <RegressionCases contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
     {(primary) => <Stack spacing={2}>
       <Section title={<Typography component="span" variant="m3">Check answers with this context</Typography>} description="Tests your instructions and locked linked skills together. To verify an application repair, choose the application test." />
       {source && !onOpenSavedDraft && <CandidateSource source={source} />}

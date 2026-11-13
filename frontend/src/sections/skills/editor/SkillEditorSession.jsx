@@ -177,7 +177,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
     <ObjectHeader title={skill.name}
       crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
-      purpose={isContext ? `Content origin ${session.baseVersion == null ? 'unpublished' : `v${session.baseVersion}`} · draft r${session.revision} · ${session.resolvedLock?.links?.length || 0} locked skills` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
+      purpose={isContext ? `${session.baseVersion == null ? 'New context' : `Based on v${session.baseVersion}`} · ${session.resolvedLock?.links?.length || 0} linked skill${session.resolvedLock?.links?.length === 1 ? '' : 's'}` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
         <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
         {session.status === 'error' && <Button size="small" disabled={Boolean(session.mutationError)} onClick={() => session.save()}>Retry</Button>}

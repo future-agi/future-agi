@@ -112,7 +112,7 @@ const session = () => ({ contextSpec: { links: [] }, resolvedLock: { links: [] }
 it('adds every remaining published skill in one reviewed set, keeping a deliberate pin as its own exception', async () => {
   const preview = vi.fn(async () => ({ revision: 3, fingerprint: 'fp', candidateDigest: 'sha256:x', changes: [], checks: { summary: { errors: 0 } } }));
   render(<ContextLinksPanel scopeKey="scope" session={session()} availableSkills={available} onPreview={preview} onApply={vi.fn()} />);
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Published leaf skill' })); fireEvent.click(screen.getByRole('option', { name: 'one' }));
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Add a published skill' })); fireEvent.click(screen.getByRole('option', { name: 'one' }));
   fireEvent.mouseDown(screen.getByRole('combobox', { name: /^Update policy/ })); fireEvent.click(screen.getByRole('option', { name: 'Pin version' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Version' }), { target: { value: '7' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));

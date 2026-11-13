@@ -35,10 +35,10 @@ it('discovers the real allowance panel through production navigation and confirm
   expect(screen.getByLabelText('Period allowance (USD)')).toHaveValue('');
   expect(api.save).not.toHaveBeenCalled();
   fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '12.3400' } });
-  fireEvent.click(screen.getByLabelText('Enable paid-work admission under this allowance'));
-  fireEvent.click(screen.getByRole('button', { name: 'Review policy change' }));
+  fireEvent.click(screen.getByLabelText('Allow paid test runs up to this amount'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   expect(api.save).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Apply policy change' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowance' }));
   await waitFor(() => expect(api.save).toHaveBeenCalledOnce());
   expect(api.save.mock.calls[0][0]).toEqual({ revision: 0, enabled: true, periodLimitUsd: '12.3400', idempotencyKey: expect.any(String) });
 });
@@ -48,7 +48,7 @@ it('allows members to discover the requirement but not authorize spending', () =
   fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
   expect(screen.getByLabelText('Period allowance (USD)')).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Review policy change' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   expect(api.save).not.toHaveBeenCalled();
 });
 it('does not enable navigation before the spend contract is ready', () => {

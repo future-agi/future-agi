@@ -312,7 +312,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const submit = async (cycle) => {
           // Acknowledging the review prepares the packet; the reviewer chosen once stays selected for a restarted review.
           const reviewerBox = authorPage.getByRole('combobox', { name: 'Reviewer' });
-          await expect(authorPage.getByText('Packet fingerprint', { exact: false })).toBeVisible();
+          await expect(authorPage.getByText('Rollback request ready.', { exact: false })).toBeVisible();
           // The person who last moved production is the suggested reviewer; no list to open for a restarted or a first review alike.
           await expect(reviewerBox).toContainText(reviewerName);
           await operator.click(authorPage.getByRole('button', { name: 'Submit rollback for review', exact: true }), `submit-rollback-${cycle}`);

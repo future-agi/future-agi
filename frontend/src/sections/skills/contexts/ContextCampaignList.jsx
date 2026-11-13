@@ -37,7 +37,7 @@ export default function ContextCampaignList({ query, availability, enabled = fal
                   </Table></TableContainer>
                   <DataTablePagination page={page - 1} pageSize={25} total={data.count} onPageChange={(next) => onPageChange(next + 1)} pageSizeOptions={[25]} disabled={query.isFetching} />
                 </Box>}
-          {!off && onCreate && <Button variant="contained" onClick={onCreate} sx={{ alignSelf: 'flex-start' }}>New rollout</Button>}
+          {!off && onCreate && <Button color="primary" variant="contained" onClick={onCreate} sx={{ alignSelf: 'flex-start' }}>New rollout</Button>}
         </>}
   </Stack>;
 }

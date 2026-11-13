@@ -95,9 +95,9 @@ try {
         if (screen === 'allowance') {
           await page.getByRole('tab', { name: 'Workspace allowance', exact: true }).click();
           await page.getByLabel('Period allowance (USD)').fill('12.3400');
-          await page.getByLabel('Enable paid-work admission under this allowance').check();
-          await page.getByRole('button', { name: 'Review policy change' }).click();
-          await page.getByRole('button', { name: 'Apply policy change' }).waitFor();
+          await page.getByLabel('Allow paid test runs up to this amount').check();
+          await page.getByRole('button', { name: 'Save', exact: true }).click();
+          await page.getByRole('button', { name: 'Save allowance' }).waitFor();
         } else if (screen === 'create') {
           await page.getByLabel('AGENTS.md', { exact: true }).fill('Standing instructions retained after rejection.');
           await page.getByLabel('Immutable name').fill('taken');

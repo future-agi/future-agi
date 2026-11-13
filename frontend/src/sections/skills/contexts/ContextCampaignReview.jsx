@@ -67,7 +67,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     {campaign.status === 'draft' && <Section title="Authorize pull requests"><Stack spacing={1} alignItems="flex-start">
       <Typography variant="s3">Reviewed {targets.length - outstanding.length} of {campaign.targetCount}</Typography>
       <FormControlLabel control={<Checkbox checked={acknowledged} disabled={!editable} onChange={(event) => setAcknowledged(event.target.checked)} />} label="I reviewed every included patch and authorize only the listed repository writes, not merge or deployment." />
-      <Button variant="contained" disabled={!editable || !ready || !acknowledged} onClick={() => setConfirm('authorize')}>Authorize reviewed PR plans</Button>
+      <Button color="primary" variant="contained" disabled={!editable || !ready || !acknowledged} onClick={() => setConfirm('authorize')}>Authorize reviewed PR plans</Button>
       {!ready ? <Typography variant="s3">Review every target to continue.</Typography> : !acknowledged && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
     </Stack></Section>}
     </Box>
@@ -104,7 +104,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
       onDecision={(decision) => setDecisions((old) => ({ ...old, [selected.bindingId]: decision }))} editable={editable} observations={observations} onNext={nextTarget ? () => onSelectTarget(nextTarget.bindingId) : undefined} />
     <ConfirmDialog open={Boolean(confirm)} onClose={() => setConfirm(null)} title={confirm === 'authorize' ? 'Authorize exact repository patches?' : `${confirm || 'Change'} campaign?`}
       content={confirm === 'authorize' ? 'Only included plans in this reviewed manifest may create pull requests. This does not authorize merges or deployments.' : 'In-flight Git requests may still complete. Existing branches, PRs and receipts are retained.'}
-      action={<Button variant="contained" disabled={pending || (confirm === 'authorize' ? (!editable || !ready || !acknowledged) : !reason.trim())} onClick={() => run(() => confirm === 'authorize' ? onAuthorize({ revision: basis.revision, expectedManifestDigest: basis.digest, decisions: targets.map(chosen), acknowledgeRepositoryWrites: true }) : onStatus({ action: confirm, revision: campaign.revision, reason }))}>{confirm === 'authorize' ? 'Authorize exact plans' : 'Confirm change'}</Button>}
+      action={<Button color="primary" variant="contained" disabled={pending || (confirm === 'authorize' ? (!editable || !ready || !acknowledged) : !reason.trim())} onClick={() => run(() => confirm === 'authorize' ? onAuthorize({ revision: basis.revision, expectedManifestDigest: basis.digest, decisions: targets.map(chosen), acknowledgeRepositoryWrites: true }) : onStatus({ action: confirm, revision: campaign.revision, reason }))}>{confirm === 'authorize' ? 'Authorize exact plans' : 'Confirm change'}</Button>}
     />
   </Stack>;
 }

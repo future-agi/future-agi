@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
+import TechnicalDetails from "../components/TechnicalDetails";
 import {
   IdentityValue,
   ReviewState,
@@ -23,6 +24,13 @@ import ApplicationBehaviorFields from "../tests/ApplicationBehaviorFields";
 import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
+// "Preview expires in 30 min": relative to the review clock; the exact UTC time is in details.
+export function expiresIn(expiresAt, now) {
+  const left = Date.parse(expiresAt) - now;
+  if (!Number.isFinite(left)) return "Preview expiry not reported";
+  const minutes = Math.max(1, Math.round(left / 60000));
+  return minutes >= 120 ? `Preview expires in ${Math.round(minutes / 60)} hours` : `Preview expires in ${minutes} min`;
+}
 function ReviewedExample({
   preview,
   suiteRevision,
@@ -32,6 +40,7 @@ function ReviewedExample({
   subjectKind,
   applicationBehavior,
   renderSaved,
+  describeSource,
 }) {
   const [title, setTitle] = useState("");
   const [behavior, setBehavior] = useState({ skillId: "", action: "" });
@@ -85,6 +94,26 @@ function ReviewedExample({
     setReviewed(false);
     setShared(false);
   };
+  // After saving, the confirmation and the next step lead; the saved fields are no longer editable.
+  const rendered = operation.result ? renderSaved?.({ caseId: ids.id, preview }) : null;
+  const saved = rendered && typeof rendered === "object" && ("action" in rendered || "notice" in rendered) ? rendered : rendered ? { notice: rendered } : null;
+  if (operation.result) return (
+    <>
+      <DialogContent>
+        <Stack spacing={1.5}>
+          <Alert severity="success" role="status">
+            Reviewed example saved: {title}. No comparison was run and no content was published.
+          </Alert>
+          {saved?.action && <Typography variant="s1">Next, reproduce it on the application to confirm the failure and test a fix.</Typography>}
+          {saved?.notice}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+        {saved?.action}
+      </DialogActions>
+    </>
+  );
   return (
     <>
       <DialogContent>
@@ -93,26 +122,20 @@ function ReviewedExample({
             This replays supplied text, not external actions. The observed
             failed answer is not an answer key. Saving does not run a model.
           </Alert>
-          <IdentityValue
-            label="Source fingerprint"
-            value={preview.sourceFingerprint}
-          />
-          <IdentityValue
-            label="Source identity"
-            value={preview.sourceLabel ?? preview.captureId ?? preview.planId}
-          />
-          <IdentityValue
-            label="Recorded context"
-            value={
-              preview.recordedContext
-                ? `${preview.recordedContext.versionId} · ${preview.recordedContext.digest}`
-                : "Unavailable — diagnostic example, not exact historical replay"
-            }
-          />
-          <IdentityValue
-            label="Private preview expires"
-            value={preview.expiresAt}
-          />
+          {/* Readable provenance first; fingerprints and exact identities are details. */}
+          <Typography variant="s1">{describeSource?.(preview) || (preview.recordedContext ? "From a recorded trace" : "From a trace with no recorded context version")}</Typography>
+          {!expired && <Typography variant="s3" color="text.secondary">{expiresIn(preview.expiresAt, now)}</Typography>}
+          <TechnicalDetails title="Source details">
+            <Stack spacing={1}>
+              <IdentityValue label="Source fingerprint" value={preview.sourceFingerprint} />
+              <IdentityValue label="Source identity" value={preview.sourceLabel ?? preview.captureId ?? preview.planId} />
+              {preview.recordedContext ? <>
+                <IdentityValue label="Recorded context version" value={preview.recordedContext.versionId} />
+                <IdentityValue label="Recorded context digest" value={preview.recordedContext.digest} />
+              </> : <IdentityValue label="Recorded context" value="Unavailable — diagnostic example, not exact historical replay" />}
+              <IdentityValue label="Private preview expires (UTC)" value={preview.expiresAt} />
+            </Stack>
+          </TechnicalDetails>
           {expired && (
             <Alert severity="warning">
               Preview expired. Start a new authorized capture; these edits have
@@ -206,11 +229,9 @@ function ReviewedExample({
               }}
             />
           )}
-          <Typography variant="s3">
-            {subjectKind === "agent_context"
-              ? "Standing AGENTS instructions have no activation score."
-              : "This example checks the answer, not skill selection."}
-          </Typography>
+          {subjectKind !== "agent_context" && <Typography variant="s3">
+            This example checks the answer, not skill selection.
+          </Typography>}
           <FormControlLabel
             control={
               <Checkbox
@@ -232,21 +253,15 @@ function ReviewedExample({
             label="Share this redacted request, supplied tool results and success check with the workspace."
           />
           <OperationFeedback operation={operation} />
-          {operation.result && (
-            <Alert severity="info">
-              Reviewed example saved. No comparison was run and no content was
-              published.
-            </Alert>
-          )}
-          {operation.result && renderSaved?.({ caseId: ids.id, preview })}
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button disabled={operation.busy} onClick={onClose}>
           Close
         </Button>
-        <Button
+        {!operation.result && <Button
           variant="contained"
+          color="primary"
           disabled={!valid || !onSave}
           onClick={() =>
             operation.run(onSave, {
@@ -278,7 +293,7 @@ function ReviewedExample({
           }
         >
           Save reviewed example
-        </Button>
+        </Button>}
       </DialogActions>
     </>
   );
@@ -292,6 +307,7 @@ ReviewedExample.propTypes = {
   subjectKind: PropTypes.string.isRequired,
   applicationBehavior: PropTypes.object,
   renderSaved: PropTypes.func,
+  describeSource: PropTypes.func,
 };
 
 export default function CaseImportDialog({
@@ -307,6 +323,7 @@ export default function CaseImportDialog({
   onRetry,
   applicationBehavior,
   renderSaved,
+  describeSource,
 }) {
   return (
     <ClosableDialog
@@ -322,7 +339,7 @@ export default function CaseImportDialog({
       {open && scopeKey && state === "ready" && preview ? (
         <ReviewedExample
           key={`${scopeKey}:${preview.captureId ?? preview.planId}`}
-          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved }}
+          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved, describeSource }}
         />
       ) : (
         <DialogContent>
@@ -348,4 +365,5 @@ CaseImportDialog.propTypes = {
   onRetry: PropTypes.func,
   applicationBehavior: PropTypes.shape({ skills: PropTypes.array.isRequired }),
   renderSaved: PropTypes.func,
+  describeSource: PropTypes.func,
 };

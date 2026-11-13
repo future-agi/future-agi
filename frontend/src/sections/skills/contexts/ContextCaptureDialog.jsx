@@ -35,6 +35,7 @@ function Capture({
   canCapture,
   applicationBehavior,
   renderSaved,
+  describeSource,
   onChangeContext,
 }) {
   const operation = useReviewedOperation();
@@ -60,6 +61,7 @@ function Capture({
         onSave={onAccept}
         applicationBehavior={applicationBehavior}
         renderSaved={renderSaved}
+        describeSource={describeSource}
       />
     );
   return (
@@ -142,7 +144,7 @@ function Capture({
         <Button disabled={operation.busy} onClick={onClose}>
           Cancel
         </Button>
-        <Button
+        <Button color="primary"
           variant="contained"
           disabled={
             !allowed ||
@@ -176,6 +178,7 @@ Capture.propTypes = {
   canCapture: PropTypes.bool,
   applicationBehavior: PropTypes.object,
   renderSaved: PropTypes.func,
+  describeSource: PropTypes.func,
   onChangeContext: PropTypes.func,
 };
 export default function ContextCaptureDialog({

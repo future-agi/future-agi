@@ -68,7 +68,7 @@ function Editor({ scopeKey, contextId }) {
   if (!detail.data || (!initial && (draft.isPending || draft.isFetching))) return detail.isError ? <ErrorState title="Context unavailable" onRetry={detail.refetch} /> : <ContentSkeleton label="Loading your context draft" />;
   if (!initial && differentOrigin) return <Stack spacing={1.5}>
     <Alert severity="warning">Your existing draft has a different content origin. It was not replaced. Preserve it before starting the viewed version, or resume your existing work.</Alert>
-    <Button variant="contained" disabled={!Number.isSafeInteger(origin) || !checkpointsReady('agent_context')} onClick={() => setSwitchDraft({ draft: draft.data, origin })}>Review draft preservation</Button>
+    <Button color="primary" variant="contained" disabled={!Number.isSafeInteger(origin) || !checkpointsReady('agent_context')} onClick={() => setSwitchDraft({ draft: draft.data, origin })}>Review draft preservation</Button>
     <Button variant="outlined" onClick={() => setInitial(draft.data)}>Resume existing draft</Button>
   </Stack>;
   // Intent: inspect owned instructions and accepted dependency bytes together.
@@ -110,7 +110,7 @@ function Editor({ scopeKey, contextId }) {
   return <Stack spacing={1.5}>
     <Alert severity="info">{canStart ? `Start from ${origin === null ? 'a blank unpublished context' : `the exact viewed version v${origin}`}? No latest-version substitution is made.` : 'Choose an explicit published version on the context detail page before starting a draft.'}</Alert>
     <AuthoringError error={operation.error} />
-    <Button variant="contained" disabled={!canStart || operation.pending} onClick={async () => {
+    <Button color="primary" variant="contained" disabled={!canStart || operation.pending} onClick={async () => {
       const result = await operation.run((input, options) => start.mutateAsync({ ...input, ...options }), { revision: 0, fromVersion: origin });
       if (result) setInitial(result);
     }}>Start selected draft</Button>

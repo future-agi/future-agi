@@ -409,8 +409,8 @@ describe("exact decisions and retry safety", () => {
     click("Move production");
     await screen.findByText("Release receipt");
     fireEvent.click(await screen.findByRole("button", { name: "Audit details" }));
-    expect(screen.getByText("Currentness before the move")).toBeVisible();
-    expect(screen.getByText("Pointer state after the move")).toBeVisible();
+    expect(screen.getByText("Before the move")).toBeVisible();
+    expect(screen.getByText("After the move")).toBeVisible();
     expect(execute.mock.calls[0][0]).not.toHaveProperty("packet");
   });
   it("offers no decision or release on a request replaced by a fresh packet", () => {
@@ -681,15 +681,17 @@ describe("publication and explicit spending", () => {
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
     ).toHaveValue("");
     expect(
-      screen.getByRole("button", { name: "Review policy change" }),
+      screen.getByRole("button", { name: "Save" }),
     ).toBeDisabled();
+    // The lead says what is true now, in currency, not accounting fields.
+    expect(screen.getByText("No spending allowance set · $2.12 used this period (Nov 1–30)")).toBeVisible();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
       { target: { value: "12.00000001" } },
     );
-    click("Review policy change");
+    click("Save");
     expect(save).not.toHaveBeenCalled();
-    click("Apply policy change");
+    click("Save allowance");
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][0]).toMatchObject({
       revision: 2,
@@ -720,9 +722,12 @@ describe("publication and explicit spending", () => {
         onSave={vi.fn()}
       />,
     );
+    // Unsettled spend stays visible in the summary; exact decimals are one click away.
+    expect(screen.getByText(/\$1\.00 is held by runs whose final cost isn.t settled yet/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Accounting details" }));
     expect(screen.getByText("0.50000000")).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Review policy change" }),
+      screen.getByRole("button", { name: "Save" }),
     ).toBeDisabled();
     expect(
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),

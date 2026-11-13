@@ -6,6 +6,7 @@ import ContextTestsPanel from './ContextTestsPanel';
 
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
 const state = vi.hoisted(() => ({ identity: 'scope-a', canPublish: true, suiteError: false, runtime: false, capture: vi.fn() }));
+vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ enabled: true, identity: state.identity }),
   // The unified Tests panel also mounts the whole-context section; it stays idle here.

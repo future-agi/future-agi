@@ -2,9 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import ContextNativePanel from './ContextNativePanel';
+import ContextNativePanel, { noReviewsYet } from './ContextNativePanel';
 
-const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: vi.fn(), runs: [], detail: undefined, annotations: [], prepared: undefined }));
+const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: vi.fn(), runs: [], detail: undefined, annotations: [], annotationIds: [], annotationError: undefined, prepared: undefined }));
+vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/context-testing', () => ({
   useNativeTargets: () => ({ data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
@@ -17,7 +18,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useCreateNativeTarget: () => ({ mutate: () => {}, isPending: false }), useQualifyNativeTarget: () => ({ mutateAsync: async () => {} }),
   useRuntimeConfiguration: () => ({ data: undefined }), usePrepareReleasePacket: () => ({ data: h.prepared, mutate: () => {}, isPending: false }),
 }));
-vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: () => ({ data: { results: h.annotations } }), useAppendEvidenceAnnotation: () => ({ mutateAsync: async () => {} }) }));
+vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: (_, id) => { h.annotationIds.push(id ?? null); if (!id) return { isLoading: false, data: undefined }; return h.annotationError ? { isError: true, error: h.annotationError, refetch: () => {} } : { data: { results: h.annotations } }; }, useAppendEvidenceAnnotation: () => ({ mutateAsync: async () => {} }) }));
 vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: () => ({ data: { name: 'Support context' } }) }));
 vi.mock('src/api/skills/j6-recovery', () => ({ useRecoveryReviewers: () => ({ data: [{ id: 'reviewer', name: 'Case reviewer' }] }) }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
@@ -25,7 +26,7 @@ const versions = [7, 6, 4].map((number) => ({ number, id: `v${number}` }));
 const cases = [{ id: 'refund', title: 'Original refund failure', reviewed: true }, { id: 'chargeback', title: 'Working chargeback case', reviewed: true }, { id: 'draft', title: 'Unreviewed', reviewed: false }];
 const renderPanel = (props = {}) => render(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} {...props} /></MemoryRouter>);
 beforeEach(() => {
-  h.annotations = []; h.prepared = undefined;
+  h.annotations = []; h.annotationIds = []; h.annotationError = undefined; h.prepared = undefined;
   h.preview = { data: undefined, plans: [] }; h.create = vi.fn().mockResolvedValue('evidence');
   h.runs = [{ id: 'previous', arms: [{ variant: 'candidate', version: 6 }, { variant: 'reference', version: 4 }] }];
   h.detail = { id: 'previous', status: 'completed', executionFingerprint: 'sha256:previous', received: 2, planned: 2, arms: h.runs[0].arms, cases: [{ id: 'refund', historical: true }, { id: 'chargeback', historical: false }] };
@@ -86,7 +87,9 @@ it('prevents previews with the candidate duplicated as the recorded reference', 
   h.runs = [];
   renderPanel({ seed: { caseId: 'refund', reference: 7 } });
   expect(h.preview.plans).toHaveLength(0);
-  expect(screen.getByText('Choose a reference different from the candidate.')).toBeVisible();
+  // A handoff that defaults both to the recorded version asks a question instead of opening in an error state.
+  expect(screen.getByText('v7 is the recorded version. Choose the candidate version that should fix it.')).toBeVisible();
+  expect(screen.queryByText('Choose a reference different from the candidate.')).not.toBeInTheDocument();
 });
 it('opens an attempt with the keyboard, shows disagreement scope and returns focus on Close', async () => {
   const user = userEvent.setup();
@@ -203,4 +206,22 @@ it('hands the primary to the chosen answer form when the packet belongs to an ea
   expect(renderForm).toHaveBeenLastCalledWith(true);
   expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
   expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
+});
+
+it('reads human reviews only once the run has finished, so the first finished render has no error', () => {
+  h.detail = { ...h.detail, status: 'running', jobState: 'running', received: 1 };
+  const { rerender } = renderPanel();
+  expect(h.annotationIds).not.toContain('previous');
+  expect(screen.queryByText("Couldn't load human reviews")).not.toBeInTheDocument();
+  h.detail = { ...h.detail, status: 'completed', jobState: 'completed', received: 2, result: { repair_verified: true, reproduction: 'reproduced' }, cells: [] };
+  rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} /></MemoryRouter>);
+  expect(h.annotationIds).toContain('previous');
+  expect(screen.queryByText("Couldn't load human reviews")).not.toBeInTheDocument();
+  expect(screen.getByText('0 disagreements')).toBeVisible();
+});
+it('treats a missing review record as no human reviews and keeps real failures visible', () => {
+  const missing = noReviewsYet({ isError: true, error: { response: { status: 404 } } });
+  expect(missing).toMatchObject({ isError: false, data: { results: [] } });
+  const failed = noReviewsYet({ isError: true, error: { response: { status: 500 } } });
+  expect(failed.isError).toBe(true);
 });

@@ -209,8 +209,8 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(durable).toEqual(receipt);
     await page.reload();
     await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
-    await expect(page.getByText('Currentness before the move', { exact: true })).toBeVisible();
-    await expect(page.getByText('Pointer state after the move', { exact: true })).toBeVisible();
+    await expect(page.getByText('Before the move', { exact: true })).toBeVisible();
+    await expect(page.getByText('After the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Review is stale or unavailable.', { exact: false })).not.toBeVisible();
     await page.screenshot({ path: `${output}/shots/03-durable-receipt-light.png` });
     await page.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });

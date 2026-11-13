@@ -39,16 +39,18 @@ export default function ReleaseReceipt({ receipt, request }) {
         <Typography variant="s3">Approval covered this candidate, target and attached evidence. This receipt records the release; it does not imply that expired evidence is still available.</Typography>
         {request?.packet && <Typography variant="s3">{request.packet.evidence.length} attached results · candidate v{request.packet.transition.version}</Typography>}
       </Stack></TechnicalDetails>
-      {/* Before/after state is the receipt's evidence, so it stays visible; raw identifiers are disclosed. */}
+      {/* Before/after state is the receipt's evidence, so it stays visible in plain words; the revision counters are audit details. */}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
-        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Currentness before the move</Typography><Typography variant="s1">Release revision {receipt.currentnessAtAction?.release_revision ?? 'Not reported'} · Security policy revision {receipt.currentnessAtAction?.security_revision ?? 'Not reported'}</Typography></Stack>
-        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Pointer state after the move</Typography><Typography variant="s1">{labelName} v{after.version} · Release revision {after.releaseRevision ?? 'Not reported'}</Typography></Stack>
+        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Before the move</Typography><Typography variant="s1">{before != null ? `${labelName} v${before}` : `${labelName} unassigned`}</Typography></Stack>
+        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">After the move</Typography><Typography variant="s1">{labelName} v{after.version}</Typography></Stack>
       </Stack>
       <TechnicalDetails title="Audit details">
         <Stack spacing={1}>
           <IdentityChip label="Request" kind="id" value={receipt.requestId} />
           <IdentityChip label="Decision" kind="id" value={receipt.decisionId} />
           <IdentityChip label="Executed by" kind="id" value={receipt.executedBy} />
+          <Typography variant="s3">Before: release revision {receipt.currentnessAtAction?.release_revision ?? 'not reported'} · security policy revision {receipt.currentnessAtAction?.security_revision ?? 'not reported'}</Typography>
+          <Typography variant="s3">After: release revision {after.releaseRevision ?? 'not reported'}</Typography>
           <Typography variant="m3">Recorded preconditions</Typography>
           <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(receipt.currentnessAtAction, null, 2)}</Typography>
           <Typography variant="m3">Recorded result</Typography>

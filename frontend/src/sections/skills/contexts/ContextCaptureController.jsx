@@ -1,6 +1,6 @@
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, DialogContent, DialogTitle, Stack } from '@mui/material';
+import { Alert, Button, DialogContent, DialogTitle } from '@mui/material';
 import { ClosableDialog } from 'src/components/custom-dialog';
 import ErrorState from 'src/components/error-state';
 import { paths } from 'src/routes/paths';
@@ -41,12 +41,19 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeConte
     // still loading or paged away must not read as a missing recording.
     const unrecorded = !reviewed.recordedContext;
     const params = new URLSearchParams({ tab: 'tests', reproduce: caseId, ...(latest ? { version: String(latest) } : {}), ...(recorded ? { reference: String(recorded) } : {}) });
-    return <Stack spacing={1}>
-      {unrecorded && <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert>}
-      <Button variant="outlined" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>
-    </Stack>;
+    return {
+      notice: unrecorded ? <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert> : null,
+      action: <Button variant="contained" color="primary" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>,
+    };
   };
-  return <ContextCaptureDialog open onClose={onClose} scopeKey={`${access.identity}:${contextId}`}
+  // Provenance in words: which context and version the trace recorded. Identifiers stay in details.
+  const describeSource = (reviewed) => {
+    const recorded = versions.data?.results.find((version) => version.id === reviewed.recordedContext?.versionId)?.number;
+    const name = detail.data?.context?.name;
+    if (!reviewed.recordedContext) return `From a trace with no recorded ${name || 'context'} version`;
+    return `From a recorded trace · ${name ? `${name} ` : ''}${recorded ? `v${recorded}` : 'recorded version'}`;
+  };
+  return <ContextCaptureDialog open describeSource={describeSource} onClose={onClose} scopeKey={`${access.identity}:${contextId}`}
     state={source.isLoading || suite.isLoading ? 'loading' : source.data && suite.data ? 'ready' : 'unavailable'}
     source={source.data} suiteRevision={suite.data?.revision} canCapture={canCapture}
     applicationBehavior={skills.length ? { skills } : undefined} renderSaved={renderSaved} onChangeContext={onChangeContext}

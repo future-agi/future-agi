@@ -25,7 +25,8 @@ export default function PeoplePicker({ people = [], value, onChange, label, load
       error={Boolean(error)}
       SelectProps={{ displayEmpty: true, SelectDisplayProps: { 'aria-labelledby': `${id}-label` }, renderValue: (chosen) => loading ? 'Loading people…' : selected?.name || (chosen ? 'Reviewer no longer available' : 'Choose an authorized reviewer') }}
       InputLabelProps={{ shrink: true }}
-      FormHelperTextProps={{ sx: { typography: 's3' } }}
+      // A load error is reported once, below; the guidance under the field stays neutral.
+      FormHelperTextProps={{ error: false, sx: { typography: 's3', color: 'text.secondary' } }}
       helperText={selected?.email || helperText}
     >
       <MenuItem value="">Choose an authorized reviewer</MenuItem>
