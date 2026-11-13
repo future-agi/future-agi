@@ -7,7 +7,7 @@ import openjpegFallbackUrl from "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url
 import { safePdfDocumentOptions } from "../pdf-document-options.mjs";
 
 const { viewer, worker, preview, page } = vi.hoisted(() => ({
-  viewer: { props: null },
+  viewer: { props: null, onItemClick: null },
   worker: {},
   preview: { url: "blob:https://example.invalid/owned-document" },
   page: { props: null },
@@ -17,6 +17,8 @@ vi.mock("react-pdf", async () => {
   const { default: PropTypes } = await import("prop-types");
   const Document = (props) => {
     viewer.props = props;
+    // react-pdf's link service keeps the onItemClick of the first render.
+    viewer.onItemClick ??= props.onItemClick;
     return <div data-testid="pdf-rendered">PDF preview{props.children}</div>;
   };
   Document.propTypes = { children: PropTypes.node };
@@ -60,6 +62,7 @@ beforeEach(() => {
   preview.open = true;
   preview.type = "pdf";
   viewer.props = null;
+  viewer.onItemClick = null;
   page.props = null;
   vi.stubGlobal(
     "ResizeObserver",
@@ -131,19 +134,13 @@ describe("PDF preview rendering", () => {
     render(<PdfPreviewDrawer />);
     act(() => viewer.props.onLoadSuccess({ numPages: 3 }));
     expect(page.props.renderAnnotationLayer).toBe(true);
-    act(() =>
-      viewer.props.onItemClick({ dest: [], pageIndex: 2, pageNumber: 3 }),
-    );
+    act(() => viewer.onItemClick({ dest: [], pageIndex: 2, pageNumber: 3 }));
     expect(screen.getByText("Page 3 of 3")).toBeVisible();
     expect(page.props.pageNumber).toBe(3);
     // A destination outside the document keeps the current page.
-    act(() =>
-      viewer.props.onItemClick({ dest: [], pageIndex: 8, pageNumber: 9 }),
-    );
+    act(() => viewer.onItemClick({ dest: [], pageIndex: 8, pageNumber: 9 }));
     expect(page.props.pageNumber).toBe(3);
-    act(() =>
-      viewer.props.onItemClick({ dest: [], pageIndex: 0, pageNumber: 1 }),
-    );
+    act(() => viewer.onItemClick({ dest: [], pageIndex: 0, pageNumber: 1 }));
     expect(screen.getByText("Page 1 of 3")).toBeVisible();
   });
 
