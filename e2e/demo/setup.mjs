@@ -87,6 +87,8 @@ async function main() {
   const run = Date.now().toString(36);
   const owner = await signup(`priya.shah@${domain}`, 'Priya Shah', `Demo-${randomUUID().slice(0, 12)}!`);
   log('owner', owner.userId, owner.organizationId, owner.workspaceId);
+  // The story's workspace is named after the company, not "Default Workspace".
+  await must(owner, 'PUT', `/accounts/workspaces/${owner.workspaceId}/`, { display_name: 'Acme Support', name: 'Acme Support' });
   const author = await invite(owner, `maya.chen@${domain}`, 8);
   await must(author, 'POST', '/accounts/update-user-full-name/', { name: 'Maya Chen' });
   log('author', author.userId);
@@ -127,7 +129,8 @@ async function main() {
 
   // Reviewed application cases for the support context.
   const cases = [
-    testCase('Damaged mug refund', REQUESTS.refund, { age_days: 10, amount: 25, disputed: false }, skills['refund-policy'].id, 'issue_refund', 'receipt'),
+    // The answer check names the refund amount, the same check as the whole-context test: v1's answer misses it.
+    testCase('Damaged mug refund', REQUESTS.refund, { age_days: 10, amount: 25, disputed: false }, skills['refund-policy'].id, 'issue_refund', '$25'),
     testCase('Unrecognised card charge', REQUESTS.chargeback, { age_days: 10, amount: 25, disputed: true }, skills['chargeback-handling'].id, 'open_chargeback', 'chargeback'),
     testCase('Late package', REQUESTS.shipping, { age_days: 5, amount: 25, disputed: false }, skills['shipping-delays'].id, 'track_shipment', 'package'),
   ];
