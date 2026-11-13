@@ -36,7 +36,7 @@ const CallLogMessages = ({ data }) => {
               sx={{
                 backgroundColor: "background.paper",
                 borderRadius: "4px",
-                fontSize: "13px",
+                fontSize: "12px",
                 whiteSpace: "pre-wrap",
                 maxHeight: "72vh",
                 overflow: "auto",

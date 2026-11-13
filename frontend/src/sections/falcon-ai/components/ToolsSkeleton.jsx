@@ -18,7 +18,7 @@ import Typography from "@mui/material/Typography";
  */
 export default function ToolsSkeleton({
   title = "Tool permissions",
-  subtitle = "Choose when Falcon is allowed to use these tools.",
+  subtitle = "Choose when Chat is allowed to use these tools.",
   groupHeader = true,
   trailing = "icon",
   rows = 3,

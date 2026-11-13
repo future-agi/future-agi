@@ -246,7 +246,7 @@ function ConsistencyRow({ line, color, showSwatch, onSelect }) {
         >
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+            sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
           >
             {showSwatch && (
               <Swatch
@@ -426,7 +426,7 @@ export default function AskPatterns({
   let body;
   if (tooFew)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
         {running
           ? `Patterns appear once ${MIN_ANSWERED} rows are answered (${formatCount(result.answered)} so far).`
           : `Too few answers to compare groups (${formatCount(result.answered)}).`}
@@ -434,7 +434,7 @@ export default function AskPatterns({
     );
   else if (!patterns.length)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
         {consistency.length ? "Nothing else stands out" : "Nothing stands out"}
         {running ? " yet" : ""}: no day, time, user, model, turn count, error or
         other answer has a clearly different share of{" "}

@@ -57,7 +57,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const headerTitle =
     currentConv?.title && currentConv.title !== "New conversation"
       ? currentConv.title
-      : "Falcon AI";
+      : "Chat";
   const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
   const skillsMenuTrigger = useFalconStore((s) => s.skillsMenuTrigger);
 
@@ -181,7 +181,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             variant="subtitle1"
             sx={{
               fontWeight: 600,
-              fontSize: 13,
+              fontSize: 12,
               color: "text.primary",
               letterSpacing: "-0.01em",
             }}
@@ -278,8 +278,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               maxHeight: 400,
               mt: 0.5,
               borderRadius: "12px",
-              border: 1,
-              borderColor: "divider",
             },
           },
         }}
@@ -301,7 +299,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
 
         {(!skills || skills.length === 0) && (
           <Box sx={{ px: 2, py: 1.5 }}>
-            <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               No skills configured yet
             </Typography>
           </Box>
@@ -323,7 +321,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             <ListItemText
               primary={skill.name}
               secondary={skill.description || null}
-              primaryTypographyProps={{ fontSize: 13 }}
+              primaryTypographyProps={{ fontSize: 12 }}
               secondaryTypographyProps={{ fontSize: 12, noWrap: true }}
             />
           </MenuItem>
@@ -351,7 +349,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
           <ListItemText
             primary="Create Skill"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               color: "text.secondary",
             }}
           />
@@ -372,8 +370,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               maxHeight: 420,
               mt: 0.5,
               borderRadius: "12px",
-              border: 1,
-              borderColor: "divider",
               display: "flex",
               flexDirection: "column",
             },
@@ -402,7 +398,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             }}
             sx={{
               "& .MuiInputBase-root": {
-                fontSize: 13,
+                fontSize: 12,
                 height: 34,
                 borderRadius: "8px",
               },
@@ -448,7 +444,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 primary={conv.title || "Untitled"}
                 primaryTypographyProps={{
                   noWrap: true,
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: conv.id === currentConversationId ? 500 : 400,
                 }}
               />

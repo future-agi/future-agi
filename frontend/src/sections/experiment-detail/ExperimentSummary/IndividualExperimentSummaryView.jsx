@@ -1,4 +1,4 @@
-import { Box, LinearProgress } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useMemo } from "react";
 import ExperimentSummaryTable from "./ExperimentSummaryTable";
 import ExperimentEvaluationChart from "./ExperimentEvaluationChart";
@@ -8,6 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { ExperimentSummaryStaticColumnDefs } from "./tableConfig";
 import ExperimentEvalCellRenderer from "./CustomRenderers/ExperimentEvalCellRenderer";
 import RankWithIndexRenderer from "./CustomRenderers/RankWithIndexRenderer";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const IndividualExperimentSummaryView = () => {
   const { individualExperimentId } = useParams();
@@ -74,7 +75,7 @@ const IndividualExperimentSummaryView = () => {
   }, [data]);
 
   if (isMetadataLoading || isSummaryLoading) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (
