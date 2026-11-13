@@ -516,8 +516,8 @@ documented vendor speech route.
 Supported text units are checked synchronously before any held frame is released.
 Pre-stage checks see the text as a request message; post-stage checks see it once,
 as the response, with the model on the request. Checks that read only request
-messages (topic restriction, prompt injection, language detection and system prompt
-protection) see post-stage text as a request message.
+messages (topic restriction, instruction-override detection, language detection and
+system prompt protection) see post-stage text as a request message.
 Execution failure is separate from the score: a checker HTTP error, malformed or
 missing verdict, incomplete evaluation results or invalid score cannot approve
 speech, even with a threshold of 1. A genuine scored decision still follows the
