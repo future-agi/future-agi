@@ -3814,12 +3814,19 @@ class DownloadExperimentsView(APIView):
     def get(self, request, experiment_id, *args, **kwargs):
         try:
             # Get dataset and verify it exists
-            experiment = ExperimentsTable.objects.prefetch_related(
-                "experiments_datasets",
-                "experiments_datasets__columns",
-                "experiments_datasets__columns__cell_set",
-                "user_eval_template_ids",
-            ).get(id=experiment_id)
+            experiment = (
+                _scoped_experiment_queryset(request)
+                .prefetch_related(
+                    "experiments_datasets",
+                    "experiments_datasets__columns",
+                    "experiments_datasets__columns__cell_set",
+                    "user_eval_template_ids",
+                )
+                .filter(id=experiment_id)
+                .first()
+            )
+            if experiment is None:
+                return self._gm.not_found("Experiment not found")
 
             # Get all columns in the correct order
             # Allowed column source types to display from the dataset.
