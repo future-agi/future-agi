@@ -2666,7 +2666,7 @@
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:43`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
 
 **Tags:** —
 
@@ -2716,7 +2716,7 @@
 
 **Goal:** A person finds two imports they never drafted under Draft imports on an environment's Scenarios tab, resumes one, and discards the other
 
-**Spec:** `flows/simulate/evidence-import-resume.spec.ts:31`
+**Spec:** `flows/simulate/evidence-import-resume.spec.ts:32`
 
 **Tags:** —
 
