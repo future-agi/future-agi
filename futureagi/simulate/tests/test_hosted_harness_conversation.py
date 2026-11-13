@@ -483,6 +483,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     conversation = job.conversation
     uploads = {}
     commands = []
+    exports = []
     preparation_commands = []
     process_checks = []
 
@@ -506,6 +507,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
         def execute_session_command(self, name, request):
             assert name == "alk-chat"
             commands.append(request.command)
+            exports.append(request.env)
             return SimpleNamespace(cmd_id="chat-command")
 
         def get_session_command(self, name, command_id, request_timeout):
@@ -589,6 +591,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     assert lease.control_only is True
     assert gateway.client.created == 1
     assert "fi.alk.harness.hosted_chat_entrypoint" in commands[0]
+    assert exports[0]["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
     assert "tar -xzf /work/source.tar.gz -C /work" in preparation_commands[0]
     assert (
         "tar -xzf /work/conversation.tar.gz -C /work/authoring"

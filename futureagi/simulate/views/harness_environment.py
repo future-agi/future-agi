@@ -1,10 +1,12 @@
 from uuid import UUID
 
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -18,6 +20,12 @@ from simulate.selectors.held_back import (
 )
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
+    HarnessActorDeleteQuerySerializer,
+    HarnessActorLimitsWriteSerializer,
+    HarnessActorListSerializer,
+    HarnessActorViewQuerySerializer,
+    HarnessActorViewSerializer,
+    HarnessActorWriteSerializer,
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCompareQuerySerializer,
@@ -411,6 +419,189 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if run is None:
             raise NotFound("Verify not found")
         return Response(verify_result(run))
+
+    @validated_request(
+        responses={200: HarnessActorListSerializer},
+        operation_id="simulate_api_harness-environments_actors",
+    )
+    @action(detail=True, methods=["get"], url_path="actors")
+    def actors(self, request, pk=None):
+        """The environment's cast as the next run would use it: the draft's when there is one."""
+        from simulate.services.harness_actors import read_actors
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(read_actors(job))
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_create_actor",
+    )
+    @actors.mapping.post
+    def create_actor(self, request, pk=None):
+        """Add one actor to the environment's draft; the saved version is unchanged until the draft is saved."""
+        return self._actor_edit(request, pk, op="create")
+
+    @validated_request(
+        query_serializer=HarnessActorViewQuerySerializer,
+        responses={200: HarnessActorViewSerializer},
+        operation_id="simulate_api_harness-environments_actor_view",
+    )
+    @action(detail=True, methods=["get"], url_path=r"actors/(?P<actor_id>[^/]{1,64})")
+    def actor_detail(self, request, pk=None, actor_id=None):
+        """What one actor sees and may do, optionally in one scenario, and what it never sees."""
+        from simulate.services.harness_actors import actor_view
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            actor_view(
+                job,
+                actor_id,
+                scenario_key=request.validated_query_data.get("scenario_key"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["PUT"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_replace_actor",
+    )
+    @actor_detail.mapping.put
+    def replace_actor(self, request, pk=None, actor_id=None):
+        """Replace one actor in the draft; its id never changes."""
+        return self._actor_edit(request, pk, op="replace", actor_id=actor_id)
+
+    @validated_request(
+        query_serializer=HarnessActorDeleteQuerySerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["DELETE"],
+        operation_id="simulate_api_harness-environments_delete_actor",
+    )
+    @actor_detail.mapping.delete
+    def delete_actor(self, request, pk=None, actor_id=None):
+        """Take one actor out of the draft; refused while a scenario includes it."""
+        return self._actor_edit(request, pk, op="delete", actor_id=actor_id)
+
+    @validated_request(
+        request_serializer=HarnessActorLimitsWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["PUT"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_actor_limits",
+    )
+    @action(detail=True, methods=["put"], url_path="actor-limits")
+    def actor_limits(self, request, pk=None):
+        """Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model."""
+        from simulate.services.harness_actors import write_actor_limits
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            write_actor_limits(
+                job,
+                limits=request.validated_data.get("limits") or {},
+                user=request.user,
+                expected_revision=request.validated_data.get("expected_revision"),
+            )
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="files",
+        parser_classes=[MultiPartParser],
+    )
+    @swagger_auto_schema(
+        operation_id="simulate_api_harness-environments_upload_file",
+        manual_parameters=[
+            openapi.Parameter(
+                "file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True
+            ),
+            openapi.Parameter(
+                "kind",
+                openapi.IN_FORM,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="What the file is for: `knowledge`, a document an actor may be given to read.",
+            ),
+            openapi.Parameter(
+                "expected_revision",
+                openapi.IN_FORM,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+        ],
+        responses={200: HarnessActorListSerializer},
+    )
+    def upload_file(self, request, pk=None):
+        """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
+        it, for picking per actor."""
+        from simulate.services.harness_actors import (
+            UPLOAD_MAX_BYTES,
+            upload_environment_file,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise HostedHarnessError(
+                "upload_invalid", "choose a file to upload", status_code=400
+            )
+        revision = request.data.get("expected_revision")
+        try:
+            expected = int(revision) if revision not in (None, "") else None
+        except (TypeError, ValueError):
+            raise HostedHarnessError(
+                "upload_invalid", "expected_revision is a number", status_code=400
+            ) from None
+        return Response(
+            upload_environment_file(
+                job,
+                kind=str(request.data.get("kind") or ""),
+                name=str(upload.name or ""),
+                # Read one byte past the bound, so a larger file is refused without reading all of it.
+                content=upload.read(UPLOAD_MAX_BYTES + 1),
+                user=request.user,
+                expected_revision=expected,
+            )
+        )
+
+    def _actor_edit(self, request, pk, *, op, actor_id=None):
+        from simulate.services.harness_actors import write_actor_edit
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = (
+            request.validated_query_data if op == "delete" else request.validated_data
+        )
+        return Response(
+            write_actor_edit(
+                job,
+                op=op,
+                actor_id=actor_id,
+                body=data.get("actor"),
+                user=request.user,
+                expected_revision=data.get("expected_revision"),
+                share_actions=data.get("share_actions"),
+            )
+        )
 
     @validated_request(responses={200: HarnessDraftsSerializer})
     @action(detail=True, methods=["get"], url_path="drafts")

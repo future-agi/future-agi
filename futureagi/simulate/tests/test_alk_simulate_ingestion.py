@@ -1351,6 +1351,55 @@ class TestResultIngest:
         }
         assert localizer_call["eval_explanation"] == "matched the required response"
 
+    def test_not_applicable_and_inconclusive_results_are_stored_as_neither_pass_nor_fail(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        evaluations = [
+            {
+                "name": name,
+                "kind": "checkpoint",
+                "passed": passed,
+                "result": result,
+                "reason": reason,
+            }
+            for name, passed, result, reason in (
+                ("done", True, "pass", "done"),
+                (
+                    "noticed",
+                    None,
+                    "not_applicable",
+                    "Not applicable: the caller never asked to cancel.",
+                ),
+                (
+                    "heard",
+                    None,
+                    "inconclusive",
+                    "Inconclusive: the deciding moment cannot be heard.",
+                ),
+            )
+        ]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {"harness_evaluations": evaluations},
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs
+        stored = sorted(
+            (one["name"], one["output"], one.get("result")) for one in outputs.values()
+        )
+        assert stored == [
+            ("done", "Passed", "pass"),
+            ("heard", "Inconclusive", "inconclusive"),
+            ("noticed", "Not applicable", "not_applicable"),
+        ]
+
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
         call_id = call_ids[0]
@@ -1555,6 +1604,46 @@ class TestResultIngest:
         resolver_log.error.assert_not_called()
         # Outbound: the tested agent speaks as "assistant", the simulator as "user".
         assert [row["speaker_role"] for row in rows] == ["user", "assistant", "user"]
+
+    def test_an_actor_turn_in_a_result_keeps_who_spoke_it(self, auth_client, run_test):
+        from simulate.models import CallTranscriptActor
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call_id = call_ids[0]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": [
+                    *_transcript_payload()[:2],
+                    {
+                        "speaker_role": "actor",
+                        "speaker_name": "Rowan",
+                        "content": "Add a stop.",
+                        "start_time_ms": 11500,
+                        "end_time_ms": 11900,
+                    },
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_id)
+        assert list(
+            CallTranscriptActor.objects.filter(
+                transcript__call_execution=call
+            ).values_list("speaker_name", flat=True)
+        ) == ["Rowan"]
+        rows = CallExecutionDetailSerializer(
+            context={"detail_mode": True}
+        ).get_transcript(call)
+        assert [(row["speaker_role"], row["speaker_name"]) for row in rows][-1] == (
+            "actor",
+            "Rowan",
+        )
 
     def test_retell_inbound_result_swaps_speaker_roles(self, auth_client, run_test):
         """Same hosted Retell result, inbound direction: the simulator placed the

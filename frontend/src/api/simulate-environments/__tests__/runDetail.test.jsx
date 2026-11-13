@@ -154,7 +154,7 @@ describe("buildRunStats", () => {
       failed: 1,
       measured: 3,
       unmeasured: 3,
-      passRate: 33,
+      passRate: 67,
     });
   });
 
@@ -368,6 +368,25 @@ describe("mapCallDetail", () => {
     expect(d.stats.words).toBe(11);
   });
 
+  it("reads a chat row whose message is the scenario's own task as the task, not the customer", () => {
+    const d = mapCallDetail({
+      id: "chat-task",
+      simulation_call_type: "text",
+      persona: null,
+      transcript: [
+        {
+          role: "user",
+          content: [{ role: "task", content: "Nightly reconciliation: post deal 9." }],
+        },
+        { role: "assistant", content: [{ role: "assistant", content: "Posted." }] },
+        // An older row with the person's own message reads as before.
+        { role: "user", content: [{ role: "user", content: "Thanks" }] },
+      ],
+    });
+    expect(d.turns.map((t) => t.role)).toEqual(["task", "agent", "customer"]);
+    expect(d.persona).toBeNull();
+  });
+
   it("maps a real voice call-detail payload to the CallDetail view-model", () => {
     const d = mapCallDetail(callDetailPayload());
     expect(d.id).toBe("call-1");
@@ -535,6 +554,98 @@ describe("mapCallDetail", () => {
       },
     );
   });
+
+  it("shows an actor's chat line as theirs, not the customer's, and leaves anyone it can't name as the customer", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: "Please apply 25% to deal 8.",
+          start_time_seconds: 1,
+        },
+        {
+          role: "user",
+          content:
+            "Alex Vance (not the person being served): I approved it in the CRM.",
+          start_time_seconds: 2,
+        },
+        {
+          role: "user",
+          content:
+            "Bob (not the person being served): someone the call never had.",
+          start_time_seconds: 3,
+        },
+      ],
+      call_actors: [
+        {
+          id: "alex_vance",
+          name: "Alex Vance",
+          role: "Sales Manager",
+          channel: "chat_message",
+        },
+      ],
+      recordings: {},
+    });
+    expect(
+      d.turns.map((t) => [
+        t.role,
+        t.speakerName,
+        t.actorId,
+        t.actorRole,
+        t.text,
+      ]),
+    ).toEqual([
+      ["customer", "", "", "", "Please apply 25% to deal 8."],
+      [
+        "actor",
+        "Alex Vance",
+        "alex_vance",
+        "Sales Manager",
+        "I approved it in the CRM.",
+      ],
+      [
+        "customer",
+        "",
+        "",
+        "",
+        "Bob (not the person being served): someone the call never had.",
+      ],
+    ]);
+  });
+
+  it("names an actor's chat line from its world actions when the call keeps no actor list", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat-2",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: "Jordan Taylor (not the person being served): Thanks!",
+          start_time_seconds: 5,
+        },
+      ],
+      function_calls: [
+        {
+          name: "apply_discount",
+          actor_id: "jordan_taylor",
+          actor_name: "Jordan Taylor",
+          actor_role: "Sales Coworker",
+          outcome: "refused",
+          start_time_seconds: 1,
+        },
+      ],
+      recordings: {},
+    });
+    const line = d.turns.find((t) => t.text === "Thanks!");
+    expect(line).toMatchObject({
+      role: "actor",
+      speakerName: "Jordan Taylor",
+      actorId: "jordan_taylor",
+      actorRole: "Sales Coworker",
+    });
+  });
 });
 
 describe("callTranscript", () => {
@@ -637,6 +748,83 @@ describe("callTranscript", () => {
       }).every((row) => row.start_time_seconds === null),
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
+  });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          refused: true,
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "faulted",
+          refused: false,
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "refused",
+          refused: true,
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        { name: "approve", actor_id: "manager" },
+        { name: "approve", actor_id: "manager", outcome: "duplicate" },
+        // A row logged before the world kept outcomes says only whether it was refused.
+        { name: "approve", actor_id: "manager", refused: true },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "approve",
+      "Duplicate · approve",
+      "Refused · approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+      "",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
   });
 });
 
@@ -1615,5 +1803,80 @@ describe("useCallTraces", () => {
     renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
 
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("actor turns in a call", () => {
+  it("names who spoke on a voice turn", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        { speaker_role: "actor", speaker_name: "Rowan", content: "Two" },
+        { speaker_role: "user", content: "One" },
+      ],
+    });
+    expect(voice.turns.map((t) => [t.role, t.speakerName])).toEqual([
+      ["actor", "Rowan"],
+      ["customer", ""],
+    ]);
+  });
+
+  it("gives each actor's turn their role and how they were heard, and an older call neither", () => {
+    const transcript = [
+      { speaker_role: "actor", speaker_name: "Rowan", content: "Two" },
+      { speaker_role: "actor", speaker_name: "Sam", content: "Me too" },
+      { speaker_role: "user", content: "One" },
+    ];
+    const voice = mapCallDetail({
+      id: "v",
+      transcript,
+      call_actors: [
+        { id: "friend", name: "Rowan", role: "roommate", channel: "audio_mix" },
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["Rowan", "roommate", "audio_mix"],
+      ["Sam", "son", "audio_handoff"],
+      ["", "", ""],
+    ]);
+    const older = mapCallDetail({ id: "v", transcript });
+    expect(older.turns.map((t) => [t.actorRole, t.channel])).toEqual([
+      ["", ""],
+      ["", ""],
+      ["", ""],
+    ]);
+  });
+
+  it("joins each actor's turn by their id, so two with the same name keep their own role", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "actor",
+          actor_id: "uncle",
+          speaker_name: "Sam",
+          content: "a",
+        },
+        {
+          speaker_role: "actor",
+          actor_id: "kid",
+          speaker_name: "Sam",
+          content: "b",
+        },
+      ],
+      call_actors: [
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+        { id: "uncle", name: "Sam", role: "uncle", channel: "audio_mix" },
+      ],
+    });
+    expect(voice.turns.map((t) => [t.actorId, t.actorRole, t.channel])).toEqual(
+      [
+        ["uncle", "uncle", "audio_mix"],
+        ["kid", "son", "audio_handoff"],
+      ],
+    );
   });
 });

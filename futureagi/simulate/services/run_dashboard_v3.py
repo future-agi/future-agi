@@ -45,6 +45,7 @@ GOAL_OUTCOMES = (
     "error",
     "escalated",
     "inconclusive",
+    "no_score",
 )
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
@@ -167,8 +168,9 @@ def _breakdown(
         segments = [
             by_label.get(value, {"label": value, "count": 0, "share": 0})
             for value in order
+            if value != "no_score" or value in by_label
         ]
-    if key == "goal_outcome":
+    if key == "goal_outcome" and order:
         for segment in segments:
             if segment["label"] in order:
                 segment["statuses"] = [segment["label"]]
@@ -387,41 +389,45 @@ def build_run_dashboard(
     comparison: dict | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
-    queryset = annotate_goal_outcome(queryset).annotate(
-        # Provider-reported only: the platform does not compute sentiment (v1 D1).
-        dashboard_sentiment=Lower(
-            Coalesce(
-                _json_text("analysis_data", "user_sentiment"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "user_sentiment",
-                ),
-            )
-        ),
-        dashboard_success_raw=Lower(
-            Coalesce(
-                _json_text("analysis_data", "call_successful"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "call_successful",
-                ),
-                _json_text("analysis_data", "successEvaluation"),
-            )
-        ),
-    ).annotate(
-        dashboard_provider_success=Case(
-            When(
-                dashboard_success_raw__in=["true", "false"],
-                then=F("dashboard_success_raw"),
+    queryset = (
+        annotate_goal_outcome(queryset)
+        .annotate(
+            # Provider-reported only: the platform does not compute sentiment (v1 D1).
+            dashboard_sentiment=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "user_sentiment"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "user_sentiment",
+                    ),
+                )
             ),
-            default=None,
-            output_field=TextField(),
-        ),
-        dashboard_csat=F("result_csat"),
+            dashboard_success_raw=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "call_successful"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "call_successful",
+                    ),
+                    _json_text("analysis_data", "successEvaluation"),
+                )
+            ),
+        )
+        .annotate(
+            dashboard_provider_success=Case(
+                When(
+                    dashboard_success_raw__in=["true", "false"],
+                    then=F("dashboard_success_raw"),
+                ),
+                default=None,
+                output_field=TextField(),
+            ),
+            dashboard_csat=F("result_csat"),
+        )
     )
     voice = queryset.filter(simulation_call_type="voice")
     # A run is one modality in practice; a mixed run counts as voice.
@@ -495,7 +501,12 @@ def build_run_dashboard(
         summary["measured"],
         # pass^1's range belongs to the run header: this rate pools trials, so
         # the range need not bracket it.
-        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
+        + (
+            f" {outcomes['no_score']} with no score are excluded too."
+            if outcomes["no_score"]
+            else ""
+        ),
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
@@ -722,6 +733,7 @@ def build_run_dashboard(
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
                 "inconclusive": row["outcomes"]["inconclusive"],
+                "no_score": row["outcomes"]["no_score"],
             }
             for row in risk[:7]
         ],

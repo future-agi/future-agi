@@ -1903,6 +1903,10 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
@@ -3272,7 +3276,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"ALK_HARNESS_MODEL": "gemini-3.7-flash"},
     )
     barrier = Barrier(2)
 
@@ -3296,6 +3300,10 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     assert client.deleted is False
 
 

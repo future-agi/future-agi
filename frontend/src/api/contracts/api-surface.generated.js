@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1139,
+  endpointCount: 1143,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -872,6 +872,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+      "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+      "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+        "delete",
+        "get",
+        "put",
+      ],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -883,6 +890,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/files/": ["post"],
       "/simulate/api/harness-environments/{id}/nudges/": ["get"],
       "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
         "post",
@@ -2247,6 +2255,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+  "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+    "delete",
+    "get",
+    "put",
+  ],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -2258,6 +2273,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/files/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/": ["get"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],

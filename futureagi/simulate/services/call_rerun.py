@@ -1,13 +1,30 @@
+from django.db.models import F, Value
+from django.db.models.functions import Coalesce
+
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 
 
-def clear_call_for_rerun(
-    call_execution: CallExecution, *, keep_metadata_keys: tuple[str, ...] = ()
-) -> None:
-    """Snapshot a call's result, then reset the row so a rerun can fill it again."""
+def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
+    """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn."""
+    return [
+        dict(row)
+        for row in call_execution.transcripts.values(
+            "speaker_role",
+            "content",
+            "start_time_ms",
+            "end_time_ms",
+            "confidence_score",
+            speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
+            actor_id=F("actor_turn__actor_id"),
+        )
+    ]
 
-    CallExecutionSnapshot.objects.create(
+
+def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
+    """The call's whole result as a call-and-eval rerun keeps it, with who spoke each turn. Not saved: single reruns
+    save it, bulk reruns create many at once."""
+    return CallExecutionSnapshot(
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         service_provider_call_id=call_execution.service_provider_call_id,
@@ -49,65 +66,42 @@ def clear_call_for_rerun(
         ai_interruption_rate=call_execution.ai_interruption_rate,
         avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
         conversation_metrics_data=call_execution.conversation_metrics_data,
-        transcripts=list(
-            call_execution.transcripts.values(
-                "speaker_role",
-                "content",
-                "start_time_ms",
-                "end_time_ms",
-                "confidence_score",
-            )
-        ),
+        transcripts=transcript_snapshot(call_execution),
     )
 
-    call_execution.transcripts.all().delete()
 
-    call_execution.service_provider_call_id = None
-    call_execution.monitor_call_data = None
-    call_execution.status = CallExecution.CallStatus.PENDING
-    call_execution.started_at = None
-    call_execution.completed_at = None
-    call_execution.ended_at = None
-    call_execution.duration_seconds = None
-    call_execution.recording_url = None
-    call_execution.stereo_recording_url = None
-    call_execution.cost_cents = None
-    call_execution.stt_cost_cents = None
-    call_execution.llm_cost_cents = None
-    call_execution.tts_cost_cents = None
-    call_execution.vapi_cost_cents = None
-    call_execution.call_summary = None
-    call_execution.ended_reason = None
-    call_execution.overall_score = None
-    call_execution.response_time_ms = None
-    call_execution.assistant_id = None
-    call_execution.customer_number = None
-    call_execution.call_type = None
-    call_execution.analysis_data = None
-    call_execution.evaluation_data = None
-    call_execution.message_count = None
-    call_execution.transcript_available = False
-    call_execution.recording_available = False
-    call_execution.eval_outputs = {}
-    call_execution.tool_outputs = {}
-    call_execution.provider_call_data = {}
-    call_execution.avg_agent_latency_ms = None
-    call_execution.user_interruption_count = None
-    call_execution.user_interruption_rate = None
-    call_execution.user_wpm = None
-    call_execution.bot_wpm = None
-    call_execution.talk_ratio = None
-    call_execution.ai_interruption_count = None
-    call_execution.ai_interruption_rate = None
-    call_execution.avg_stop_time_after_interruption_ms = None
-    call_execution.conversation_metrics_data = None
-    # The results grid resolves a call's Scenario Information cells via row_id, so
-    # it always survives. Everything else (the ALK alk_batch_claimed claim, eval
-    # flags) is dropped so the rerun's result is ingested like a first one; callers
-    # name any further identity keys the rerun still needs.
-    metadata = call_execution.call_metadata or {}
-    kept = {key: metadata[key] for key in keep_metadata_keys if key in metadata}
-    if metadata.get("row_id"):
-        kept["row_id"] = metadata["row_id"]
-    call_execution.call_metadata = kept
+def eval_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
+    """The call's evaluation results as an eval-only rerun keeps them. Not saved."""
+    return CallExecutionSnapshot(
+        call_execution=call_execution,
+        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+        eval_outputs=call_execution.eval_outputs,
+        provider_call_data=call_execution.provider_call_data,
+        overall_score=call_execution.overall_score,
+        tool_outputs=call_execution.tool_outputs,
+    )
+
+
+def clear_call_for_rerun(
+    call_execution: CallExecution,
+    *,
+    keep_metadata_keys: tuple[str, ...] = (),
+    clear_metadata: bool = True,
+) -> None:
+    """Snapshot a call's result, then reset the row so a rerun can fill it again. Deleting the transcripts removes
+    their actor rows with them (cascade).
+
+    ``clear_metadata``: a hosted rerun drops ``call_metadata`` (the harness batch claim, eval flags) so its rerun is
+    ingested like a first one, keeping ``row_id`` and any ``keep_metadata_keys``. A native rerun keeps it, apart from
+    the eval flags ``reset_to_default`` clears."""
+    call_snapshot(call_execution).save()
+    call_execution.transcripts.all().delete()
+    call_execution.reset_to_default(save=False)
+    if clear_metadata:
+        # The results grid resolves a call's Scenario Information cells via row_id, so it always survives.
+        metadata = call_execution.call_metadata or {}
+        kept = {key: metadata[key] for key in keep_metadata_keys if key in metadata}
+        if metadata.get("row_id"):
+            kept["row_id"] = metadata["row_id"]
+        call_execution.call_metadata = kept
     call_execution.save()

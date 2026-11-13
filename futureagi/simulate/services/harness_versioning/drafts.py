@@ -62,6 +62,7 @@ from simulate.services.harness_versioning.versions import (
     retired_keys,
     set_defaults,
     suite_change,
+    suite_documents,
     taken_keys,
     versioning_enabled,
 )
@@ -325,23 +326,27 @@ def _side(files: Mapping[str, bytes], piece: str) -> dict[str, bytes]:
 
 
 def _piece_files(environment: HostedHarnessJob, piece: str, version: Any):
-    """A version's files; a backfilled version whose archive is gone reads the default
-    pair's side instead."""
+    """A version's files; an environment with no version yet, or a backfilled version whose
+    archive is gone, reads the default pair's side instead."""
+    fallback = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_object_key")
+        or ""
+    )
+    if version is None:
+        return (
+            _side(archives.read_archive(archives.get_archive(fallback)), piece)
+            if fallback
+            else {}
+        )
     try:
         return _side(
             archives.read_archive(archives.get_archive(version.archive_object_key)),
             piece,
         )
     except (S3Error, HostedHarnessError):
-        key = str(
-            ((environment.payload or {}).get("metadata") or {}).get(
-                "authoring_object_key"
-            )
-            or ""
-        )
-        if not key:
+        if not fallback:
             raise
-        return _side(archives.read_archive(archives.get_archive(key)), piece)
+        return _side(archives.read_archive(archives.get_archive(fallback)), piece)
 
 
 def _sealed_files(key: str) -> dict[str, bytes] | None:
@@ -618,13 +623,15 @@ def record_draft(
     expected: Mapping[str, DraftRef] | None = None,
     pieces: set[str] | None = None,
     nudge: Any = None,
+    checked: set[str] | None = None,
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 
     Each piece whose content differs from its default becomes, or updates, that
     piece's one draft; one equal to its default discards the draft. ``expected`` is the
     drafts the writer started from: another edit since refuses with ``draft_changed``.
-    ``pieces`` limits the writes and the check (both by default); ``nudge`` tags a draft
+    ``pieces`` limits the writes and the check (both by default); ``checked`` widens the check
+    to a piece the write was validated against but does not write; ``nudge`` tags a draft
     this call creates. ``None`` once drafts no longer apply: the caller saves as before.
     """
     from simulate.services.hosted_harness_conversation import (
@@ -632,8 +639,12 @@ def record_draft(
     )
 
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
+    checked = wanted | set(checked or ())
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
+    from simulate.services.harness_actors import require_valid_faults
+
+    require_valid_faults(prepared.scenarios)
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,
@@ -692,7 +703,7 @@ def record_draft(
         if expected is not None:
             current = draft_refs(locked)
             for piece in DRAFT_PIECES:
-                if piece in wanted and expected.get(piece, NO_DRAFT) != current[piece]:
+                if piece in checked and expected.get(piece, NO_DRAFT) != current[piece]:
                     logger.info(
                         "harness_draft_changed environment=%s piece=%s origin=%s",
                         locked.id,
@@ -793,6 +804,46 @@ def record_draft(
     )
 
 
+def edit_side(
+    environment: HostedHarnessJob, piece: str
+) -> tuple[dict[str, bytes], str]:
+    """One piece's files the next edit builds on (its open draft, else its saved default), with the archive key they
+    were read from ("" when there is none)."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+    key = str(getattr(version, "archive_object_key", "") or "")
+    return _piece_files(head, piece, version), key
+
+
+def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
+    """The files the next edit builds on, per piece: its open draft, else its saved default."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    return {
+        piece: _piece_files(
+            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+        )
+        for piece in DRAFT_PIECES
+    }
+
+
+def actor_ids(environment_files: Mapping[str, bytes]) -> set[str]:
+    """The ids of the environment's actors, from its `actors.json`; none when it has no actors."""
+    raw = environment_files.get("actors.json")
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        return set()
+    return {
+        str(one.get("id"))
+        for one in (body.get("actors") or [])
+        if isinstance(one, dict) and one.get("id")
+    }
+
+
 def write_suite_edit(
     environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
 ) -> DraftWrite | None:
@@ -802,13 +853,35 @@ def write_suite_edit(
         _rewritten_authoring_archive,
     )
 
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    sides = {}
-    for piece in DRAFT_PIECES:
-        version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
-        sides[piece] = _piece_files(head, piece, version)
+    # Both refs before the files: an actor edit landing meanwhile fails this write's check.
+    refs = draft_refs(environment)
+    sides = edit_sides(environment)
+    from simulate.services.harness_scenarios import (
+        actor_reference_problems,
+        with_sessions_to_rewrite,
+    )
+
+    before = {
+        str(doc.get("scenario_key") or doc.get("name") or ""): doc
+        for doc in suite_documents(sides["suite"])
+    }
+    # Only the scenarios this edit changes are held to the actor list: one sealed earlier that names an actor the
+    # list no longer has runs as a recorded scenario problem, and never blocks an edit to another scenario.
+    known = actor_ids(sides["environment"])
+    problems = [
+        one
+        for doc in suite
+        if doc != before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        for one in actor_reference_problems(doc, known)
+    ]
+    if problems:
+        raise HostedHarnessError("actor_unknown", "; ".join(problems), status_code=400)
+    suite = [
+        with_sessions_to_rewrite(
+            doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        )
+        for doc in suite
+    ]
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )
@@ -821,9 +894,25 @@ def write_suite_edit(
     body = archives.pack_archive(
         archives.compose(sides["environment"], archives.read_archive(rewritten))
     )
-    write = record_draft(
-        environment, body, origin="manual", user=user, pieces={"suite"}
-    )
+    try:
+        write = record_draft(
+            environment,
+            body,
+            origin="manual",
+            user=user,
+            pieces={"suite"},
+            expected=refs,
+            # Validated against the actor list: an actor edit landing meanwhile refuses this one.
+            checked=set(DRAFT_PIECES),
+        )
+    except HostedHarnessError as exc:
+        if exc.code != "draft_changed":
+            raise
+        raise HostedHarnessError(
+            "draft_changed",
+            "the environment was edited elsewhere since you read it; read it again",
+            status_code=409,
+        ) from exc
     transaction.on_commit(lambda: retire_chat_runtime(environment))
     return write
 
@@ -1412,7 +1501,11 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
     rules = contract.get("rules") or {}
     sub_goals = diff.get("sub_goals") or {}
     files = diff.get("files") or {}
+    actors = diff.get("actors") or {}
     return {
+        "actors": size(
+            actors.get("added"), actors.get("removed"), actors.get("changed")
+        ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
         "sub_goals": size(

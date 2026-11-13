@@ -16,9 +16,21 @@ import json
 import re
 import uuid
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
-from django.db.models import Count, OuterRef, Prefetch, Q, QuerySet, Subquery
+import structlog
+from django.db.models import (
+    CharField,
+    Count,
+    F,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+)
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentVersion,
@@ -28,7 +40,14 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
+from simulate.services.harness_scenarios import (
+    call_actor_choice_labels,
+    call_actor_entries,
+)
+from simulate.types import ContractCallActor
 from simulate.utils.ended_reason import canonical_ended_reasons
+
+logger = structlog.get_logger(__name__)
 
 # The four states the list's status pill knows. The pipeline reports far finer
 # stages; the raw one travels alongside as ``stage`` so a caller that wants
@@ -201,13 +220,19 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_passed": (
                 outcomes.get("passed", 0) if outcomes is not None else None
             ),
+            # A pass rate is passed over passed plus failed; every other outcome is its own count.
             "outcome_failed": (
-                outcomes.get("failed", 0) + outcomes.get("errored", 0)
-                if outcomes is not None
-                else None
+                outcomes.get("failed", 0) if outcomes is not None else None
+            ),
+            "outcome_errored": (
+                outcomes.get("errored", 0) if outcomes is not None else None
             ),
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
+            ),
+            # Calls that ran with no pass or fail; a pass rate leaves them out.
+            "outcome_no_score": (
+                outcomes.get("no_score", 0) if outcomes is not None else None
             ),
             "started_at": _isoformat(execution.started_at),
             "completed_at": _isoformat(execution.completed_at),
@@ -220,7 +245,8 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
 
     A receipt belongs to a call through its execution, or, for a scenario-level
     receipt, through the scenario registration. Receipts of soft-deleted calls
-    stay in the table and must not be counted.
+    stay in the table and must not be counted. A call's own outcome wins over its receipt's
+    status, so a call with no pass or fail counts as no score, never as passed.
     """
     job_ids = list(job_ids)
     counts: dict[Any, dict[str, int]] = {}
@@ -232,10 +258,19 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
     for row in (
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
-        .values("job_id", "status")
+        .annotate(
+            outcome=Coalesce(
+                KeyTextTransform(
+                    "harness_outcome_status", "execution__call_execution__call_metadata"
+                ),
+                F("status"),
+                output_field=CharField(),
+            )
+        )
+        .values("job_id", "outcome")
         .annotate(count=Count("id"))
     ):
-        counts.setdefault(row["job_id"], {})[row["status"]] = row["count"]
+        counts.setdefault(row["job_id"], {})[row["outcome"]] = row["count"]
     return counts
 
 
@@ -628,6 +663,7 @@ def _scenarios(
                     for name in doc.get("sub_goals") or []
                     if isinstance(name, str)
                 ],
+                "actors": call_actor_entries(doc.get("actors")) or [],
                 "persona": _persona_of(cells),
                 "situation": cells.get("situation") or None,
                 "outcome": cells.get("outcome") or None,
@@ -796,6 +832,9 @@ def _contract_section(
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
+    section["call_actors"] = _call_actor_list(
+        _stage_output(job, "call_actors"), scenario_docs
+    )
     section["end_conditions"] = _end_conditions(job, contract, scenario_docs)
     section["provenance"] = _provenance(job, environment)
     return section
@@ -824,6 +863,53 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
             }
         )
     return goals
+
+
+def call_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
+    """How the scenario filter names each of the environment's actors: every actor in its `actors.json`, world-only
+    ones included, over the speaking actors the actor list stage output kept for environments without one."""
+    from django.core.cache import cache
+
+    from simulate.services.harness_versioning import drafts, hashing
+
+    labels = call_actor_choice_labels(_stage_output(job, "call_actors"))
+    try:
+        files, key = drafts.edit_side(job, "environment")
+    except Exception:  # noqa: BLE001 - the labels are a convenience: storage trouble keeps the list's own names
+        logger.warning("scenario_filter_actor_names_unreadable", job_id=str(job.id))
+        return labels
+    cache_key = f"simulate:actor-names:{key}" if key else None
+    names = cache.get(cache_key) if cache_key else None
+    if names is None:
+        names = hashing.actor_names(files) or {}
+        if cache_key:
+            cache.set(cache_key, names, 3600)
+    labels.update(
+        {
+            actor_id: name
+            for actor_id, name in names.items()
+            if actor_id not in (hashing.ACTOR_LIMITS_KEY, hashing.ACTOR_OTHER_KEY)
+        }
+    )
+    return labels
+
+
+def _call_actor_list(listing: object, scenario_docs: object) -> list[ContractCallActor]:
+    """The environment's actors, each with how many scenarios include it."""
+    included: dict[str, int] = {}
+    for doc in scenario_docs if isinstance(scenario_docs, list) else []:
+        for one in doc.get("actors") or [] if isinstance(doc, dict) else []:
+            if isinstance(one, dict) and one.get("id"):
+                included[str(one["id"])] = included.get(str(one["id"]), 0) + 1
+    entries = listing.get("call_actors") if isinstance(listing, dict) else None
+    return [
+        cast(
+            ContractCallActor,
+            {**entry, "scenarios_count": included.get(str(entry["id"]), 0)},
+        )
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("id")
+    ]
 
 
 def _end_conditions(

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import TraceTable from "../TraceTable";
+import { STATUS_META } from "../../../runs.constants";
 
 const row = (id) => ({
   id,
@@ -314,6 +315,48 @@ describe("TraceTable — sub-goal verdicts", () => {
         expect(within(result).queryByText(verdict)).not.toBeInTheDocument();
       }
     }
+  });
+
+  it("says a check whose evidence never arrived is not measured, and what each check was decided from", () => {
+    render(
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                status: "failed",
+                subGoalResults: [
+                  {
+                    name: "Refund row",
+                    passed: false,
+                    evidence: ["world_state", "tool_calls"],
+                  },
+                  {
+                    name: "Polite",
+                    passed: null,
+                    result: "unmeasured",
+                    evidence: ["transcript"],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const details = within(activeRow())
+      .getAllByText("Scenario a1")[0]
+      .closest("td");
+    expect(within(details).getByText("Not measured")).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the world, the agent's calls"),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the transcript"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -831,5 +874,97 @@ describe("TraceTable — persona cell", () => {
     );
     expect(screen.getByText("Indian male")).toBeInTheDocument();
     expect(screen.getByText("Anxious")).toBeInTheDocument();
+  });
+});
+
+describe("TraceTable skipped scenarios", () => {
+  it("shows why a scenario was skipped beside its outcome", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("off"),
+            status: "error",
+            durationMs: null,
+            outcomeReason: "actors are switched off",
+            subGoalResults: [{ name: "noticed", passed: null }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("actors are switched off")).toBeInTheDocument();
+    expect(screen.getByText("noticed")).toBeInTheDocument();
+  });
+});
+
+describe("TraceTable calls with no pass or fail", () => {
+  it("reads No score with what it has instead", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("ns"),
+            status: "no_score",
+            subGoalResults: [
+              { name: "noticed", passed: null, result: "not_applicable" },
+              { name: "checked", passed: null, result: "not_applicable" },
+              { name: "asked", passed: null, result: "inconclusive" },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("No score")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 not applicable, 1 inconclusive"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads Inconclusive with why the call was not scored", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("in"),
+            status: "unmeasured",
+            outcomeReason: "The deciding moment cannot be heard.",
+            subGoalResults: [{ name: "booked", passed: true }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("Inconclusive")).toBeInTheDocument();
+    expect(
+      screen.getByText("The deciding moment cannot be heard."),
+    ).toBeInTheDocument();
+  });
+
+  it("says a sub-goal did not apply, and why, apart from an inconclusive one", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("na"),
+            status: "no_score",
+            subGoalResults: [
+              {
+                name: "noticed",
+                passed: null,
+                result: "not_applicable",
+                reason: "The roommate never spoke",
+              },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    const verdict = within(screen.getByText("noticed").parentElement).getByText(
+      STATUS_META.not_applicable.label,
+    );
+    expect(verdict).toHaveAccessibleName("The roommate never spoke");
   });
 });

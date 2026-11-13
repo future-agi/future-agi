@@ -189,6 +189,7 @@ const VoiceLeftPanel = ({
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
                     <TranscriptView
                       transcript={filteredTranscript}
+                      customerName={data?.persona}
                       embedded={embedded}
                     />
                   </Box>

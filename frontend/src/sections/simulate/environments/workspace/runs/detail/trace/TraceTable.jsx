@@ -46,6 +46,7 @@ import {
   UnscoredEval,
 } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
+import { STATUS_META } from "../../runs.constants";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
@@ -112,6 +113,31 @@ const clampSx = {
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
   wordBreak: "break-word",
+};
+
+// What a check was decided from, in plain words: "from the world and the transcript".
+const EVIDENCE_WORDS = {
+  world_state: "the world",
+  tool_calls: "the agent's calls",
+  transcript: "the transcript",
+  recording: "the recording",
+};
+const evidenceLabel = (evidence) =>
+  `from ${evidence.map((one) => EVIDENCE_WORDS[one] || one).join(", ")}`;
+
+// A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
+const unscoredSummary = (t) => {
+  if (t.status !== "no_score") return "";
+  const count = (result) =>
+    (t.subGoalResults || []).filter((goal) => goal.result === result).length;
+  return [
+    [count("not_applicable"), STATUS_META.not_applicable.label.toLowerCase()],
+    [count("inconclusive"), STATUS_META.inconclusive.label.toLowerCase()],
+    [count("unmeasured"), STATUS_META.unmeasured.label.toLowerCase()],
+  ]
+    .filter(([n]) => n)
+    .map(([n, label]) => `${n} ${label}`)
+    .join(", ");
 };
 
 // A persona is worth showing when any field is filled, not only the name: the
@@ -328,16 +354,35 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
+              {/* On its own line, so a long reason never squeezes the status. */}
+              {(t.outcomeReason || unscoredSummary(t)) && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {t.outcomeReason || unscoredSummary(t)}
+                </Typography>
+              )}
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict = runOutcome(
-                      goal.passed === true
-                        ? "passed"
-                        : goal.passed === false
-                          ? "failed"
-                          : "inconclusive",
-                    );
+                    const verdict =
+                      goal.result === "not_applicable" ||
+                      goal.result === "unmeasured"
+                        ? {
+                            label: STATUS_META[goal.result].label,
+                            color: "text.disabled",
+                          }
+                        : runOutcome(
+                            goal.passed === true
+                              ? "passed"
+                              : goal.passed === false
+                                ? "failed"
+                                : "inconclusive",
+                          );
                     return (
                       <Stack
                         key={`${goal.name}-${goalIndex}`}
@@ -350,12 +395,26 @@ export default function TraceTable({
                         >
                           {goal.name}
                         </Typography>
-                        {goal.passed == null ? (
+                        {goal.evidence?.length > 0 && (
                           <Typography
-                            sx={{ typography: "s3", color: verdict.color }}
+                            sx={{ typography: "s3", color: "text.disabled" }}
                           >
-                            {verdict.label}
+                            {evidenceLabel(goal.evidence)}
                           </Typography>
+                        )}
+                        {goal.passed == null ? (
+                          <CustomTooltip
+                            show={!!goal.reason}
+                            size="small"
+                            arrow
+                            title={goal.reason}
+                          >
+                            <Typography
+                              sx={{ typography: "s3", color: verdict.color }}
+                            >
+                              {verdict.label}
+                            </Typography>
+                          </CustomTooltip>
                         ) : (
                           <Box
                             role="img"
@@ -364,7 +423,11 @@ export default function TraceTable({
                             sx={{ display: "flex", color: verdict.color }}
                           >
                             <Iconify
-                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
+                              icon={
+                                goal.passed
+                                  ? "solar:check-linear"
+                                  : "solar:close-linear"
+                              }
                               width={16}
                               aria-hidden="true"
                             />

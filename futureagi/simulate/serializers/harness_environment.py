@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from rest_framework import serializers
 
+from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
@@ -103,7 +106,9 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     agent_version = AgentVersionRefSerializer(allow_null=True)
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
+    outcome_errored = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_no_score = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 
@@ -289,6 +294,73 @@ class HarnessEnvironmentAmendmentSerializer(serializers.Serializer):
     note = serializers.CharField()
 
 
+class HarnessEnvironmentCallActorSerializer(serializers.Serializer):
+    """Someone on the person's side who is not the person, on the environment's list."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    role = serializers.CharField(allow_blank=True)
+    channel = serializers.CharField()
+    # The caller persona's fields the voice is chosen from (name, gender, age_group, languages, accent and the rest),
+    # kept as the runtime wrote them, any field it adds included.
+    persona = JsonObjectRequestField()
+    loudness_ratio = serializers.FloatField(required=False, allow_null=True)
+    scenarios_count = serializers.IntegerField()
+
+
+class HarnessEnvironmentCallActorTriggerSerializer(serializers.Serializer):
+    """When an actor enters a call, or a scheduled action fires; only the keys its kind uses are present."""
+
+    kind = serializers.ChoiceField(
+        choices=(
+            "always",
+            "after_seconds",
+            "on_tool",
+            "contacted",
+            "probability",
+            "mid_journey",
+            "on_keyword",
+            "conditional",
+        ),
+        required=False,
+    )
+    seconds = serializers.FloatField(required=False)
+    turn = serializers.IntegerField(required=False)
+    tool = serializers.CharField(required=False, allow_blank=True)
+    on_call = serializers.IntegerField(required=False)
+    words = serializers.ListField(child=serializers.CharField(), required=False)
+    p = serializers.FloatField(required=False)
+    # `conditional`: the record collection watched and the field values that bring the actor in.
+    collection = serializers.CharField(required=False, allow_blank=True)
+    where = serializers.JSONField(required=False)
+
+
+class HarnessEnvironmentScenarioActorActionSerializer(serializers.Serializer):
+    """A world action the actor takes in the scenario, with its arguments as the world receives them."""
+
+    action = serializers.CharField()
+    arguments = serializers.JSONField(required=False)
+    trigger = HarnessEnvironmentCallActorTriggerSerializer(required=False)
+
+
+class HarnessEnvironmentScenarioCallActorSerializer(serializers.Serializer):
+    """An actor a scenario includes: what they say in it and when, what they read, and the world actions they take."""
+
+    id = serializers.CharField()
+    instruction = serializers.CharField(
+        allow_blank=True, required=False, trim_whitespace=False
+    )
+    # What the actor is given to read in this scenario, each entry kept as the runtime wrote it: usually
+    # `{"kind": "facts", "text"}`, `{"kind": "files", "paths"}` or `{"kind": "records", "store", "collection", "where"?}`,
+    # but any object, with or without a `kind`, is valid.
+    knowledge = serializers.ListField(child=JsonObjectRequestField(), required=False)
+    # Absent or null: the actor comes in the way its own activation says.
+    trigger = HarnessEnvironmentCallActorTriggerSerializer(
+        required=False, allow_null=True
+    )
+    actions = HarnessEnvironmentScenarioActorActionSerializer(many=True, required=False)
+
+
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
     """One catalogue entry, carrying the code that settles it where there is any.
 
@@ -361,6 +433,7 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     )
     amendments = HarnessEnvironmentAmendmentSerializer(many=True)
     sub_goals = HarnessEnvironmentCatalogueSubGoalSerializer(many=True)
+    call_actors = HarnessEnvironmentCallActorSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     chosen_evals = serializers.ListField(
@@ -424,6 +497,7 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     fixture = serializers.DictField(allow_null=True)
     steps = serializers.IntegerField(allow_null=True)
     sub_goals = HarnessEnvironmentSubGoalSerializer(many=True)
+    actors = HarnessEnvironmentScenarioCallActorSerializer(many=True)
     persona = serializers.DictField(allow_null=True)
     situation = serializers.CharField(allow_null=True)
     outcome = serializers.CharField(allow_null=True)
@@ -684,7 +758,7 @@ class HarnessDraftItemSerializer(HarnessVersionSerializer):
         child=serializers.IntegerField(),
         help_text=(
             "Counts against the parent: added, removed and changed for the suite;"
-            " tools, rules, sub_goals and world_files for the environment."
+            " actors, tools, rules, sub_goals and world_files for the environment."
         ),
     )
 
@@ -1035,3 +1109,126 @@ class HarnessNudgeListQuerySerializer(serializers.Serializer):
 
 class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
+
+
+# Bounds every field of one actor record together, as compact JSON (the editor counts the same way); each
+# field's own limit comes from the sealed rules.
+ACTOR_RECORD_MAX_CHARS = 65_536
+
+
+class HarnessActorRecordField(JsonObjectRequestField):
+    """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        if size > ACTOR_RECORD_MAX_CHARS:
+            raise serializers.ValidationError(
+                f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
+            )
+        return value
+
+
+class HarnessActorWriteSerializer(serializers.Serializer):
+    actor = HarnessActorRecordField()
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0
+    )
+    # Actions this edit gives the actor that only one other actor holds, confirmed as shared by both.
+    share_actions = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        max_length=100,
+        help_text=(
+            "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an "
+            "edit is refused with permission_conflict (409) and each conflict."
+        ),
+    )
+
+
+class HarnessActorLimitsWriteSerializer(serializers.Serializer):
+    # The whole limits block, replacing the stored one: each a positive number or null for no limit, `model` one of
+    # the actor models. A field left out of the block takes the channel's default.
+    limits = JsonObjectRequestField(
+        help_text=(
+            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; "
+            "model is one of actor_models. A limit left out takes the channel's default."
+        )
+    )
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class HarnessActorDeleteQuerySerializer(serializers.Serializer):
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class HarnessWorldActionSerializer(serializers.Serializer):
+    """One action the world lets an actor take, named as the world names it, with the tool behind it."""
+
+    action = serializers.CharField()
+    tool = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+
+
+class HarnessActorRecordSourceSerializer(serializers.Serializer):
+    store = serializers.CharField(allow_blank=True)
+    collection = serializers.CharField()
+
+
+class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
+    files = serializers.ListField(child=serializers.CharField())
+    records = HarnessActorRecordSourceSerializer(many=True)
+
+
+class HarnessActorListSerializer(serializers.Serializer):
+    actors = serializers.ListField(child=HarnessActorRecordField())
+    source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]  # the API field is named source
+    revision = serializers.IntegerField()
+    # Each actor file's record schema, from the rules of the release that sealed the environment.
+    record_schemas = JsonObjectRequestField()
+    # What an actor can be given here: the world's actions, and the call channels an actor speaks on.
+    actions = HarnessWorldActionSerializer(many=True)
+    channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
+    # Which channels have a loudness, and the range a call draws from when none is set.
+    loudness = JsonObjectRequestField()
+    # Ids no actor may take.
+    reserved_ids = serializers.ListField(child=serializers.CharField())
+    # What an actor may be given to read here: the environment's own files and its world's record collections.
+    knowledge_sources = HarnessActorKnowledgeSourcesSerializer()
+    # The environment's actor limits: null is no limit, a missing key the channel's default.
+    limits = JsonObjectRequestField(required=False)
+    # The models an actor may be played on; the first is the default.
+    actor_models = serializers.ListField(child=serializers.CharField(), required=False)
+
+
+class HarnessActorViewQuerySerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(required=False, max_length=255)
+
+
+class HarnessActorSeenSerializer(serializers.Serializer):
+    input = serializers.CharField()
+    value = serializers.JSONField()
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source
+        choices=("actor", "scenario", "caller")
+    )
+
+
+class HarnessActorNeverSeesSerializer(serializers.Serializer):
+    """What an actor is never given: the grader's scenario fields and files, and other actors' private fields by
+    name (`<name>.<field>`)."""
+
+    scenario_fields = serializers.ListField(child=serializers.CharField())
+    files = serializers.ListField(child=serializers.CharField())
+    other_actors = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessActorViewSerializer(serializers.Serializer):
+    actor_id = serializers.CharField()
+    permitted_actions = serializers.ListField(child=serializers.CharField())
+    sees = HarnessActorSeenSerializer(many=True)
+    never_sees = HarnessActorNeverSeesSerializer()
+    # Whether a run plays the actor from what it sees; when not, why.
+    played_from_view = serializers.BooleanField()
+    unused_reason = serializers.CharField(allow_null=True)

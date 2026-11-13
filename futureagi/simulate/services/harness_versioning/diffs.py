@@ -5,12 +5,22 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from simulate.services.harness_versioning.hashing import (
+    ACTOR_LIMITS_KEY,
+    ACTOR_OTHER_KEY,
+)
+
 # Contract fields compared item by item below, or never part of a diff.
 _CONTRACT_ITEM_FIELDS = frozenset(
     {"tools", "hard_constraints", "real_use_cases", "use_cases"}
 )
 _CONTRACT_IGNORED_FIELDS = frozenset({"chosen_evals", "amendments"})
 _SCENARIO_IGNORED_FIELDS = frozenset({"scenario_key", "scenario_id"})
+
+
+def _present(value: Any) -> Any:
+    """A field's value, with an empty list or object read as the field being absent."""
+    return None if value in ([], {}) else value
 
 
 def _added_removed(previous: Iterable[str], current: Iterable[str]) -> dict[str, list]:
@@ -83,6 +93,16 @@ def keyed_diff(
     return diff
 
 
+def _named(
+    diff: dict[str, list[str]], names: Mapping[str, str]
+) -> dict[str, list[dict[str, str]]]:
+    """Each changed actor by id and name, so a change reads by who it is about."""
+    return {
+        key: [{"id": one, "name": names.get(one) or one} for one in ids]
+        for key, ids in diff.items()
+    }
+
+
 def environment_diff(
     *,
     previous_contract: Mapping[str, Any] | None,
@@ -91,15 +111,42 @@ def environment_diff(
     sub_goals: Mapping[str, str],
     previous_files: Mapping[str, str] | None,
     files: Mapping[str, str],
+    previous_actors: Mapping[str, str] | None = None,
+    actors: Mapping[str, str] | None = None,
+    previous_actor_names: Mapping[str, str] | None = None,
+    actor_names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Contract items, sub-goal definitions and world files, each added, removed or changed.
+    """Contract items, sub-goal definitions, world files and actors, each added, removed or changed.
 
-    A parent whose world files are unknown (backfilled without its archive) has no file diff.
+    A parent whose world files are unknown (backfilled without its archive) has no file diff; a side whose cast is
+    unknown has no actor diff.
     """
+    with_actors = bool(previous_actors or actors)
+    file_diff = None if previous_files is None else keyed_diff(previous_files, files)
+    if file_diff is not None and with_actors:
+        # The actors section shows the cast one actor at a time; listing its files too counts each edit twice.
+        file_diff = {
+            key: [name for name in names if name != "actors.json"]
+            for key, names in file_diff.items()
+        }
     return {
         "contract": contract_diff(previous_contract, contract),
         "sub_goals": keyed_diff(previous_sub_goals, sub_goals),
-        "files": None if previous_files is None else keyed_diff(previous_files, files),
+        "files": file_diff,
+        **(
+            {
+                "actors": (
+                    None
+                    if previous_actors is None or actors is None
+                    else _named(
+                        keyed_diff(previous_actors, actors),
+                        {**(previous_actor_names or {}), **(actor_names or {})},
+                    )
+                )
+            }
+            if with_actors
+            else {}
+        ),
     }
 
 
@@ -121,7 +168,7 @@ def suite_diff(
             field
             for field in set(before[key]) | set(after[key])
             if field not in _SCENARIO_IGNORED_FIELDS
-            and before[key].get(field) != after[key].get(field)
+            and _present(before[key].get(field)) != _present(after[key].get(field))
         )
         if fields:
             changed[key] = fields
@@ -156,6 +203,31 @@ def _count(noun: str, nouns: str, verb: str, values: object) -> str | None:
     return f"{size} {noun if size == 1 else nouns} {verb}"
 
 
+def _key(one: Any) -> Any:
+    return one.get("id") if isinstance(one, dict) else one
+
+
+def _cast(entries: Any) -> list[Any]:
+    """The actors among a diff's entries, without the actor limits and other settings listed beside them."""
+    return [
+        one
+        for one in entries or []
+        if _key(one) not in (ACTOR_LIMITS_KEY, ACTOR_OTHER_KEY)
+    ]
+
+
+def _setting_changed(actors: Mapping[str, Any], key: str) -> bool:
+    return any(
+        _key(one) == key
+        for entries in (
+            actors.get("added"),
+            actors.get("removed"),
+            actors.get("changed"),
+        )
+        for one in entries or []
+    )
+
+
 def summarize_environment(diff: Mapping[str, Any] | None) -> str:
     if not diff:
         return "First version"
@@ -165,6 +237,7 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
     use_cases = contract.get("use_cases") or {}
     sub_goals = diff.get("sub_goals") or {}
     files = diff.get("files") or {}
+    actors = diff.get("actors") or {}
     parts = [
         _count("tool", "tools", "added", tools.get("added")),
         _count("tool", "tools", "removed", tools.get("removed")),
@@ -180,6 +253,13 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
         _count("world file", "world files", "added", files.get("added")),
         _count("world file", "world files", "removed", files.get("removed")),
         _count("world file", "world files", "changed", files.get("changed")),
+        _count("actor", "actors", "added", _cast(actors.get("added"))),
+        _count("actor", "actors", "removed", _cast(actors.get("removed"))),
+        _count("actor", "actors", "changed", _cast(actors.get("changed"))),
+        "actor limits changed" if _setting_changed(actors, ACTOR_LIMITS_KEY) else "",
+        "other actor settings changed"
+        if _setting_changed(actors, ACTOR_OTHER_KEY)
+        else "",
     ]
     if "modality" in contract:
         modality = contract["modality"]
