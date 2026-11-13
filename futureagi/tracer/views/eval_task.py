@@ -88,6 +88,7 @@ from tracer.services.eval_tasks.entries import (
     soft_delete_eval_results,
     soft_delete_live,
 )
+from tracer.services.eval_tasks.withdrawal import withdraw_tasks
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1919,7 +1920,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             # The workflow's first step materializes entries, so create returns
             # immediately even for large tasks.
-            start_eval_task_workflow_sync(eval_task)
+            try:
+                start_eval_task_workflow_sync(eval_task)
+            except Exception:
+                self._withdraw_undispatched_task(eval_task)
+                raise
 
             return self._gm.success_response({"id": eval_task.id})
 
@@ -1933,6 +1938,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request("Evaluation task could not be created")
+
+    @staticmethod
+    def _withdraw_undispatched_task(eval_task):
+        """Delete a task whose create is about to be reported as failed.
+
+        The caller is told the task was not created, so it must not exist. The
+        stranded sweep activates idle continuous tasks, so a leftover PENDING
+        row would start running beside the task a retry creates, and every span
+        would be evaluated, and billed, twice. Withdrawn as a list delete
+        withdraws, so neither the Tasks list nor the sweep sees it. A start
+        that did reach Temporal fails at its first task read (reconcile or
+        claim), which never returns a deleted row.
+        """
+        try:
+            withdraw_tasks([eval_task.id])
+        except Exception:
+            logger.exception(
+                "eval_task.create_withdraw_failed", eval_task_id=str(eval_task.id)
+            )
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
@@ -2798,7 +2822,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_task.status = EvalTaskStatus.PAUSED
-            eval_task.save()
+            eval_task.save(update_fields=["status", "updated_at"])
 
             # Nudge the running workflow to stop launching new evals immediately.
             # Best-effort: the paused status above is the durable signal the
@@ -3120,10 +3144,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     # rows older than the overlap may newly match (or stop
                     # matching). Reset inside this locked transaction so the
                     # next reconcile performs a complete start-time proof.
-                    EvalTask.objects.filter(id=eval_task.id).update(
-                        continuous_cursor=None
-                    )
-                    eval_task.continuous_cursor = None
+                    reset = {"continuous_cursor": None}
+                    if original_run_type == RunType.CONTINUOUS:
+                        # This explicit rerun re-activates coverage now, so
+                        # its proof starts here. Keeping the original floor
+                        # would re-evaluate, and bill, every row since the
+                        # task first activated. A conversion has already
+                        # persisted its own new floor.
+                        reset["start_time"] = update_fields["last_run"]
+                    EvalTask.objects.filter(id=eval_task.id).update(**reset)
+                    for field, value in reset.items():
+                        setattr(eval_task, field, value)
 
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the

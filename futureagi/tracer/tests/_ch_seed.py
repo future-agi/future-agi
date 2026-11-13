@@ -319,6 +319,25 @@ def truncate_ch_spans() -> None:
         client.close()
 
 
+def delete_ch_spans_for_project(project_id: Any) -> None:
+    """Remove only one project's rows from CH ``spans``, waiting until gone.
+
+    Use this rather than ``truncate_ch_spans`` in a test's own cleanup: the
+    session's CH is shared, and later tests (the live hourly-aggregate plan
+    checks, for one) read rows other tests left there. A classic mutation, not
+    a lightweight ``DELETE``, because ``spans`` carries projections.
+    """
+    client = _get_ch_client()
+    try:
+        client.command(
+            "ALTER TABLE spans DELETE WHERE project_id = %(p)s "
+            "SETTINGS mutations_sync = 2",
+            parameters={"p": str(project_id)},
+        )
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # model_hub_score  (CDC mirror of PG model_hub.models.score.Score)
 # ---------------------------------------------------------------------------

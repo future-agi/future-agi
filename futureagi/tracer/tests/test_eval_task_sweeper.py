@@ -7,18 +7,28 @@ workflow. These tests pin the recovery contract — what is swept, what is left
 alone, and the threshold that keeps the reap from racing a live worker.
 """
 
+import io
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from django.core.cache import cache
+from django.core.management import call_command
 from django.utils import timezone
 
+from accounts.models.organization import Organization
 from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.temporal.eval_tasks import client as eval_task_client
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -46,7 +56,9 @@ def only_this_modules_entries(db):
     so leftovers survive between sessions. The delete runs inside the test's own
     transaction and rolls back with it, leaving nothing changed for anyone else.
     """
+    cache.delete("eval-task-sweep:position:v1")
     EvalLogger.all_objects.filter(status__in=_UNDRAINED).delete()
+    EvalTask.all_objects.filter(run_type=RunType.CONTINUOUS).delete()
 
 
 @pytest.fixture
@@ -82,14 +94,14 @@ def sweep_config(db, sweep_project, organization, workspace):
 
 @pytest.fixture
 def make_task(db, sweep_project, sweep_config):
-    def _make(status=EvalTaskStatus.RUNNING):
+    def _make(status=EvalTaskStatus.RUNNING, run_type=RunType.HISTORICAL):
         task = EvalTask.objects.create(
             project=sweep_project,
             name="sweep task",
             filters={},
             sampling_rate=100.0,
             spans_limit=100,
-            run_type=RunType.HISTORICAL,
+            run_type=run_type,
             status=status,
             row_type=RowType.SPANS,
         )
@@ -368,10 +380,11 @@ class TestRecoverTask:
         assert entry.attempts == 0
 
     def test_a_failed_task_is_made_pending_before_its_workflow_restarts(
-        self, make_task, make_entry, temporal
+        self, make_task, make_entry, temporal, settings
     ):
         """``get_eval_task_state_activity`` reports a FAILED task inactive, so a
         restart that left the status alone would exit on its first check."""
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = True
         task = make_task(status=EvalTaskStatus.FAILED)
         make_entry(task)
 
@@ -900,3 +913,537 @@ def test_thresholds_are_derived_and_the_wait_cap_clears_the_blind_floor():
     assert longest_wait > blind
     # A confirmed-stopped restart reclaims after a single wait.
     assert _FINALIZE_WAIT.total_seconds() >= confirmed
+
+
+@pytest.mark.django_db
+class TestIdleContinuousRecovery:
+    @pytest.mark.parametrize("status", [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING])
+    @pytest.mark.parametrize(
+        "terminal", [None, EvalEntryStatus.COMPLETED, EvalEntryStatus.ERRORED]
+    )
+    @pytest.mark.parametrize(
+        "verdict", [eval_task_client.WF_CLOSED, eval_task_client.WF_ABSENT]
+    )
+    def test_idle_or_never_dispatched_tasks_are_recovered(
+        self, make_task, make_entry, temporal, status, terminal, verdict
+    ):
+        task = make_task(status=status, run_type=RunType.CONTINUOUS)
+        entry = make_entry(task, status=terminal) if terminal else None
+        before = (entry.status, entry.updated_at, entry.attempts) if entry else None
+        temporal["verdict"] = verdict
+
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert result["candidates"] == 1
+        assert result["idle_continuous_candidates"] == 1
+        assert result["backlog_candidates"] == 0
+        assert result["restarted"] == 1
+        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        task.refresh_from_db()
+        assert task.continuous_cursor is None
+        assert task.start_time == task.created_at
+        if entry:
+            entry.refresh_from_db()
+            assert (entry.status, entry.updated_at, entry.attempts) == before
+
+    @pytest.mark.parametrize(
+        "verdict", [eval_task_client.WF_PROGRESSING, RuntimeError("unavailable")]
+    )
+    def test_idle_live_or_unknown_workflow_is_left_untouched(
+        self, make_task, temporal, verdict
+    ):
+        task = make_task(run_type=RunType.CONTINUOUS)
+        temporal["verdict"] = verdict
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["candidates"] == 1
+        assert result["restarted"] == 0
+        assert temporal["started"] == []
+        task.refresh_from_db()
+        assert task.start_time is None
+        assert result["errors"] == int(isinstance(verdict, Exception))
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            EvalTaskStatus.PAUSED,
+            EvalTaskStatus.DELETED,
+            EvalTaskStatus.FAILED,
+            EvalTaskStatus.COMPLETED,
+        ],
+    )
+    def test_idle_inactive_tasks_are_excluded(self, make_task, temporal, status):
+        make_task(status=status, run_type=RunType.CONTINUOUS)
+        assert sweeper.find_stranded_tasks() == []
+
+    def test_soft_deleted_idle_task_is_excluded(self, make_task):
+        task = make_task(run_type=RunType.CONTINUOUS)
+        EvalTask.all_objects.filter(id=task.id).update(deleted=True)
+        assert sweeper.find_stranded_tasks() == []
+
+    def test_idle_failed_recovery_is_opt_in(self, make_task, temporal, settings):
+        task = make_task(status=EvalTaskStatus.FAILED, run_type=RunType.CONTINUOUS)
+        assert sweeper.find_stranded_tasks() == []
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = True
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["restarted"] == 1
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.RUNNING
+        assert task.start_time == task.created_at
+
+    @pytest.mark.parametrize("with_backlog", [False, True])
+    def test_idle_ring_reaches_every_task_even_when_all_are_live(
+        self, make_task, make_entry, temporal, settings, with_backlog
+    ):
+        idle = [make_task(run_type=RunType.CONTINUOUS) for _ in range(5)]
+        backlog = make_task() if with_backlog else None
+        if backlog:
+            make_entry(backlog)
+        temporal["verdict"] = eval_task_client.WF_PROGRESSING
+        settings.EVAL_TASK_SWEEP_MAX_TASKS = 2
+        for _ in idle:
+            result = sweeper.sweep_stranded_eval_tasks._original_func()
+            assert result["candidates"] <= 2
+            if backlog:
+                assert result["backlog_candidates"] == 1
+        assert {str(t.id) for t in idle} <= set(temporal["described"])
+
+    def test_one_slot_budget_alternates_idle_and_backlog(
+        self, make_task, make_entry, temporal, settings
+    ):
+        idle = make_task(run_type=RunType.CONTINUOUS)
+        backlog = make_task()
+        make_entry(backlog)
+        settings.EVAL_TASK_SWEEP_MAX_TASKS = 1
+        temporal["verdict"] = eval_task_client.WF_PROGRESSING
+        for _ in range(2):
+            assert sweeper.sweep_stranded_eval_tasks._original_func()["candidates"] == 1
+        assert temporal["described"] == [str(backlog.id), str(idle.id)]
+
+    def test_idle_tasks_cannot_starve_oldest_backlog(self, make_task, make_entry):
+        for _ in range(6):
+            make_task(run_type=RunType.CONTINUOUS)
+        oldest = make_task()
+        make_entry(oldest, age_seconds=10000)
+        for _ in range(5):
+            make_entry(make_task())
+        found = sweeper.find_stranded_tasks(limit=4)
+        assert len(found) == 4
+        assert len({t.id for t in found}) == 4
+        assert [t.id for t in found if t.sweep_candidate_kind == "backlog"][
+            0
+        ] == oldest.id
+        assert sum(t.sweep_candidate_kind == "idle_continuous" for t in found) == 2
+
+    @pytest.mark.parametrize(
+        "status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED]
+    )
+    def test_lifecycle_change_during_describe_prevents_entry_mutation(
+        self, make_task, make_entry, temporal, monkeypatch, status
+    ):
+        task = make_task(run_type=RunType.CONTINUOUS)
+        entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10000)
+
+        def describe(task_id):
+            EvalTask.no_workspace_objects.filter(id=task_id).update(status=status)
+            return eval_task_client.WF_CLOSED
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe
+        )
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        entry.refresh_from_db()
+        assert (entry.status, entry.attempts) == (EvalEntryStatus.RUNNING, 0)
+        assert result["skipped"] == 1
+        assert temporal["started"] == []
+
+    def test_soft_delete_during_describe_prevents_reap(
+        self, make_task, make_entry, temporal, monkeypatch
+    ):
+        task = make_task(run_type=RunType.CONTINUOUS)
+        entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10000)
+
+        def describe(task_id):
+            EvalTask.all_objects.filter(id=task_id).update(deleted=True)
+            return eval_task_client.WF_CLOSED
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe
+        )
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        entry.refresh_from_db()
+        assert (entry.status, entry.attempts) == (EvalEntryStatus.RUNNING, 0)
+        assert result["skipped"] == 1
+        assert temporal["started"] == []
+
+    def test_pause_after_reap_prevents_dispatch(self, make_task, temporal, monkeypatch):
+        from tracer.services.eval_tasks import recovery
+
+        task = make_task(run_type=RunType.CONTINUOUS)
+
+        def deferred_check(*args, **kwargs):
+            EvalTask.no_workspace_objects.filter(id=task.id).update(
+                status=EvalTaskStatus.PAUSED
+            )
+            return False
+
+        monkeypatch.setattr(
+            recovery, "only_unreclaimable_claims_remain", deferred_check
+        )
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["skipped"] == 1
+        assert temporal["started"] == []
+        task.refresh_from_db()
+        assert task.start_time is None
+
+    def test_dispatch_failure_remains_discoverable_without_moving_floor(
+        self, make_task, temporal, monkeypatch
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+        floor = timezone.now() - timedelta(days=2)
+        cursor = floor + timedelta(hours=1)
+        EvalTask.no_workspace_objects.filter(id=task.id).update(
+            start_time=floor, continuous_cursor=cursor
+        )
+
+        def start(*args, **kwargs):
+            raise RuntimeError("dispatch unavailable")
+
+        monkeypatch.setattr(eval_task_client, "start_eval_task_workflow_sync", start)
+        for _ in range(2):
+            result = sweeper.sweep_stranded_eval_tasks._original_func()
+            assert result["errors"] == 1
+            assert result["candidates"] == 1
+            task.refresh_from_db()
+            assert task.start_time == floor
+            assert task.continuous_cursor == cursor
+
+    def test_continuous_restart_uses_real_coalescing_starter(
+        self, make_task, monkeypatch
+    ):
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+        starts = TestTheRestartRunsOnTheSweepsOwnDescribe()._real_starter(
+            monkeypatch, lambda _: eval_task_client.WF_ABSENT
+        )
+        outcome = sweeper.recover_task(task, stale_running_seconds=7200)
+        assert outcome["restarted"]
+        [start] = starts
+        assert start["workflow_id"] == f"eval-task-{task.id}"
+        assert start["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
+        assert start["workflow_input"].workflow_confirmed_stopped
+
+    def test_pause_immediately_before_dispatch_wins(
+        self, make_task, temporal, monkeypatch
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+        manager = EvalTask.no_workspace_objects
+        original_filter = manager.filter
+
+        def pause_before_final_read(*args, **kwargs):
+            if kwargs == {"id": task.id, "status": EvalTaskStatus.RUNNING}:
+                EvalTask.all_objects.filter(id=task.id).update(
+                    status=EvalTaskStatus.PAUSED
+                )
+            return original_filter(*args, **kwargs)
+
+        monkeypatch.setattr(manager, "filter", pause_before_final_read)
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["skipped"] == 1
+        assert temporal["started"] == []
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.PAUSED
+
+    def test_lost_rotation_cache_does_not_disable_recovery(
+        self, make_task, temporal, monkeypatch
+    ):
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("cache unavailable")
+
+        make_task(run_type=RunType.CONTINUOUS)
+        monkeypatch.setattr(cache, "get", unavailable)
+        monkeypatch.setattr(cache, "set", unavailable)
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["restarted"] == 1
+
+
+@pytest.mark.django_db
+class TestCreateDispatchFailure:
+    """A create reported as failed must leave nothing the sweep can activate."""
+
+    NAME = "dispatch-failed create"
+
+    def _create(self, auth_client, project, config):
+        return auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": self.NAME,
+                "run_type": RunType.CONTINUOUS,
+                "row_type": RowType.SPANS,
+                "sampling_rate": 100,
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+
+    def test_a_retry_after_a_failed_create_is_the_only_task_evaluated(
+        self,
+        auth_client,
+        sweep_project,
+        sweep_config,
+        make_entry,
+        temporal,
+        monkeypatch,
+    ):
+        landed = []
+
+        def dispatch_outage(task, **kwargs):
+            # A start can reach Temporal and materialize before the client
+            # sees the error; whatever it wrote is withdrawn too.
+            landed.append(make_entry(task))
+            raise RuntimeError("synthetic Temporal outage")
+
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync", dispatch_outage
+        )
+        failed = self._create(auth_client, sweep_project, sweep_config)
+
+        assert failed.status_code == 400
+        assert failed.json()["message"] == "Evaluation task could not be created"
+        [ghost] = EvalTask.all_objects.filter(project=sweep_project, name=self.NAME)
+        assert (ghost.deleted, ghost.status) == (True, EvalTaskStatus.DELETED)
+        assert EvalLogger.all_objects.get(id=landed[0].id).deleted
+
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["candidates"] == 0, result
+        assert temporal["started"] == []
+
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync",
+            lambda task, **kwargs: f"eval-task-{task.id}",
+        )
+        retry = self._create(auth_client, sweep_project, sweep_config)
+
+        assert retry.status_code == 200, retry.content
+        retried = str(retry.json()["result"]["id"])
+        live = EvalTask.objects.filter(project=sweep_project, name=self.NAME)
+        assert [str(task.id) for task in live] == [retried]
+        sweeper.sweep_stranded_eval_tasks._original_func()
+        assert temporal["started"] == [(retried, _SWEEP_RESTART)]
+
+
+def _legacy_failed_create(make_task, *, age_minutes=120):
+    """A row a failed create left live before create withdrew its own row."""
+    task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+    EvalTask.all_objects.filter(id=task.id).update(
+        created_at=timezone.now() - timedelta(minutes=age_minutes)
+    )
+    task.refresh_from_db()
+    return task
+
+
+def _withdraw_command(*args):
+    out = io.StringIO()
+    call_command("withdraw_failed_create_eval_tasks", *args, stdout=out)
+    return out.getvalue()
+
+
+def _tally(output, label="total"):
+    [line] = [row for row in output.splitlines() if row.startswith(f"{label}: ")]
+    pairs = (pair.split("=") for pair in line.split(": ", 1)[1].split())
+    return {key: int(value) for key, value in pairs}
+
+
+@pytest.mark.django_db
+class TestWithdrawFailedCreateCommand:
+    """Rows dev left live after a failed create: continuous, PENDING, never
+    started, and their owner was told "Evaluation task could not be created".
+    The idle sweep would activate each from its creation time, so the rollout
+    withdraws them with this command before the sweep is enabled."""
+
+    def test_dry_run_counts_per_organization_and_writes_nothing(
+        self, make_task, temporal
+    ):
+        from tracer.selectors.eval_tasks.failed_creates import (
+            FAILED_CREATE_PREDICATE,
+        )
+
+        ghost = _legacy_failed_create(make_task)
+        other_org = Organization.objects.create(name="Synthetic other org")
+        other_project = Project.objects.create(
+            name="Synthetic other project",
+            organization=other_org,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="experiment",
+            config=[],
+        )
+        other = EvalTask.objects.create(
+            project=other_project,
+            name="synthetic other task",
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            row_type=RowType.SPANS,
+        )
+        EvalTask.all_objects.filter(id=other.id).update(
+            created_at=timezone.now() - timedelta(hours=3)
+        )
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        out = _withdraw_command()
+
+        assert f"Predicate: {FAILED_CREATE_PREDICATE}" in out
+        for organization_id in (ghost.project.organization_id, other_org.id):
+            tally = _tally(out, f"organization {organization_id}")
+            assert (tally["matched"], tally["would_withdraw"]) == (1, 1)
+        assert _tally(out) == {
+            "matched": 2,
+            "would_withdraw": 2,
+            "withdrawn": 0,
+            "workflow_on_record": 0,
+            "temporal_unreachable": 0,
+            "changed_since_read": 0,
+        }
+        assert "Dry run: nothing was written" in out
+        for name in (
+            ghost.name,
+            ghost.project.name,
+            ghost.project.organization.name,
+            other.name,
+            other_project.name,
+            other_org.name,
+        ):
+            assert name not in out
+        live = EvalTask.objects.filter(
+            id__in=[ghost.id, other.id], status=EvalTaskStatus.PENDING
+        )
+        assert live.count() == 2
+
+    def test_apply_withdraws_like_list_delete_and_a_rerun_matches_nothing(
+        self, make_task, temporal
+    ):
+        ghost = _legacy_failed_create(make_task)
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        out = _withdraw_command("--apply")
+
+        assert _tally(out)["withdrawn"] == 1
+        row = EvalTask.all_objects.get(id=ghost.id)
+        assert (row.deleted, row.status) == (True, EvalTaskStatus.DELETED)
+        assert row.deleted_at is not None
+        assert not EvalTask.objects.filter(id=ghost.id).exists()
+
+        again = _withdraw_command("--apply")
+
+        assert _tally(again)["matched"] == 0
+        assert EvalTask.all_objects.get(id=ghost.id).deleted_at == row.deleted_at
+
+    @pytest.mark.parametrize(
+        ("case", "skipped_as"),
+        [
+            ("start_time", None),
+            ("continuous_cursor", None),
+            ("end_time", None),
+            ("running", None),
+            ("paused", None),
+            ("historical", None),
+            ("completed_result", None),
+            ("soft_deleted_result", None),
+            ("task_logger", None),
+            ("created_moments_ago", None),
+            ("live_workflow", "workflow_on_record"),
+            ("closed_workflow", "workflow_on_record"),
+            ("temporal_unreachable", "temporal_unreachable"),
+        ],
+    )
+    def test_a_task_that_ever_started_or_may_still_start_is_never_touched(
+        self, make_task, make_entry, temporal, case, skipped_as
+    ):
+        task = _legacy_failed_create(make_task)
+        rows = EvalTask.all_objects.filter(id=task.id)
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+        entry = None
+        stamp = timezone.now() - timedelta(minutes=30)
+        if case in ("start_time", "continuous_cursor", "end_time"):
+            rows.update(**{case: stamp})
+        elif case == "running":
+            rows.update(status=EvalTaskStatus.RUNNING)
+        elif case == "paused":
+            rows.update(status=EvalTaskStatus.PAUSED)
+        elif case == "historical":
+            rows.update(run_type=RunType.HISTORICAL)
+        elif case == "completed_result":
+            entry = make_entry(task, status=EvalEntryStatus.COMPLETED)
+        elif case == "soft_deleted_result":
+            entry = make_entry(task, deleted=True)
+        elif case == "task_logger":
+            EvalTaskLogger.objects.create(eval_task=task, status=EvalTaskStatus.RUNNING)
+        elif case == "created_moments_ago":
+            rows.update(created_at=timezone.now())
+        elif case == "live_workflow":
+            temporal["verdict"] = eval_task_client.WF_PROGRESSING
+        elif case == "closed_workflow":
+            temporal["verdict"] = eval_task_client.WF_CLOSED
+        else:
+            temporal["verdict"] = RuntimeError("synthetic Temporal outage")
+        before = rows.values().get()
+        entry_before = (entry.deleted, entry.status) if entry else None
+
+        out = _withdraw_command("--apply")
+
+        tally = _tally(out)
+        assert tally["withdrawn"] == 0
+        if skipped_as:
+            assert (tally["matched"], tally[skipped_as]) == (1, 1)
+        else:
+            assert tally["matched"] == 0
+        assert rows.values().get() == before
+        if entry:
+            entry = EvalLogger.all_objects.get(id=entry.id)
+            assert (entry.deleted, entry.status) == entry_before
+
+    def test_a_row_started_after_the_describe_is_skipped(
+        self, make_task, temporal, monkeypatch
+    ):
+        """A sweep or edit that starts the row between the describe and the
+        write stamps it, and the locked re-read refuses it."""
+        task = _legacy_failed_create(make_task)
+
+        def describe_then_start(task_id):
+            EvalTask.no_workspace_objects.filter(id=task_id).update(
+                status=EvalTaskStatus.RUNNING, start_time=timezone.now()
+            )
+            return eval_task_client.WF_ABSENT
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe_then_start
+        )
+
+        out = _withdraw_command("--apply")
+
+        assert (_tally(out)["changed_since_read"], _tally(out)["withdrawn"]) == (1, 0)
+        task.refresh_from_db()
+        assert (task.deleted, task.status) == (False, EvalTaskStatus.RUNNING)
+
+    def test_the_sweep_does_not_activate_a_withdrawn_legacy_row(
+        self, make_task, temporal
+    ):
+        ghost = _legacy_failed_create(make_task)
+        started = make_task(status=EvalTaskStatus.RUNNING, run_type=RunType.CONTINUOUS)
+        EvalTask.all_objects.filter(id=started.id).update(
+            start_time=timezone.now() - timedelta(hours=1)
+        )
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+
+        _withdraw_command("--apply")
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert result["idle_continuous_candidates"] == 1, result
+        assert temporal["started"] == [(str(started.id), _SWEEP_RESTART)]
+        row = EvalTask.all_objects.get(id=ghost.id)
+        assert (row.deleted, row.status, row.start_time) == (
+            True,
+            EvalTaskStatus.DELETED,
+            None,
+        )

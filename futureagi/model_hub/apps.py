@@ -59,6 +59,8 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "register_temporal_schedules",
         "seed_system_evals",
         "purge_sql_results",
+        # One-off rollout step for the idle evaluation-task sweep; dry run by default.
+        "withdraw_failed_create_eval_tasks",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:
