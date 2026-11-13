@@ -31,6 +31,9 @@ export function deriveDelivery(requests, { names }) {
   assert.ok(agents, 'native_root_instructions_missing');
   const body = agents.slice(agents.indexOf('<INSTRUCTIONS>\n') + '<INSTRUCTIONS>\n'.length, agents.lastIndexOf('</INSTRUCTIONS>'));
   const marker = body.match(/^<!-- futureagi:context:([0-9a-f-]{36}):begin -->\n/);
+  // A managed block that is present but not first means the host also loaded an
+  // enclosing directory's AGENTS.md (a git root above the project): not a missing block.
+  assert.ok(marker || !/<!-- futureagi:context:[0-9a-f-]{36}:begin -->/.test(body), 'native_root_enclosing_instructions_precede_managed_block');
   assert.ok(marker, 'native_root_managed_block_missing');
   const end = `<!-- futureagi:context:${marker[1]}:end -->\n`;
   const close = body.indexOf(end);

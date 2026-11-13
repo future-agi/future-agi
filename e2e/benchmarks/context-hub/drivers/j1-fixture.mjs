@@ -70,6 +70,16 @@ export function expectedObservations({ prefix, fixture }) {
   };
 }
 
+/** Where one prepared J1 run keeps its files. The source AGENTS.md lives in its own
+ * directory: Codex concatenates every AGENTS.md from the enclosing git root down
+ * to the project, so a source AGENTS.md in the project's parent would precede the
+ * managed block whenever a run directory sits inside a git work tree. */
+export const layoutFor = (target) => ({
+  project: resolve(target, 'project'), private: resolve(target, 'private'),
+  exchange: resolve(target, 'exchange.json'), exchangeV2: resolve(target, 'exchange-v2.json'),
+  agentsDirectory: resolve(target, 'inputs'), agents: resolve(target, 'inputs', 'AGENTS.md'),
+});
+
 async function writeTree(root, entries) {
   for (const [path, content] of entries) {
     const target = resolve(root, path);
@@ -94,7 +104,7 @@ export async function prepare({ root, cohort, evidence, apiUrl = 'http://localho
   const folderEntries = names.slice(7).flatMap((name) => files[name].map((file) => [`${name}/${file.path}`, file.content]));
   folderEntries.push([`${names[14]}/binary.bin`, Buffer.from([0, 255, 0, 1])]);
   await writeTree(resolve(target, 'private'), folderEntries);
-  await writeTree(target, [['exchange.json', exchange], ['exchange-v2.json', updateExchange], ['AGENTS.md', AGENTS_SOURCE]]);
+  await writeTree(target, [['exchange.json', exchange], ['exchange-v2.json', updateExchange], ['inputs/AGENTS.md', AGENTS_SOURCE]]);
   await writeTree(resolve(target, 'project'), [['AGENTS.md', LOCAL_AGENTS], ['notes/local.md', LOCAL_NOTES]]);
   const api = async (path, data, auth) => {
     const response = await fetch(`${apiUrl}${path}`, { method: data ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) }, ...(data ? { body: JSON.stringify(data) } : {}) });
@@ -107,7 +117,7 @@ export async function prepare({ root, cohort, evidence, apiUrl = 'http://localho
   const tokens = await api('/accounts/token/', { email, password, remember_me: true });
   const user = await api('/accounts/user-info/', null, tokens.access);
   const input = { productRoot: root, outputDir: resolve(evidence, 'driver'), appUrl, apiUrl,
-    folder: resolve(target, 'private'), exchange: resolve(target, 'exchange.json'), agents: resolve(target, 'AGENTS.md'),
+    folder: resolve(target, 'private'), exchange: resolve(target, 'exchange.json'), agents: layoutFor(target).agents,
     project: resolve(target, 'project'), python, sdkPython, codex: { executable: codex, sha256: codexSha256 },
     contextName: `${prefix}-context`, description: 'Synthetic isolated policy trial', sourceProject: prefix,
     names, files, selected: [...names.slice(7, 14).map((name) => `folder-0/${name}`), ...names.slice(0, 7).map((_, i) => `exchange-0/${i}`)],
