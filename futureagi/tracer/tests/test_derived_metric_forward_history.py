@@ -430,11 +430,10 @@ def test_forward_metric_before_its_first_publication_reads_as_not_calculated_yet
 ):
     """Forward versions activate before a fresh project's first head exists."""
     version = DerivedMetricVersion.objects.get(metric_id=saved["id"], version=1)
+    # `saved` already activated version 1 without publishing; make it forward.
+    assert DerivedMetric.objects.get(id=saved["id"]).active_version_id == version.id
     DerivedMetricVersion.objects.filter(id=version.id).update(
-        history_mode="forward", coverage_start=NOW, backfill_status="complete"
-    )
-    DerivedMetric.activate_version(
-        version.metric_id, version.id, expected_active_id=None, now=NOW
+        history_mode="forward", coverage_start=NOW
     )
     state = MetricProjectRefresh.for_project(version.metric.project_id)
     assert state.head_manifest_id is None
@@ -446,4 +445,3 @@ def test_forward_metric_before_its_first_publication_reads_as_not_calculated_yet
             assert result.data["code"] == "metric_recalculating", action
             assert result.data["retryable"] is True and "value" not in result.data
         store.assert_not_called()
-
