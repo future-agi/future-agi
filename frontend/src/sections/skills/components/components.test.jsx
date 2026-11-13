@@ -73,19 +73,16 @@ describe('FileTree', () => {
   it('creates a file using a folder prefix without persisting empty folders', () => {
     const create = vi.fn();
     render(<FileTree files={files} onSelect={vi.fn()} onCreate={create} readOnly={false} />);
-    fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
-    fireEvent.change(screen.getByLabelText('Folder path'), { target: { value: 'scripts' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add file' }));
     expect(create).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
-    expect(screen.getByLabelText('File path')).toHaveValue('scripts/');
+    expect(screen.getByLabelText('File path')).toHaveValue('');
     fireEvent.change(screen.getByLabelText('File path'), { target: { value: 'scripts/check.sh' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(create).toHaveBeenCalledWith('scripts/check.sh');
   });
   it('rejects traversal, case duplicates and file/folder collisions', () => {
     render(<FileTree files={files} onSelect={vi.fn()} onCreate={vi.fn()} readOnly={false} />);
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add file' }));
     for (const value of ['../outside', 'skill.md', 'references', 'SKILL.md/child', 'a\\b']) {
       fireEvent.change(screen.getByLabelText('File path'), { target: { value } });
       expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();

@@ -43,6 +43,7 @@ DraftInitializer.propTypes = {
 };
 
 export default function SkillEditorView() {
+  useEffect(() => { import("@monaco-editor/react").then(({ loader }) => loader.init()).catch(() => {}); }, []);
   const { skillId } = useParams();
   const { identity } = useSkillV11Scope();
   const navigate = useNavigate();

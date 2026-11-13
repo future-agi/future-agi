@@ -332,3 +332,24 @@ it('keeps summary generation disabled independently of text testing permission',
   expect(await screen.findByRole('button', { name: 'Summarize changes' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Use summary suggestion' })).not.toBeInTheDocument();
 });
+
+it('names each label move on the publish action and explains the production consequence', async () => {
+  renderDialog({ skill: { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 2, canMove: true }] } });
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Creates v3. Production stays on v2.');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move production' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Creates v3 and moves production from v2 to v3.');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'staging', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move labels' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('button', { name: 'Publish and move staging' })).toBeInTheDocument();
+});
+
+it('does not promise a new version when the reviewed bytes already match latest', async () => {
+  api.compare.mockReturnValue({ data: { files: [{ path: 'SKILL.md', status: 'unchanged', toSha256: createHash('sha256').update(draft.files[0].content).digest('hex') }] }, isError: false });
+  renderDialog({ skill: { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 1, canMove: true }] }, draft: { ...draft, baseVersion: 2 } });
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Reuses v2. Production stays on v1.'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+  expect(screen.getByRole('status')).toHaveTextContent('Reuses v2 and moves production from v1 to v2.');
+});

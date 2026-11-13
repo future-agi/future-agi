@@ -166,11 +166,6 @@ export default function FilesTab({ skill, previewEmpty = false }) {
             }
           />
         </Box>
-        {viewed.number && (
-          <Typography variant="s3" color="text.secondary">
-            Viewing immutable version v{viewed.number}
-          </Typography>
-        )}
       </Stack>
       {viewed.error ? (
         <ErrorState title="Version not found" detail={viewed.error} />

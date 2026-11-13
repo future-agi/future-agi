@@ -5,7 +5,7 @@ import { Autocomplete, Avatar, Box, Button, Chip, Link, MenuItem, Stack, TextFie
 import { useSkillsList } from "src/api/skills";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
-import MetricStrip from "src/components/metric-strip";
+import StatusBadge from "src/components/status-badge";
 import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
@@ -44,13 +44,14 @@ export default function SkillsLibraryView() {
   const requestedPageSize = Number(params.get("page_size") || LIMITS.DEFAULT_PAGE_SIZE);
   const pageSize = [10, 25, 50, 100].includes(requestedPageSize) ? requestedPageSize : LIMITS.DEFAULT_PAGE_SIZE;
   const query = useSkillsList({ search, tag, label, sort, order, page, pageSize });
-  const previewState = usePreviewState();
+  const statePreview = usePreviewState();
+  const previewState = params.get("state") === "filtered-empty" ? "filtered-empty" : statePreview;
   const loading = previewState === "loading" || (!previewState && query.isPending);
   const failed = previewState === "error" || (!previewState && query.isError);
-  const rows = previewState === "empty" ? [] : query.data?.results || [];
-  const count = previewState === "empty" ? 0 : query.data?.count || 0;
+  const rows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
+  const count = ['empty', 'filtered-empty'].includes(previewState) ? 0 : query.data?.count || 0;
   const stats = previewState === "empty" ? { total: 0 } : query.data?.stats;
-  const filtered = Boolean(search || tag || label);
+  const filtered = previewState === 'filtered-empty' || Boolean(search || tag || label);
   const firstRun = !loading && !failed && stats?.total === 0 && !filtered;
   // This page supplies suggestions, not an exhaustive workspace tag inventory.
   const tagSuggestions = [...new Set([...(tag ? [tag] : []), ...rows.flatMap((skill) => skill.tags)])].sort();
@@ -96,12 +97,8 @@ export default function SkillsLibraryView() {
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
         actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
-      {!loading && !failed && stats?.total > 0 && <MetricStrip sx={{ mt: 2, gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", md: "repeat(4, minmax(0, 1fr))" } }} items={[
-        { key: "skills", label: "Skills", value: stats.total, hint: "In this workspace" },
-        { key: "production", label: "In production", value: stats.inProduction },
-        { key: "fetches", label: "Fetches (7d)", value: stats.fetches7d },
-        { key: "drafts", label: "Your drafts", value: stats.myDrafts },
-      ]} />}
+      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{stats.total} skills · {stats.inProduction} in production · {stats.fetches7d} fetches in 7 days · {stats.myDrafts} drafts</Typography>}
+      {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
         <FormSearchField searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
         <Autocomplete freeSolo autoSelect selectOnFocus forcePopupIcon size="small" options={tagSuggestions} value={tag || null}

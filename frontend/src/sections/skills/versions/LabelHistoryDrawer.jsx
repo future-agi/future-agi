@@ -1,10 +1,11 @@
 import { useId, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Drawer, IconButton, Stack, Typography } from "@mui/material";
+import { Box, Button, Drawer, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
+import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { fDateTime } from "src/utils/format-time";
@@ -12,8 +13,10 @@ import { usePreviewState } from "src/sections/skills/components/SkillsStatePrevi
 import useLabelHistoryPage from "./useLabelHistoryPage";
 
 function HistoryEvents({ skillId, label }) {
+  const filterId = useId();
+  const [labelFilter, setLabelFilter] = useState(label || "");
   const [page, setPage] = useState(1);
-  const history = useLabelHistoryPage(skillId, label, page);
+  const history = useLabelHistoryPage(skillId, labelFilter, page);
   const preview = usePreviewState();
   const events = history.data?.results ?? [];
   const loading = preview === "loading" || (!preview && history.isPending);
@@ -22,6 +25,11 @@ function HistoryEvents({ skillId, label }) {
 
   return (
     <>
+      <TextField id={filterId} select size="small" label="Label filter" value={labelFilter} SelectProps={{ displayEmpty: true, SelectDisplayProps: { "aria-labelledby": `${filterId}-label` } }} onChange={(event) => { setLabelFilter(event.target.value); setPage(1); }}>
+        <MenuItem value="">All labels</MenuItem>
+        {[...new Set(['production', 'staging', label, ...events.map((event) => event.label)])].filter(Boolean).map((name) => <MenuItem key={name} value={name}>{name}</MenuItem>)}
+      </TextField>
+      {history.isFetching && !loading && <StatusBadge status="checking" label="Updating…" />}
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }} aria-busy={loading}>
         {loading ? (
           <ContentSkeleton
@@ -38,7 +46,8 @@ function HistoryEvents({ skillId, label }) {
           <EmptyState
             variant="no-results"
             title="No label changes yet"
-            description="Moving or removing a label records who changed it and when."
+            description="A change you just made can take a moment to appear."
+            action={<Button variant="outlined" onClick={history.refetch}>Refresh</Button>}
           />
         ) : (
           <Stack component="ol" spacing={0} sx={{ m: 0, p: 0, listStyle: "none" }}>
@@ -144,7 +153,7 @@ export default function LabelHistoryDrawer({ open, onClose, skill, label }) {
           spacing={1}
         >
           <Typography id={titleId} variant="m1" component="h2" fontWeight={600}>
-            {name ? `${name} history` : "Label history"}
+            Label history
           </Typography>
           <IconButton aria-label="Close label history" onClick={onClose}>
             <Iconify icon="solar:close-linear" />

@@ -23,6 +23,7 @@ import FileStatusBadge from "src/sections/skills/components/FileStatusBadge";
 import TextDiff from "src/sections/skills/components/TextDiff";
 import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
+import IdentityChip from "../components/IdentityChip";
 import RestoreVersionDialog from "../versions/RestoreVersionDialog";
 import CompareSummary from "./CompareSummary";
 
@@ -49,6 +50,9 @@ export default function SkillCompareView() {
   const router = useRouter();
   const [params, setParams] = useSearchParams();
   const preview = usePreviewState();
+  const requestedReturn = params.get('returnTo');
+  const returnTo = requestedReturn?.startsWith(`${paths.dashboard.skills.reviews}?`) ? requestedReturn : `${paths.dashboard.skills.detail(skillId)}?tab=versions`;
+  const returnLabel = returnTo === requestedReturn ? 'Return to review' : 'Back to versions';
   const [selectedPath, setSelectedPath] = useState(null);
   const [restore, setRestore] = useState(null);
   const skill = useSkill(skillId);
@@ -117,6 +121,7 @@ export default function SkillCompareView() {
     <Stack spacing={2} sx={{ p: 3, minWidth: 0, flex: 1 }}>
       <PageHeader
         title="Compare versions"
+        actions={<Button variant="contained" onClick={() => router.push(returnTo)}>{returnLabel}</Button>}
         description={
           skill.data?.name || "Review changes across every file in a skill."
         }
@@ -125,7 +130,7 @@ export default function SkillCompareView() {
             aria-label="Back to skill versions"
             onClick={() =>
               router.push(
-                `${paths.dashboard.skills.detail(skillId)}?tab=versions`,
+                returnTo,
               )
             }
           >
@@ -201,6 +206,10 @@ export default function SkillCompareView() {
       ) : (
         <Stack spacing={2}>
           <CompareSummary summary={compare.data.summary} />
+          {selected && <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.5}>
+            {selected.fromSha256 && <IdentityChip value={selected.fromSha256} label={`${refTitle(resolvedFrom)} file digest`} />}
+            {selected.toSha256 && <IdentityChip value={selected.toSha256} label={`${refTitle(resolvedTo)} file digest`} />}
+          </Stack>}
           <Stack
             direction={{ xs: "column", md: "row" }}
             spacing={2}

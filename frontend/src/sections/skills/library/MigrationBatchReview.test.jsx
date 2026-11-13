@@ -160,3 +160,33 @@ it('assembles the packet\'s proposed context from exactly the published versions
   // The same operation keys are kept for an exact retry.
   expect(context.publish.mock.calls[0][0].keys).toBe(context.prepare.mock.calls[0][0].keys);
 });
+
+it('keeps import consequence copy synchronized with the actual publication choice', () => {
+  const onConsequenceChange = vi.fn();
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={vi.fn()} onPublish={vi.fn()} onConsequenceChange={onConsequenceChange} />);
+  expect(onConsequenceChange).toHaveBeenLastCalledWith("Imports 2 items as new published versions. Production labels don't change.");
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Publish each imported draft as a new version without labels' }));
+  expect(onConsequenceChange).toHaveBeenLastCalledWith('Imports 2 items as unpublished drafts.');
+  expect(screen.getByRole('status')).toHaveTextContent('Imports 2 items as unpublished drafts.');
+});
+
+it('filters held items without removing required decisions or changing the submitted set', () => {
+  render(<MigrationBatchReview plans={[plan([item('one'), item('both', { diverged: true, destinationId: 'd' }), item('mine', { hasDraft: true })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Item status' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Held', exact: true }));
+  expect(screen.getByRole('table')).toHaveTextContent('mine');
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  expect(screen.getByRole('button', { name: 'Import and publish 2 items' })).toBeDisabled();
+});
+
+it('requires fresh rights and exception acknowledgments when the reviewed source set changes', () => {
+  const first = plan([item('one')]);
+  const accept = vi.fn(); const publish = vi.fn();
+  const { rerender } = render(<MigrationBatchReview plans={[first]} onAccept={accept} onPublish={publish} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  expect(screen.getByRole('button', { name: 'Import and publish 1 item' })).toBeEnabled();
+  rerender(<MigrationBatchReview plans={[first, plan([item('two')], 'second')]} onAccept={accept} onPublish={publish} />);
+  expect(screen.getByRole('checkbox', { name: /^I confirm my rights/ })).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Import and publish 2 items' })).toBeDisabled();
+});

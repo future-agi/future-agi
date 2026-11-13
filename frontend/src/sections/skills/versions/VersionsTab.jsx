@@ -25,7 +25,7 @@ import Section from "src/components/section";
 import SelectionBar from "src/components/selection-bar";
 import LabelChip from "src/sections/skills/components/LabelChip";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
-import { shortDigest } from "src/sections/skills/utils/format";
+import IdentityChip from "../components/IdentityChip";
 import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 import MoveLabelDialog from "./MoveLabelDialog";
@@ -146,16 +146,8 @@ export default function VersionsTab({ skill }) {
     {
       accessorKey: "digest",
       header: "Digest",
-      size: 130,
-      cell: ({ getValue }) => (
-        <Typography
-          variant="s3"
-          title={getValue()}
-          sx={{ fontFamily: "monospace" }}
-        >
-          {shortDigest(getValue())}
-        </Typography>
-      ),
+      size: 210,
+      cell: ({ getValue }) => <Box onClick={(event) => event.stopPropagation()}><IdentityChip value={getValue()} label="Digest" inline /></Box>,
     },
     { accessorKey: "fileCount", header: "Files", size: 70 },
     {

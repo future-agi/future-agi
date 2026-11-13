@@ -25,6 +25,7 @@ import {
   getSkillErrorCode,
   useArchiveSkill,
   useSkill,
+  useSkillVersion,
 } from "src/api/skills";
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { HOST_API } from "src/config-global";
@@ -33,10 +34,11 @@ import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
-import PageHeader from "src/components/page-header";
+import ObjectHeader from "../components/ObjectHeader";
+import VersionIdentityRow from "../components/VersionIdentityRow";
+import OperationFeedback from "../components/OperationFeedback";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { CustomTabs } from "src/components/tabs/tabs";
-import LabelChip from "../components/LabelChip";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildInstallCommand } from "../utils/install";
 import TestsTab from '../tests/TestsTab';
@@ -67,6 +69,7 @@ function DetailContent({ skill, preview }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [archiveRevision, setArchiveRevision] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [operationError, setOperationError] = useState(null);
   const tab = TABS.includes(params.get("tab")) ? params.get("tab") : "files";
   const production = skill.labels.find((label) => label.name === "production");
   const otherDrafts = (skill.drafts || []).filter((draft) => !draft.isMine);
@@ -74,6 +77,7 @@ function DetailContent({ skill, preview }) {
     skill,
     params.get("version"),
   );
+  const viewedVersion = useSkillVersion(skill.id, downloadNumber);
   const changeTab = (value) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -102,51 +106,38 @@ function DetailContent({ skill, preview }) {
   const download = async () => {
     setMenuAnchor(null);
     setDownloading(true);
+    setOperationError(null);
     try {
       await downloadVersionZip(skill.id, downloadNumber);
-    } catch {
-      enqueueSnackbar("Could not download this version. Try again.", {
-        variant: "error",
-      });
+    } catch (error) {
+      setOperationError({ error: { ...error, code: "retryable_transport", message: error.message }, action: "download this version" });
     } finally {
       setDownloading(false);
     }
   };
   const confirmArchive = async () => {
+    setOperationError(null);
     try {
       await archive.mutateAsync({ id: skill.id, expectedReleaseRevision: archiveRevision });
       enqueueSnackbar("Skill archived", { variant: "success" });
       navigate(paths.dashboard.skills.root);
-    } catch {
-      enqueueSnackbar("Could not archive this skill. Try again.", {
-        variant: "error",
-      });
+    } catch (error) {
+      setConfirmOpen(false);
+      setOperationError({ error, action: "archive this skill" });
     }
   };
 
   return (
     <>
-      <PageHeader
+      <ObjectHeader
+        crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.name }]}
         title={
           <Box component="span" sx={{ fontFamily: "monospace" }}>
             {skill.name}
           </Box>
         }
-        description={skill.description}
-        badge={
-          production && (
-            <LabelChip name="production" version={production.version} />
-          )
-        }
-        back={
-          <IconButton
-            component={RouterLink}
-            to={paths.dashboard.skills.root}
-            aria-label="Back to Skills"
-          >
-            <Iconify icon="solar:arrow-left-linear" />
-          </IconButton>
-        }
+        purpose={skill.description}
+        identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
@@ -158,7 +149,7 @@ function DetailContent({ skill, preview }) {
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
-              {skill.hasDraft ? 'Continue draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
+              {skill.hasDraft ? 'Resume your draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
             </Button>
             <IconButton
               aria-label="Skill actions"
@@ -172,9 +163,8 @@ function DetailContent({ skill, preview }) {
           </>
         }
       />
-      <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>
-        Viewed {downloadNumber ? `v${downloadNumber}` : 'not available'} · Production {production ? `v${production.version}` : 'unassigned'} · Latest {skill.latestVersion ? `v${skill.latestVersion}` : 'unpublished'}. {skill.hasDraft ? 'Continue draft retains its original content basis.' : 'The current legacy editor starts from latest; it does not silently use the viewed release.'}
-      </Typography>
+      {!skill.hasDraft && downloadNumber && downloadNumber !== skill.latestVersion && <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>Editing starts from latest v{skill.latestVersion}, not the v{downloadNumber} you&apos;re viewing.</Typography>}
+      {operationError && <OperationFeedback {...operationError} onRetry={operationError.action.startsWith('download') ? download : undefined} onRefresh={() => window.location.reload()} onReconcile={() => window.location.reload()} />}
       {otherDrafts.length > 0 && (
         <Alert severity="info" sx={{ mb: 1.5 }}>
           {otherDrafts.map((draft) => draft.user.name).join(", ")}{" "}
