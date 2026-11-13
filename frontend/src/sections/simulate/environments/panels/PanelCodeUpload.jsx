@@ -74,7 +74,7 @@ function reducer(s, a) {
 
 // Hidden folder picker reused by both the empty drop zone and the Replace
 // button. webkitdirectory/directory are spread via Box (a raw <input> trips
-// react/no-unknown-property).
+// react/no-unknown-property), matching the product's HarnessCreate.
 export function FolderInput({ onPick }) {
   return (
     <Box

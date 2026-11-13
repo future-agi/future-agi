@@ -5,14 +5,20 @@ const jobsPath = () => apiPath("/simulate/api/harness-jobs/");
 const jobPath = (id) => apiPath("/simulate/api/harness-jobs/{id}/", { id });
 const cancelPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/cancel/", { id });
+const adjustPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/adjust/", { id });
 const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
 const sourcesPath = () => apiPath("/simulate/api/harness-jobs/sources/");
 const secretFilesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-files/");
+const extendPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
 const conversationMessagesPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
 const scenariosPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id });
+const scenarioCoveragePath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/coverage/", { id });
 const amendScenariosPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id });
 
@@ -58,6 +64,8 @@ export const uploadHarnessSecretFile = async (formData) =>
     })
   ).data;
 export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;
+export const adjustHarnessJob = async (id, payload) =>
+  (await axios.post(adjustPath(id), payload)).data;
 // The contract marks this endpoint runtimeRequestValidation: true against
 // HarnessJobAction, so it must be sent an object. Posting no body at all makes the
 // validator parse `undefined`, which fails before the request ever leaves the browser.
@@ -68,6 +76,11 @@ export const cancelHarnessJob = async (id, reason) => {
   if (trimmed) body.reason = trimmed.slice(0, 500);
   return (await axios.post(cancelPath(id), body)).data;
 };
+// The RL-environment chat, once terminal, drives follow-ups: "add 5 scenarios with more
+// neutral happy flows" adds scenarios against the saved world; a message with no count
+// just reruns the saved suite.
+export const extendHarnessJob = async (id, payload) =>
+  (await axios.post(extendPath(id), payload)).data;
 
 // Post a turn into the live builder conversation. `payload` carries the required
 // { content, client_request_id, kind } and, for a reply to a blocking question,
@@ -91,6 +104,21 @@ export const listHarnessScenarios = async (id, params = {}) => {
   const query = search.toString();
   return (await axios.get(`${scenariosPath(id)}${query ? `?${query}` : ""}`))
     .data;
+};
+
+export const getHarnessScenarioCoverage = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    // A repeated key is one property's OR-set, so an array has to stay several params.
+    (Array.isArray(value) ? value : [value]).forEach((one) =>
+      search.append(key, String(one)),
+    );
+  });
+  const query = search.toString();
+  return (
+    await axios.get(`${scenarioCoveragePath(id)}${query ? `?${query}` : ""}`)
+  ).data;
 };
 
 // Edit a finished run's authored suite. `changes` is a batch, and the reply is one receipt per

@@ -1,4 +1,5 @@
-// Folder upload: a webkitdirectory input sends a copy of a local folder to the
+// Folder upload, matching the product's Create-RL-environment "Upload folder"
+// (HarnessCreate): a webkitdirectory input sends a copy of a local folder to the
 // isolated runner, leaving .env and generated dependency folders behind.
 export const CODE_UPLOAD_COPY = {
   title: "Upload your agent folder",

@@ -89,6 +89,11 @@ export const paths = {
       test: `${ROOTS.DASHBOARD}/simulate/test`,
       testCallDetails: (testId, executionId) =>
         `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      harness: {
+        root: `${ROOTS.DASHBOARD}/simulate/harness`,
+        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
+        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
+      },
       environments: {
         root: `${ROOTS.DASHBOARD}/simulate/environments`,
         templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
