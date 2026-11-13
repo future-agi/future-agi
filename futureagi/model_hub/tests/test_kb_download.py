@@ -179,9 +179,7 @@ def test_header_filename_normalizes_paths_and_control_characters(download_case):
     c.file.name = "../folder\\report\r\nSuffix.txt"
     c.file.save()
     response = download_knowledge_base_file(c.request, c.kb.id, c.file.id)
-    assert (
-        response["Content-Disposition"] == 'attachment; filename="reportSuffix.txt"'
-    )
+    assert response["Content-Disposition"] == 'attachment; filename="reportSuffix.txt"'
     response.close()
 
 
@@ -199,3 +197,38 @@ def test_invalid_collection_id(download_case):
     with pytest.raises(ValidationError):
         download_knowledge_base_file(c.request, "../other", c.file.id)
     c.client.assert_not_called()
+
+
+def test_asgi_response_sends_first_chunk_before_reading_whole_object(download_case):
+    """The ASGI handler must forward storage chunks as they are read."""
+    from asgiref.sync import async_to_sync
+    from django.core.handlers.asgi import ASGIHandler
+
+    c = download_case
+    chunks = [bytes([index]) * 1024 for index in range(8)]
+    reads = []
+
+    def stream(_amount):
+        for chunk in chunks:
+            reads.append(len(chunk))
+            yield chunk
+
+    c.stored.stream.side_effect = stream
+    response = download_knowledge_base_file(c.request, c.kb.id, c.file.id)
+    reads_at_first_body = []
+    bodies = []
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            if not bodies:
+                reads_at_first_body.append(len(reads))
+            bodies.append(message["body"])
+
+    async_to_sync(ASGIHandler().send_response)(response, send)
+    # ASGIHandler.handle() closes the response after send_response() returns.
+    response.close()
+
+    assert reads_at_first_body == [1]
+    assert b"".join(bodies) == b"".join(chunks)
+    c.stored.close.assert_called_once()
+    c.stored.release_conn.assert_called_once()

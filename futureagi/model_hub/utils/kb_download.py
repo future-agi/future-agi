@@ -4,6 +4,7 @@ import mimetypes
 import re
 from uuid import UUID
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.utils.http import content_disposition_header
@@ -30,6 +31,27 @@ class _StorageDownload:
             self.response.close()
         finally:
             self.response.release_conn()
+
+
+_STREAM_END = object()
+
+
+class _StorageStreamingResponse(StreamingHttpResponse):
+    """Stream storage chunks one at a time under both WSGI and ASGI.
+
+    Django's ASGI handler collects a synchronous iterator into a list before
+    sending the body. Reading one chunk per worker-thread call keeps memory
+    bounded by the chunk size instead of the file size.
+    """
+
+    async def __aiter__(self):
+        chunks = iter(self.streaming_content)
+        read_chunk = sync_to_async(next, thread_sensitive=False)
+        while True:
+            chunk = await read_chunk(chunks, _STREAM_END)
+            if chunk is _STREAM_END:
+                return
+            yield chunk
 
 
 def download_knowledge_base_file(request, kb_id, file_id):
@@ -115,7 +137,7 @@ def download_knowledge_base_file(request, kb_id, file_id):
         if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
             raise NotFound("Knowledge base file not found.") from exc
         raise
-    response = StreamingHttpResponse(
+    response = _StorageStreamingResponse(
         _StorageDownload(stored),
         content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
     )
