@@ -19,6 +19,11 @@ from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 pytestmark = pytest.mark.django_db
 
+# The account number in the source trace. It must never reach the accepted
+# receipt; letters outside a-f keep it from occurring by chance inside the
+# receipt's UUIDs and SHA-256 digests.
+ACCOUNT = "acct-QZX-7781"
+
 
 @pytest.fixture
 def trace(principal, monkeypatch):
@@ -45,7 +50,7 @@ def trace(principal, monkeypatch):
                     {"role": "system", "content": "Private system instructions"},
                     {
                         "role": "user",
-                        "content": "Check a synthetic refund for account 123.",
+                        "content": f"Check a synthetic refund for account {ACCOUNT}.",
                     },
                     {
                         "role": "assistant",
@@ -151,11 +156,7 @@ def test_capture_redacts_before_sharing_and_replays_without_duplicate(
     assert saved["cases"][0]["source_group_id"].startswith("trace:sha256:")
     capture = HubSkillContextCapture.objects.get(pk=result["capture_id"])
     assert capture.selected_text is None
-    # The receipt carries random UUIDs and SHA-256 digests, so a bare "123" can
-    # occur by chance; look for the source's identifying text instead.
-    receipt = json.dumps(capture.accepted_receipt)
-    assert "account 123" not in receipt
-    assert "Check a synthetic refund for account" not in receipt
+    assert ACCOUNT not in json.dumps(capture.accepted_receipt)
     HubSkillContextCapture.objects.filter(pk=capture.pk).update(
         expires_at=timezone.now() - timedelta(days=1)
     )
