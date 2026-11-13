@@ -920,7 +920,7 @@ def trigger_error_localization_for_span(
         "eval_logger_id": str(eval_logger.id),
         "span_id": str(observation_span.id),
     }
-    span_context = {
+    span_context: dict[str, Any] = {
         "eval_template": eval_template,
         "eval_logger": eval_logger,
         "observation_span": observation_span,
