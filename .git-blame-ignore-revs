@@ -4,3 +4,5 @@
 
 # style: format backend Python with ruff format (mechanical, no behaviour change)
 7e98398ca28e264b44b65e41bede825062654991
+# style: format backend Python files changed since the first pass
+897384e98dab3e21c5985e8cd57703d58f0fcb80
