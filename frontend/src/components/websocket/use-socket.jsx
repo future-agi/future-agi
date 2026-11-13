@@ -29,6 +29,9 @@ const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002, 4003]);
 // The server accepts the handshake before closing with this code, so the
 // open does not count as a successful connection for the retry backoff.
 const AUTHENTICATION_UNAVAILABLE_CLOSE_CODE = 1011;
+// Once the retry budget is spent during such an outage, keep retrying at this
+// slow, fixed interval: the credential was never refused.
+const AUTHENTICATION_UNAVAILABLE_RETRY_DELAY = 60000;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
@@ -37,6 +40,8 @@ export const WebSocketProvider = ({ children }) => {
   const reconnectAttempts = useRef(0);
   const reconnectAttemptsBeforeOpen = useRef(0);
   const retryBudgetCredentialRef = useRef(null);
+  // Set when the server last closed with 1011; cleared by any server frame.
+  const authenticationUnavailableRef = useRef(false);
   const navigate = useNavigate();
 
   const socketRef = useRef(null);
@@ -130,10 +135,13 @@ export const WebSocketProvider = ({ children }) => {
       return;
     }
 
+    const exhausted = reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS;
+
     // Reconnection permanently exhausted — stop retrying. The single actionable
     // exception is emitted from errorHandler once this cap is reached; here we
-    // just stop the loop so transient drops don't retry forever.
-    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+    // just stop the loop so transient drops don't retry forever. While the
+    // server cannot authenticate the socket (1011) it keeps retrying slowly.
+    if (exhausted && !authenticationUnavailableRef.current) {
       logger.addBreadcrumb({
         category: "websocket",
         level: "warning",
@@ -143,17 +151,22 @@ export const WebSocketProvider = ({ children }) => {
     }
 
     // Use exponential backoff with a maximum delay
-    const backoffTime = Math.min(
-      RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts.current),
-      MAX_RECONNECT_DELAY,
-    );
+    const backoffTime = exhausted
+      ? AUTHENTICATION_UNAVAILABLE_RETRY_DELAY
+      : Math.min(
+          RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts.current),
+          MAX_RECONNECT_DELAY,
+        );
 
     logger.debug(
       `Attempting WebSocket reconnect in ${backoffTime}ms (attempt ${reconnectAttempts.current + 1})...`,
     );
 
     reconnectTimeoutRef.current = setTimeout(() => {
-      reconnectAttempts.current++;
+      reconnectAttempts.current = Math.min(
+        reconnectAttempts.current + 1,
+        MAX_RECONNECT_ATTEMPTS,
+      );
       // Use ref to avoid circular dependency
       if (createWebSocketConnectionRef.current) {
         createWebSocketConnectionRef.current();
@@ -197,6 +210,7 @@ export const WebSocketProvider = ({ children }) => {
       // A frame from the server means the socket was authenticated, so a
       // later 1011 close starts a new backoff instead of resuming the old one.
       reconnectAttemptsBeforeOpen.current = 0;
+      authenticationUnavailableRef.current = false;
       let message = event.data;
       try {
         message = JSON.parse(event.data);
@@ -253,6 +267,9 @@ export const WebSocketProvider = ({ children }) => {
       }
       setError("WebSocket connection error");
       setIsConnected(false);
+      // A failure other than 1011 ends the slow retries for unavailable
+      // authentication; the normal retry limit applies again.
+      authenticationUnavailableRef.current = false;
 
       if (
         socketRef.current?.readyState !== WebSocket.OPEN &&
@@ -288,6 +305,9 @@ export const WebSocketProvider = ({ children }) => {
       if (event.code === AUTHENTICATION_UNAVAILABLE_CLOSE_CODE) {
         // Keep backing off while the server cannot authenticate the socket.
         reconnectAttempts.current = reconnectAttemptsBeforeOpen.current;
+        authenticationUnavailableRef.current = true;
+      } else {
+        authenticationUnavailableRef.current = false;
       }
 
       if (event.code === 1006) {
@@ -385,6 +405,13 @@ export const WebSocketProvider = ({ children }) => {
         };
         reconnectAttempts.current = 0;
         reconnectAttemptsBeforeOpen.current = 0;
+        authenticationUnavailableRef.current = false;
+        // A retry scheduled for the old credential would replace the socket
+        // opened below.
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
       }
 
       if (

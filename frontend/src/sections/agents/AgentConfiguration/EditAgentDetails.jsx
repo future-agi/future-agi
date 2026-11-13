@@ -566,6 +566,7 @@ const EditAgentDetails = ({
               <FormTextFieldV2
                 control={control}
                 fieldName="apiKey"
+                fieldType="password"
                 placeholder="Enter API key"
                 label="Provider API Key"
                 required={
@@ -606,6 +607,7 @@ const EditAgentDetails = ({
             <FormTextFieldV2
               control={control}
               fieldName="livekitApiKey"
+              type="password"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
               required={!isSourceAgent}

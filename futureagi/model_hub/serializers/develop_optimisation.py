@@ -7,6 +7,7 @@ from model_hub.models.choices import SourceChoices
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.utils.optimization_scope import optimization_metrics
 from model_hub.utils.workspace_scope import (
     scoped_column_queryset,
     scoped_dataset_queryset,
@@ -143,7 +144,9 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
 
     def get_optimized_columns(self, obj):
         columns = Column.objects.filter(
-            source=SourceChoices.OPTIMISATION.value, source_id=str(obj.id)
+            source=SourceChoices.OPTIMISATION.value,
+            source_id=str(obj.id),
+            dataset=obj.dataset,
         )
         return [{"id": col.id, "name": col.name} for col in columns]
 
@@ -151,20 +154,16 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
         # Dictionary to group columns by eval_id
         eval_groups = {}
 
-        for eval_metric in obj.user_eval_template_ids.all():
+        for eval_metric in optimization_metrics(obj):
             eval_id = eval_metric.id
             columns = Column.objects.filter(
                 source=SourceChoices.OPTIMISATION_EVALUATION.value,
                 source_id=f"{obj.id}-sourceid-{eval_id}",
+                dataset=obj.dataset,
             )
 
             # Get eval metric details
-            eval_metric_obj = UserEvalMetric.objects.filter(id=eval_id).first()
-            output_type = (
-                eval_metric_obj.template.config.get("output")
-                if eval_metric_obj
-                else None
-            )
+            output_type = eval_metric.template.config.get("output")
 
             # Initialize group for this eval_id
             if eval_id not in eval_groups:
@@ -172,7 +171,7 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
                     "eval_id": eval_id,
                     "new_prompt": None,
                     "old_prompt": None,
-                    "eval_name": eval_metric_obj.name,
+                    "eval_name": eval_metric.name,
                 }
 
             # Process each column
@@ -198,7 +197,9 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
                 for placeholder in placeholders:
                     try:
                         # Fetch the column name using the placeholder as the column ID
-                        column = Column.objects.filter(id=placeholder).first()
+                        column = Column.objects.filter(
+                            id=placeholder, dataset=obj.dataset
+                        ).first()
                         if column:
                             # Replace the placeholder with the column name
                             prompt = prompt.replace(
@@ -214,7 +215,7 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
     def get_user_eval_template_ids(self, obj):
         return [
             str(metric_id)
-            for metric_id in obj.user_eval_template_ids.values_list("id", flat=True)
+            for metric_id in optimization_metrics(obj).values_list("id", flat=True)
         ]
 
 

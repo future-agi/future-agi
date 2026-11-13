@@ -15,6 +15,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.safe_traceback import sanitized_exception_traceback
 from tfc.utils.websocket_relay_auth import (
     RELAY_SIGNATURE_HEADER,
+    RELAY_TIMESTAMP_HEADER,
     relay_signature_is_valid,
 )
 
@@ -45,7 +46,10 @@ class IsInternalRelayCaller(BasePermission):
         except RawPostDataException:
             return False
         return relay_signature_is_valid(
-            organization.id, body, request.headers.get(RELAY_SIGNATURE_HEADER)
+            organization.id,
+            body,
+            request.headers.get(RELAY_SIGNATURE_HEADER),
+            request.headers.get(RELAY_TIMESTAMP_HEADER),
         )
 
 

@@ -34,7 +34,7 @@ from tfc.middleware.workspace_context import (
     set_workspace_context,
 )
 from tfc.settings.settings import MIDDLEWARE
-from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
+from tfc.utils.websocket_relay_auth import relay_headers
 
 pytestmark = [pytest.mark.integration, pytest.mark.django_db(transaction=True)]
 PASSWORD = "Synthetic-relay-test-password"
@@ -246,11 +246,11 @@ def internal_headers(key, signed_org=None, signed_body=None):
     """Headers the server-side relay caller sends: system key plus signature."""
 
     def build(raw):
-        signature = relay_signature(
+        signed = relay_headers(
             signed_org or key.organization_id,
             raw if signed_body is None else signed_body,
         )
-        return {**key_headers(key), RELAY_SIGNATURE_HEADER: signature}
+        return {**key_headers(key), **signed}
 
     return build
 
@@ -364,7 +364,7 @@ def caller_headers(server, caller, org, owner, member, key):
         session = {"Authorization": "Bearer " + login(server, owner)["access"]}
         return lambda raw: {
             **session,
-            RELAY_SIGNATURE_HEADER: relay_signature(org.pk, raw),
+            **relay_headers(org.pk, raw),
         }
     raise AssertionError(caller)
 
@@ -437,8 +437,8 @@ def test_removed_member_socket_receives_no_former_org_traffic(
                 send_message_to_channel(org.pk, message)
             # The organization's own subscriber is the positive control.
             assert json.loads(own.recv(timeout=10)) == message
-            leaked = receive_optional(removed) if removed is not None else None
-            assert (status, leaked) == (403, None)
+            delivered = receive_optional(removed) if removed is not None else None
+            assert (status, delivered) == (403, None)
 
 
 def test_client_frames_never_reach_stream_subscribers(relay_server):
@@ -460,7 +460,7 @@ def test_client_frames_never_reach_stream_subscribers(relay_server):
         with socket_or_refusal(url) as (removed, status):
             if removed is not None:
                 subscribe(removed, target)
-                frame = {"type": "injected", "uuid": target, "data": {"text": "x"}}
+                frame = {"type": "client_stream", "uuid": target, "data": {"text": "x"}}
                 removed.send(json.dumps(frame))
             assert (status, receive_optional(own)) == (403, None)
 

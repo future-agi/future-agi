@@ -89,10 +89,20 @@ class MembershipSocketGuard:
         self.closed = False
         self._last_validated_at: float | None = None
         self._revalidation_pending = False
+        # Advanced by every forced check. Only a check that started at the
+        # current generation may clear a pending revalidation, so a check that
+        # was already running when the membership changed cannot.
+        self._generation = 0
 
     @property
     def revalidation_pending(self) -> bool:
         return self._revalidation_pending
+
+    @property
+    def generation(self) -> int:
+        """Advanced by every forced check."""
+
+        return self._generation
 
     def mark_validated(self, at: float | None = None) -> None:
         self._last_validated_at = time.monotonic() if at is None else at
@@ -112,6 +122,7 @@ class MembershipSocketGuard:
             # Cleared only by a successful check, so an interrupted or failed
             # check cannot fall back to a cached result.
             self._revalidation_pending = True
+            self._generation += 1
         elif not self._revalidation_pending:
             if self.consumer.scope.get("auth_scope") is not None:
                 return True
@@ -126,6 +137,7 @@ class MembershipSocketGuard:
             ):
                 return True
 
+        generation = self._generation
         try:
             allowed = await database_sync_to_async(organization_membership_is_active)(
                 user.id, organization_id
@@ -137,6 +149,13 @@ class MembershipSocketGuard:
             )
             return False
 
+        if self.closed:
+            return False
+        if generation != self._generation:
+            # The membership changed while this check ran; its answer may
+            # predate the change, so it neither delivers, closes nor clears
+            # the pending revalidation.
+            return False
         if not allowed:
             await self._close()
             return False

@@ -216,19 +216,106 @@ it("backs off while the server cannot complete authentication", () => {
   expect(sockets).toHaveLength(5);
 });
 
-it("stops retrying unavailable authentication at the reconnect limit", () => {
-  vi.useFakeTimers();
-  render(tree());
-  for (let i = 0; i < 20; i += 1) {
-    act(() => {
-      sockets.at(-1).emit("open");
-      sockets.at(-1).emit("close", { code: 1011 });
-    });
-    act(() => {
-      vi.advanceTimersByTime(30000);
-    });
+const failHandshake = () =>
+  act(() => {
+    sockets.at(-1).emit("open");
+    sockets.at(-1).emit("close", { code: 1011 });
+  });
+const waitFor = (ms) =>
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+// Fail handshakes with 1011 until the retry budget is spent.
+const spendTheRetryBudget = () => {
+  for (let i = 0; i < 10; i += 1) {
+    failHandshake();
+    waitFor(30000);
   }
   // The first socket plus MAX_RECONNECT_ATTEMPTS (10) retries.
+  expect(sockets).toHaveLength(11);
+};
+
+it("keeps retrying unavailable authentication slowly after the reconnect limit", () => {
+  vi.useFakeTimers();
+  render(tree());
+  spendTheRetryBudget();
+
+  // An outage longer than the whole backoff does not end the retries.
+  for (let expected = 12; expected <= 16; expected += 1) {
+    failHandshake();
+    waitFor(59999);
+    expect(sockets).toHaveLength(expected - 1);
+    waitFor(1);
+    expect(sockets).toHaveLength(expected);
+  }
+  expect(new URL(sockets.at(-1).url).searchParams.get("token")).toBe(
+    "synthetic-token",
+  );
+
+  // Once the server authenticates the socket, a later drop backs off from
+  // the start again.
+  act(() => {
+    sockets.at(-1).emit("open");
+    sockets.at(-1).emit("message", { data: JSON.stringify({ type: "pong" }) });
+  });
+  act(() => {
+    sockets.at(-1).emit("close", { code: 1000 });
+  });
+  waitFor(5000);
+  expect(sockets).toHaveLength(17);
+});
+
+it.each([4001, 4003])(
+  "stops the slow retries when the server refuses the credential with %i",
+  (code) => {
+    vi.useFakeTimers();
+    render(tree());
+    spendTheRetryBudget();
+    failHandshake();
+    waitFor(60000);
+    expect(sockets).toHaveLength(12);
+    act(() => {
+      sockets.at(-1).emit("open");
+      sockets.at(-1).emit("close", { code });
+    });
+    waitLongerThanEveryBackoff();
+    expect(sockets).toHaveLength(12);
+  },
+);
+
+it("returns to the retry limit when a later failure is not 1011", () => {
+  vi.useFakeTimers();
+  render(tree());
+  spendTheRetryBudget();
+  failHandshake();
+  waitFor(60000);
+  expect(sockets).toHaveLength(12);
+  // The server is now unreachable: the handshake fails without a 1011.
+  act(() => {
+    sockets.at(-1).emit("error");
+    sockets.at(-1).emit("close", { code: 1006 });
+  });
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(12);
+});
+
+it("still stops at the reconnect limit when authentication is not the cause", () => {
+  vi.useFakeTimers();
+  render(tree());
+  act(() => {
+    sockets[0].emit("open");
+    sockets[0].emit("message", { data: JSON.stringify({ type: "pong" }) });
+  });
+  for (let i = 0; i < 20; i += 1) {
+    act(() => {
+      sockets.at(-1).emit("error");
+      sockets.at(-1).emit("close", { code: 1006 });
+    });
+    waitFor(30000);
+  }
+  // The first socket plus MAX_RECONNECT_ATTEMPTS (10) retries.
+  expect(sockets).toHaveLength(11);
+  waitLongerThanEveryBackoff();
   expect(sockets).toHaveLength(11);
 });
 
@@ -282,29 +369,27 @@ it("starts a new backoff when an authenticated socket later closes with 1011", (
 it("gives a replaced credential the full retry budget during an outage", () => {
   vi.useFakeTimers();
   const { rerender } = render(tree());
-  const failHandshakes = (count) => {
-    for (let i = 0; i < count; i += 1) {
-      act(() => {
-        sockets.at(-1).emit("open");
-        sockets.at(-1).emit("close", { code: 1011 });
-      });
-      act(() => {
-        vi.advanceTimersByTime(30000);
-      });
-    }
-  };
-  failHandshakes(20);
-  // The first socket plus MAX_RECONNECT_ATTEMPTS (10) retries.
-  expect(sockets).toHaveLength(11);
+  spendTheRetryBudget();
+  // The spent budget leaves a slow retry scheduled.
+  failHandshake();
+  expect(vi.getTimerCount()).toBe(1);
 
   act(() => {
     state.user = { ...state.user, accessToken: "synthetic-token-2" };
     rerender(tree());
   });
   expect(sockets).toHaveLength(12);
-  failHandshakes(3);
-  expect(sockets).toHaveLength(15);
-  expect(new URL(sockets[14].url).searchParams.get("token")).toBe(
-    "synthetic-token-2",
-  );
+  failHandshake();
+  waitFor(5000);
+  expect(sockets).toHaveLength(13);
+  failHandshake();
+  waitFor(10000);
+  expect(sockets).toHaveLength(14);
+  // The old credential's slow retry does not replace the new socket.
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(14);
+  expect(sockets[13].close).not.toHaveBeenCalled();
+  expect(
+    sockets.slice(11).map((s) => new URL(s.url).searchParams.get("token")),
+  ).toEqual(Array(3).fill("synthetic-token-2"));
 });

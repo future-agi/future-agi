@@ -41,7 +41,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
-from tfc.utils.websocket_relay_auth import relay_signature
+from tfc.utils.websocket_relay_auth import relay_headers
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -151,7 +151,10 @@ def relay(key, target=None):
         content_type="application/json",
         HTTP_X_API_KEY=key.api_key,
         HTTP_X_SECRET_KEY=key.secret_key,
-        HTTP_X_RELAY_SIGNATURE=relay_signature(key.organization_id, raw),
+        **{
+            "HTTP_" + name.upper().replace("-", "_"): value
+            for name, value in relay_headers(key.organization_id, raw).items()
+        },
     )
     assert response.status_code == 200, response.content
     return message

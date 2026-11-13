@@ -88,6 +88,7 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
                 await self._stop_subscriber()
 
     async def disconnect(self, close_code):
+        self._guard.stop()
         logger.info(
             "simulation_ws_disconnected",
             test_id=self.test_id,
@@ -137,7 +138,10 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             async for message in self._pubsub.listen():
                 if message["type"] == "message":
                     if not await self._guard.ensure_live(inbound=False):
-                        return
+                        if self._guard.revoked or self._guard.closed:
+                            return
+                        # Deliver nothing until a credential check succeeds.
+                        continue
                     if not await self._membership.ensure_member():
                         if self._membership.closed:
                             return
