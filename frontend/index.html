@@ -2,9 +2,9 @@
 <html lang="en" style="max-height: 100vh;">
   <head>
     <meta charset="utf-8" />
-    <!-- Reject the unactivated code protocol before resources or analytics run.
-         This is not a consumer: no capture, exchange, or stored-session change.
-         The existing unmarked legacy transport is deliberately unchanged. -->
+    <!-- Normalize sign-in callback URLs before other resources or analytics load.
+         Only the address changes; nothing is captured or stored here.
+         Callbacks without a saml_code parameter keep their existing flow. -->
     <meta name="referrer" content="no-referrer" />
     <script id="saml-initial-marker-guard">
       (function () {
@@ -24,14 +24,14 @@
         if (!scrubCodeUrl(url)) return;
         try { window.history.replaceState(window.history.state, "", url.href); }
         catch (error) {
-          // Do not load a legacy consumer while a mixed marked URL remains.
+          // Record the failed update; entry.js then does not load the app.
           window.__authHandoffScrubFailed = true;
           window.__authLateMarkerScrubFailed = true;
-          try { window.location.replace(url.href); } catch (navigationError) { /* No credential adoption. */ }
+          try { window.location.replace(url.href); } catch (navigationError) { /* Leave the address as it is. */ }
         }
       })();
     </script>
-    <!-- Late SAML markers are never a second login capability. Install before observers. -->
+    <!-- Normalize callback parameters added after start-up. Installed before other listeners. -->
     <script id="saml-late-marker-guard">
       (function () {
         var history = window.history;
@@ -50,10 +50,10 @@
           try { nativeReplace.call(history, history.state, "", clean.href); }
           catch (error) {
             window.__authLateMarkerScrubFailed = true;
-            // Same-origin replacement keeps stored session credentials. If
-            // navigation also fails, the URL may remain; never publish the
-            // platform exception or its capability URL to telemetry.
-            try { window.location.replace(clean.href); } catch (navigationError) { /* Input stays denied. */ }
+            // A same-origin navigation keeps the stored session. If it also
+            // fails, the address stays as it is and the error is not sent to
+            // monitoring.
+            try { window.location.replace(clean.href); } catch (navigationError) { /* The failure flag above stays set. */ }
           }
         }
 
@@ -98,8 +98,8 @@
             rejected = Boolean(scrubbed(event.oldURL) || scrubbed(event.newURL)) || rejected;
           }
           if (!rejected) return;
-          // Suppress first: a platform history failure must not expose the
-          // event's captured capability URL to later observers.
+          // Stop the event first, so later listeners do not receive its URLs
+          // even if the address update below fails.
           event.stopImmediatePropagation();
           if (clean) safelyReplace(clean);
         }

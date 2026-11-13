@@ -205,9 +205,9 @@ const CUSTOM_MODEL_PROVIDERS = new Set([
   "sagemaker",
 ]);
 
-// A custom-provider configuration can contain arbitrary credential field names.
-// Do not inspect, serialize, or forward its form/payload at this analytics boundary.
-const safeCustomModelProperties = (properties) => ({
+// Custom-model events use a fixed property set: the provider (or "other") and
+// whether it was a create or an edit.
+const customModelEventProperties = (properties) => ({
   model_provider: CUSTOM_MODEL_PROVIDERS.has(properties?.model_provider)
     ? properties.model_provider
     : "other",
@@ -220,7 +220,7 @@ export const trackEvent = (eventName, properties) => {
     mixpanel.track(
       eventName,
       eventName === Events.customModelAdded
-        ? safeCustomModelProperties(properties)
+        ? customModelEventProperties(properties)
         : properties,
     );
   } catch (error) {

@@ -156,9 +156,9 @@ func TestAsyncJobStandaloneModeWorksWithoutKey(t *testing.T) {
 	}
 }
 
-// With license auth on and key auth off there is no per-caller identity for an
-// async job, so jobs must not be shared by every caller of the gateway.
-func TestAsyncJobLicenseModeWithoutKeysHasNoSharedResults(t *testing.T) {
+// License auth without key auth has no API key to own an async job, so submit,
+// read and cancel return 401.
+func TestAsyncJobLicenseModeWithoutKeysRequiresKey(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 	cfg := config.DefaultConfig()

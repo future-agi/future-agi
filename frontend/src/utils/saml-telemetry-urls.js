@@ -1,6 +1,6 @@
-// SAML/OAuth URL capabilities must not enter the supported Sentry URL fields.
-// This is not an arbitrary-string/DOM-content redactor. Keep normal diagnostics
-// and the existing Replay text/media masking policy unchanged.
+// Normalizes sign-in callback URLs in the Sentry URL fields listed below. It
+// does not rewrite other strings or DOM content; normal diagnostics and the
+// Replay text/media masking are unchanged.
 const FILTERED = "[Filtered protocol URL]";
 const CAPABILITY_KEYS = new Set([
   "saml_code",
@@ -103,9 +103,8 @@ export function scrubProtocolUrl(value) {
   try {
     pathname = decodeURIComponent(parsed.pathname);
   } catch {
-    // A malformed path cannot establish an ordinary callback-key namespace.
-    // Redact that URL field if it carries protocol/callback parameters; do not
-    // return a potentially sensitive value after failed classification.
+    // A malformed path cannot be classified; replace the whole field when it
+    // carries callback parameters.
     return marker ||
       Array.from(parsed.searchParams.keys()).some((key) =>
         CALLBACK_KEYS.has(key.toLowerCase()),
@@ -134,8 +133,8 @@ export function scrubProtocolUrl(value) {
     /^https?:\/\//i.test(raw) || raw.startsWith("//")
       ? parsed.href
       : parsed.pathname + parsed.search + parsed.hash;
-  // Removing capability keys does not remove marker text nested in another
-  // parameter's value or a fragment route; fail closed instead of keeping it.
+  // A removed key can still appear inside another parameter's value or a
+  // fragment route; replace the whole field in that case.
   if (hasCapabilityMarker(result)) return FILTERED;
   return prefix + result;
 }

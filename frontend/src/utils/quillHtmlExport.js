@@ -1,11 +1,10 @@
 import Quill from "quill";
 
-// Quill 2.0.3's formula and video blots build their html() output by string
-// interpolation, so quotes, angle brackets and entities in the stored value
-// end up as markup in getSemanticHTML() and in Quill's copy/cut clipboard
-// HTML. Register escaping subclasses on the shared Quill class used by
-// PromptEditor and InputPromptBoxV3; their custom blot registrations and the
-// Delta values are left unchanged.
+// Formula and video blots export their value as text: html() escapes it, so
+// getSemanticHTML() and copy/cut output show the value exactly as stored. The
+// subclasses are registered on the shared Quill class used by PromptEditor and
+// InputPromptBoxV3; their custom blot registrations and the Delta values are
+// left unchanged.
 const Formula = Quill.import("formats/formula");
 const Video = Quill.import("formats/video");
 const HTML_ENTITIES = {
