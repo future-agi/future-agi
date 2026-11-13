@@ -108,24 +108,52 @@ _RESERVATION_ATTR = "_mcp_oauth_token_attempt_reservation"
 # whatever other traffic does in the meantime.
 _RESERVATION_TIMEOUT_SECONDS = 60
 
-# Prune expired reservations and add this one in a single step. Every
-# reservation is its own sorted-set member scored by when it was taken, so
-# later requests never extend an older reservation's lifetime. The key TTL
-# only garbage-collects the set once its newest member has expired.
+# Prune expired reservations, read the recorded invalid attempts, and add
+# this reservation only if both together leave room for it, in a single step.
+# A request that finishes meanwhile is then counted exactly once: either as
+# in flight or as recorded. Every reservation is its own sorted-set member
+# scored by when it was taken, so later requests never extend an older
+# reservation's lifetime. The key TTL only garbage-collects the set once its
+# newest member has expired. KEYS[2] is the Django cache key of the counter.
 _RESERVE_IN_FLIGHT_LUA = """
-local key    = KEYS[1]
+local key         = KEYS[1]
+local attempt_key = KEYS[2]
 local now    = tonumber(ARGV[1])
 local ttl    = tonumber(ARGV[2])
 local member = ARGV[3]
+local limit  = tonumber(ARGV[4])
 
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
+local recorded = tonumber(redis.call('GET', attempt_key) or '0') or 0
+if recorded + redis.call('ZCARD', key) + 1 > limit then
+  return 0
+end
 redis.call('ZADD', key, now, member)
 redis.call('EXPIRE', key, ttl)
-return redis.call('ZCARD', key)
+return 1
 """
 
 _RELEASE_IN_FLIGHT_LUA = """
 return redis.call('ZREM', KEYS[1], ARGV[1])
+"""
+
+# Count one invalid attempt and drop the request's reservation in a single
+# step, so admission never sees the attempt both recorded and in flight.
+# Matches cache.add(key, 1, timeout) followed by cache.incr(key).
+_RECORD_INVALID_ATTEMPT_LUA = """
+local attempt_key = KEYS[1]
+local key         = KEYS[2]
+local window = tonumber(ARGV[1])
+local member = ARGV[2]
+
+local attempts = redis.call('INCR', attempt_key)
+if attempts == 1 then
+  redis.call('EXPIRE', attempt_key, window)
+end
+if member ~= '' then
+  redis.call('ZREM', key, member)
+end
+return attempts
 """
 
 
@@ -136,23 +164,40 @@ def _live_reservations(key: str, now: float) -> dict[str, float]:
     return {member: taken for member, taken in stored.items() if taken > cutoff}
 
 
-def _add_reservation(key: str, member: str, now: float) -> int:
-    """Record one reservation and return how many are live, this one included."""
+def _add_reservation(
+    key: str, attempt_key: str, member: str, now: float, limit: int
+) -> bool:
+    """Add one reservation if recorded attempts plus live reservations allow it."""
     script = rate_limiter._redis_script(_RESERVE_IN_FLIGHT_LUA)
     if script is not None:
-        return int(
-            script(
-                keys=[key],
-                args=[now, _RESERVATION_TIMEOUT_SECONDS, member],
+        return bool(
+            int(
+                script(
+                    keys=[key, cache.make_key(attempt_key)],
+                    args=[now, _RESERVATION_TIMEOUT_SECONDS, member, limit],
+                )
             )
         )
     # Only reached when the explicit test fallback is enabled; production
     # without Redis already failed closed in _redis_script().
     with rate_limiter._fallback_lock:
         live = _live_reservations(key, now)
+        recorded = int(cache.get(attempt_key) or 0)
+        if recorded + len(live) + 1 > limit:
+            return False
         live[member] = now
         cache.set(key, live, timeout=_RESERVATION_TIMEOUT_SECONDS)
-        return len(live)
+        return True
+
+
+def _discard_reservation(key: str, member: str) -> None:
+    """Drop one fallback reservation. The caller holds the fallback lock."""
+    live = _live_reservations(key, time.time())
+    live.pop(member, None)
+    if live:
+        cache.set(key, live, timeout=_RESERVATION_TIMEOUT_SECONDS)
+    else:
+        cache.delete(key)
 
 
 def _remove_reservation(key: str, member: str) -> None:
@@ -161,12 +206,7 @@ def _remove_reservation(key: str, member: str) -> None:
         script(keys=[key], args=[member])
         return
     with rate_limiter._fallback_lock:
-        live = _live_reservations(key, time.time())
-        live.pop(member, None)
-        if live:
-            cache.set(key, live, timeout=_RESERVATION_TIMEOUT_SECONDS)
-        else:
-            cache.delete(key)
+        _discard_reservation(key, member)
 
 
 def _invalid_attempt_limit() -> int:
@@ -204,11 +244,16 @@ def reserve_token_attempt(request: Request) -> bool:
     The lockout is only written after a failed secret check, so without a
     reservation a concurrent burst passes the lockout check together and gets
     more secret checks than the limit allows. Recorded invalid attempts plus
-    requests still being verified must stay within the limit. A refused
-    request gives its slot back at once; an admitted one keeps it until
-    release_token_attempt_reservation() runs after the response is built, or
-    until the reservation expires _RESERVATION_TIMEOUT_SECONDS after it was
-    taken.
+    requests still being verified must stay within the limit. Both are read
+    in the same step that adds the reservation, and a refused request never
+    takes a slot. An admitted request keeps its slot until
+    record_invalid_token_attempt() or release_token_attempt_reservation()
+    gives it back, or until the reservation expires
+    _RESERVATION_TIMEOUT_SECONDS after it was taken.
+
+    A request that reaches the limit sets the lockout and then resets the
+    counter; MCPOAuthTokenLockoutThrottle catches that by re-checking the
+    lockout after reserving.
     """
     key = _in_flight_key(request)
     member = uuid.uuid4().hex
@@ -216,23 +261,21 @@ def reserve_token_attempt(request: Request) -> bool:
     # is lost, the cleanup below still removes the member.
     setattr(request, _RESERVATION_ATTR, (key, member))
     try:
-        in_flight = _add_reservation(key, member, time.time())
-        # Read the recorded attempts after reserving. A request that finishes
-        # in between records its attempt before it releases its slot, so its
-        # attempt is counted at least once. The exception is a request that
-        # reaches the limit: it sets the lockout and resets the counter, which
-        # MCPOAuthTokenLockoutThrottle catches by re-checking the lockout after
-        # reserving.
-        recorded = int(cache.get(_invalid_attempt_key(request)) or 0)
+        admitted = _add_reservation(
+            key,
+            _invalid_attempt_key(request),
+            member,
+            time.time(),
+            _invalid_attempt_limit(),
+        )
     except (ConnectionInterrupted, RedisError) as exc:
         logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
         release_token_attempt_reservation(request)
         raise RateLimitBackendUnavailableError() from exc
 
-    if recorded + in_flight <= _invalid_attempt_limit():
-        return True
-    release_token_attempt_reservation(request)
-    return False
+    if not admitted:
+        setattr(request, _RESERVATION_ATTR, None)
+    return admitted
 
 
 def release_token_attempt_reservation(request: Request | None) -> None:
@@ -247,6 +290,49 @@ def release_token_attempt_reservation(request: Request | None) -> None:
         # The reservation expires on its own _RESERVATION_TIMEOUT_SECONDS
         # after it was taken, so a missed release cannot linger past that.
         logger.error("mcp_oauth_token_reservation_release_failed", exc_info=True)
+
+
+def _increment_invalid_attempts(attempt_key: str, window_seconds: int) -> int:
+    if cache.add(attempt_key, 1, timeout=window_seconds):
+        return 1
+    try:
+        return cache.incr(attempt_key)
+    except ValueError:
+        # Recover if the window expired between add() and incr().
+        cache.set(attempt_key, 1, timeout=window_seconds)
+        return 1
+
+
+def _count_invalid_attempt(
+    request: Request, attempt_key: str, window_seconds: int
+) -> int:
+    """Count one invalid attempt and give back the request's reservation.
+
+    Both happen in one step, so admission never counts the attempt twice:
+    once as recorded and once as still in flight.
+    """
+    reservation = getattr(request, _RESERVATION_ATTR, None)
+    script = rate_limiter._redis_script(_RECORD_INVALID_ATTEMPT_LUA)
+    if script is not None:
+        key, member = reservation or (_in_flight_key(request), "")
+        attempts = int(
+            script(
+                keys=[cache.make_key(attempt_key), key],
+                args=[window_seconds, member],
+            )
+        )
+    elif reservation is None:
+        # Nothing in flight to give back, so no step to share with admission.
+        return _increment_invalid_attempts(attempt_key, window_seconds)
+    else:
+        key, member = reservation
+        with rate_limiter._fallback_lock:
+            attempts = _increment_invalid_attempts(attempt_key, window_seconds)
+            _discard_reservation(key, member)
+    # Cleared only once the reservation is gone, so a failure above still
+    # leaves it for release_token_attempt_reservation().
+    setattr(request, _RESERVATION_ATTR, None)
+    return attempts
 
 
 def record_invalid_token_attempt(request: Request) -> int:
@@ -266,15 +352,7 @@ def record_invalid_token_attempt(request: Request) -> int:
 
     attempt_key = _invalid_attempt_key(request)
     try:
-        if cache.add(attempt_key, 1, timeout=window_seconds):
-            attempts = 1
-        else:
-            try:
-                attempts = cache.incr(attempt_key)
-            except ValueError:
-                # Recover if the window expired between add() and incr().
-                cache.set(attempt_key, 1, timeout=window_seconds)
-                attempts = 1
+        attempts = _count_invalid_attempt(request, attempt_key, window_seconds)
     except (ConnectionInterrupted, RedisError) as exc:
         logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
         raise RateLimitBackendUnavailableError() from exc
