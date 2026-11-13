@@ -159,9 +159,9 @@ const AddTagsPopover = ({
         itemCount,
       },
     ) => {
-      if (bulk && sessionId !== session.current.id) return;
-      if (bulk) confirmedTags.current = savedTags;
-      else {
+      if (bulk) {
+        if (sessionId === session.current.id) confirmedTags.current = savedTags;
+      } else {
         const key = tagTargetKey(savedEntity, type);
         acknowledged.current.set(key, result);
         // Show it only if the popover still edits the entity it was saved for.
@@ -183,8 +183,9 @@ const AddTagsPopover = ({
       onSuccess?.(result, bulk ? undefined : { entity: savedEntity, type });
     },
     onError: (error, { bulk, sessionId }) => {
-      if (bulk && sessionId !== session.current.id) return;
-      setTags(confirmedTags.current);
+      if (!bulk || sessionId === session.current.id) {
+        setTags(confirmedTags.current);
+      }
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(
         `${bulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,

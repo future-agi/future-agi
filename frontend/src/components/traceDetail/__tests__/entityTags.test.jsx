@@ -542,11 +542,11 @@ describe("scoped entity tag writes", () => {
       { id: "child", type: "span", entity: child, currentTags: child.tags },
     ];
     const second = [
-      { id: "root-1", type: "trace", entity, currentTags: entity.tags },
       { id: "other", type: "span", entity: other, currentTags: other.tags },
     ];
     const onSuccess = vi.fn();
     const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     const popover = (open, bulkItems) => (
       <QueryClientProvider client={client}>
         <AddTagsPopover
@@ -568,14 +568,27 @@ describe("scoped entity tag writes", () => {
     await waitFor(() =>
       expect(screen.getByText("Add test tag")).not.toBeDisabled(),
     );
-    expect(onSuccess).not.toHaveBeenCalled();
-    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
-      "Tags applied to 2 items",
-      { variant: "success" },
+    expect(enqueueSnackbar).toHaveBeenCalledWith("Tags applied to 2 items", {
+      variant: "success",
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("sdk")).toBeInTheDocument();
+    expect(screen.queryByText("a")).not.toBeInTheDocument();
+
+    // A new session's failed save must roll back to its own confirmed tags,
+    // not to the old bulk session's acknowledged tags.
+    axios.post.mockRejectedValueOnce({ statusCode: 503 });
+    nextTag.name = "new";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
     );
+    expect(screen.getByText("sdk")).toBeInTheDocument();
+    expect(screen.queryByText("a")).not.toBeInTheDocument();
   });
 
-  it("does not report an old bulk error as a new single-item error", async () => {
+  it("reports an old bulk error with bulk wording after switching to a single item", async () => {
     let rejectOld;
     axios.patch.mockReturnValueOnce(
       new Promise((_, reject) => {
@@ -588,6 +601,7 @@ describe("scoped entity tag writes", () => {
       { id: "child", type: "span", entity: child, currentTags: child.tags },
     ];
     const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     const popover = (items) => (
       <QueryClientProvider client={client}>
         <AddTagsPopover
@@ -603,7 +617,12 @@ describe("scoped entity tag writes", () => {
     await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
     rerender(popover([bulk[1]]));
     await act(async () => rejectOld({ statusCode: 409 }));
-    expect(enqueueSnackbar).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      `Some items may have been updated. ${tagUpdateErrorMessage({ statusCode: 409 })}`,
+      { variant: "error" },
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
+    expect(screen.getByText("sdk")).toBeInTheDocument();
   });
 
   it("saves one shared assignment for two root spans and can add again", async () => {
