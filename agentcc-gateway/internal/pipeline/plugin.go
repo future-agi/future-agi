@@ -85,6 +85,14 @@ type PostPriority interface {
 	PostPriority() int
 }
 
+// AccessGate is an optional interface for a plugin whose request-side check
+// decides whether the caller may use the gateway at all, such as the address
+// lists and the key's own restrictions. Engine.CheckAccess runs these checks
+// alone, for handlers that call a provider without the whole pipeline.
+type AccessGate interface {
+	IsAccessGate() bool
+}
+
 // SkipOnCacheHit is an optional interface plugins can implement to indicate
 // their ProcessResponse should be skipped when the request was served from cache.
 // Cost calculation and credits deduction are meaningless on cache hits.

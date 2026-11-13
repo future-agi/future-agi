@@ -1,6 +1,7 @@
-"""Keep open relay sockets in step with organization membership.
+"""Keep open sockets in step with organization membership.
 
-Each ``DataConsumer`` joins a per-user group when it connects. When one of the
+Each organization-bound socket (``DataConsumer``, ``SimulationUpdateConsumer``,
+``FalconAIConsumer``) joins a per-user group when it connects. When one of the
 user's memberships ends, ``close_sockets_for_membership`` asks those sockets to
 revalidate; a socket that no longer belongs to its organization closes itself.
 ``MembershipSocketGuard`` also revalidates before delivery on a short interval,
@@ -77,12 +78,21 @@ class MembershipSocketGuard:
     for a short interval, and a notification forces a fresh check. SAML
     sockets are revalidated by their own guard, which already requires an
     active membership, so only forced checks run for them here.
+
+    A forced check that does not complete (for example a database error)
+    leaves the socket pending: every delivery, SAML or not, then checks again
+    and nothing is delivered until a check succeeds.
     """
 
     def __init__(self, consumer):
         self.consumer = consumer
         self.closed = False
         self._last_validated_at: float | None = None
+        self._revalidation_pending = False
+
+    @property
+    def revalidation_pending(self) -> bool:
+        return self._revalidation_pending
 
     def mark_validated(self, at: float | None = None) -> None:
         self._last_validated_at = time.monotonic() if at is None else at
@@ -98,7 +108,11 @@ class MembershipSocketGuard:
             return False
 
         now = time.monotonic()
-        if not force:
+        if force:
+            # Cleared only by a successful check, so an interrupted or failed
+            # check cannot fall back to a cached result.
+            self._revalidation_pending = True
+        elif not self._revalidation_pending:
             if self.consumer.scope.get("auth_scope") is not None:
                 return True
             interval = getattr(
@@ -127,6 +141,7 @@ class MembershipSocketGuard:
             await self._close()
             return False
         self._last_validated_at = now
+        self._revalidation_pending = False
         return True
 
     async def _close(self) -> None:

@@ -12,7 +12,7 @@ export const SearchFieldBox = styled(Box)(({ theme }) => ({
 export const LabelButton = styled(MenuItem)(({ theme }) => ({
   color: theme.palette.primary.main,
   cursor: "pointer",
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: typography.fontWeightSemiBold,
   lineHeight: 1.6,
   display: "flex",

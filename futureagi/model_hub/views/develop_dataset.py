@@ -15301,7 +15301,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
                     metric.dataset.save()
 
                     # Create reason column
-                    reason_column, _ = Column.objects.create(
+                    reason_column = Column.objects.create(
                         name=f"{metric.name}-reason",
                         data_type=DataTypeChoices.TEXT.value,
                         source=SourceChoices.EVALUATION_REASON.value,

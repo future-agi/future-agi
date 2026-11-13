@@ -69,7 +69,7 @@ describe("SpanDetailPane read-only", () => {
     expect(screen.queryByTestId("scores-list")).toBeNull();
   });
 
-  it("offers Fix with Falcon in the Evals tab only when it can act", async () => {
+  it("offers Fix with AI in the Evals tab only when it can act", async () => {
     const user = userEvent.setup();
     const { unmount } = renderPane({ onAction: vi.fn() });
     await user.click(screen.getByText("Evals"));
