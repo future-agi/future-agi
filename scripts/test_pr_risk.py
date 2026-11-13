@@ -1553,6 +1553,18 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(risk.review_ledger(self.api, 42, self.api.comments)), 1)
         self.assertEqual(self.api.checks[-1]["conclusion"], "cancelled")
 
+    def test_the_verdict_summary_speaks_only_for_its_own_step(self):
+        # The review action prints its whole prompt, diff included, to the
+        # ai-review job's log, so the publish step claims only its own log.
+        self.api.files[0]["patch"] = "@@ -1 +1 @@\n+distinctive diff line"
+        context = self.prepare()
+        self.summary.reset_mock()
+        self.publish(context)
+        texts = [str(call.args[0]) for call in self.summary.call_args_list]
+        self.assertIn("Automated review outcome: passed; round 1. This step logs no diff content.", texts)
+        self.assertFalse(any("No diff content is logged" in text for text in texts))
+        self.assertFalse(any("distinctive diff line" in text for text in texts))
+
     def test_pending_reservation_cannot_be_completed_by_a_rerun_or_another_run(self):
         context = self.prepare()
         for env in (

@@ -2038,7 +2038,9 @@ def publish_verdict(api, policy, context, raw, action_result):
         # must not change the outcome or fail the step.
         summary("The review result comment could not be posted.")
     summary(
-        f"Automated review outcome: {outcome}; round {context['round']}. No diff content is logged."
+        # Only this step: the review action prints its whole prompt, diff
+        # included, to the ai-review job's log.
+        f"Automated review outcome: {outcome}; round {context['round']}. This step logs no diff content."
     )
     return outcome
 
