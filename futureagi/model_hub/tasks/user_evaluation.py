@@ -1649,7 +1649,12 @@ def process_single_error_localization(task_id):
                 )
 
                 eval_logger.output_metadata = output_metadata
-                eval_logger.save(update_fields=["output_metadata"])
+                # Primary: save() validates the result's config (full_clean),
+                # which a lagging replica may not have when the eval is new.
+                from tfc.routers import force_primary
+
+                with force_primary():
+                    eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
                 if metadata.get("log_id", None) and APICallLog is not None:

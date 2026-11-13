@@ -38,6 +38,7 @@ from model_hub.models.evals_metric import EvalTemplate, Feedback
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import clear_workspace_context
+from tfc.routers import force_primary
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
 from tracer.models.custom_eval_config import (
     CustomEvalConfig,
@@ -201,6 +202,40 @@ def test_c13_localizer_writes_back_onto_result_created_after_freeze(
         trace, observation_span, custom_eval_config, {"tokens": 3}
     )
     assert not EvalLogger.objects.filter(pk=eval_logger.pk).exists()
+
+    task = _localize(localizer_template, eval_logger)
+
+    assert task.status == ErrorLocalizerStatus.COMPLETED, task.error_message
+    metadata = _primary_logger(eval_logger.pk).output_metadata
+    assert metadata["tokens"] == 3
+    assert metadata["error_analysis"] == _ANALYSIS
+    assert localizer.refunds == []
+
+
+def test_c13_localizer_writes_back_onto_result_of_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    localizer,
+    localizer_template,
+    project,
+    eval_template,
+    trace,
+    observation_span,
+):
+    """A new eval (config) whose first result fails: saving the analysis
+    validates the result's config, which the replica does not have yet."""
+    lagging_replica.freeze()
+    config = CustomEvalConfig.objects.create(
+        name="localizer-fresh-" + uuid.uuid4().hex[:6],
+        project=project,
+        eval_template=eval_template,
+        config={},
+        mapping={"input": "input", "output": "output"},
+        filters={},
+    )
+    # The eval run that wrote the result runs on the primary.
+    with force_primary():
+        eval_logger = _observe_logger(trace, observation_span, config, {"tokens": 3})
+    assert not CustomEvalConfig.objects.filter(pk=config.pk).exists()
 
     task = _localize(localizer_template, eval_logger)
 
