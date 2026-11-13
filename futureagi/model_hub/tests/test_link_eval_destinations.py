@@ -7,7 +7,10 @@ The YAML code executes directly, without a Django/LLM test double.
 import http.server
 import os
 import socket
+import ssl
+import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -27,6 +30,55 @@ def load(name):
         namespace,
     )  # noqa: S102
     return namespace["evaluate"]
+
+
+def _routed_socket(routes, attempts, connect_delay=0.0):
+    """A real socket class whose connect() maps public test addresses to loopback."""
+    real = socket.socket
+
+    class Routed(real):
+        def connect(self, address):
+            attempts.append(address)
+            time.sleep(connect_delay)
+            return super().connect(routes[address])
+
+    return Routed
+
+
+def _self_signed_certificate(directory, hostname):
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), False)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = directory / "cert.pem"
+    key_path = directory / "key.pem"
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
 
 
 class LinkAcceptance(unittest.TestCase):
@@ -344,6 +396,113 @@ class LinkAcceptance(unittest.TestCase):
                 self.assertEqual(result["reason"], "Too many links to validate")
                 check.assert_not_called()
 
+    def test_next_validated_address_is_tried_when_first_refuses(self):
+        received = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                received.append((self.headers["Host"], self.path))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        closed = socket.socket()
+        closed.bind(("127.0.0.1", 0))
+        closed_port = closed.getsockname()[1]
+        closed.close()
+        records = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.1", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.2", 80)),
+        ]
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            routes = {
+                ("11.0.0.1", 80): ("127.0.0.1", closed_port),
+                ("11.0.0.2", 80): ("127.0.0.1", server.server_port),
+            }
+            try:
+                for name in NAMES:
+                    attempts = []
+                    received.clear()
+                    with (
+                        self.subTest(name=name),
+                        mock.patch.dict(
+                            os.environ, {"LINK_EVAL_ALLOWED_HOSTS": "allowed.example"}
+                        ),
+                        mock.patch("socket.getaddrinfo", return_value=records),
+                        mock.patch("socket.socket", _routed_socket(routes, attempts)),
+                    ):
+                        result = load(name)(
+                            None, "http://allowed.example/docs", None, None
+                        )
+                    self.assertEqual(result["score"], 1.0, result)
+                    self.assertEqual(attempts, [("11.0.0.1", 80), ("11.0.0.2", 80)])
+                    self.assertEqual(received, [("allowed.example", "/docs")])
+            finally:
+                server.shutdown()
+                thread.join()
+
+    def test_https_deadline_still_applies_after_a_late_tls_handshake(self):
+        # TCP uses most of the budget, TLS finishes after the deadline, then
+        # the server keeps sending one header byte at a time.
+        with tempfile.TemporaryDirectory() as directory:
+            cert, key = _self_signed_certificate(Path(directory), "allowed.example")
+            server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.load_cert_chain(cert, key)
+            client_context = ssl.create_default_context(cafile=str(cert))
+            stop = threading.Event()
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+
+            def slow_server():
+                peer, _ = listener.accept()
+                with peer:
+                    if stop.wait(0.4):
+                        return
+                    try:
+                        with server_context.wrap_socket(peer, server_side=True) as tls:
+                            tls.recv(4096)
+                            for byte in b"HTTP/1.1 200 OK\r\nX-Slow: " + b"a" * 100:
+                                if stop.wait(0.1):
+                                    return
+                                tls.sendall(bytes([byte]))
+                    except OSError:
+                        return
+
+            server = threading.Thread(target=slow_server, daemon=True)
+            server.start()
+            records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.1", 443))]
+            routes = {("11.0.0.1", 443): listener.getsockname()}
+            link_status = load("no_invalid_links").__globals__["_link_status"]
+            try:
+                with (
+                    mock.patch.dict(
+                        os.environ, {"LINK_EVAL_ALLOWED_HOSTS": "allowed.example"}
+                    ),
+                    mock.patch("socket.getaddrinfo", return_value=records),
+                    mock.patch(
+                        "socket.socket", _routed_socket(routes, [], connect_delay=0.4)
+                    ),
+                    mock.patch(
+                        "ssl._create_default_https_context", lambda: client_context
+                    ),
+                ):
+                    started = time.monotonic()
+                    with self.assertRaisesRegex(
+                        TimeoutError, "Link validation timed out"
+                    ):
+                        link_status("https://allowed.example/", started + 0.6)
+                    elapsed = time.monotonic() - started
+            finally:
+                stop.set()
+                server.join(5)
+                listener.close()
+        self.assertLess(elapsed, 2.0)
+
     def test_system_eval_version_is_bumped(self):
         import ast
 
@@ -358,7 +517,10 @@ class LinkAcceptance(unittest.TestCase):
                 for target in node.targets
             )
         ]
-        self.assertEqual(versions, [30])
+        # 29 is the version before the link-check changes. Templates seeded at
+        # 29 must be refreshed, whatever number SYSTEM_EVALS_VERSION ships as.
+        self.assertEqual(len(versions), 1)
+        self.assertGreater(versions[0], 29)
 
 
 if __name__ == "__main__":

@@ -130,24 +130,49 @@ config:
             # mirror the product's never-allowed metadata exception explicitly.
             if not ip.is_global or ip.is_reserved or ip.is_multicast or str(ip) == "168.63.129.16" or (ip.version == 6 and (ip.is_site_local or ip.ipv4_mapped or ip.sixtofour or ip.teredo)):
                 raise refused()
-        family, kind, proto, canonname, address = records[0]
         connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
         connection = connection_type(host, port, timeout=remaining())
-        raw = socket.socket(family, kind, proto)
+        guard = threading.Lock()
+        state = {"expired": False, "watch": None}
+        opened = []
+        def expire():
+            with guard:
+                state["expired"] = True
+                watch = state["watch"]
+            if watch is not None:
+                try:
+                    watch.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
         def pinned_connection(*args, **kwargs):
-            raw.settimeout(remaining())
-            raw.connect(address)
-            return raw
+            # Try each validated numeric sockaddr in order, as
+            # socket.create_connection does, without another DNS lookup.
+            error = None
+            for family, kind, proto, canonname, address in records:
+                budget = remaining()
+                raw = socket.socket(family, kind, proto)
+                # TLS wrapping takes over raw's descriptor; a duplicate still
+                # refers to the same connection, so expire() can always end it.
+                watch = raw.dup()
+                opened.extend((raw, watch))
+                with guard:
+                    expired = state["expired"]
+                    state["watch"] = watch
+                if expired:
+                    raise TimeoutError("Link validation timed out")
+                try:
+                    raw.settimeout(budget)
+                    raw.connect(address)
+                    return raw
+                except OSError as exc:
+                    error = exc
+                    raw.close()
+                    watch.close()
+            remaining()
+            raise error
         # Keep Host and TLS verification/SNI on the original hostname while
         # connecting to the validated numeric sockaddr without another DNS lookup.
         connection._create_connection = pinned_connection
-        def expire():
-            sock = connection.sock or raw
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            sock.close()
         timer = threading.Timer(remaining(), expire)
         timer.daemon = True
         timer.start()
@@ -158,10 +183,17 @@ config:
                 remaining()
                 # http.client neither follows redirects nor reads proxy settings.
                 return response.status
+        except Exception:
+            with guard:
+                expired = state["expired"]
+            if expired:
+                raise TimeoutError("Link validation timed out") from None
+            raise
         finally:
             timer.cancel()
             connection.close()
-            raw.close()
+            for sock in opened:
+                sock.close()
 
 
     def evaluate(input, output, expected, context, **kwargs):
