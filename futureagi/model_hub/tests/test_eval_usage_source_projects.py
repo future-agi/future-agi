@@ -330,6 +330,36 @@ def test_logs_from_projects_the_caller_cannot_read_never_appear(
     assert result["logs"]["total"] == 1
 
 
+def test_a_recorded_project_with_an_escaped_key_still_decides(
+    organization, workspace, template, clickhouse_usage
+):
+    """JSON may escape any key character; the recorded project still decides.
+
+    The log recorded a project the caller cannot read (another organization)
+    and a readable project holds a copy of its trace id, so it must stay
+    hidden, exactly as with a plainly written key."""
+
+    readable = _project(organization, workspace, "Readable copy")
+    foreign = _project(
+        Organization.objects.create(name="Unreadable organization"),
+        None,
+        "Other organization",
+    )
+    config = _config(readable, template, "cfg")
+    ledger = _Ledger(organization, workspace, template)
+    trace_id = uuid.uuid4()
+    _, row = ledger.row(trace_id=trace_id, config_id=config.id, project_id=foreign.id)
+    escaped = row[6].replace('"project_id"', '"\\u0070roject_id"')
+    assert escaped != row[6]
+    row = (*row[:6], escaped, *row[7:])
+    clickhouse_usage(
+        traces=[(trace_id, foreign.id, 0, 1), (trace_id, readable.id, 0, 1)],
+        logs=[row],
+    )
+
+    assert _listed(_usage(template, organization, workspace)) == set()
+
+
 def test_a_trace_tombstoned_in_its_project_is_not_listed(
     organization, workspace, template, clickhouse_usage
 ):
