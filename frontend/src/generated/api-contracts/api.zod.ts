@@ -1784,7 +1784,7 @@ export const accountsUserListListQueryLimitDefault = 10;
 export const accountsUserListListQueryLimitMax = 100;
 
 export const accountsUserListListQuerySearchDefault = ``;
-export const accountsUserListListQuerySortDefault = [];
+export const accountsUserListListQuerySortDefault = ``;
 export const accountsUserListListQueryFilterStatusDefault = [];
 export const accountsUserListListQueryFilterRoleDefault = [];
 
@@ -22829,7 +22829,7 @@ export const modelHubDevelopsGetDatasetTableListQueryFiltersDefault = `[]`;
 
 export const modelHubDevelopsGetDatasetTableListQuerySortDefault = `[]`;
 
-export const modelHubDevelopsGetDatasetTableListQuerySearchDefault = {};
+export const modelHubDevelopsGetDatasetTableListQuerySearchDefault = `{}`;
 export const modelHubDevelopsGetDatasetTableListQueryPageSizeDefault = 10;
 
 export const modelHubDevelopsGetDatasetTableListQueryCurrentPageIndexDefault = 0;
@@ -27265,7 +27265,7 @@ export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexDefault = 0;
 export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexMin = 0;
 
 export const modelHubGetEvalLogsDetailsListQuerySourceDefault = `logs`;
-export const modelHubGetEvalLogsDetailsListQuerySearchDefault = {};
+export const modelHubGetEvalLogsDetailsListQuerySearchDefault = `{}`;
 export const modelHubGetEvalLogsDetailsListQueryFiltersDefault = `[]`;
 
 export const modelHubGetEvalLogsDetailsListQuerySortDefault = `[]`;
@@ -46249,7 +46249,7 @@ export const simulateApiRunTestsListQuerySummaryDefault = false;
 export const SimulateApiRunTestsListQueryParams = zod.object({
   search: zod.string().default(simulateApiRunTestsListQuerySearchDefault),
   simulation_type: zod
-    .enum(["agent_definition", "prompt"])
+    .enum(["", "agent_definition", "prompt"])
     .default(simulateApiRunTestsListQuerySimulationTypeDefault),
   prompt_template_id: zod.string().uuid().optional(),
   page: zod
@@ -48868,7 +48868,7 @@ export const simulateRunTestsListQuerySummaryDefault = false;
 export const SimulateRunTestsListQueryParams = zod.object({
   search: zod.string().default(simulateRunTestsListQuerySearchDefault),
   simulation_type: zod
-    .enum(["agent_definition", "prompt"])
+    .enum(["", "agent_definition", "prompt"])
     .default(simulateRunTestsListQuerySimulationTypeDefault),
   prompt_template_id: zod.string().uuid().optional(),
   page: zod
@@ -53768,7 +53768,7 @@ export const SimulateV3TestExecutionCallsParams = zod.object({
 });
 
 export const simulateV3TestExecutionCallsQuerySearchDefault = ``;
-export const simulateV3TestExecutionCallsQueryFiltersDefault = {};
+export const simulateV3TestExecutionCallsQueryFiltersDefault = `{}`;
 export const simulateV3TestExecutionCallsQueryOrderingDefault = `-started_at`;
 export const simulateV3TestExecutionCallsQueryPageDefault = 1;
 
@@ -53814,7 +53814,7 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
     .max(simulateV3TestExecutionCallsQueryPageSizeMax)
     .default(simulateV3TestExecutionCallsQueryPageSizeDefault),
   group_by: zod
-    .enum(["goal", "sub_goal", "accent", "age", "attack", "task", "status"])
+    .enum(["", "goal", "sub_goal", "accent", "age", "attack", "task", "status"])
     .default(simulateV3TestExecutionCallsQueryGroupByDefault),
   group_key: zod.string().optional(),
 });
@@ -55666,7 +55666,7 @@ export const tracerDashboardFilterValuesCreateResponseResultActivationFingerprin
 export const TracerDashboardFilterValuesCreateResponse =
   TracerDashboardFilterValuesResponse;
 
-export const tracerDashboardMetricsQueryProjectIdsDefault = [];
+export const tracerDashboardMetricsQueryProjectIdsDefault = ``;
 export const tracerDashboardMetricsQueryPerEvalConfigDefault = false;
 export const tracerDashboardMetricsQueryExcludeCustomAttributesDefault = false;
 export const tracerDashboardMetricsQuerySearchDefault = ``;
@@ -55698,6 +55698,7 @@ export const TracerDashboardMetricsQueryParams = zod.object({
     .default(tracerDashboardMetricsQuerySearchDefault),
   category: zod
     .enum([
+      "",
       "system_metric",
       "eval_metric",
       "annotation_metric",
@@ -55706,10 +55707,11 @@ export const TracerDashboardMetricsQueryParams = zod.object({
     ])
     .default(tracerDashboardMetricsQueryCategoryDefault),
   role: zod
-    .enum(["metric", "dimension"])
+    .enum(["", "metric", "dimension"])
     .default(tracerDashboardMetricsQueryRoleDefault),
   source: zod
     .enum([
+      "",
       "traces",
       "spans",
       "sessions",
@@ -55882,6 +55884,7 @@ export const TracerDashboardMetricsCreateBody = zod.object({
     .default(tracerDashboardMetricsCreateBodySearchDefault),
   category: zod
     .enum([
+      "",
       "system_metric",
       "eval_metric",
       "annotation_metric",
@@ -55890,10 +55893,11 @@ export const TracerDashboardMetricsCreateBody = zod.object({
     ])
     .default(tracerDashboardMetricsCreateBodyCategoryDefault),
   role: zod
-    .enum(["metric", "dimension"])
+    .enum(["", "metric", "dimension"])
     .default(tracerDashboardMetricsCreateBodyRoleDefault),
   source: zod
     .enum([
+      "",
       "traces",
       "spans",
       "sessions",
@@ -72494,10 +72498,8 @@ export const TracerSqlQueryDownloadResponse = zod.instanceof(File);
 
 export const tracerTraceAnnotationGetAnnotationValuesQueryObservationSpanIdMax = 255;
 
-export const tracerTraceAnnotationGetAnnotationValuesQueryAnnotatorsDefault =
-  [];
-export const tracerTraceAnnotationGetAnnotationValuesQueryExcludeAnnotatorsDefault =
-  [];
+export const tracerTraceAnnotationGetAnnotationValuesQueryAnnotatorsDefault = `[]`;
+export const tracerTraceAnnotationGetAnnotationValuesQueryExcludeAnnotatorsDefault = `[]`;
 
 export const TracerTraceAnnotationGetAnnotationValuesQueryParams = zod.object({
   page: zod
@@ -74695,7 +74697,7 @@ export const TracerTraceGetTraceIdByIndexObserveCreateBody = zod.object({
 export const TracerTraceGetTraceIdByIndexObserveCreateResponse =
   TracerTraceGetTraceIdByIndexObserveResponse;
 
-export const tracerTraceListTracesQueryTraceIdsDefault = [];
+export const tracerTraceListTracesQueryTraceIdsDefault = ``;
 export const tracerTraceListTracesQueryFiltersDefault = `[]`;
 
 export const tracerTraceListTracesQuerySortParamsDefault = `[]`;
@@ -74849,7 +74851,7 @@ export const TracerTraceListTracesResponse = zod.object({
 /**
  * List traces filtered by project ID and project version ID with optimized queries.
  */
-export const tracerTraceListTracesCreateBodyTraceIdsDefault = [];
+export const tracerTraceListTracesCreateBodyTraceIdsDefault = ``;
 export const tracerTraceListTracesCreateBodyFiltersDefault = `[]`;
 
 export const tracerTraceListTracesCreateBodySortParamsDefault = `[]`;
@@ -77885,8 +77887,7 @@ export const tracerUsersListQueryExportDefault = false;
 export const tracerUsersListQueryCursorMax = 4096;
 
 export const tracerUsersListQueryCursorModeDefault = false;
-export const tracerUsersListQueryRequestedColumnsDefault = [];
-export const tracerUsersListQueryAttributeKeysDefault = [];
+export const tracerUsersListQueryAttributeKeysDefault = ``;
 
 export const TracerUsersListQueryParams = zod.object({
   project_id: zod.string().uuid().optional(),
@@ -77917,7 +77918,7 @@ export const TracerUsersListQueryParams = zod.object({
   cursor_mode: zod.boolean().default(tracerUsersListQueryCursorModeDefault),
   requested_columns: zod
     .string()
-    .default(tracerUsersListQueryRequestedColumnsDefault)
+    .optional()
     .describe(
       "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
     ),
@@ -78039,8 +78040,7 @@ export const tracerUsersCreateBodyExportDefault = false;
 export const tracerUsersCreateBodyCursorMax = 4096;
 
 export const tracerUsersCreateBodyCursorModeDefault = false;
-export const tracerUsersCreateBodyRequestedColumnsDefault = [];
-export const tracerUsersCreateBodyAttributeKeysDefault = [];
+export const tracerUsersCreateBodyAttributeKeysDefault = ``;
 
 export const TracerUsersCreateBody = zod.object({
   project_id: zod.string().uuid().optional(),
@@ -78076,7 +78076,7 @@ export const TracerUsersCreateBody = zod.object({
   cursor_mode: zod.boolean().default(tracerUsersCreateBodyCursorModeDefault),
   requested_columns: zod
     .string()
-    .default(tracerUsersCreateBodyRequestedColumnsDefault)
+    .optional()
     .describe(
       "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
     ),
