@@ -67,9 +67,43 @@ describe("jobToBuildProgress", () => {
       stepId: "generate-env",
       retryable: true,
     });
-    // Our infrastructure's failure reads as ours, not the agent's; "boom" stays on the record.
+    // A run issue reads as one that doesn't count against the agent; "boom" stays on the record.
     expect(out.failure.detail).toBe(
-      "Our infrastructure failed, not the agent. Counts neither for nor against it.",
+      "Stopped — an issue occurred while running this. Run it again; it doesn't count against the agent.",
+    );
+  });
+
+  it("reads an older build's start timeout as a slow start, not as a run issue", () => {
+    // Recorded before failures carried a cause: infrastructure domain, depends_on_timeout.
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "generating_environment",
+          domain: "infrastructure",
+          message:
+            "depends_on/depends_on_timeout (agent): agent: started_check did not pass within 180.0s",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
+    );
+
+    // An older image certifies without recording a cause: the start timeout still reads so.
+    const unrecorded = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "validating_environment",
+          domain: "environment",
+          code: "authoring_runtime_validation_failed",
+          cause: "unknown",
+          message:
+            "We couldn't run this agent version in its environment: ProcessRuntimeError: depends_on/depends_on_timeout (agent)",
+        },
+      }),
+    );
+    expect(unrecorded.failure.detail).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
     );
   });
 
@@ -90,6 +124,9 @@ describe("jobToBuildProgress", () => {
 
     expect(failedWith("agent_exited_before_ready")).toBe(
       "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version.",
+    );
+    expect(failedWith("agent_not_ready_in_time")).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
     );
     expect(failedWith("a_value_from_a_newer_server")).toBe(
       "Stopped — the reason wasn't recorded. Run it again.",

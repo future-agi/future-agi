@@ -22,6 +22,7 @@ from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.held_back import (
     CAUSE_WORDS,
     coding_agent_failure_message,
+    failure_cause,
     held_back,
     verify_run,
     version_verify,
@@ -67,6 +68,8 @@ from simulate.tests.test_harness_versioning_record import _authoring
 pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
+# A certify start timeout as the guest recorded it, from a run before failures carried a cause.
+_START_TIMEOUT = "depends_on/depends_on_timeout (agent): agent: started_check did not pass within 180.0s"
 VERIFY_FIELDS = {
     "state",
     "passed",
@@ -1047,7 +1050,7 @@ class TestWhatACodingAgentReads:
         job = _as(api_client, keys.coder, "get", job_path)
         call_read = _as(api_client, keys.coder, "get", call_path)
 
-        message = f"{RUNTIME_VALIDATION_FAILED}. {CAUSE_WORDS[read]} (cause: {read})"
+        message = f"{CAUSE_WORDS[read]} (cause: {read})"
         assert job.json()["status"]["failure"] == {
             "domain": "environment",
             "stage": "validating_environment",
@@ -1059,9 +1062,22 @@ class TestWhatACodingAgentReads:
         for response in (job, call_read):
             assert hidden not in json.dumps(response.json())
 
-    @pytest.mark.parametrize("cause", ["agent_exited_before_ready", None])
+    @pytest.mark.parametrize(
+        "cause,detail,read",
+        [
+            (
+                "agent_exited_before_ready",
+                "agent: exited early",
+                "agent_exited_before_ready",
+            ),
+            (None, "agent: exited early", None),
+            # A start timeout recorded without a cause, or by an older image, is a slow start.
+            (None, _START_TIMEOUT, "agent_not_ready_in_time"),
+            ("unknown", _START_TIMEOUT, "agent_not_ready_in_time"),
+        ],
+    )
     def test_a_person_s_calls_read_a_named_cause_in_plain_words(
-        self, api_client, environment, keys, cause
+        self, api_client, environment, keys, cause, detail, read
     ):
         created = _as(
             api_client,
@@ -1069,10 +1085,10 @@ class TestWhatACodingAgentReads:
             "post",
             f"{BASE}/{environment.id}/run/",
             {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
-            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}",
+            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}-{read}",
         )
         assert created.status_code == 202, created.content
-        raw = f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: agent: exited early"
+        raw = f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {detail}"
         run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
         run.state = HostedHarnessJob.State.FAILED
         run.failure = {
@@ -1093,11 +1109,7 @@ class TestWhatACodingAgentReads:
         )
         # With a cause every call says it plainly, and the guest text stays on the job.
         # Without one, a person's calls keep the stored message as before.
-        assert reasons == (
-            {f"{RUNTIME_VALIDATION_FAILED}. {CAUSE_WORDS[cause]} (cause: {cause})"}
-            if cause
-            else {raw}
-        )
+        assert reasons == ({f"{CAUSE_WORDS[read]} (cause: {read})"} if read else {raw})
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
@@ -1165,10 +1177,40 @@ def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
         "cause": "agent_exited_before_ready",
     }
 
+    # With a cause, only its words and its code: the run's label is not repeated before them.
     assert coding_agent_failure_message(failure) == (
-        "We couldn't run this agent version in its environment. "
         "Didn't start — the agent exited before it was ready. Fix the crash on startup, "
         "then push a new agent version. (cause: agent_exited_before_ready)"
     )
+    assert coding_agent_failure_message(
+        {**failure, "cause": "agent_not_ready_in_time"}
+    ) == (
+        "Didn't start in time — the agent wasn't ready within the limit. "
+        "Run it again; if it repeats, make it start or listen sooner. "
+        "(cause: agent_not_ready_in_time)"
+    )
+    # Without one, the fixed label for its code.
+    assert (
+        coding_agent_failure_message({"code": "authoring_runtime_validation_failed"})
+        == "We couldn't run this agent version in its environment"
+    )
+    # A start timeout without a cause, or with one nobody recorded, reads as the slow start;
+    # so does an older build's own start-timeout code.
+    start_timeout = {
+        "code": "authoring_runtime_validation_failed",
+        "message": f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {_START_TIMEOUT}",
+    }
+    for stored in ({}, {"cause": "unknown"}):
+        assert failure_cause({**start_timeout, **stored}) == "agent_not_ready_in_time"
+    assert (
+        failure_cause({"code": "depends_on_timeout", "domain": "infrastructure"})
+        == "agent_not_ready_in_time"
+    )
+    # A named cause wins over the code, and a failure with neither has none.
+    assert (
+        failure_cause({**start_timeout, "cause": "chat_target_timeout"})
+        == "chat_target_timeout"
+    )
+    assert failure_cause({"code": "authoring_runtime_validation_failed"}) is None
     # Every value the cause can take, unknown included, has words.
     assert set(CAUSE_WORDS) == {*FAILURE_CAUSES, "unknown"}

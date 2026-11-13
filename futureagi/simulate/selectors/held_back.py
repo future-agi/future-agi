@@ -24,6 +24,7 @@ from simulate.selectors.agent_fix import FINISHED_RUN_STATES
 from simulate.services.hosted_harness_gateway import (
     AUTHORING_FAILED,
     RUNTIME_VALIDATION_FAILED,
+    UNKNOWN_FAILURE_CAUSE,
     closed_failure_cause,
 )
 from simulate.services.run_compare import trial_passed, wilson_interval
@@ -147,8 +148,8 @@ CAUSE_WORDS = {
         "Fix the crash on startup, then push a new agent version."
     ),
     "agent_not_ready_in_time": (
-        "Didn't start — the agent wasn't listening in time. "
-        "Make it start faster or listen sooner, then push a new agent version."
+        "Didn't start in time — the agent wasn't ready within the limit. "
+        "Run it again; if it repeats, make it start or listen sooner."
     ),
     "chat_target_timeout": (
         "Stopped — the agent didn't reply to a message in time. "
@@ -162,15 +163,31 @@ CAUSE_WORDS = {
 }
 
 
+# A start timeout recorded without a cause (before failures carried one, or by an older
+# image) names its closed code in the failure; it reads as the slow start it was.
+_START_TIMEOUT_CODE = "depends_on_timeout"
+
+
+def failure_cause(failure: Mapping[str, Any]) -> str | None:
+    """The cause a failure reads with: its own from the closed set, or the slow start that a
+    start timeout without one names; None for a failure that has neither."""
+    cause = closed_failure_cause(failure["cause"]) if "cause" in failure else None
+    if cause in (None, UNKNOWN_FAILURE_CAUSE) and _START_TIMEOUT_CODE in (
+        f"{failure.get('code') or ''} {failure.get('message') or ''}"
+    ):
+        return "agent_not_ready_in_time"
+    return cause
+
+
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
-    """A failure's message as a coding agent reads it: fixed text for its code, and, when
-    the failure has a cause, what it means and what to do, with the cause's code."""
+    """A failure's message as a coding agent and a call row read it: when the failure has a
+    cause, what it means and what to do, with the cause's code last; otherwise fixed text for
+    its code."""
+    cause = failure_cause(failure)
+    if cause is not None:
+        return f"{CAUSE_WORDS[cause]} (cause: {cause})"
     code = str(failure.get("code") or "failed")
-    label = _FAILURE_LABELS.get(code, f"The run failed ({code})")
-    if "cause" not in failure:
-        return label
-    cause = closed_failure_cause(failure["cause"])
-    return f"{label}. {CAUSE_WORDS[cause]} (cause: {cause})"
+    return _FAILURE_LABELS.get(code, f"The run failed ({code})")
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
@@ -189,8 +206,8 @@ def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
                     if name in failure
                 },
                 **(
-                    {"cause": closed_failure_cause(failure["cause"])}
-                    if "cause" in failure
+                    {"cause": cause}
+                    if (cause := failure_cause(failure)) is not None
                     else {}
                 ),
                 "message": coding_agent_failure_message(failure),

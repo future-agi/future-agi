@@ -2937,14 +2937,17 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
 
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     """Move a terminal job's Run, and the calls it left open, to their end states."""
-    from simulate.selectors.held_back import coding_agent_failure_message
+    from simulate.selectors.held_back import (
+        coding_agent_failure_message,
+        failure_cause,
+    )
 
     if not job.test_execution_id:
         return
     failure = job.failure or {}
     message = failure.get("message")
     if message and (
-        "cause" in failure
+        failure_cause(failure) is not None
         or ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
     ):
         # A named cause reads in plain words for everyone, and a coding agent reads only
