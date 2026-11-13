@@ -314,6 +314,35 @@ def read_members(body: bytes, paths: set[str], max_size: int) -> dict[str, bytes
     return found
 
 
+def stream_members(key: str, paths: set[str], max_size: int) -> dict[str, bytes]:
+    """The named regular members of at most ``max_size`` bytes, read off the stored
+    archive as it streams: reading stops once every named member has been passed, and
+    nothing but those members is held in memory. Stored archives are packed with sorted
+    members (``pack_archive``), so reading also stops at the first member that sorts
+    after every named one: an archive missing one of them is not read to its end."""
+    found: dict[str, bytes] = {}
+    passed: set[str] = set()
+    last = max((PurePosixPath(path) for path in paths), default=None)
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
+    try:
+        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+            for path, member in _regular_members(archive):
+                if last is None or PurePosixPath(path) > last:
+                    break
+                if path not in paths:
+                    continue
+                if member.size <= max_size:
+                    source = archive.extractfile(member)
+                    found[path] = source.read() if source is not None else b""
+                passed.add(path)
+                if passed >= paths:
+                    break
+    finally:
+        response.close()
+        response.release_conn()
+    return found
+
+
 def get_archive(key: str) -> bytes:
     response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
     try:

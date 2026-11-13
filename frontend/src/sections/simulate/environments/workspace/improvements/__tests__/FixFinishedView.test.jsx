@@ -305,6 +305,21 @@ describe("Ship", () => {
     expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
   });
 
+  it("says a winner waiting for its check becomes the default once it passes", async () => {
+    hooks.ship = {
+      isPending: false,
+      mutateAsync: vi.fn().mockResolvedValue({ kind: "validating" }),
+    };
+    const user = userEvent.setup();
+    renderPage("fix-ready-archive");
+    await user.click((await confirmShip(user, "Make default")).confirm);
+    expect(
+      await screen.findByText(
+        "It becomes the default once it passes a check with this environment",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("offers the patch when the repository cannot take a pull request", async () => {
     hooks.ship = {
       isPending: false,
