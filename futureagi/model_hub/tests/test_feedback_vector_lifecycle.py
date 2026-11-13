@@ -340,3 +340,63 @@ def test_rolled_back_delete_does_not_revoke_vectors(feedback_factory, deletion):
                 raise RuntimeError("rollback")
         client.assert_not_called()
     assert Feedback.objects.filter(pk=feedback_id).exists()
+
+
+@pytest.mark.integration
+def test_runtime_grounding_retains_feedback_and_tenant_scope(
+    feedback_factory, vector_manager, monkeypatch
+):
+    from evaluations.engine.params import prepare_run_params
+
+    feedback = feedback_factory(explanation="owning tenant correction")
+    embed_feedback(vector_manager, feedback)
+    # Deliberately give another tenant the same eval/item input shape. Retrieval
+    # must still exclude its feedback, even with workspace filtering disabled.
+    vector_manager.db_client.upsert_vector(
+        "feedbacks",
+        str(feedback.eval_template_id),
+        [1.0, 0.0],
+        {
+            "item_id": str(uuid.uuid4()),
+            "prompt": "What is the identifier?",
+            "response": "The identifier is ABC.",
+            "feedback_comment": "other tenant correction",
+            "feedback_value": "Passed",
+            "input_type": "text",
+            "organization_id": str(uuid.uuid4()),
+        },
+        ["item_id"],
+    )
+    template = feedback.eval_template
+    template.config = {
+        "eval_type_id": "AgentEvaluator",
+        "required_keys": ["prompt", "response"],
+        "optional_keys": ["reference_context"],
+    }
+    queries = []
+    monkeypatch.setattr(
+        embedding_manager.model_manager,
+        "text_model",
+        lambda text: queries.append(text) or [1.0, 0.0],
+    )
+    monkeypatch.setattr(embedding_manager, "EmbeddingManager", lambda: vector_manager)
+    inputs = {
+        "trace_context": {"id": "synthetic-trace"},
+        "prompt": "What is the identifier?",
+        "span_context": {"id": "synthetic-span"},
+        "response": "The identifier is ABC.",
+        "session_context": {"id": "synthetic-session"},
+        "ground_truth_blocks": [{"type": "text", "text": "runtime ground truth"}],
+    }
+    params = prepare_run_params(
+        inputs, template, organization_id=str(feedback.organization_id)
+    )
+    assert "owning tenant correction" in str(params["few_shots"])
+    assert "other tenant correction" not in str(params["few_shots"])
+    assert "runtime ground truth" not in str(params["few_shots"])
+    assert queries == [
+        "What is the identifier?",
+        "The identifier is ABC.",
+    ]
+    for key, value in inputs.items():
+        assert params[key] == value

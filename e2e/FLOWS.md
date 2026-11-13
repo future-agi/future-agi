@@ -88,6 +88,28 @@
 - PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
 - alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
 
+### ALERT-E2E-003 — alert owners configure webhooks without private destinations or unauthorized changes
+
+**Goal:** An authorized alert owner configures a public webhook through the alert editor while private destinations and unauthorized changes are refused.
+
+**Spec:** `flows/alerts/webhook-configuration.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named muted monitor with no notification destinations
+2. open the alert editor, choose Webhook, enter a public URL and save
+3. read the exact saved destination through the detail API and Postgres
+4. try a private destination through the editor and verify rejection
+5. try cross-organization, cross-workspace and viewer updates
+
+**Backend state verified:**
+
+- The browser-saved webhook is returned by the alert detail API and stored on the owner organization's muted monitor.
+- A private destination is rejected and the saved webhook remains unchanged.
+- Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
+
 ## annotations
 
 ### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
