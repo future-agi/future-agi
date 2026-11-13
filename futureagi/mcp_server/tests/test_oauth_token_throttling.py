@@ -1309,6 +1309,20 @@ def test_trusted_proxy_forwarded_address_is_used(remote_addr, forwarded_for, exp
     assert _client_ident_for(remote_addr, forwarded_for) == expected
 
 
+@pytest.mark.parametrize(
+    "trusted, remote_addr",
+    [
+        (["::ffff:10.0.0.1"], "::ffff:10.0.0.1"),
+        (["::ffff:10.0.0.0/104"], "::ffff:10.0.0.1"),
+        (["10.0.0.0/8"], "::ffff:10.0.0.1"),
+        (["::ffff:10.0.0.1"], "10.0.0.1"),
+    ],
+)
+def test_ipv4_mapped_trusted_proxy_matches_either_form(trusted, remote_addr):
+    with override_settings(MCP_OAUTH_TRUSTED_PROXIES=trusted):
+        assert _client_ident_for(remote_addr, "198.51.100.10") == "198.51.100.10"
+
+
 @override_settings(MCP_OAUTH_TRUSTED_PROXIES=[])
 def test_forwarded_address_is_ignored_without_trusted_proxies():
     assert _client_ident_for("10.0.0.1", "198.51.100.10") == "10.0.0.1"
