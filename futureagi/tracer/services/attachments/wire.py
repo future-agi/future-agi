@@ -8,6 +8,7 @@ Only fixed reason codes leave this boundary; supplied values never do.
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from tracer.services.attachments.contract import AttachmentError
 
@@ -73,7 +74,7 @@ IMPORT_UNAVAILABLE = (403, "policy_denied")
 
 def public_error(error):
     """Map an AttachmentError to (status, F01 Reason) without leaking details."""
-    status, reason = PUBLIC.get(getattr(error, "code", None), (503, "incomplete"))
+    status, reason = PUBLIC.get(getattr(error, "code", ""), (503, "incomplete"))
     return status, reason
 
 
@@ -231,7 +232,9 @@ def _manifest_rules(value):
         seen.add(segment["occurrence_id"])
         previous_start = segment["start_ms"]
     separate = value["layout"] == "separate_tracks"
-    timelines = {track: [] for track in track_ids} if separate else {None: []}
+    timelines: dict[str | None, list[dict[str, Any]]] = (
+        {track: [] for track in track_ids} if separate else {None: []}
+    )
     for interval in value["segments"] + value["gaps"]:
         track = interval.get("track_id")
         if track not in timelines:

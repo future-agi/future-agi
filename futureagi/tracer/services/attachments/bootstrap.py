@@ -124,10 +124,11 @@ def _check_identity(writer, workspace, scope=None):
                 .select_related("granted_by")
                 .first()
             )
+            granter = None if grant is None else grant.granted_by
             if (
-                grant is None
-                or not grant.granted_by.is_active
-                or not grant.granted_by.can_write_to_workspace(workspace)
+                granter is None
+                or not granter.is_active
+                or not granter.can_write_to_workspace(workspace)
             ):
                 raise AttachmentError("credential_scope_unsupported", 403)
             if key.type == "coding_agent" and (
