@@ -439,12 +439,85 @@ def test_a_slow_private_check_does_not_override_a_newer_refusal(
     bucket = _use_creation_client(monkeypatch, settings, client, backend)
 
     # The slow first check found the bucket private, but a newer check
-    # refused it meanwhile: the private verdict is not remembered.
-    ensure_private_bucket(client, bucket)
+    # refused it meanwhile: the private verdict is neither used nor remembered.
+    with pytest.raises(PrivateBucketRefused):
+        ensure_private_bucket(client, bucket)
     assert client.policy_reads == 2
     with pytest.raises(PrivateBucketRefused):
         ensure_private_bucket(client, bucket)
     assert client.policy_reads == 3
+
+
+def _storage_error(code):
+    error = Exception(code)
+    error.code = code
+    return error
+
+
+@pytest.mark.parametrize(
+    "backend, failure",
+    [
+        ("s3", "bucket-exists-fails"),
+        ("minio", "bucket-exists-fails"),
+        ("s3", "policy-read-finds-no-bucket"),
+        ("minio", "policy-read-finds-no-bucket"),
+        ("minio", "bucket-creation-fails"),
+    ],
+)
+def test_a_failed_check_also_refuses_a_slower_check_running_with_it(
+    monkeypatch, settings, backend, failure
+):
+    from tfc.utils.storage_client import PrivateBucketRefused, ensure_private_bucket
+
+    class _FailsDuringCheckClient(_ReadsCountingClient):
+        """The first check reads a private policy; before it finishes, a
+        second check fails with ``failure``."""
+
+        def __init__(self):
+            super().__init__(exists=True)
+            self.during_first_check = False
+            self.second_check_error = None
+
+        def bucket_exists(self, bucket):
+            if self.during_first_check and failure == "bucket-exists-fails":
+                raise RuntimeError("storage unavailable")
+            if self.during_first_check and failure == "bucket-creation-fails":
+                return False
+            return True
+
+        def make_bucket(self, bucket):
+            self.created.append(bucket)
+            raise _storage_error("BucketAlreadyExists")
+
+        def get_bucket_policy(self, bucket):
+            self.policy_reads += 1
+            if self.policy_reads == 1:
+                self.during_first_check = True
+                try:
+                    ensure_private_bucket(self, bucket)
+                except Exception as error:  # noqa: BLE001
+                    self.second_check_error = error
+                self.during_first_check = False
+            elif self.during_first_check:
+                raise _storage_error("NoSuchBucket")
+            raise _storage_error("NoSuchBucketPolicy")
+
+    client = _FailsDuringCheckClient()
+    bucket = _use_creation_client(monkeypatch, settings, client, backend)
+
+    with pytest.raises(PrivateBucketRefused):
+        ensure_private_bucket(client, bucket)
+    # The failing check raised its own storage error.
+    assert client.second_check_error is not None
+    assert not isinstance(client.second_check_error, PrivateBucketRefused)
+
+    # Nothing was remembered: the next check reads the policy again, finds the
+    # bucket private and is then used until the recheck.
+    reads = client.policy_reads
+    ensure_private_bucket(client, bucket)
+    assert client.policy_reads == reads + 1
+    ensure_private_bucket(client, bucket)
+    assert client.policy_reads == reads + 1
 
 
 def test_gcs_refuses_a_missing_compare_bucket_with_a_clear_error(monkeypatch, settings):

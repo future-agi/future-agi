@@ -359,9 +359,11 @@ PRIVATE_BUCKET_RECHECK_SECONDS = 5 * 60
 # Private buckets this process has checked: name -> time.monotonic() of the
 # check.
 _checked_private_buckets: dict[str, float] = {}
-# Refusals per bucket name. A check that finds a bucket private remembers that
-# only if no other check refused the bucket while it ran, so a slower check
-# that read the policy before it was opened cannot overwrite a newer refusal.
+# Refusals per bucket name: every check that does not find the bucket private
+# counts. A check that finds a bucket private is used and remembered only if no
+# other check refused the bucket while it ran; otherwise it is refused too, so
+# a slower check that read the policy before it was opened cannot overwrite a
+# newer refusal.
 _private_bucket_refusals: dict[str, int] = {}
 _private_bucket_lock = threading.Lock()
 
@@ -374,10 +376,14 @@ def _refuse_private_bucket(bucket_name: str) -> None:
         _checked_private_buckets.pop(bucket_name, None)
 
 
-def _remember_private_bucket(bucket_name: str, refusals_before: int) -> None:
+def _remember_private_bucket(bucket_name: str, refusals_before: int) -> bool:
+    """Remember a bucket found private, unless another check refused it while
+    this one ran. Returns whether it was remembered."""
     with _private_bucket_lock:
-        if _private_bucket_refusals.get(bucket_name, 0) == refusals_before:
-            _checked_private_buckets[bucket_name] = time.monotonic()
+        if _private_bucket_refusals.get(bucket_name, 0) != refusals_before:
+            return False
+        _checked_private_buckets[bucket_name] = time.monotonic()
+        return True
 
 
 def policy_allows_anyone(policy: str) -> bool:
@@ -410,7 +416,9 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     so only the backend's own credentials reach its objects. A bucket whose
     policy may let anyone in, or whose policy these credentials may not read,
     raises PrivateBucketRefused and is asked again on the next call. A bucket
-    found private is checked again after PRIVATE_BUCKET_RECHECK_SECONDS.
+    found private is checked again after PRIVATE_BUCKET_RECHECK_SECONDS. A
+    check that another check refused while it ran raises PrivateBucketRefused
+    as well.
 
     On MinIO a missing bucket is created, with no policy. On S3 it must be
     created in advance: the S3 client cannot send ExpectedBucketOwner on the
@@ -430,9 +438,25 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         # Not used while it is being checked again.
         _checked_private_buckets.pop(bucket_name, None)
         refusals_before = _private_bucket_refusals.get(bucket_name, 0)
+    try:
+        _check_private_bucket(client, bucket_name)
+    except Exception:
+        # Any check that does not find the bucket private counts as a refusal,
+        # so that a slower check that started earlier is not used either.
+        _refuse_private_bucket(bucket_name)
+        raise
+    if not _remember_private_bucket(bucket_name, refusals_before):
+        # Another check refused the bucket while this one ran, so this check
+        # may have read a state that no longer holds.
+        logger.error("storage_private_bucket_refused_during_check", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name)
+
+
+def _check_private_bucket(client: Minio, bucket_name: str) -> None:
+    """One check of ensure_private_bucket. Raises when the bucket is not
+    known to be private."""
     exists = client.bucket_exists(bucket_name)
     if not exists and STORAGE_BACKEND in ("s3", "gcs"):
-        _refuse_private_bucket(bucket_name)
         error = PrivateBucketMissing(bucket_name)
         logger.error(
             "storage_private_bucket_missing", bucket=bucket_name, error=str(error)
@@ -440,7 +464,6 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         raise error
     if STORAGE_BACKEND == "gcs":
         # GCS bucket access is IAM, not a bucket policy the S3 API can read.
-        _remember_private_bucket(bucket_name, refusals_before)
         return
     if not exists:
         try:
@@ -458,13 +481,10 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         if code == "AccessDenied":
             # Whether anyone else may read it cannot be told: do not use it.
             logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
-            _refuse_private_bucket(bucket_name)
             raise PrivateBucketRefused(bucket_name) from exc
         if code not in _NO_POLICY_CODES:
             raise
         policy = None
     if policy and policy_allows_anyone(policy):
         logger.error("storage_private_bucket_public", bucket=bucket_name)
-        _refuse_private_bucket(bucket_name)
         raise PrivateBucketRefused(bucket_name)
-    _remember_private_bucket(bucket_name, refusals_before)
