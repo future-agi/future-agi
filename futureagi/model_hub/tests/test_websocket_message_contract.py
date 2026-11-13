@@ -329,6 +329,32 @@ def test_relay_refuses_callers_other_than_the_internal_client(
     layer.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "signature",
+    [
+        pytest.param("\u00e9" * 64, id="latin-1"),
+        pytest.param("\u2603" + "0" * 63, id="non-latin"),
+    ],
+)
+def test_relay_refuses_a_signature_with_non_ascii_characters(signature):
+    raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        response = post_relay(None, raw=raw, signature=signature)
+    assert response.status_code == 403
+    assert response.data["code"] == "permission_denied"
+    layer.assert_not_called()
+
+
+def test_signature_check_treats_non_ascii_text_as_a_mismatch():
+    from tfc.utils.websocket_relay_auth import relay_signature_is_valid
+
+    raw = b"{}"
+    valid = relay_signature(ORG, raw)
+    assert relay_signature_is_valid(ORG, raw, valid)
+    assert not relay_signature_is_valid(ORG, raw, valid[:-1] + "\u00e9")
+    assert not relay_signature_is_valid(ORG, raw, "\ud800" + valid[1:])
+
+
 @pytest.mark.parametrize("targeted", [False, True])
 def test_enqueue_failure_is_not_reported_as_success(targeted):
     with (

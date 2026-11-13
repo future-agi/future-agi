@@ -30,4 +30,8 @@ def relay_signature_is_valid(organization_id, body: bytes, signature) -> bool:
     if organization_id is None or not isinstance(signature, str) or not signature:
         return False
     expected = relay_signature(organization_id, body)
-    return hmac.compare_digest(expected, signature)
+    # compare_digest only accepts ASCII strings; compare bytes so a header
+    # with other characters is a mismatch rather than an error.
+    return hmac.compare_digest(
+        expected.encode("ascii"), signature.encode("utf-8", "surrogatepass")
+    )
