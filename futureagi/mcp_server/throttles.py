@@ -62,9 +62,17 @@ def _parse_trusted_proxies(
     networks = []
     for entry in entries:
         try:
-            networks.append(ipaddress.ip_network(entry.strip(), strict=False))
+            network = ipaddress.ip_network(entry.strip(), strict=False)
         except ValueError:
             logger.warning("mcp_oauth_trusted_proxy_entry_ignored", entry=entry)
+            continue
+        # Compare IPv4-mapped IPv6 entries in their IPv4 form, like addresses.
+        mapped = isinstance(network, ipaddress.IPv6Network) and (
+            network.network_address.ipv4_mapped
+        )
+        if mapped and network.prefixlen >= 96:
+            network = ipaddress.ip_network((mapped, network.prefixlen - 96))
+        networks.append(network)
     return tuple(networks)
 
 
