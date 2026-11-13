@@ -14,6 +14,7 @@ URL routing:
 import ipaddress
 import json
 import os
+import time
 from urllib.parse import urlparse
 
 import certifi
@@ -350,8 +351,13 @@ _NO_POLICY_CODES = ("NoSuchBucketPolicy", "NotImplemented")
 # race. BucketAlreadyExists means another account owns that name.
 _BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou",)
 
-# Private buckets this process has already created or checked.
-_checked_private_buckets: set[str] = set()
+# How long a bucket found private is used before its policy is read again,
+# so that a bucket whose policy is later opened up is refused.
+PRIVATE_BUCKET_RECHECK_SECONDS = 5 * 60
+
+# Private buckets this process has checked: name -> time.monotonic() of the
+# check.
+_checked_private_buckets: dict[str, float] = {}
 
 
 def policy_allows_anyone(policy: str) -> bool:
@@ -383,7 +389,8 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     """Check that the bucket exists with no bucket policy that lets anyone in,
     so only the backend's own credentials reach its objects. A bucket whose
     policy may let anyone in, or whose policy these credentials may not read,
-    raises PrivateBucketRefused and is asked again on the next call.
+    raises PrivateBucketRefused and is asked again on the next call. A bucket
+    found private is checked again after PRIVATE_BUCKET_RECHECK_SECONDS.
 
     On MinIO a missing bucket is created, with no policy. On S3 it must be
     created in advance: the S3 client cannot send ExpectedBucketOwner on the
@@ -393,8 +400,14 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     so only their existence is checked. A missing S3 or GCS bucket raises
     PrivateBucketMissing.
     """
-    if bucket_name in _checked_private_buckets:
+    checked_at = _checked_private_buckets.get(bucket_name)
+    if (
+        checked_at is not None
+        and time.monotonic() - checked_at < PRIVATE_BUCKET_RECHECK_SECONDS
+    ):
         return
+    # Not used while it is being checked again.
+    _checked_private_buckets.pop(bucket_name, None)
     exists = client.bucket_exists(bucket_name)
     if not exists and STORAGE_BACKEND in ("s3", "gcs"):
         error = PrivateBucketMissing(bucket_name)
@@ -404,7 +417,7 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         raise error
     if STORAGE_BACKEND == "gcs":
         # GCS bucket access is IAM, not a bucket policy the S3 API can read.
-        _checked_private_buckets.add(bucket_name)
+        _checked_private_buckets[bucket_name] = time.monotonic()
         return
     if not exists:
         try:
@@ -429,4 +442,4 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     if policy and policy_allows_anyone(policy):
         logger.error("storage_private_bucket_public", bucket=bucket_name)
         raise PrivateBucketRefused(bucket_name)
-    _checked_private_buckets.add(bucket_name)
+    _checked_private_buckets[bucket_name] = time.monotonic()

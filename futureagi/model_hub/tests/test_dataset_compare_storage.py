@@ -358,6 +358,62 @@ class _ReadsCountingClient(_CreationClient):
         return self.policy
 
 
+_PUBLIC_READ = json.dumps(
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": ["s3:GetObject"],
+                "Resource": ["arn:aws:s3:::bucket/*"],
+            }
+        ],
+    }
+)
+
+
+@pytest.mark.parametrize("backend", ["s3", "minio"])
+def test_a_bucket_whose_policy_opens_later_is_refused_after_the_recheck(
+    monkeypatch, settings, backend
+):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    client = _ReadsCountingClient(exists=True)
+    _use_creation_client(monkeypatch, settings, client, backend)
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(
+        storage_client,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+        raising=False,
+    )
+    recheck = getattr(storage_client, "PRIVATE_BUCKET_RECHECK_SECONDS", 300)
+    compare_id = str(uuid.uuid4())
+    write_compare_json(compare_id, "page_1.json", {"rows": []})
+    assert client.policy_reads == 1
+
+    # Someone opens the bucket. Until the recheck it is not read again.
+    client.policy = _PUBLIC_READ
+    clock.now += recheck - 1
+    write_compare_json(compare_id, "page_2.json", {"rows": []})
+    assert client.policy_reads == 1
+
+    clock.now += 2
+    with pytest.raises(PrivateBucketRefused):
+        write_compare_json(compare_id, "page_3.json", {"rows": []})
+    assert client.policy_reads == 2
+    assert client.written == [
+        f"compare/{compare_id}/page_1.json",
+        f"compare/{compare_id}/page_2.json",
+    ]
+    # Refused, not remembered: the next write reads the policy again.
+    with pytest.raises(PrivateBucketRefused):
+        write_compare_json(compare_id, "page_3.json", {"rows": []})
+    assert client.policy_reads == 3
+
+
 def test_gcs_refuses_a_missing_compare_bucket_with_a_clear_error(monkeypatch, settings):
     from model_hub.utils.compare_storage import write_compare_json
     from tfc.utils.storage_client import PrivateBucketRefused
