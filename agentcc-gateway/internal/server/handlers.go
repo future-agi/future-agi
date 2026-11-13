@@ -113,6 +113,27 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
+}
+
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
+	}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
+	}
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -232,6 +253,8 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -300,6 +323,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -1045,19 +1069,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
