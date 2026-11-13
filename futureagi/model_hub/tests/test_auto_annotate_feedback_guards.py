@@ -1,5 +1,6 @@
 """API and column-allocation regressions that isolate feedback scope guards."""
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -206,7 +207,8 @@ def test_feedback_ignores_review_in_foreign_cell_dataset(tenants):
     assert sentinel.value == "Foreign review"
 
 
-def test_feedback_revalidates_column_returned_by_allocation(tenants):
+@pytest.mark.parametrize("source", ["stored_cell", "allocation"])
+def test_feedback_revalidates_column_returned_by_allocation(tenants, source):
     own, foreign, _ = tenants
     annotation, output = _annotation(own)
     annotation.assigned_users.add(own.user)
@@ -227,18 +229,32 @@ def test_feedback_revalidates_column_returned_by_allocation(tenants):
         value="Untouched",
         feedback_info={"annotation": {"user_id": str(own.user.id)}},
     )
+    # "stored_cell": allocation itself must ignore the stored cell whose column
+    # is in another dataset, so no slot is free. "allocation": even if
+    # allocation returned that column, update_cells must reject it.
+    allocation = (
+        patch.object(
+            AnnotationsViewSet,
+            "can_user_annotate",
+            return_value=(True, str(foreign_column.id)),
+        )
+        if source == "allocation"
+        else nullcontext()
+    )
     with (
         patch.object(
             auto_annotate.generate_annotations_task, "apply_async"
         ) as dispatch,
         patch("model_hub.views.develop_annotations.EmbeddingManager"),
+        allocation,
     ):
         response = own.client.post(
             f"/model-hub/annotations/{annotation.id}/update_cells/",
             {"label_values": [_update(own, output)]},
             format="json",
         )
-    assert response.status_code == 404, response.content
+    expected = 404 if source == "allocation" else 403
+    assert response.status_code == expected, response.content
     clear_workspace_context()
     sentinel.refresh_from_db()
     assert sentinel.value == "Untouched"
@@ -317,6 +333,59 @@ def test_column_allocation_never_returns_foreign_dataset_column(tenants, filled)
     assert allowed
     assert column_id == expected.id
     assert column_id != foreign_column.id
+
+
+@pytest.mark.parametrize("owner", ["self", "unassigned"])
+def test_full_allocation_ignores_cells_whose_column_is_in_another_dataset(
+    tenants, owner
+):
+    own, foreign, _ = tenants
+    annotation, output = _annotation(own)
+    annotation.assigned_users.add(own.user)
+    # A stored cell in this dataset whose column belongs to another dataset
+    # with the same source_id. Cell foreign keys alone do not keep the two
+    # datasets equal, so allocation must check the column's dataset too.
+    other_column = _output_column(foreign.dataset, output.source_id)
+    feedback = {"annotation": {"user_id": str(own.user.id)}} if owner == "self" else {}
+    Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=other_column,
+        value="Value from another dataset",
+        feedback_info=feedback,
+    )
+    allowed, column_id = _view(own).can_user_annotate(
+        annotation.id, own.row.id, own.label.id, own.user.id
+    )
+    assert str(column_id) != str(other_column.id)
+    assert allowed
+    assert str(column_id) == str(output.id)
+
+
+def test_annotate_row_only_reads_columns_of_the_annotation_dataset(tenants):
+    own, foreign, _ = tenants
+    annotation, output = _annotation(own)
+    annotation.assigned_users.add(own.user)
+    other_column = _output_column(foreign.dataset, output.source_id)
+    Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=other_column,
+        value="Value from another dataset",
+        feedback_info={},
+    )
+    # Even if allocation ever returned another dataset's column, annotate_row
+    # must not read it.
+    with patch.object(
+        AnnotationsViewSet,
+        "can_user_annotate",
+        return_value=(True, str(other_column.id)),
+    ):
+        response = own.client.get(
+            f"/model-hub/annotations/{annotation.id}/annotate_row/"
+            f"?row_order={own.row.order}"
+        )
+    assert "Value from another dataset" not in response.content.decode()
 
 
 @pytest.mark.parametrize("record", ["annotation", "label"])

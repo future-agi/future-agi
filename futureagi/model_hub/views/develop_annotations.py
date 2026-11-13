@@ -1439,7 +1439,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 cell_value = None
                 cell = None
                 if can_annotate:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset
+                    )
                     cell, created = Cell.objects.get_or_create(
                         dataset=annotation.dataset, column=column, row=row
                     )
@@ -1560,6 +1562,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         cells = Cell.objects.filter(
             dataset=annotation.dataset,
             row=row,
+            column__dataset=annotation.dataset,
             column__source_id=source_id,
             deleted=False,
         ).select_related("column")
