@@ -108,7 +108,10 @@ it("submits to the only reviewer and offers the exact request link afterwards", 
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
   fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
-  expect(screen.getByRole("textbox", { name: "Review link" }).value).toBe(
+  expect(screen.queryByRole("button", { name: "Submit rollback for review" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Reviewer" })).toBeNull();
+  expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).toBeChecked();
+  expect(screen.getByRole("link", { name: "Review link" }).href).toBe(
     `${window.location.origin}/dashboard/skills/contexts/ctx/review?request=req-1`,
   );
 });
@@ -130,12 +133,13 @@ const suggestedCandidates = [
 it("preselects the newest eligible release before the failing one and shows its closure for review without a choice click", () => {
   recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getByText(/Suggested: v1, the newest eligible release older than the failing v3/)).toBeVisible();
+  expect(screen.getByText(/v1 is the newest eligible release before v3/)).toBeVisible();
   // The review and its acknowledgement are still required before anything is prepared.
   expect(screen.getByText("Request rollback to v1")).toBeVisible();
   expect(previewMutate).not.toHaveBeenCalled();
   expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
   // The quarantined alternative is still refused, and another release can still be chosen.
+  fireEvent.click(screen.getByRole("button", { name: "Change", exact: true }));
   expect(screen.getByRole("button", { name: "Choose v2" })).toBeDisabled();
 });
 
@@ -201,4 +205,51 @@ it('retries the preview with the acknowledged annotation revision, not refreshed
   fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
   expect(previewMutate.mock.calls[1][0]).toEqual(original);
   expect(previewMutate.mock.calls[1][0].evidence[0].annotationRevision).toBe(4);
+});
+
+it('keeps the submitted request revision-bound when production changes', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  reviewers = [{ id: 'u2', name: 'Releaser' }];
+  previewState = { data: { fingerprint: 'fp' } };
+  submitState = { data: { id: 'req-1' } };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText(/Rollback to v1 requested from Releaser/)).toBeVisible();
+  submitState = {};
+  previewState = {};
+  recovery = { ...recovery, releaseRevision: 8 };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.queryByText(/Rollback to v1 requested from Releaser/)).toBeNull();
+  expect(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
+});
+
+it('reports a production move without treating missing reports as confirmation', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, candidates: suggestedCandidates };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  recovery = { ...recovery, releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Production moved from v3 to v1 · 0 of 1 consumers confirmed')).toBeVisible();
+});
+
+it('uses the observed previous production rather than an obsolete submitted request', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, candidates: suggestedCandidates };
+  reviewers = [{ id: 'u2', name: 'Releaser' }];
+  previewState = { data: { fingerprint: 'fp' } };
+  submitState = { data: { id: 'req-1' } };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  submitState = {};
+  recovery = { ...recovery, releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v2-id' })) };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  recovery = { ...recovery, releaseRevision: 9, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Production moved from v2 to v1 · 0 of 1 consumers confirmed')).toBeVisible();
+});
+
+it('reopens verification after a reload without inventing the previous production release', () => {
+  recovery = { cohort: [], releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Production is v1 · 0 of 0 consumers confirmed')).toBeVisible();
+  expect(screen.getByText('Replace the application credential')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another recovery release' }));
+  expect(screen.getByRole('button', { name: 'Choose v3' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Choose v1' })).toBeNull();
 });

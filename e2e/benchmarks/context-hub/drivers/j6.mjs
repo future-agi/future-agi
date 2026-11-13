@@ -247,7 +247,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(cohort.U.states.length === 1 && cohort.U.states[0] === 'unknown', 'The never-observed consumer must start unknown');
         const table = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(table).toBeVisible();
-        await expect(table.getByText('refund_window_regression', { exact: false })).toBeVisible();
+        await expect(table.getByText('Refund window regression', { exact: false })).toBeVisible();
         state.cohortBefore = Object.fromEntries(Object.entries(cohort).map(([key, row]) => [key, { states: row.states, failure: row.latest_failure?.diagnostic_codes ?? null }]));
         const hash = await record('incident-cohort', { evidence_class: GUEST_EVIDENCE_CLASS, cohort: state.cohortBefore });
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash, actionSequences: [] });
@@ -256,6 +256,7 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'choose-eligible-release') {
+        await operator.click(authorPage.getByRole('button', { name: 'Change', exact: true }), 'inspect-recovery-alternatives');
         const releases = authorPage.getByRole('table', { name: 'Recovery releases' });
         await expect(releases).toBeVisible();
         // Quarantined alternative: the UI refuses it and the public API independently refuses a packet.
@@ -270,7 +271,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(retired.status === 404, 'The refund child source must be retired');
         await expect(authorPage.getByText('Source retired:', { exact: false }).first()).toBeVisible();
         // The view preselects the newest eligible release older than the failing one and says why; choosing another is still one click.
-        await expect(authorPage.getByText('Suggested: v1', { exact: false }).first()).toBeVisible();
+        await expect(authorPage.getByText('Recovery release: v1 (suggested)', { exact: false }).first()).toBeVisible();
         await expect(authorPage.getByRole('button', { name: 'Choose v1', exact: true })).toBeEnabled();
         const closure = await readCompleteClosure(read, input.contextId, 1, signal);
         const production = await readCompleteClosure(read, input.contextId, 3, signal);
@@ -373,8 +374,8 @@ export async function createDriver({ jobId, runId, registration }) {
         await operator.click(authorPage.getByRole('button', { name: 'Copy review link', exact: true }), 'copy-review-link');
         await expect(authorPage.getByText('Copied the review link.', { exact: true })).toBeVisible();
         const reviewLink = await authorPage.evaluate(() => navigator.clipboard.readText());
-        requireValue(reviewLink === await authorPage.getByRole('textbox', { name: 'Review link' }).inputValue() && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
-        await authorPage.getByRole('textbox', { name: 'Review link' }).scrollIntoViewIfNeeded();
+        requireValue(reviewLink === await authorPage.getByRole('link', { name: 'Review link' }).getAttribute('href') && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
+        await authorPage.getByRole('link', { name: 'Review link' }).scrollIntoViewIfNeeded();
         // No credential is on this screen (the replacement is issued later), so the link is captured unmasked.
         await authorPage.screenshot({ path: resolve(output, 'shots', '03-review-link.png') });
         await navigate(admin, ledger, stage, reviewerPage, reviewLink, 'open-review-link');
@@ -407,7 +408,7 @@ export async function createDriver({ jobId, runId, registration }) {
       if (stage.id === 'locked-local-restore') {
         // The operator is an organization administrator: issue the replacement credential here and hand
         // its one-time secret to the application's secret store (manual information transfer).
-        await expect(authorPage.getByText('v1 is in production.', { exact: false })).toBeVisible({ timeout: 30_000 });
+        await expect(authorPage.getByText('Production moved from v3 to v1', { exact: false })).toBeVisible({ timeout: 30_000 });
         await operator.click(authorPage.getByRole('button', { name: 'Issue replacement credential', exact: true }), 'issue-replacement-credential');
         const secretBox = authorPage.getByRole('textbox', { name: 'New credential (shown once)' });
         await expect(secretBox).toBeVisible();

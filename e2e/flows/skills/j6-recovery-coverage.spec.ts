@@ -137,7 +137,7 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
       await page.getByRole('button', { name: bindings[1].name, exact: true }).click();
       await expect(page.getByText('Delivery receipts', { exact: true })).toBeVisible();
       await expect(page.getByText('Wait for a runtime delivery report.', { exact: true })).toBeVisible();
-      await expect(page.getByText(/Delivery is supplied content, not proven compliance/)).toBeVisible();
+      await expect(page.getByText(/Delivered means the release was sent to this runtime/)).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath('j6-receipts.png') });
     }, { timeout: UI_READY });
   } finally {

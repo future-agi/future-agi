@@ -15,3 +15,13 @@ export const consumerNextSteps = {
   none: 'No action reported.',
 };
 export const consumerNextStep = (code) => consumerNextSteps[code] || 'Unknown';
+
+export const humanizeCode = (code) => {
+  if (!code) return 'Not reported';
+  const words = String(code).replace(/[_-]+/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+// Completeness describes the bounded inventory read; unknown also includes missing
+// runtime reports, incomplete delivery, later failures and lost authority.
+export const needsDeliveryVerification = (row) => row.observationsComplete === false || row.states.includes('unknown');

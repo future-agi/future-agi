@@ -21,3 +21,7 @@ addIcon(SKILLS_NAV_ICON, {
 });
 addIcon('solar:alt-arrow-right-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5L15 12L9 19"/>' });
 addIcon('solar:alt-arrow-down-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9L12 15L5 9"/>' });
+
+// Task drawers and selected-release indicators must work offline too.
+addIcon('solar:close-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M18 6L6 18M6 6l12 12"/>' });
+addIcon('solar:check-circle-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="m8 12 3 3 5-6"/></g>' });

@@ -68,7 +68,7 @@ describe('exact repository review', () => {
     expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Review changed state' }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
-    expect(screen.getByText('pending', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Not decided', { exact: true })).toBeInTheDocument();
   });
   it('cannot include a deliberate pin that would change its version', async () => {
     render(<Harness targets={[{ ...target, selector: { version: 2 } }]} />);
@@ -95,12 +95,13 @@ describe('exact repository review', () => {
 describe('independent observations and availability', () => {
   it('does not turn merged into installed or delivered', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery observations' }));
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
     expect(screen.getByText(/Merged does not mean installed or delivered/)).toBeInTheDocument();
   });
   it('retains the planned identity when a binding no longer names a repository', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: null }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
-    expect(screen.getByText(/binding no longer names a repository/)).toBeInTheDocument();
+    expect(screen.getByText(/target no longer names a repository/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
     expect(screen.getByText(/Planned repository ID 100/)).toBeInTheDocument();
   });
@@ -142,5 +143,5 @@ it('keeps hidden targets in authorization validation when filtering the inventor
   fireEvent.change(screen.getByLabelText('Search repositories'), { target: { value: 'synthetic' } });
   expect(screen.queryByRole('button', { name: 'Review target another-repository' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
-  expect(screen.getByText('1 of 2 reviewed')).toBeVisible();
+  expect(screen.getByText('Reviewed 1 of 2')).toBeVisible();
 });

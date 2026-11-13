@@ -131,6 +131,7 @@ it('labels delivered sessions with their exact release number, never a guessed o
   expect(screen.queryByText('v1')).not.toBeInTheDocument();
   expect(screen.getAllByText('Old thread retained')).toHaveLength(2);
   fireEvent.click(screen.getByRole('button', { name: 'Inspect runtime-known' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Details', exact: true }));
   expect(screen.getByTitle('fresh-session')).toBeVisible();
 });
 
