@@ -41,7 +41,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
   const editPrimary = ['context', 'links'].includes(tab);
-  return <Stack spacing={{ xs: 1, sm: 1.5 }} sx={{ minWidth: 0 }}>
+  return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: { xs: 'none', sm: 'block' } } }} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack spacing={0.5}>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
