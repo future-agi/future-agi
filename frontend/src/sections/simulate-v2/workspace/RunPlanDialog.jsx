@@ -271,6 +271,9 @@ export default function RunPlanDialog({
      button names the choice — "Run 6 of 10" — and the 4 left out are
      recorded on the run as not run (TH-8880). */
   const blockedN = compat?.scope?.blocked?.length || 0;
+  /* Eligible cases nothing has proved on this pair yet: they run, and the
+     button says Run anyway (the Re-check group lists them). */
+  const untestedN = compat?.scope?.untested?.length || 0;
   /* After a failed or timed-out check the whole pairing is refused. */
   const pairFailed = ["failed", "timed_out"].includes(
     compat?.validation?.state,
@@ -425,17 +428,14 @@ export default function RunPlanDialog({
     : checkingCompat
       ? {
           title: "Waiting for the check",
-          line: "Runs start when it finishes.",
         }
       : pairFailed
         ? {
             title: "Can't start until a check passes",
-            line: "Fix the red row, then Re-check.",
           }
         : allHeld
           ? {
               title: "Every selected scenario waits on a fix",
-              line: "Fix it, or pick other scenarios.",
             }
           : null;
   const canStart = check.canStart && !pairHold;
@@ -500,7 +500,6 @@ export default function RunPlanDialog({
               {[
                 env?.name || "Environment",
                 voice ? "Voice" : "Text",
-                `environment ${pickedEnv || currentEnvLabel}`,
                 runLocation
                   ? runLocation === "hosted"
                     ? "hosted"
@@ -528,7 +527,7 @@ export default function RunPlanDialog({
             )}
             {/* ── the agent first: everything below is for this agent on
               this environment (compatibility belongs to the pair) ── */}
-            {
+            <Stack spacing={1}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography
                   sx={{
@@ -649,7 +648,90 @@ export default function RunPlanDialog({
                   </TextField>
                 )}
               </Stack>
-            }
+              {/* The environment version and its scenarios sit with the agent:
+                  the three things a run is for (runs.md: agent version,
+                  environment version, scenario suite version). */}
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    width: 88,
+                    flexShrink: 0,
+                  }}
+                >
+                  Environment
+                </Typography>
+                {envVersionOptions.length > 1 ? (
+                  <TextField
+                    select
+                    size="small"
+                    value={pickedEnv || currentEnvLabel}
+                    onChange={(e) => setEnvVer(e.target.value)}
+                    SelectProps={{ renderValue: (v) => v }}
+                    inputProps={{ "aria-label": "Environment version" }}
+                    sx={{ minWidth: 88, ...fieldSx }}
+                  >
+                    {envVersionOptions.map((v) => (
+                      <MenuItem key={v.label} value={v.label} sx={{ gap: 1 }}>
+                        <Box component="span" sx={{ flex: 1 }}>
+                          {v.label}
+                        </Box>
+                        {v.current && (
+                          <Box
+                            component="span"
+                            sx={{
+                              typography: "s3",
+                              color: "text.tertiary",
+                            }}
+                          >
+                            current
+                          </Box>
+                        )}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : (
+                  <Box component="span">{currentEnvLabel}</Box>
+                )}
+              </Stack>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    width: 88,
+                    flexShrink: 0,
+                  }}
+                >
+                  Scenarios
+                </Typography>
+                {suites.length ? (
+                  <TextField
+                    select
+                    size="small"
+                    value={suiteId}
+                    onChange={(e) => setSuiteId(e.target.value)}
+                    inputProps={{ "aria-label": "Suite" }}
+                    sx={{ minWidth: 180, ...fieldSx }}
+                  >
+                    <MenuItem value="all">{`All · ${scopeCount}`}</MenuItem>
+                    {suites.map((x) => (
+                      <MenuItem key={x.id} value={x.id}>
+                        {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : (
+                  <Box component="span">{`All ${scopeCount} scenarios`}</Box>
+                )}
+                {suite && (
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Frozen when the run starts
+                  </Typography>
+                )}
+              </Stack>
+            </Stack>
 
             {/* ── Ready to run (plan T06): this agent version on this
               environment, before anything starts — six areas, each blocker
@@ -710,8 +792,8 @@ export default function RunPlanDialog({
               </ReadyToRun>
             )}
 
-            {/* ── run setup: agent · environment · suite, read together ── */}
-            {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
+            {/* ── who takes part and what scores the run ── */}
+            {
               <Box
                 sx={{
                   border: "1px solid",
@@ -735,83 +817,6 @@ export default function RunPlanDialog({
                         },
                       ]
                     : []),
-                  /* Environment and suite on one line: the version that runs,
-                   then which of its scenarios. */
-                  {
-                    k: "Environment",
-                    v: (
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.5}
-                        useFlexGap
-                        flexWrap="wrap"
-                      >
-                        {envVersionOptions.length > 1 ? (
-                          <TextField
-                            select
-                            size="small"
-                            value={pickedEnv || currentEnvLabel}
-                            onChange={(e) => setEnvVer(e.target.value)}
-                            SelectProps={{ renderValue: (v) => v }}
-                            inputProps={{ "aria-label": "Environment version" }}
-                            sx={{ minWidth: 88, ...fieldSx }}
-                          >
-                            {envVersionOptions.map((v) => (
-                              <MenuItem
-                                key={v.label}
-                                value={v.label}
-                                sx={{ gap: 1 }}
-                              >
-                                <Box component="span" sx={{ flex: 1 }}>
-                                  {v.label}
-                                </Box>
-                                {v.current && (
-                                  <Box
-                                    component="span"
-                                    sx={{
-                                      typography: "s3",
-                                      color: "text.tertiary",
-                                    }}
-                                  >
-                                    current
-                                  </Box>
-                                )}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        ) : (
-                          <Box component="span">{`${currentEnvLabel} ·`}</Box>
-                        )}
-                        {suites.length ? (
-                          <TextField
-                            select
-                            size="small"
-                            value={suiteId}
-                            onChange={(e) => setSuiteId(e.target.value)}
-                            inputProps={{ "aria-label": "Suite" }}
-                            sx={{ minWidth: 180, ...fieldSx }}
-                          >
-                            <MenuItem value="all">
-                              {`All · ${scopeCount}`}
-                            </MenuItem>
-                            {suites.map((x) => (
-                              <MenuItem key={x.id} value={x.id}>
-                                {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        ) : (
-                          <Box component="span">
-                            {`${scopeCount} scenarios`}
-                          </Box>
-                        )}
-                      </Stack>
-                    ),
-                    note: suite
-                      ? "A suite is frozen when the run starts: later edits to it don't change this run."
-                      : null,
-                  },
                   /* What scores this run: the added evaluations, then the
                    suggested ones — picked here, never added by default. */
                   {
@@ -966,7 +971,7 @@ export default function RunPlanDialog({
                   </Stack>
                 ))}
               </Box>
-            )}
+            }
 
             {/* ── what runs: one sentence, its numbers editable in place ── */}
             {!noRun && (
@@ -1163,8 +1168,8 @@ export default function RunPlanDialog({
                       label="Seed"
                       detail={
                         seedFrom
-                          ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
-                          : "Fixed when the run starts and saved with it — a re-run can reuse it"
+                          ? `Same callers and data as ${seedFrom}`
+                          : "Saved with the run"
                       }
                       value={seedFrom ? `Same as ${seedFrom}` : "New"}
                       muted
@@ -1172,7 +1177,7 @@ export default function RunPlanDialog({
                   )}
                   <Row
                     label={voice ? "Longest call" : "Per-trial timeout"}
-                    detail={`A ${unit} still going then stops and fails as timed out`}
+                    detail="Then it fails as timed out"
                   >
                     <TextField
                       select
@@ -1196,7 +1201,7 @@ export default function RunPlanDialog({
                   </Row>
                   <Row
                     label="Whole-run deadline"
-                    detail={`No new ${unit}s start after it; evidence is kept`}
+                    detail={`No new ${unit}s after it`}
                   >
                     <TextField
                       select
@@ -1220,15 +1225,12 @@ export default function RunPlanDialog({
                   </Row>
                   <Row
                     label="Turn limit"
-                    detail="The environment's limit — change it in Settings"
+                    detail="Set in the environment's Settings"
                     value={`${limits.turnLimit} turns`}
                     muted
                   />
                   {limits.stepLimit ? (
-                    <Row
-                      label="Tool-step limit"
-                      detail="Tool calls one trial may make before it stops"
-                    >
+                    <Row label="Tool-step limit" detail="Tool calls per trial">
                       <TextField
                         select
                         size="small"
@@ -1252,7 +1254,7 @@ export default function RunPlanDialog({
                   ) : (
                     <Row
                       label="Tool-step limit"
-                      detail={`${envState?.agent?.name || "This agent"} runs its tools on its own platform, so steps can't be stopped from here`}
+                      detail="Its tools run on its own platform"
                       value="Not enforced"
                       muted
                     />
@@ -1531,11 +1533,13 @@ export default function RunPlanDialog({
                       >
                         {h.title}
                       </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
-                      >
-                        {h.line}
-                      </Typography>
+                      {h.line && (
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {h.line}
+                        </Typography>
+                      )}
                     </Box>
                   ),
                 )}
@@ -1564,8 +1568,8 @@ export default function RunPlanDialog({
           >
             <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
               {submit === "rejected"
-                ? "No run created — the world service is unavailable. Nothing was charged; your choices are kept."
-                : "We couldn't confirm the run started. It may exist, so Start stays off — find it first."}
+                ? "No run created: the world service is unavailable. Nothing was charged."
+                : "Couldn't confirm the run started. Find it before starting again."}
             </Typography>
             {submit === "timeout" && env?.id && (
               <Button
@@ -1673,7 +1677,10 @@ export default function RunPlanDialog({
                   ? "Starting…"
                   : submit === "rejected"
                     ? "Try again"
-                    : "Start run"}
+                    : /* Something is still open: the label says so. */
+                      canStart && (blockedN > 0 || untestedN > 0)
+                      ? "Run anyway"
+                      : "Start run"}
               </Button>
             </span>
           </Tooltip>
