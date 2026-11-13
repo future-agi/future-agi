@@ -16,8 +16,10 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from django.conf import settings
 from django.core.cache import cache
+from django.db.models import Prefetch
 from django.utils import timezone
 
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.services import instant_eval_rows as rows_service
@@ -146,6 +148,17 @@ def _question(config) -> dict:
         "answer_type": "category" if answer_type == "category" else "yes_no",
         "labels": labels,
     }
+
+
+def with_primary_evals(tasks):
+    """``tasks`` with each task's questions prefetched from the primary.
+
+    ``_view``, ``_unit_of`` and the Instant check read this prefetch. A task
+    asked through the plain eval-task API may be read seconds after it was
+    created, before a replica has its question links."""
+    return tasks.prefetch_related(
+        Prefetch("evals", queryset=CustomEvalConfig.objects.using("default"))
+    )
 
 
 def _run_of(task):
@@ -532,7 +545,7 @@ def compute_summary(task, run, view, questions, price: float | None) -> dict:
 def prewarm_summary(task_id) -> None:
     """Count a run that just finished in the time zone it was last viewed
     in, so whoever opens it next reads the count instead of waiting for it."""
-    task = EvalTask.objects.filter(id=task_id).prefetch_related("evals").first()
+    task = with_primary_evals(EvalTask.objects.filter(id=task_id)).first()
     run = _run_of(task) if task else None
     if run is None:
         return

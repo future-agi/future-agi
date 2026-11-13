@@ -544,3 +544,278 @@ def test_task_browsing_keeps_replica_eligible_related_reads(
         assert task.evals.all()[0].name == custom_eval_config.name
     assert queries.captured_queries
     assert CustomEvalConfig.objects.all().db == "replica"
+
+
+# -- R4: a config or task the user acts on right after creating it ------------
+
+CONFIG_URL = "/tracer/custom-eval-config/"
+
+
+def _primary_config(config_id):
+    return CustomEvalConfig.objects.using("default").get(pk=config_id)
+
+
+def test_r4_1_config_edited_right_after_create_is_accepted_and_saved(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+):
+    """The task panel edits an eval it added a moment ago: 200, not
+    'Custom eval config with id ... does not exist.'"""
+    lagging_replica.freeze()
+    config_id = _create_config(auth_client, project, eval_template)
+    assert not CustomEvalConfig.objects.filter(pk=config_id).exists()
+
+    response = auth_client.patch(
+        f"{CONFIG_URL}{config_id}/",
+        {"name": "renamed", "mapping": {"input": "output"}},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    config = _primary_config(config_id)
+    assert (config.name, config.mapping) == ("renamed", {"input": "output"})
+
+
+def test_r4_1_two_quick_edits_keep_both_changes(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+):
+    """The second edit must not save back a copy of the row from before the
+    first one."""
+    config_id = _create_config(auth_client, project, eval_template)
+    lagging_replica.freeze()
+
+    first = auth_client.patch(
+        f"{CONFIG_URL}{config_id}/", {"mapping": {"input": "output"}}, format="json"
+    )
+    assert first.status_code == 200, first.data
+    second = auth_client.patch(
+        f"{CONFIG_URL}{config_id}/", {"name": "renamed"}, format="json"
+    )
+    assert second.status_code == 200, second.data
+    config = _primary_config(config_id)
+    assert (config.name, config.mapping) == ("renamed", {"input": "output"})
+    assert CustomEvalConfig.objects.get(pk=config_id).mapping == {"input": "input"}
+
+
+def test_r4_1_config_opened_right_after_create_is_found(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+):
+    lagging_replica.freeze()
+    config_id = _create_config(auth_client, project, eval_template)
+    response = auth_client.get(f"{CONFIG_URL}{config_id}/")
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body.get("result", body)["id"] == config_id
+
+
+class _Spans:
+    """The ClickHouse span reader, returning the spans it is given."""
+
+    def __init__(self, spans):
+        self.spans = spans
+        self.asked = []
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def list_by_project(self, project_id, **filters):
+        self.asked.append((project_id, filters))
+        return self.spans
+
+
+def test_r4_1_rerun_right_after_create_saves_the_result(
+    lagging_replica,  # noqa: F811
+    settings,
+    auth_client,
+    project,
+    eval_template,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """Re-running a config created a moment ago: the request finds it, the
+    evaluation it dispatches finds it, and the result is saved. Only the
+    model call, the cost log and the ClickHouse span listing are stubbed."""
+    import tracer.services.clickhouse.v2 as ch_v2
+    import tracer.utils.eval as eval_module
+
+    settings.EVAL_SPAN_READ_SOURCE = "postgres"
+    version = ProjectVersion.objects.create(project=project, name="A", version="A")
+    trace = Trace.objects.create(project=project, project_version=version)
+    span = ObservationSpan.objects.create(
+        id="span_" + uuid.uuid4().hex,
+        project=project,
+        project_version=version,
+        trace=trace,
+        observation_type="llm",
+        input={"question": "What is the capital of France?"},
+        output={"answer": "Paris"},
+    )
+    lagging_replica.freeze()
+    created = auth_client.post(
+        CONFIG_URL,
+        {
+            "project": str(project.pk),
+            "eval_template": str(eval_template.pk),
+            "name": "rerun-" + uuid.uuid4().hex,
+            "mapping": {"input": "input", "output": "output"},
+            "config": {},
+        },
+        format="json",
+    )
+    assert created.status_code == 200, created.data
+    config_id = created.data["result"]["id"]
+    version.eval_tags = [{"custom_eval_config_id": config_id, "value": "LLM"}]
+    version.save(update_fields=["eval_tags"])
+    assert not CustomEvalConfig.objects.filter(pk=config_id).exists()
+
+    reader = _Spans([SimpleNamespace(id=span.id)])
+    monkeypatch.setattr(ch_v2, "get_reader", reader)
+    # The worker runs the dispatched evaluation in place.
+    monkeypatch.setattr(
+        eval_module.evaluate_observation_span,
+        "delay",
+        eval_module.evaluate_observation_span._original_func,
+    )
+
+    response = auth_client.post(
+        f"{CONFIG_URL}run_evaluation/",
+        {"custom_eval_config_id": config_id, "project_version_id": str(version.pk)},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    assert reader.asked == [
+        (
+            str(project.pk),
+            {"project_version_id": str(version.pk), "observation_type": "llm"},
+        )
+    ]
+    assert len(stub_run_eval.requests) == 1
+    results = list(
+        EvalLogger.objects.using("default").filter(
+            observation_span_id=span.id, deleted=False
+        )
+    )
+    assert [(str(r.custom_eval_config_id), r.error) for r in results] == [
+        (config_id, False)
+    ]
+
+
+def _eval_ids_in_details(client, task_id):
+    response = client.get(f"{TASK_URL}get_eval_details/", {"eval_id": str(task_id)})
+    assert response.status_code == 200, response.data
+    return sorted(e["id"] for e in response.data["result"]["evals_applied"])
+
+
+def test_r4_2_task_details_list_the_eval_of_a_task_just_created(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+    workflow_inputs,
+):
+    """The task page right after Create Task shows the task's eval, not
+    'No evaluations added yet'."""
+    lagging_replica.freeze()
+    config_id = _create_config(auth_client, project, eval_template)
+    created = auth_client.post(
+        TASK_URL, _task_payload(project, config_id), format="json"
+    )
+    assert created.status_code == 200, created.data
+    task_id = created.data["result"]["id"]
+    assert not CustomEvalConfig.objects.filter(eval_tasks__id=task_id).exists()
+    assert _eval_ids_in_details(auth_client, task_id) == [config_id]
+
+
+def test_r4_2_task_details_list_every_eval_right_after_an_edit(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+    eval_task,
+    custom_eval_config,
+    workflow_inputs,
+):
+    """Saved with a just-added second eval: the page right after Save shows
+    both, so a second Save from it does not drop the new one."""
+    eval_task.run_type = "historical"
+    eval_task.save(update_fields=["run_type"])
+    lagging_replica.freeze()
+    added = _create_config(auth_client, project, eval_template)
+    both = sorted([str(custom_eval_config.pk), added])
+    edited = auth_client.patch(
+        TASK_URL + "update_eval_task/",
+        {"eval_task_id": str(eval_task.pk), "evals": both, "edit_type": "edit_rerun"},
+        format="json",
+    )
+    assert edited.status_code == 200, edited.data
+    assert list(
+        CustomEvalConfig.objects.filter(eval_tasks=eval_task).values_list(
+            "id", flat=True
+        )
+    ) == [custom_eval_config.pk]
+    assert _eval_ids_in_details(auth_client, eval_task.pk) == both
+
+
+def _check_exists(client, project, name, template, mapping):
+    response = client.post(
+        f"{CONFIG_URL}check_exists/",
+        {
+            "project_name": project.name,
+            "project_type": project.trace_type,
+            "eval_tags": [
+                {
+                    "custom_eval_name": name,
+                    "eval_name": template.name,
+                    "mapping": mapping,
+                }
+            ],
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    return response.data["result"]["exists"]
+
+
+def test_r4_4_sdk_check_sees_a_config_created_a_moment_ago(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+):
+    """The SDK's pre-flight check reports a same-name config with another
+    mapping, created a moment ago, as a conflict; the same config is not."""
+    lagging_replica.freeze()
+    response = auth_client.post(
+        CONFIG_URL,
+        {
+            "project": str(project.pk),
+            "eval_template": str(eval_template.pk),
+            "name": "sdk-eval",
+            "mapping": {"input": "input"},
+            "config": {},
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    assert not CustomEvalConfig.objects.filter(name="sdk-eval").exists()
+
+    assert _check_exists(
+        auth_client, project, "sdk-eval", eval_template, {"input": "output"}
+    )
+    assert not _check_exists(
+        auth_client, project, "sdk-eval", eval_template, {"input": "input"}
+    )

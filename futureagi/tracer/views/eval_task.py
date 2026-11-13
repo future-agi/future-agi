@@ -3230,9 +3230,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 .get(id=eval_id)
             )
 
+            # Primary: the task page builds its edit form from this list right
+            # after a task is created or saved, and a Save from a stale form
+            # would write the old eval set back.
             eval_configs = list(
                 self._scope_custom_eval_config_queryset(
-                    CustomEvalConfig.objects.select_related("eval_template")
+                    CustomEvalConfig.objects.using("default").select_related(
+                        "eval_template"
+                    )
                 )
                 .filter(eval_tasks=queryset)
                 .order_by("-created_at", "id")[

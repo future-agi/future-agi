@@ -84,6 +84,7 @@ from tracer.services.instant_eval_run import (
     compute_summary,
     credits_per_answer,
     max_rows,
+    with_primary_evals,
 )
 from tracer.services.user_filter_capabilities import (
     validate_users_filter_capabilities,
@@ -1161,13 +1162,11 @@ def _load(request, params, gm):
     project = _project(request, params["project_id"])
     if project is None:
         return None, gm.not_found("Project not found")
-    task = (
+    task = with_primary_evals(
         EvalTask.objects.filter(
             id=params["eval_task_id"], project=project, deleted=False
         )
-        .prefetch_related("evals")
-        .first()
-    )
+    ).first()
     if task is None or not _is_instant_task(task):
         # Only an Instant eval run is read (and given a run record) here: a
         # read of any other eval task would write rows and a run for it, and

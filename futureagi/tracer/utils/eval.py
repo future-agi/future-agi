@@ -2052,6 +2052,10 @@ def _create_error_eval_logger(
     time_limit=3600,
     queue="tasks_s",
 )
+# Primary for the whole run: run_evaluation dispatches this for a config it has
+# just found on the primary, which may be seconds old, and the result this run
+# saves checks that config again (EvalLogger.save runs full_clean).
+@primary_required
 def evaluate_observation_span(
     observation_span_id=None,
     custom_eval_config_id=None,

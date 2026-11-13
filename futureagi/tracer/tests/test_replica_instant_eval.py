@@ -31,7 +31,9 @@ from accounts.models.organization import Organization
 from model_hub.models.ai_model import AIModel
 from tfc.capabilities import service as capability_service
 from tfc.capabilities.service import CapabilityDecision
+from tfc.routers import force_primary
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow, InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
@@ -280,6 +282,55 @@ def test_d24_first_read_of_a_plain_task_stores_rows_materialized_after_freeze(
     lagging_replica.thaw()
     cache.clear()
     assert prepared() == expected
+
+
+# -- R4-3: a plain Instant task read seconds after it was created -------------
+
+
+def test_r4_3_plain_instant_task_created_after_freeze_loads_with_its_question(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    observe_project,
+    yes_no,  # noqa: F811
+    fake_view,  # noqa: F811
+    started,  # noqa: F811
+    monkeypatch,
+):
+    """A historical task asked through the plain eval-task API with an
+    Instant question, read before the replica has its question link: the
+    summary loads (no 404) and counts that question from the first poll."""
+    lagging_replica.freeze()
+    created = auth_client.post(
+        TASK_URL,
+        {
+            "project": str(observe_project.id),
+            "name": "Plain Instant task",
+            "run_type": "historical",
+            "row_type": "sessions",
+            "spans_limit": 100,
+            "sampling_rate": 100.0,
+            "evals": [str(yes_no.id)],
+        },
+        format="json",
+    )
+    assert created.status_code == status.HTTP_200_OK, created.content
+    task = EvalTask.objects.get(id=created.data["result"]["id"])
+    assert not (task.filters or {}).get("instant_eval_run")
+    assert not CustomEvalConfig.objects.filter(eval_tasks=task).exists()
+
+    # The task's workflow materializes its two sessions on the primary, as
+    # its reconcile pass does.
+    monkeypatch.setattr(
+        entries_module, "get_reader", lambda: SimpleNamespace(close=lambda: None)
+    )
+    sessions = fake_view.ids[:2]
+    with force_primary():
+        assert materialize_pending(task, resolved_row_ids=sessions) == 2
+
+    summary = _summary(auth_client, observe_project, task)
+    assert list(summary["counts"]) == [str(yes_no.id)]
+    run = InstantEvalRun.objects.get(eval_task=task)
+    assert (run.questions, summary["total"]) == (1, 2)
 
 
 # -- D25: retrying a failure the replica has not applied -----------------------
