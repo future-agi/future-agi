@@ -84,6 +84,20 @@ describe("publish review", () => {
     await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true, revision: 1, expectedDigest: expect.stringMatching(/^sha256:/), expectedReleaseRevision: 3, evidenceRunId: null }));
   });
 
+  it("collapses unchanged files and states the production move once without summary assistance", async () => {
+    api.compare.mockReturnValue({ data: { files: [{ path: 'SKILL.md', status: 'unchanged', toSha256: createHash('sha256').update(draft.files[0].content).digest('hex') }] }, isError: false });
+    const released = { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 1, canMove: true }] };
+    api.currentSkill = released;
+    renderDialog({ skill: released, draft: { ...draft, baseVersion: 2 } });
+    await screen.findByText('No file changes since v2');
+    expect(screen.queryByRole('list', { name: 'File changes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Summarize changes' })).not.toBeInTheDocument();
+    expect(screen.getByText('Review what changes, then publish.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
+    expect(screen.getAllByText('Reuses v2 and moves production from v1 to v2.')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Publish and move production' })).toBeEnabled();
+  });
+
   it("renders changed files first and opens their freshly loaded diff", async () => {
     const files = [...draft.files, { path: 'references/policy.md', content: 'New policy' }];
     api.compare.mockReturnValue({ data: { files: [

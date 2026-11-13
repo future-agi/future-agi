@@ -59,13 +59,14 @@ test('SKILLS-E2E-010: retain all supported members and recover one lost import r
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Retained migration', exact: true }).click();
+    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
     await choose('Retained source format', 'Private folder or ZIP');
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'private-library.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(entries, { level: 0 })) });
     const previewResponse = page.waitForResponse(response => response.url().endsWith('/skills/intake/preview/') && response.status() === 200);
     await page.getByRole('button', { name: 'Preview retained migration', exact: true }).click();
     const preview = (await (await previewResponse).json()).result as Plan;
-    await expect(page.getByRole('heading', { name: 'Review retained migration plan' })).toBeVisible();
+    await page.getByRole('button', { name: 'Decide one item at a time', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review one item', exact: true })).toBeVisible();
     const plan = await read<Plan>(`/model-hub/skills/intake/${preview.id}/`);
     const inventoryOracle = (value: Plan) => {
       assert.deepEqual(value.inventory.items.map(item => item.name).sort(), [...supported, unsupported].sort());

@@ -176,7 +176,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const page = await newPage();
           await go(page, '/dashboard/skills', 'migration-library');
           await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
-          await click(page, 'tab', 'Retained migration');
+          await click(page, 'tab', 'Review sources');
           const previews = [];
           const onPreview = response => {
             const url = response.url();

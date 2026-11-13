@@ -69,7 +69,7 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Retained migration', exact: true }).click();
+    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
     const previews: Response[] = [];
     page.on('response', response => { if (response.request().method() === 'POST' && /\/skills\/intake\/(langfuse\/)?preview\/$/.test(response.url())) previews.push(response); });
     await page.getByLabel('Inventory migration packet', { exact: true }).setInputFiles({ name: 'migration-packet.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(packet)) });

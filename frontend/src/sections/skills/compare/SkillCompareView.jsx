@@ -122,7 +122,7 @@ export default function SkillCompareView() {
         crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.data?.name || "Skill", to: paths.dashboard.skills.detail(skillId) }, { label: "Compare" }]}
         title="Compare versions"
         purpose="Review file changes before choosing a version."
-        actions={<Button variant="contained" onClick={() => router.push(returnTo)}>{returnLabel}</Button>}
+        actions={<Button variant="contained" color="primary" onClick={() => router.push(returnTo)}>{returnLabel}</Button>}
       />
       {skill.data && (
         <Stack

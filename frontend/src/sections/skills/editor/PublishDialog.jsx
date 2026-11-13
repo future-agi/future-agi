@@ -105,11 +105,12 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const comparisonVerified = Boolean(compared && compared.data === comparison.data && digest);
   const comparisonMismatch = draft.baseVersion !== null && comparisonVerified && compared.digest !== digest;
   const comparisonReady = draft.baseVersion === null || Boolean(comparisonVerified && compared.digest === digest && !comparison.isError && !comparison.isPending && !liveComparison.isFetching);
+  const noFileChanges = comparisonReady && draft.baseVersion !== null && files.length > 0 && files.every((file) => file.status === 'unchanged');
   const canPublish = Boolean(digest && !releaseConflict && labels.every(canMove) && checks && live.current && !live.pending && !live.error && comparisonReady
     && checks.summary.errors === 0 && (checks.summary.warnings === 0 || acknowledged) && note.length <= 2000);
 
   const nextVersion = release.latestVersion === null ? 1 : release.latestVersion != null ? release.latestVersion + 1 : null;
-  const sameAsLatest = draft.baseVersion != null && draft.baseVersion === release.latestVersion && comparisonReady && files.length > 0 && files.every((file) => file.status === 'unchanged');
+  const sameAsLatest = noFileChanges && draft.baseVersion === release.latestVersion;
   const versionText = sameAsLatest ? `v${release.latestVersion}` : nextVersion ? `v${nextVersion}` : 'a new version';
   const publishEffect = sameAsLatest ? 'Reuses' : 'Creates';
   const productionVersion = release.labels?.find((item) => item.name === 'production')?.version;
@@ -193,7 +194,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
-        <ReviewSection title={comparisonReady && files.every((file) => file.status === "unchanged") ? `No file changes since v${draft.baseVersion}` : draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
+        <ReviewSection title={noFileChanges ? `No file changes since v${draft.baseVersion}` : draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
           {draft.baseVersion !== null && !comparison.isError && (comparison.isPending || !comparisonVerified || liveComparison.isFetching) && <ContentSkeleton variant="panel" label="Verifying reviewed file changes" />}
           {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
           {comparisonMismatch && <Alert severity="warning" action={<Button color="inherit" onClick={() => setConflict(true)}>Review changed draft</Button>}>The server draft changed after this review opened. Reload or overwrite it before reviewing the diff.</Alert>}
@@ -217,8 +218,8 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           )}
         </ReviewSection>
         <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
-        <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>
-        {summaryOpen && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
+        {!noFileChanges && <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>}
+        {summaryOpen && !noFileChanges && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
         <ReviewSection title="Checks">
           {live.pending && <ContentSkeleton variant="rows" rows={2} label="Checking draft before publishing" />}
           {live.error && <ErrorState title="Couldn't run checks" onRetry={live.retry} />}

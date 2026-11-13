@@ -65,11 +65,12 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Retained migration', exact: true }).click();
+    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'exchange.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exchange)) });
     const exchangeResponse = page.waitForResponse(response => response.url().endsWith('/skills/intake/langfuse/preview/') && response.status() === 200);
     await page.getByRole('button', { name: 'Preview retained migration', exact: true }).click();
     const plan = await read<Plan>(`/model-hub/skills/intake/${((await (await exchangeResponse).json()).result as Plan).id}/`);
+    await page.getByRole('button', { name: 'Change sources', exact: true }).click();
     await page.getByRole('combobox', { name: 'Retained source format', exact: true }).click();
     await page.getByRole('option', { name: 'Private folder or ZIP', exact: true }).click();
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'private-library.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(entries, { level: 0 })) });
