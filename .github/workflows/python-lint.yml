@@ -50,6 +50,9 @@ jobs:
               - 'futureagi/**/pyproject.toml'
               - 'futureagi/**/ruff.toml'
               - 'futureagi/**/.ruff.toml'
+              - 'pyproject.toml'
+              - 'ruff.toml'
+              - '.ruff.toml'
               - 'scripts/check_python_lint_delta.py'
               - 'scripts/test_check_python_lint_delta.py'
               - 'scripts/lint-staged-python.sh'
@@ -131,7 +134,13 @@ jobs:
           venv="$RUNNER_TEMP/python-lint-base-venv"
           python3 -I -m venv "$venv"
           "$venv/bin/python" -I -m pip install --quiet "ruff==${RUFF_VERSION}"
-          python3 -I "$gate" --base "$base" --config-ref "$trusted_ref" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
+          # Older trusted gates do not take --config-ref; read the trusted gate
+          # (not head code) to decide whether to pass it.
+          config_ref_args=()
+          if grep -q -- "--config-ref" "$gate"; then
+            config_ref_args=(--config-ref "$trusted_ref")
+          fi
+          python3 -I "$gate" --base "$base" "${config_ref_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
 
   python-lint-pass:
     name: Python Lint Pass

@@ -254,14 +254,14 @@ def committed_configs(repo: Path, ref: str) -> dict[str, bytes | None]:
 
 
 def ruff_section(path: str, data: bytes | None) -> object:
-    """Return a committed pyproject's Ruff table, or None if absent."""
+    """Return a committed pyproject's Ruff table, None if absent, or the raw
+    bytes when the file is not parseable TOML."""
     if data is None:
         return None
     try:
-        tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
+        tool = tomllib.loads(data.decode("utf-8-sig")).get("tool", {})
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-        # The caller rejects unparseable trusted settings; head settings are
-        # removed before linting, so they need no interpretation here.
+        # Returned as raw bytes; reject_extended_configs stops on them.
         return data
     if not isinstance(tool, dict):
         raise GateError(f"{path}: tool must be a table")
@@ -274,26 +274,23 @@ def ruff_section(path: str, data: bytes | None) -> object:
 def reject_extended_configs(
     configs: dict[str, bytes | None], *, trusted: bool = False
 ) -> None:
-    """Stop on extend; require trusted config bytes to be parseable as TOML."""
+    """Stop on extend, and on any in-scope config that is not parseable TOML."""
     for path, content in configs.items():
         if content is None:
             continue
         name = PurePosixPath(path).name
+        # A config this check cannot read stops it on both sides, so the PR
+        # that adds one fails its own check instead of every later PR.
+        side = "trusted" if trusted else "head"
         if name == "pyproject.toml":
             section = ruff_section(path, content)
             if isinstance(section, bytes):
-                if trusted:
-                    raise GateError(f"{path}: trusted config is not parseable TOML")
-                continue
+                raise GateError(f"{path}: {side} config is not parseable TOML")
         else:
             try:
-                section = tomllib.loads(content.decode("utf-8"))
+                section = tomllib.loads(content.decode("utf-8-sig"))
             except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-                if trusted:
-                    raise GateError(
-                        f"{path}: trusted config is not parseable TOML"
-                    ) from exc
-                continue  # Head settings are replaced before linting.
+                raise GateError(f"{path}: {side} config is not parseable TOML") from exc
         if isinstance(section, dict) and "extend" in section:
             raise GateError(
                 f"{path}: Ruff config uses extend; cannot compare referenced settings"

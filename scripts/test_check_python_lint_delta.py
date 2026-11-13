@@ -278,6 +278,9 @@ LINT_PATHS = (
     "futureagi/**/pyproject.toml",
     "futureagi/**/ruff.toml",
     "futureagi/**/.ruff.toml",
+    "pyproject.toml",
+    "ruff.toml",
+    ".ruff.toml",
     "scripts/check_python_lint_delta.py",
     "scripts/test_check_python_lint_delta.py",
     "scripts/lint-staged-python.sh",
@@ -399,9 +402,10 @@ class WorkflowTests(unittest.TestCase):
             'git show "${trusted_ref}:.github/workflows/python-lint.yml"', ruff
         )
         self.assertIn(
-            'python3 -I "$gate" --base "$base" --config-ref "$trusted_ref" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
+            'python3 -I "$gate" --base "$base" "${config_ref_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
             ruff,
         )
+        self.assertIn('if grep -q -- "--config-ref" "$gate"; then', ruff)
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
         # No head-provided executable runs before the reporting step in this job.
         self.assertNotIn("scripts/test_check_python_lint_delta.py", ruff)
@@ -1101,6 +1105,33 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
                 )
                 self.commit()
                 self.assert_gate_stopped(base, "futureagi/model_hub/" + name)
+
+    def test_unparsed_head_config_stops_its_own_pr(self):
+        # Ruff may accept a config this check cannot read; the PR adding it
+        # fails its own check rather than every later backend PR.
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        path = "futureagi/model_hub/ruff.toml"
+        self.write(
+            path,
+            'lint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+        )
+        self.write("futureagi/model_hub/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_config_with_byte_order_mark_is_read(self):
+        self.write("futureagi/pyproject.toml", "\ufeff" + self.banned_config())
+        base = self.commit()
+        self.write(
+            "futureagi/app/new.py",
+            "from library import old_api\n\nold_api()\n",
+        )
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn("TID251", proc.stdout)
+        self.assertNotIn("not parseable", proc.stdout)
 
     def test_tip_settings_judge_stale_branch_and_preserve_old_findings(self):
         path = "futureagi/app/new.py"
