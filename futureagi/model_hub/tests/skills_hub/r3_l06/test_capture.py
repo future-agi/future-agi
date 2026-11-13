@@ -151,7 +151,11 @@ def test_capture_redacts_before_sharing_and_replays_without_duplicate(
     assert saved["cases"][0]["source_group_id"].startswith("trace:sha256:")
     capture = HubSkillContextCapture.objects.get(pk=result["capture_id"])
     assert capture.selected_text is None
-    assert "123" not in json.dumps(capture.accepted_receipt)
+    # The receipt carries random UUIDs and SHA-256 digests, so a bare "123" can
+    # occur by chance; look for the source's identifying text instead.
+    receipt = json.dumps(capture.accepted_receipt)
+    assert "account 123" not in receipt
+    assert "Check a synthetic refund for account" not in receipt
     HubSkillContextCapture.objects.filter(pk=capture.pk).update(
         expires_at=timezone.now() - timedelta(days=1)
     )
