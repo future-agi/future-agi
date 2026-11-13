@@ -14,15 +14,15 @@ from django.utils.dateparse import parse_datetime
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.harness_environment import _VOICE_CONNECTORS
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
+    HostedHarnessError,
+)
 from tfc.ee_gating import is_oss
 
 _ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
-_NON_BILLABLE_FAILURE_DOMAINS = frozenset(
-    {"infrastructure", "connectivity", "platform_sync"}
-)
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ def is_billable_receipt(status: str, call: object, failure_domain: str | None) -
     return (
         status != "skipped"
         and bool(call)
-        and failure_domain not in _NON_BILLABLE_FAILURE_DOMAINS
+        and failure_domain not in PLATFORM_FAILURE_DOMAINS
     )
 
 
@@ -241,7 +241,7 @@ def _billable_records(
             (receipt_body.get("failure") or {}).get("domain"),
         ):
             continue
-        if item.get("failure_domain") in _NON_BILLABLE_FAILURE_DOMAINS:
+        if item.get("failure_domain") in PLATFORM_FAILURE_DOMAINS:
             continue
         # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
         # for audit, but never let an untrusted value suppress a billable simulator call.

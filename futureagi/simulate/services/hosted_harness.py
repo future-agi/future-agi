@@ -1435,6 +1435,13 @@ def _scenario_edits(
 # these and the job's counters treat every other receipt as still current.
 RERUN_EXECUTION_KEYS = "rerun_execution_keys"
 
+# The failure domains of the platform's own infrastructure, connectivity or sync. A call
+# one of them ended was interrupted, not failed by the agent: it is never charged, and a
+# retry runs it again.
+PLATFORM_FAILURE_DOMAINS = frozenset(
+    {"infrastructure", "connectivity", "platform_sync"}
+)
+
 
 def rerun_calls_in_run(
     test_execution: TestExecution, call_execution_ids: list[uuid.UUID]
@@ -1661,7 +1668,9 @@ def executions_without_result(
     """The keys of the executions an attempt was sent and delivered no result for.
 
     None when it was sent none: a build's product is its bundle, not call results. A
-    result an earlier attempt delivered is not this attempt's.
+    result an earlier attempt delivered is not this attempt's. A receipt the platform's
+    own failure ended is no result either: the call was interrupted, and its receipt
+    is not charged, so running it again charges it once.
     """
     if job.environment_id is None:
         return None
@@ -1671,9 +1680,13 @@ def executions_without_result(
         executions = executions.filter(execution_key__in=rerun_keys)
     if not executions.exists():
         return None
-    received = HostedHarnessReceipt.no_workspace_objects.filter(
+    receipts = HostedHarnessReceipt.no_workspace_objects.filter(
         job=job, attempt_number=attempt_number, execution__isnull=False
-    ).values("execution_id")
+    )
+    interrupted = receipts.filter(
+        body__failure__domain__in=sorted(PLATFORM_FAILURE_DOMAINS)
+    ).values("id")
+    received = receipts.exclude(id__in=interrupted).values("execution_id")
     return sorted(
         executions.exclude(id__in=received).values_list("execution_key", flat=True)
     )

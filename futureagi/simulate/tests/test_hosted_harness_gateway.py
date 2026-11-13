@@ -36,6 +36,7 @@ from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.harness_usage import harness_consumption, record_harness_usage
 from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
     HostedHarnessError,
     begin_scenarios,
     create_hosted_job,
@@ -3279,9 +3280,15 @@ def _dispatched(job: HostedHarnessJob) -> list[str]:
     return [entry["execution_key"] for entry in manifest]
 
 
-def _run_calls(attempt: HostedHarnessAttempt, tokens: dict[str, int]) -> None:
+def _run_calls(
+    attempt: HostedHarnessAttempt,
+    tokens: dict[str, int],
+    interrupted: dict[str, str] | None = None,
+) -> None:
     """What a guest does with the calls it is sent: report each call's usage and deliver
-    each call's result through the platform's own receipt ingestion."""
+    each call's result through the platform's own receipt ingestion. A call in
+    ``interrupted`` ends errored in that failure domain."""
+    interrupted = interrupted or {}
     now = timezone.now().isoformat()
     record_harness_usage(
         attempt,
@@ -3316,11 +3323,18 @@ def _run_calls(attempt: HostedHarnessAttempt, tokens: dict[str, int]) -> None:
             "scenario_id": str(execution.source_scenario.scenario_id),
             "scenario_attempt": attempt.attempt_number,
             "world_index": None,
-            "status": "passed",
+            "status": "errored" if key in interrupted else "passed",
             "sub_goals": [],
             "evaluations": [],
             "call": {"started_at": now, "ended_at": now, "duration_ms": 1000},
-            "failure": None,
+            "failure": {
+                "domain": interrupted[key],
+                "stage": "call",
+                "code": "call_interrupted",
+                "message": "the call was cut off",
+            }
+            if key in interrupted
+            else None,
         }
         body["digest"] = canonical_digest(body)
         ingest_result_receipt(attempt, body, replay_usage=False)
@@ -3407,6 +3421,44 @@ def test_a_call_with_a_result_is_charged_once_across_a_retry(
     assert job.state == HostedHarnessJob.State.COMPLETED
     # The billed events are built from the same records: the first call's 100 tokens
     # once, the second call's 10.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("domain", sorted(PLATFORM_FAILURE_DOMAINS))
+def test_a_call_the_platform_interrupted_runs_again_and_is_charged_once(
+    organization, monkeypatch, domain
+):
+    first = _delivered_run(organization, f"run-interrupted-{domain}", receipts=0)
+    # Both calls have a receipt, but the platform's own failure ended the second.
+    _run_calls(
+        first,
+        {"scenario-1:0": 100, "scenario-2:0": 50},
+        interrupted={"scenario-2:0": domain},
+    )
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The interrupted call has no result, so it runs again; the other does not.
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # The interrupted receipt's 50 tokens are never charged: each call is charged once,
+    # 100 for the first and 10 for the second's re-run.
     assert harness_consumption(job)["text_sim_tokens"] == 110
 
 
