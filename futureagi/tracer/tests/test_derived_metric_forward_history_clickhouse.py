@@ -11,9 +11,13 @@ from uuid import uuid4
 
 import pytest
 
-from tracer.models.derived_metric import DerivedMetricVersion
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricVersion,
+    MetricProjectRefresh,
+)
 from tracer.selectors.eval_tasks import continuous_candidates as arrivals
-from tracer.services.derived_metrics import backfill, changes
+from tracer.services.derived_metrics import admission, backfill, changes, reads
 from tracer.services.derived_metrics.changes import (
     ChangeBatch,
     Dependency,
@@ -23,10 +27,12 @@ from tracer.services.derived_metrics.changes import (
 )
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.queries import Scope
+from tracer.services.derived_metrics.service import MetricUnavailableError
 from tracer.services.derived_metrics.storage import FIELD_VALUES
 from tracer.tests.test_derived_metric_changes_clickhouse import (  # noqa: F401
     NOW,
     OLD,
+    Analytics,
     complete_repair,
     discover,
     query_reads,
@@ -279,3 +285,89 @@ def test_forward_span_version_computes_only_spans_from_coverage_start(
     # Only the span after coverage_start (its 15-minute bucket) is computed.
     assert bucket == after_at.replace(minute=after_at.minute // 15 * 15)
     assert rows[0][2:] == (1, 6.0, 1.0)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("enabled_metrics")
+def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
+    live_writer, workspace, observe_project, settings
+):
+    """The scheduled pass on a fresh large project: decide, discover, publish, read.
+
+    enter_backfill then the same pass's run_incremental on an EMPTY head, with
+    the real size count and real discovery: no history page runs, discovery
+    starts at enrollment, only units from coverage_start get values, and reads
+    go from "not calculated yet" to values once the first head is published.
+    """
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    writer.store.execute(
+        "ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''"
+    )
+    definition = definition_for(writer, workspace, observe_project)
+    enrolled = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=3)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
+    sessions = {}
+    for name, start, arrival, value in (
+        # Ingested before enrollment: discovery never reads it.
+        ("before", enrolled - timedelta(hours=1), enrolled - timedelta(hours=1), 2),
+        # Ingested after enrollment but started before it: not this version's.
+        ("late", enrolled - timedelta(minutes=30), enrolled + timedelta(hours=1), 4),
+        ("after", enrolled + timedelta(hours=1), enrolled + timedelta(hours=1), 8),
+    ):
+        sessions[name] = uuid4()
+        seed_span_revision(
+            writer,
+            scope,
+            uuid4(),
+            f"{name}-span",
+            sessions[name],
+            start,
+            value,
+            revision=changes.ns(arrival),
+            arrival=arrival,
+        )
+    settings.METRICS_BACKFILL_MAX_SPANS = 2
+    analytics = Analytics(writer.store.client)
+    assert backfill.enter_backfill(
+        writer.lease, analytics, retention_days=lambda: 0
+    ) == {str(definition.id): "forward"}
+    definition.refresh_from_db()
+    assert definition.coverage_start == enrolled
+    # run_project_pass therefore takes the incremental branch, not run_pass.
+    assert not backfill.pending_versions(observe_project.id).exists()
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.head_manifest_id is None
+    metric = DerivedMetric.objects.select_related("project", "active_version").get(
+        pk=definition.metric_id
+    )
+    window = {"window_start": enrolled, "window_end": datetime.now(UTC)}
+    with pytest.raises(MetricUnavailableError) as early:
+        reads.read_kpi(metric, window, store=writer.store)
+    assert early.value.code == "metric_recalculating"
+
+    admission.run_incremental(writer, analytics, scope, state)
+
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.head_manifest_id is not None
+    assert state.watermark_ns > changes.ns(enrolled)
+    assert _version_fields(writer, state.head_manifest, definition) == [
+        (str(sessions["after"]), 8.0)
+    ]
+    metric = DerivedMetric.objects.select_related("project", "active_version").get(
+        pk=definition.metric_id
+    )
+    kpi = reads.read_kpi(metric, window, store=writer.store)
+    assert kpi["current"]["value"] == pytest.approx(8.0)
+    assert kpi["current"]["eligible_count"] == 1
+    assert kpi["previous"] is None
+    assert kpi["provenance"]["manifest_id"] == state.head_manifest_id
+    assert kpi["provenance"]["history_mode"] == "forward"
+    assert kpi["provenance"]["coverage_start"] == enrolled
+    with pytest.raises(MetricUnavailableError) as before_coverage:
+        reads.read_kpi(
+            metric,
+            {**window, "window_start": enrolled - timedelta(days=1)},
+            store=writer.store,
+        )
+    assert before_coverage.value.code == "window_not_calculated"
