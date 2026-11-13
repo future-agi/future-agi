@@ -240,6 +240,43 @@ def test_optimizer_does_not_retrieve_org_wide_feedback(neighboring_datasets):
         manager.assert_not_called()
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_optimizer_reuses_only_own_dataset_feedback(neighboring_datasets, user, legacy):
+    from ee.agenthub.prompt_optimizer_agent.tests.test_optimizer_examples import (
+        make_feedback,
+    )
+    from model_hub.views.eval_runner import EvaluationRunner
+
+    dataset, column, other_dataset, other_column = neighboring_datasets
+    metric = make_metric(dataset, column)
+    other_metric = make_metric(other_dataset, other_column)
+    other_metric.template = metric.template
+    other_metric.save()
+    own = make_feedback(metric, column, user)
+    foreign = make_feedback(other_metric, other_column, user, "other correction")
+    if legacy:
+        own.workspace = None
+        own.save()
+    optimization = create_optimization(dataset, column, metric)
+    runner = EvaluationRunner(metric.id, column=column, optimize=optimization)
+    runner.load_user_eval_metric()
+    with patch("model_hub.views.eval_runner.EmbeddingManager") as manager:
+
+        def retrieve(**kwargs):
+            assert kwargs["feedback_ids"] == [str(own.id)]
+            assert str(foreign.id) not in kwargs["feedback_ids"]
+            return ["own correction"]
+
+        manager.return_value.retrieve_avg_rag_based_examples.side_effect = retrieve
+        manager.return_value.process_examples.side_effect = lambda examples, **kwargs: (
+            examples
+        )
+        assert runner.get_few_shot_examples(["question"], ["input"]) == [
+            "own correction"
+        ]
+        manager.return_value.close.assert_called_once()
+
+
 def test_foreign_metric_link_cannot_run_or_write_usage(neighboring_datasets):
     dataset, column, other_dataset, other_column = neighboring_datasets
     foreign_metric = make_metric(other_dataset, other_column)

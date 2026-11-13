@@ -741,6 +741,28 @@ class ClickHouseVectorDB:
 
         return vectors
 
+    @staticmethod
+    def _feedback_filter_clause(feedback_ids):
+        if feedback_ids is None:
+            return ""
+        return (
+            " AND has(metadata.key, 'feedback_id')"
+            " AND metadata.value[indexOf(metadata.key, 'feedback_id')]"
+            " IN %(feedback_ids)s"
+        )
+
+    def _execute_feedback_search(self, query, feedback_ids, top_k):
+        if feedback_ids is None:
+            return self.execute_read(query)
+        # Keep each bound identity list below the query-size limit. Each batch
+        # contributes its nearest rows; rank those together before returning.
+        results = []
+        for offset in range(0, len(feedback_ids), 1000):
+            params = {"feedback_ids": tuple(feedback_ids[offset:offset + 1000])}
+            results.extend(self.execute_read(query, params))
+        results.sort(key=lambda row: row[-1])
+        return results[:top_k] if top_k is not None else results
+
     def vector_similarity_search_with_threshold(
         self,
         table_name: str,
@@ -750,6 +772,7 @@ class ClickHouseVectorDB:
         dataset_id: str | None = None,
         top_k: int | None = None,
         threshold: float = 0.75,
+        feedback_ids: list[str] | None = None,
     ):
         """
         tracebacka similarity search against vectors in the specified table using cosine distance.
@@ -767,6 +790,9 @@ class ClickHouseVectorDB:
         Returns:
             List of tuples containing (id, vector, metadata, similarity)
         """
+        if feedback_ids is not None and not feedback_ids:
+            return []
+        feedback_filter = self._feedback_filter_clause(feedback_ids)
         if filter_by is None:
             filter_by = {}
         filter_by = sanitize_metadata(filter_by)
@@ -808,13 +834,14 @@ class ClickHouseVectorDB:
         {dataset_id_filter}
         {metadata_not_null_filter}
         {metadata_filter_query}
+        {feedback_filter}
         {threshold_filter}
         ORDER BY distance ASC
         {limit_clause}
         """
         # Execute the query
         try:
-            results = self.execute_read(query)
+            results = self._execute_feedback_search(query, feedback_ids, top_k)
         except clickhouse_driver.errors.PartiallyConsumedQueryError as e:
             logger.error(f"PartiallyConsumedQueryError: {e}")
             self.close()
@@ -850,11 +877,15 @@ class ClickHouseVectorDB:
         eval_id: str | None = None,
         top_k: int = 5,
         syn_data_flag=False,
+        feedback_ids: list[str] | None = None,
     ):
         """
         Performs a similarity search against vectors in the specified table using cosine distance.
         Returns the top_k vectors sorted by similarity to the query vector.
         """
+        if feedback_ids is not None and not feedback_ids:
+            return []
+        feedback_filter = self._feedback_filter_clause(feedback_ids)
         if filter_by is None:
             filter_by = {}
         filter_by = sanitize_metadata(filter_by)
@@ -894,6 +925,7 @@ class ClickHouseVectorDB:
         {eval_id_filter}
         {metadata_not_null_filter}
         {metadata_filter_query}
+        {feedback_filter}
         ORDER BY distance ASC
         LIMIT {top_k}
         """
@@ -901,7 +933,7 @@ class ClickHouseVectorDB:
         results = None
         # Execute the query
         try:
-            results = self.execute_read(query)
+            results = self._execute_feedback_search(query, feedback_ids, top_k)
         except Exception:
             import traceback
 

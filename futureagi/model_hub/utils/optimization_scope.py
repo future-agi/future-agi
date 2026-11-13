@@ -1,9 +1,11 @@
 """Explicit dataset scope for optimizer workers, which have no request context."""
 
-from django.db.models import F, Q
+from django.db.models import CharField, F, Q
+from django.db.models.functions import Cast
 
-from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.models.choices import FeedbackSourceChoices, OwnerChoices
+from model_hub.models.develop_dataset import Column, Row
+from model_hub.models.evals_metric import Feedback, UserEvalMetric
 
 
 def _workspace_scope(dataset, field):
@@ -48,3 +50,28 @@ def optimization_metrics(optimization):
         )
         .select_related("template")
     )
+
+
+def optimization_feedback_ids(dataset, template_id):
+    """Return vector identities backed by feedback in this optimizer's dataset."""
+    if dataset.deleted:
+        return []
+    columns = Column.no_workspace_objects.filter(dataset=dataset, deleted=False)
+    rows = Row.no_workspace_objects.filter(dataset=dataset, deleted=False)
+    feedback = Feedback.no_workspace_objects.filter(
+        _workspace_scope(dataset, "workspace"),
+        _workspace_scope(dataset, "user_eval_metric__workspace"),
+        organization_id=dataset.organization_id,
+        eval_template_id=template_id,
+        user_eval_metric__dataset=dataset,
+        user_eval_metric__organization_id=dataset.organization_id,
+        user_eval_metric__template_id=template_id,
+        user_eval_metric__deleted=False,
+        source=FeedbackSourceChoices.DATASET.value,
+        source_id__in=columns.annotate(text_id=Cast("id", CharField())).values(
+            "text_id"
+        ),
+        row_id__in=rows.annotate(text_id=Cast("id", CharField())).values("text_id"),
+        deleted=False,
+    )
+    return [str(feedback_id) for feedback_id in feedback.values_list("id", flat=True)]

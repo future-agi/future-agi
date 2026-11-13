@@ -400,3 +400,41 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
     ]
     for key, value in inputs.items():
         assert params[key] == value
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("selection", ["own", "empty", "missing", "many"])
+def test_feedback_identity_filter_runs_before_ranking(
+    feedback_factory, vector_manager, selection
+):
+    own = feedback_factory(explanation="selected correction")
+    other = feedback_factory(explanation="other correction")
+    embed_feedback(vector_manager, other)
+    embed_feedback(vector_manager, own)
+    identities = {
+        "own": [str(own.id)],
+        "empty": [],
+        "missing": [str(uuid.uuid4())],
+        "many": [str(uuid.uuid4()) for _ in range(1000)] + [str(own.id)],
+    }[selection]
+    examples = vector_manager.retrieve_avg_rag_based_examples(
+        eval_id=str(own.eval_template_id),
+        inputs=["What is the identifier?", "The identifier is ABC."],
+        input_cols=["prompt", "response"],
+        organization_id=str(own.organization_id),
+        feedback_ids=identities,
+        top_k=1,
+    )
+    if selection not in ("own", "many"):
+        assert examples == []
+        return
+    context = str(
+        vector_manager.process_examples(
+            examples,
+            inputs=["prompt", "response"],
+            feedback_col_name="feedback_comment",
+            corrected_label_col_name="feedback_value",
+        )
+    )
+    assert "selected correction" in context
+    assert "other correction" not in context

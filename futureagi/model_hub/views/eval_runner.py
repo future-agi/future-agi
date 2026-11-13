@@ -870,6 +870,8 @@ class EvaluationRunner:
         self.cancel_event = cancel_event
         self.futureagi_eval = futureagi_eval
         self.dataset_feedback_groups = {}
+        self._optimizer_feedback_scope: tuple | None = None
+        self._optimizer_feedback_ids: list[str] = []
         self.df = None
         self.protect = protect
         self.protect_flash = protect_flash
@@ -901,16 +903,38 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
-        # The feedback index is organization/template-wide, without a dataset
-        # ownership boundary. Optimizer runs must not consume another dataset's
-        # examples; omit RAG feedback until dataset-scoped retrieval is available.
+        retrieval_scope = {}
+        organization_id = self.organization_id
+        workspace_id = None
         if self.optimize is not None:
-            return []
+            from model_hub.utils.optimization_scope import optimization_feedback_ids
+
+            dataset = self.optimize.dataset
+            scope = (
+                dataset.id, dataset.organization_id, dataset.workspace_id,
+                dataset.deleted, self.eval_template.id,
+            )
+            # One eligibility snapshot per runner. Feedback recalculation creates
+            # a new runner, so submitted corrections are included immediately.
+            if self._optimizer_feedback_scope != scope:
+                self._optimizer_feedback_ids = optimization_feedback_ids(
+                    dataset, self.eval_template.id
+                )
+                self._optimizer_feedback_scope = scope
+            feedback_ids = self._optimizer_feedback_ids
+            if not feedback_ids:
+                return []
+            retrieval_scope["feedback_ids"] = feedback_ids
+            organization_id = dataset.organization_id
+            # Eligible IDs include legacy default-workspace records. Private
+            # workspaces also retain the exact vector workspace predicate.
+            if dataset.workspace_id and not dataset.workspace.is_default:
+                workspace_id = dataset.workspace_id
         embedding_manager = EmbeddingManager()
 
         all_examples = []
         try:
-            if not self.organization_id:
+            if not organization_id:
                 logger.warning(
                     "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
                 )
@@ -922,9 +946,9 @@ class EvaluationRunner:
                 eval_id=self.eval_template.id,
                 inputs=mapping,
                 input_cols=required_field,
-                organization_id=self.organization_id,
-                # Feedback retrieval is org-scoped; writes still tag workspace_id.
-                workspace_id=None,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                **retrieval_scope,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()
@@ -2597,6 +2621,13 @@ class EvaluationRunner:
         if runtime_config is None and self.user_eval_metric:
             runtime_config = self.user_eval_metric.config
 
+        organization_id = self.organization_id
+        workspace_id = self.workspace_id
+        dataset = self.optimize.dataset if self.optimize is not None else self.dataset
+        if dataset is not None:
+            organization_id = dataset.organization_id
+            workspace_id = dataset.workspace_id
+
         instance, criteria = create_eval_instance(
             eval_class=self.eval_class,
             eval_template=self.eval_template,
@@ -2604,8 +2635,8 @@ class EvaluationRunner:
             model=model,
             kb_id=kb_id,
             runtime_config=runtime_config,
-            organization_id=str(self.organization_id) if self.organization_id else None,
-            workspace_id=str(self.workspace_id) if self.workspace_id else None,
+            organization_id=str(organization_id) if organization_id else None,
+            workspace_id=str(workspace_id) if workspace_id else None,
             version_number=self.version_number,
             is_futureagi=self.futureagi_eval,
         )
