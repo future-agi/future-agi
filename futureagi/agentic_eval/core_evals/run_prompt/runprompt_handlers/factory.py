@@ -17,6 +17,29 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 logger = structlog.get_logger(__name__)
 
 
+def _get_model_mode(model: str) -> str | None:
+    """Catalog mode of a model, or None when it cannot be determined."""
+    from model_hub.utils.utils import get_model_mode
+
+    try:
+        return get_model_mode(model)
+    except Exception as e:
+        logger.warning(f"Failed to get model mode, defaulting to LLM: {e}")
+        return None
+
+
+def uses_tts_handler(model: str, output_format: str | None) -> bool:
+    """
+    Whether ModelHandlerFactory.create_handler routes a run to TTSHandler.
+
+    That is audio output from a model that is neither speech-to-text nor
+    image generation; create_handler routes those two modes first.
+    """
+    if output_format != "audio":
+        return False
+    return _get_model_mode(model) not in ("stt", "image_generation")
+
+
 class ModelHandlerFactory:
     """
     Factory for creating model handlers.
@@ -70,19 +93,12 @@ class ModelHandlerFactory:
         Raises:
             ValueError: If context is invalid or handler cannot be determined
         """
-        # Import here to avoid circular dependencies
-        from model_hub.utils.utils import get_model_mode
-
         # Validate context
         if not context.model:
             raise ValueError("Model name is required in context")
 
         # Get model mode
-        try:
-            model_mode = get_model_mode(context.model)
-        except Exception as e:
-            logger.warning(f"Failed to get model mode, defaulting to LLM: {e}")
-            model_mode = None
+        model_mode = _get_model_mode(context.model)
 
         logger.debug(
             "Determining handler",
@@ -106,7 +122,7 @@ class ModelHandlerFactory:
             return ImageHandler(context)
 
         # 3. TTS models (output_format == "audio")
-        if context.output_format == "audio":
+        if uses_tts_handler(context.model, context.output_format):
             from .handlers.tts_handler import TTSHandler
 
             logger.debug("Using TTSHandler")
