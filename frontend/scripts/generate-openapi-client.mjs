@@ -855,6 +855,8 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["requested_here", "boolean"],
         ["pickable", "boolean"],
         ["discardable", "boolean"],
+        ["name", "string"],
+        ["candidate_state", `${typeName}CandidateState`],
         ...extra,
       ]) {
         schemas = assertReplaceInNamedBlock(
@@ -867,6 +869,19 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
     // A piece without unsaved changes has no draft; a Save names the parent it saw.
+    // Validation and candidates are null until Validate has run.
+    for (const [field, valueType] of [
+      ["validation", "HarnessDraftValidationApi"],
+      ["candidates", "HarnessCandidatesApi"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessDraftsApi {",
+        `${field}: ${valueType};`,
+        `${field}: ${valueType} | null;`,
+        `HarnessDraftsApi.${field} nullable`,
+      );
+    }
     for (const piece of ["environment", "suite"]) {
       schemas = assertReplaceInNamedBlock(
         schemas,
@@ -1315,6 +1330,11 @@ export type ${jsonAlias} = JsonValueApi;`,
           /("discardable": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g,
           "discardable",
         ],
+        [/("name": zod\.string\(\)\.min\(1\)\.describe\([^)]*\))/g, "name"],
+        [
+          /("candidate_state": zod\.enum\(\[[^\]]*\]\)(?:\.describe\([^)]*\))?)/g,
+          "candidate_state",
+        ],
       ]) {
         zod = assertReplaceRegexInNamedBlock(
           zod,
@@ -1354,6 +1374,13 @@ export type ${jsonAlias} = JsonValueApi;`,
       /("(?:environment|suite)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\))/g,
       "$1.nullable()",
       "SimulateApiHarnessEnvironmentsDraftsResponse.pieces nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      draftsResponse,
+      /("(?:validation|candidates)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\)(?:\.describe\([^)]*\))?)/g,
+      "$1.nullable()",
+      "SimulateApiHarnessEnvironmentsDraftsResponse.validation and candidates nullable",
     );
     zod = assertReplaceInNamedBlock(
       zod,

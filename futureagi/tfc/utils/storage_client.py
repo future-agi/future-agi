@@ -20,6 +20,7 @@ import certifi
 import structlog
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 from requests.utils import (
     get_auth_from_url,
     get_environ_proxies,
@@ -303,6 +304,9 @@ def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
     )
 
 
+_BUCKET_TAKEN_CODES = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
+
+
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
     """Create the bucket if needed, readable (not writable or listable) by URL.
     Policy only applies on S3/MinIO."""
@@ -310,14 +314,20 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
     if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
-        policy = {
-            "Version": "2012-10-17",
-            "Statement": [_anonymous_read_statement(bucket_name)],
-        }
-        client.set_bucket_policy(bucket_name, json.dumps(policy))
-        _checked_bucket_policies.add(bucket_name)
-        return
+        try:
+            client.make_bucket(bucket_name)
+        except S3Error as exc:
+            # Another worker created it between the check and the create.
+            if exc.code not in _BUCKET_TAKEN_CODES:
+                raise
+        else:
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [_anonymous_read_statement(bucket_name)],
+            }
+            client.set_bucket_policy(bucket_name, json.dumps(policy))
+            _checked_bucket_policies.add(bucket_name)
+            return
     # Only the bundled MinIO: an operator's own S3 bucket policy is theirs.
     if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
         _checked_bucket_policies.add(bucket_name)

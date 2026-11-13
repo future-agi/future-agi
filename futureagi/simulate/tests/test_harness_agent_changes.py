@@ -40,6 +40,7 @@ from simulate.services.harness_provider import _preflight_source_connectors
 from simulate.services.harness_versioning.versions import move_default
 from simulate.services.hosted_harness import HostedHarnessError, _soft_delete
 from simulate.services.hosted_harness_gateway import _empty_source_archive
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_creation import VALUES, _body, _job, _post
 from simulate.tests.test_harness_agent_creation import (  # noqa: F401 - fixture
     gates as gates,
@@ -335,6 +336,7 @@ class TestPush:
         assert scheduled.call_count == 1
 
         assert _preflight(version).status == "passed"
+        settle_validations()
 
         assert _defaults(environment) == [version.id]
         assert _outcomes(version) == {str(environment.id): "activated"}
@@ -379,6 +381,7 @@ class TestPush:
         # One read of the head for both.
         assert len(gh.calls) == 1
         assert _preflight(row.agent_version).status == "passed"
+        settle_validations()
         assert _defaults(first, second) == [row.agent_version_id] * 2
 
     def test_other_credential_sets_get_versions_of_their_own(
@@ -388,6 +391,7 @@ class TestPush:
         a1 = _a1(first)
         a2 = change_credentials(second, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         gh.heads[("acme/agent", "main")] = HEAD_Y
 
         outcomes = _observe(first)
@@ -397,6 +401,7 @@ class TestPush:
         assert len(rows) == 2
         for row in rows:
             assert _preflight(row.agent_version).status == "passed"
+            settle_validations()
         by_parent = {row.parent.agent_version_id: row.agent_version_id for row in rows}
         assert _defaults(first, second) == [by_parent[a1.id], by_parent[a2.id]]
 
@@ -430,6 +435,7 @@ class TestPush:
         _observe(environment)
         [row] = _push_rows(environment)
         assert _preflight(row.agent_version).status == "passed"
+        settle_validations()
         environment.refresh_from_db()
         move_default(
             environment,
@@ -438,6 +444,7 @@ class TestPush:
             expected_default_id=row.agent_version_id,
             user=user,
         )
+        settle_validations()
 
         assert _observe(environment) == {str(environment.id): "unchanged"}
         assert _defaults(environment) == [a1.id]
@@ -464,6 +471,7 @@ class TestPush:
         # Fixed credentials move the default: the head is asked for once more.
         fixed = change_credentials(environment, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(fixed).status == "passed"
+        settle_validations()
         assert _observe(environment) == {str(environment.id): "created"}
         assert _observe(environment) == {str(environment.id): "unchanged"}
         assert len(_push_rows(environment)) == 2
@@ -492,6 +500,7 @@ class TestPush:
         [a2_row] = _push_rows(environment)
         a2 = a2_row.agent_version
         assert _preflight(a2).status == "passed"
+        settle_validations()
         gh.heads[("acme/agent", "main")] = HEAD_Z
         assert _observe(environment) == {str(environment.id): "created"}
         a3 = _push_rows(environment)[1].agent_version
@@ -500,6 +509,7 @@ class TestPush:
             environment, secret_values={"OPENAI_API_KEY": "v4"}, parent=a2
         )
         assert _preflight(a3).status == "passed"
+        settle_validations()
         assert _preflight(a4).status == "passed"
         assert _defaults(environment) == [a4.id]
         assert _side(a4).source["commit_sha"] == HEAD_Y
@@ -532,6 +542,7 @@ class TestPush:
         order = (rotated, pushed) if rotation_lands == "first" else (pushed, rotated)
         for version in order:
             assert _preflight(version).status == "passed"
+            settle_validations()
         assert _defaults(environment) == [pushed.id]
         assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v2"
         assert _observe(environment) == {str(environment.id): "unchanged"}
@@ -558,12 +569,14 @@ class TestPush:
         fixed = change_credentials(environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _side(fixed).parent.agent_version_id == a1.id
         assert _preflight(fixed).status == "passed"
+        settle_validations()
 
         assert _observe(environment) == {str(environment.id): "created"}
         again = _push_rows(environment)[-1]
         assert again.parent.agent_version_id == fixed.id
         assert again.source["commit_sha"] == HEAD_Y
         assert _preflight(again.agent_version).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [again.agent_version_id]
         assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v3"
 
@@ -590,6 +603,7 @@ class TestPush:
         [row] = _push_rows(environment)
         assert row.parent.agent_version_id == rotated.id
         assert _preflight(row.agent_version).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [row.agent_version_id]
         environment.refresh_from_db()
         assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v2"
@@ -615,6 +629,7 @@ class TestPush:
         )
 
         assert _observe(environment) == {str(environment.id): "reused"}
+        settle_validations()
         assert _defaults(environment) == [row.agent_version_id]
         assert _hand_move(environment) is None
         assert len(_push_rows(environment)) == 1
@@ -636,6 +651,7 @@ class TestPush:
             side_effect=refused,
         ):
             assert _preflight(row.agent_version).status == "passed"
+            settle_validations()
         assert _outcomes(row.agent_version) == {
             str(environment.id): "rollback_unavailable"
         }
@@ -662,6 +678,7 @@ class TestPush:
             side_effect=refused,
         ):
             assert _preflight(row.agent_version).status == "passed"
+            settle_validations()
             assert _observe(environment) == {str(environment.id): "reused"}
             assert _observe(environment) == {str(environment.id): "reused"}
 
@@ -696,6 +713,7 @@ class TestPush:
             side_effect=RuntimeError("storage blip"),
         ):
             assert _observe(environment) == {str(environment.id): "reused"}
+            settle_validations()
         assert _outcomes(row.agent_version) == {str(environment.id): "failed"}
         assert _defaults(environment) == [a1.id]
 
@@ -713,10 +731,12 @@ class TestPush:
         assert _observe(environment) == {str(environment.id): "created"}
         on_y = _push_rows(environment)[0].agent_version
         assert _preflight(on_y).status == "passed"
+        settle_validations()
         gh.heads[("acme/agent", "main")] = HEAD_Z
         assert _observe(environment) == {str(environment.id): "created"}
         on_z = _push_rows(environment)[1].agent_version
         assert _preflight(on_z).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [on_z.id]
 
         # Reset to Y, then Z pushed again.
@@ -745,7 +765,9 @@ class TestPush:
             second, secret_values={"OPENAI_API_KEY": "v3"}, parent=a1
         )
         assert _preflight(a3).status == "passed"
+        settle_validations()
         assert _preflight(shared.agent_version).status == "passed"
+        settle_validations()
         assert _outcomes(shared.agent_version) == {
             str(first.id): "activated",
             str(second.id): "superseded",
@@ -758,6 +780,7 @@ class TestPush:
             expected_default_id=shared.agent_version_id,
             user=user,
         )
+        settle_validations()
         discard_agent_version(shared.agent_version, by_environment=first.id)
 
         assert _observe(first) == {
@@ -783,6 +806,7 @@ class TestPush:
         discard_agent_version(row.agent_version, by_environment=environment.id)
         a3 = change_credentials(environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [a3.id]
         assert _hand_move(environment) is None
 
@@ -828,6 +852,7 @@ class TestPush:
             side_effect=refused,
         ):
             assert _preflight(shared.agent_version).status == "passed"
+            settle_validations()
         assert _outcomes(shared.agent_version) == {
             str(first.id): "rollback_unavailable",
             str(second.id): "rollback_unavailable",
@@ -867,6 +892,7 @@ class TestPush:
             ),
         ):
             assert _preflight(shared.agent_version).status == "passed"
+            settle_validations()
         assert _outcomes(shared.agent_version) == {
             str(first.id): "activated",
             str(second.id): "not_bound",
@@ -879,6 +905,7 @@ class TestPush:
             expected_default_id=shared.agent_version_id,
             user=user,
         )
+        settle_validations()
         discard_agent_version(shared.agent_version, by_environment=first.id)
 
         assert _observe(first) == {
@@ -907,6 +934,7 @@ class TestPush:
             ),
         ):
             assert _preflight(shared.agent_version).status == "passed"
+            settle_validations()
         assert _outcomes(shared.agent_version) == {
             str(first.id): "activated",
             str(second.id): "not_bound",
@@ -928,6 +956,7 @@ class TestPush:
             expected_default_id=shared.agent_version_id,
             user=user,
         )
+        settle_validations()
         discard_agent_version(shared.agent_version, by_environment=first.id)
 
         assert _observe(first) == {
@@ -948,6 +977,7 @@ class TestBackgroundReuse:
         assert _observe(first) == {str(first.id): "created"}
         [row] = _push_versions(_a1(first).agent_definition_id)
         assert _preflight(row.agent_version).status == "passed"
+        settle_validations()
         HostedHarnessJob.no_workspace_objects.filter(id=second.id).update(
             state="completed"
         )
@@ -956,6 +986,7 @@ class TestBackgroundReuse:
             str(first.id): "unchanged",
             str(second.id): "reused",
         }
+        settle_validations()
 
         assert _defaults(first, second) == [row.agent_version_id] * 2
         assert _hand_move(second) is None
@@ -967,11 +998,13 @@ class TestBackgroundReuse:
         first, second = _shared(user, workspace, storage, "reuse-person")
         a2 = _create(_a1(first), first, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
 
         assert (
             change_credentials(second, secret_values={"OPENAI_API_KEY": "v2"}).id
             == a2.id
         )
+        settle_validations()
 
         assert _defaults(second) == [a2.id]
         assert _hand_move(second)["to"] == str(a2.id)
@@ -983,8 +1016,10 @@ class TestBackgroundReuse:
         a1 = _a1(first)
         a2 = _create(a1, first, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = change_credentials(second, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
+        settle_validations()
         second.refresh_from_db()
         move_default(second, "agent", a1.id, expected_default_id=a3.id, user=user)
         moved = _hand_move(second)
@@ -1055,6 +1090,7 @@ class TestLegacyAndRuns:
 
         assert version_credential_names(row) == refs
         assert _preflight(row.agent_version).status == "passed"
+        settle_validations()
         environment.refresh_from_db()
         values = pinned_credential_values(environment)
         for name, value in OLD.items():
@@ -1140,6 +1176,7 @@ class TestFirstObservation:
         assert _observe(environment) == {str(environment.id): "created"}
         on_y = _push_rows(environment)[0].agent_version
         assert _preflight(on_y).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [on_y.id]
 
         gh.heads[("acme/agent", "main")] = HEAD_X
@@ -1174,6 +1211,7 @@ class TestFirstObservation:
         environment = _environment(user, workspace, "seed-a2", storage)
         a2 = change_credentials(environment, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [a2.id]
         gh.heads[("acme/agent", "main")] = HEAD_Y
 

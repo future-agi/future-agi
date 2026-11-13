@@ -169,10 +169,30 @@ describe("DraftBar", () => {
     ["environment_busy", DRAFTS_COPY.errors.environment_busy],
     ["draft_not_found", DRAFTS_COPY.errors.draft_not_found],
     ["idempotency_key_reused", DRAFTS_COPY.errors.idempotency_key_reused],
+    ["scenario_index_mismatch", DRAFTS_COPY.errors.scenario_index_mismatch],
+    [
+      "change_depends_on_rejected",
+      DRAFTS_COPY.errors.change_depends_on_rejected,
+    ],
   ])("explains a save refused with %s", (code, text) => {
     state.save = { error: { statusCode: 409, error: code, message: "raw" } };
     render(<DraftBar env={ENV} />);
     expect(screen.getByRole("alert")).toHaveTextContent(text);
+  });
+
+  it("says how to get past a save that needs Validate, which this page has no button for", () => {
+    state.save = {
+      error: {
+        statusCode: 409,
+        error: "validation_required",
+        message:
+          "Validate the reviewed changes first, then save the validated versions",
+      },
+    };
+    render(<DraftBar env={ENV} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(DRAFTS_COPY.errors.validation_required);
+    expect(alert).not.toHaveTextContent("Validate the reviewed changes first");
   });
 
   it("explains a stale refusal with the piece it names", () => {

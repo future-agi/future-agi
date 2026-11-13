@@ -29,9 +29,19 @@ export const WORKSPACE_TABS = [
     icon: "solar:shield-check-linear",
     badge: "evals",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   // Shown only once the environment has a fix (Fix my agent).
-  { id: "improvements", label: "Improvements", icon: "solar:magic-stick-3-linear", badge: "improvements" },
+  {
+    id: "improvements",
+    label: "Improvements",
+    icon: "solar:magic-stick-3-linear",
+    badge: "improvements",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
@@ -108,7 +118,8 @@ export const WORKSPACE_COPY = {
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
@@ -300,6 +311,11 @@ export const AGENT_VERSIONS_COPY = {
     not_bound: "Not made default: this environment can't use this version",
     rerun_only: "Made for a single rerun; not used as the default",
     failed: "Not made default: something went wrong; make it default by hand",
+    validating:
+      "Becomes the default once it passes a check with this environment",
+    pair_failed: "Not made default: it failed its check with this environment",
+    validation_retry:
+      "Not made default: its check with this environment couldn't finish; make it default to try again",
   },
   activationOther: (code) => `Not made default (${code})`,
   // Read aloud when a version's check starts or lands.
@@ -429,6 +445,13 @@ export const RUN_DIALOG_COPY = {
   checking: "Checking these versions…",
   planError: "Couldn't check these versions for warnings.",
   refused: "These versions can't run.",
+  // Refusals whose words are ours, by code; any other shows the server's.
+  errors: {
+    pair_validating:
+      "These versions are being checked together. Run them once the check ends.",
+    pair_failed:
+      "These versions failed their check together. Fix them and check again.",
+  },
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
   rerunAgentFallback:
@@ -485,6 +508,12 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
+    validation_required:
+      "Some of these changes were accepted or rejected in review, so they need Validate before they can be saved. Validate isn't in the web app yet, so they can't be saved from here; discard them to start over.",
+    scenario_index_mismatch:
+      "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
+    change_depends_on_rejected:
+      "An accepted change needs one that was rejected. Accept both or reject both, then save again.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",

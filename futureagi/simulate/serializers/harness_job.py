@@ -811,6 +811,66 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     )
 
 
+class HarnessCapabilityExcludedSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    reason = serializers.ChoiceField(
+        choices=("not_selected",), help_text="Suite cases not selected for this run."
+    )
+
+
+class HarnessCapabilityChangedSinceSerializer(serializers.Serializer):
+    run_id = serializers.UUIDField()
+    suite_version = RunVersionLabelSerializer(allow_null=True)
+
+
+class HarnessCapabilityChangedSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    since = HarnessCapabilityChangedSinceSerializer(
+        allow_null=True,
+        help_text=(
+            "The newest run of this agent and environment version the selected cases"
+            " are compared with; null when there is none."
+        ),
+    )
+
+
+class HarnessCapabilityScopeSerializer(serializers.Serializer):
+    suite_total = serializers.IntegerField(
+        min_value=0, help_text="Every case of the suite version."
+    )
+    excluded = HarnessCapabilityExcludedSerializer()
+    changed = HarnessCapabilityChangedSerializer(
+        help_text=(
+            "Selected cases whose contents differ from that run's suite version, or"
+            " that it did not have."
+        )
+    )
+
+
+class HarnessRunHeldBackSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    by = serializers.DictField(
+        child=serializers.IntegerField(min_value=0),
+        help_text="Held-back cases per readiness row that held them.",
+    )
+
+
+class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
+    requested = serializers.IntegerField(min_value=1)
+    running = serializers.IntegerField(min_value=0)
+    held_back = HarnessRunHeldBackSerializer()
+    reasons = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each holding row's reason, in plain words.",
+    )
+
+
 class HarnessRunCreateResponseSerializer(serializers.Serializer):
     environment_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
@@ -824,6 +884,13 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
     stage = serializers.CharField()
     versions = HarnessRunPinnedVersionsSerializer()
     warnings = HarnessRunWarningSerializer(many=True)
+    selection = HarnessRunReadinessSelectionSerializer(
+        allow_null=True,
+        help_text=(
+            "The cases readiness held back from this run and why; null when runs are"
+            " not pinned to versions, and for a coding agent's key."
+        ),
+    )
 
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):

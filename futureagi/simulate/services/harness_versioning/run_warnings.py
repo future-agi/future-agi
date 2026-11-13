@@ -71,6 +71,54 @@ def _names(names: list[str]) -> str:
     return ", ".join(names)
 
 
+def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that hold
+    no proof against this environment version."""
+    from simulate.models import HarnessSuiteMember
+
+    reviewed = [
+        one
+        for version in (environment_version, suite_version)
+        for one in (getattr(version, "documents", None) or {}).get("review_changes")
+        or []
+    ]
+    touched = {
+        key
+        for one in reviewed
+        if one.get("decision") == "accepted" and one.get("graded")
+        for key in one.get("revalidate") or []
+    }
+    if not touched:
+        return []
+    members = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # A change names a scenario by its folder, the suite by its key: the same scenario either way once normalised.
+    tokens = {_scenario_token(key) for key in touched}
+    return sorted(
+        key
+        for key in members
+        if _scenario_token(key) in tokens
+        and not any(
+            isinstance(proof, dict)
+            and proof.get("holds") is True
+            and _scenario_token(name) == _scenario_token(key)
+            for name, proof in proofs.items()
+        )
+    )
+
+
 def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, Any]]:
     """What the pinned agent version's credentials lack, by name; no value is read
     except to learn whether its set can be decrypted at all."""
@@ -176,6 +224,20 @@ def run_warnings(
                 "suite",
             )
         )
+    unproved = _needs_revalidation(environment_version, suite_version)
+    if unproved:
+        shown = unproved[:5] + (
+            [f"{len(unproved) - 5} more"] if len(unproved) > 5 else []
+        )
+        warnings.append(
+            _warning(
+                "scenarios_need_revalidation",
+                f"Saved changes to environment {environment_label} or its suite changed what"
+                f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
+                f" prove {_names(shown)} again",
+                "suite",
+            )
+        )
     agent_version = pins.agent_version
     built_with = environment_version.agent_version_id
     if agent_version is not None and built_with and agent_version.id != built_with:
@@ -206,8 +268,7 @@ def run_warnings(
         warnings.append(
             _warning(
                 "bundle_cache_failed",
-                "The last preparation of this combination failed and will be"
-                " retried",
+                "The last preparation of this combination failed and will be retried",
                 None,
             )
         )

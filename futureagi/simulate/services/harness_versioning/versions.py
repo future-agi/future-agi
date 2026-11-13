@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import transaction
@@ -30,6 +30,9 @@ from simulate.models.harness_versioning import ArchiveLayout, HashKind, VersionS
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.harness_versioning import archives, diffs, hashing
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.validation import Validation
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +287,7 @@ def _sealed(
     return {**previous, **split.sealed}
 
 
-def _next_number(model: Any, job: HostedHarnessJob) -> int:
+def next_number(model: Any, job: HostedHarnessJob) -> int:
     # The base manager: no workspace or soft-delete filter may hide a used number.
     highest = model._base_manager.filter(job=job).aggregate(top=Max("version_number"))
     return int(highest["top"] or 0) + 1
@@ -318,7 +321,7 @@ def _land(
         organization_id=job.organization_id,
         workspace_id=job.workspace_id,
         status=VersionStatus.ACTIVE,
-        version_number=_next_number(model, job),
+        version_number=next_number(model, job),
         hash=hash,
         hash_kind=hash_kind,
         **values,
@@ -447,7 +450,7 @@ def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[s
     )
 
 
-def _member_rows(
+def member_rows(
     job: HostedHarnessJob, documents: list[dict[str, Any]]
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     from simulate.services.harness_scenarios import pair_scenarios
@@ -479,7 +482,7 @@ def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _add_members(
+def add_members(
     suite_version: HarnessSuiteVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
 ) -> None:
@@ -793,9 +796,9 @@ def record_authoring(
             note_revision(environment_version, revision)
         if not suite_created:
             note_revision(suite_version, revision)
-        paired = _member_rows(locked, documents)
+        paired = member_rows(locked, documents)
         if suite_created:
-            _add_members(suite_version, paired)
+            add_members(suite_version, paired)
         if origin in PROVED_ORIGINS and proved_since is not None:
             _validation(
                 suite_version,
@@ -1072,7 +1075,7 @@ def _cached_sealed(
     return (files, bundle.object_key) if files is not None else (None, "")
 
 
-def _default_pair(
+def pair_archive(
     job: HostedHarnessJob,
     metadata: Mapping[str, Any],
     environment_version: HarnessEnvironmentVersion,
@@ -1244,7 +1247,7 @@ def move_agent(
                 agent_version_id=outgoing,
                 replace=False,
             )
-        pair = _default_pair(
+        pair = pair_archive(
             locked, metadata, environment_version, suite_version, "agent"
         )
         metadata["authoring_object_key"] = pair.key
@@ -1281,10 +1284,19 @@ def move_agent(
 
 def _move_agent_default(
     locked: HostedHarnessJob, version_id: Any, expected_default_id: Any, user: Any
-) -> HostedHarnessJob:
+) -> tuple[HostedHarnessJob, Validation | None]:
     from simulate.models import AgentVersion
-    from simulate.services.harness_agent_versions import hand_move, require_agent_pick
+    from simulate.services.harness_agent_versions import (
+        _record_activation,
+        hand_move,
+        require_agent_pick,
+    )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
+    from simulate.services.harness_versioning.validation import (
+        agent_move,
+        drop_waiting_moves,
+        start_validation,
+    )
 
     # Locked, so a concurrent discard sees this move before its in-use check.
     require_agent_pick(
@@ -1295,10 +1307,24 @@ def _move_agent_default(
     )
     current = locked.agent_version
     if current is not None and current.id == version_id:
-        return locked
+        # Kept by hand: a move still waiting on a validation never lands.
+        drop_waiting_moves(locked, version_id)
+        return locked, None
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
+    validation = start_validation(
+        locked,
+        version,
+        locked.environment_version,
+        locked.suite_version,
+        purpose="agent_move",
+        move=agent_move("hand", locked, version, user=user),
+    )
+    if validation is not None and not validation.ready:
+        # Moved by the validation once the pairing passes; shown on the version.
+        _record_activation(version.id, {str(locked.id): "validating"})
+        return locked, validation
     move_agent(locked, version, moved=hand_move(user, version.id))
     schedule_environment_nudge(
         locked.id,
@@ -1312,7 +1338,7 @@ def _move_agent_default(
         version.id,
         getattr(user, "id", None),
     )
-    return locked
+    return locked, validation
 
 
 def require_not_busy(locked: HostedHarnessJob, piece: str) -> None:
@@ -1434,7 +1460,7 @@ def set_defaults(
         schedule_reconcile(locked.id)
 
 
-def _lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
+def lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
     locked = (
         HostedHarnessJob.no_workspace_objects.select_for_update()
         .filter(id=environment.id)
@@ -1471,6 +1497,25 @@ def _offer_reapply(locked: HostedHarnessJob, piece: str, version: Any) -> None:
     )
 
 
+def move_agent_default(
+    environment: HostedHarnessJob,
+    version_id: Any,
+    *,
+    expected_default_id: Any,
+    user: Any = None,
+) -> tuple[HostedHarnessJob, Validation | None]:
+    """Make an agent version the environment's default by hand.
+
+    Where the pairing with the default environment and suite can be validated and is
+    not yet, nothing moves now: the validation is returned and moves the default once
+    it passes. Refusals are ``move_default``'s.
+    """
+    with transaction.atomic():
+        locked = lock_environment(environment)
+        require_not_busy(locked, "agent")
+        return _move_agent_default(locked, version_id, expected_default_id, user)
+
+
 def move_default(
     environment: HostedHarnessJob,
     piece: str,
@@ -1488,12 +1533,14 @@ def move_default(
     from simulate.services.harness_versioning.drafts import require_no_rebuild
     from simulate.services.hosted_harness import _not_pickable
 
+    if piece == "agent":
+        return move_agent_default(
+            environment, version_id, expected_default_id=expected_default_id, user=user
+        )[0]
     model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         require_not_busy(locked, piece)
-        if piece == "agent":
-            return _move_agent_default(locked, version_id, expected_default_id, user)
         require_no_rebuild(locked, piece=piece)
         version = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
@@ -1507,9 +1554,15 @@ def move_default(
         if (current.id if current is not None else None) != expected_default_id:
             raise _conflict(piece, current)
         environment_version = (
-            version if piece == "environment" else locked.environment_version
+            version
+            if isinstance(version, HarnessEnvironmentVersion)
+            else locked.environment_version
         )
-        suite_version = version if piece == "suite" else locked.suite_version
+        suite_version = (
+            version
+            if isinstance(version, HarnessSuiteVersion)
+            else locked.suite_version
+        )
         if suite_version is None:
             raise HostedHarnessError(
                 "version_not_pickable",
@@ -1521,9 +1574,7 @@ def move_default(
             raise _not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
-        pair = _default_pair(
-            locked, metadata, environment_version, suite_version, piece
-        )
+        pair = pair_archive(locked, metadata, environment_version, suite_version, piece)
         set_defaults(
             locked,
             payload,

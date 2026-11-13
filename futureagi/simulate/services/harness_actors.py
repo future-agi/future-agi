@@ -30,6 +30,8 @@ _RULES_BEFORE_DECLARED = Path(__file__).with_name(
 CALLER = "caller"
 # Fields the platform writes on a record, beside the ones its rules declare.
 _PLATFORM_FIELDS = ("provenance",)
+# Fields a read adds to a record: how many scenarios include it, and the decision taken on it in review.
+_READ_ONLY_FIELDS = ("scenarios", "review_decision")
 
 
 class ActorRecord(TypedDict, total=False):
@@ -48,6 +50,7 @@ class ActorRecord(TypedDict, total=False):
     knowledge: list[dict[str, Any]]
     provenance: dict[str, Any]
     scenarios: int
+    review_decision: Literal["accepted", "rejected"] | None
 
 
 class ActorRules(TypedDict, total=False):
@@ -388,13 +391,17 @@ def _cast_view(
     draft: Any,
     stores: Any = None,
 ) -> Cast:
+    from simulate.services.harness_versioning.review import held_decisions
+
     rules = actor_rules(environment_files)
     documents = suite_documents(suite_files)
+    decided = held_decisions(draft, environment_files) if draft is not None else {}
     return {
         "actors": [
             {
                 **one,
                 "scenarios": len(_scenarios_using(documents, str(one.get("id") or ""))),
+                "review_decision": decided.get(f"actor:{one.get('id')}"),
             }
             for one in _cast(environment_files)
         ],
@@ -995,10 +1002,14 @@ def write_actor_edit(
     conflict) when the edit gives an actor an action only one other actor holds and `share_actions` does not confirm
     it, and retires the builder chat's runtime once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
-    # The scenario count is read-side only; it is never written into a record.
+    # The scenario count and the review decision are read-side only; they are never written into a record.
     record = cast(
         ActorRecord,
-        {name: value for name, value in (body or {}).items() if name != "scenarios"},
+        {
+            name: value
+            for name, value in (body or {}).items()
+            if name not in _READ_ONLY_FIELDS
+        },
     )
     given = record.pop("id", None) or actor_id
     if op != "delete" and not given:
