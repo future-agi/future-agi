@@ -203,19 +203,29 @@ changes none of them.
      new private key first and hold it outside GitHub, because GitHub
      refuses to delete an App's only key, then delete every old key. Finish
      the credential and Apps checks;
-  4. dismiss bot approvals and flag bot-pushed heads, the baseline's first
-     two checks;
+  4. at least one hour after the last old key was deleted, dismiss bot
+     approvals and flag bot-pushed heads, the baseline's first two checks,
+     on the PRs listed after that hour. No release-bot push from step 3 to
+     step 6 is exempt from the flag;
   5. the one-time read: a person who authored, pushed or approved none of
      the commits that touched them reads the key jobs' workflow files and
      scripts once, in full, at each branch the jobs run from and at each
      `v*` tag that stays, and records each tip SHA. In deployment this step
-     is the history check's tree read and first range;
+     is the history check's tree read and first range. Then the header's
+     re-listing: every `v*` tag again, which must point at a commit on
+     `main`, and the runs of the last 30 days on refs that a key or
+     approver environment admits, whose commits must match what was read or
+     whose runs are deleted;
   6. the new key goes into the environments.
 
   Release jobs that use the key, the release autopilot's `merge` job
-  included, stop working from step 3 to step 6. The dismissals come after
-  the deletion because the old key can post a new approval until it is
-  deleted. The rest of the baseline runs last before the deployment apply.
+  included, stop working from step 3 to step 6, which includes that hour.
+  The dismissals come after the hour because the old key can post a new
+  approval until it is deleted, and an installation token minted from it
+  can for up to an hour after that (GitHub documents a one-hour token
+  lifetime and does not list key deletion among the ways a token ends;
+  documented by omission, not tested). The rest of the baseline runs last
+  before the deployment apply.
   The header lists the files to read and the listing check for modules
   and bytecode that could shadow the ones these scripts import. Where this
   text and the header differ, follow the header.
@@ -909,13 +919,36 @@ bump could compare between the pinned and the new backend digest.
   It must reach main no later than that workflow, and before
   `RELEASE_AUTOPILOT` is turned on. Promotions merge all of dev, so both
   arrive together unless one is reverted or picked alone. On the first
-  release PR after that promotion, confirm that the callout run from the
-  `opened` event ran its `check` job and passed, with no edit to the PR.
-  Then confirm that the autopilot's run summary no longer gives "the
-  migrations-callout workflow has not passed on this head". The gate's two
-  reads, a run's `pull_requests` and its jobs, have not yet run with the
-  workflow token. If either comes back empty, the release waits with a green
-  run and nothing is posted on the PR.
+  release PR after that promotion, check the callout run from the `opened`
+  event:
+  1. Its `check` job log must contain the line
+     `Added migrations: N (<base> -> <head>)`. The script prints it
+     (`.github/scripts/migrations_callout.py:128`) after it has read
+     `GITHUB_SHA` as this PR's merge preview and before it reads the notes,
+     so the line shows that the read worked on an `opened` payload. The job
+     must not fail with an error that starts "GITHUB_SHA is not".
+  2. If N is 0, the job passes with no edit to the PR.
+  3. If N is greater than 0, the job is expected to fail with "Release notes
+     lack 'Contains database migrations'": release-please's body has no
+     callout, and nothing in this repository adds one. This is the expected
+     case for the first release after the promotion that brings this change
+     to `main`. On 13 Nov `dev` (local ref 02c5d006f) and this change's head
+     8268ca779 each added 32 migration files since v1.58.0, and `main`
+     (local ref 24cc65768) added none:
+     `git diff --name-only --diff-filter=A v1.58.0 <ref> -- 'futureagi/*/migrations/*.py'`,
+     without `__init__.py`. Release PRs #3720, #3705 and #3644 each failed
+     their `opened` run and passed on the same head after a person edited
+     the body (run history read in review round eight; the #3720 log shows
+     this error). A person adds the callout after the version heading
+     and inside the `---` delimiters; the `check` job of the `edited` run
+     must then pass.
+  4. In either case, once a `check` job has passed on the head, the
+     autopilot's run summary must stop giving "the migrations-callout
+     workflow has not passed on this head". The gate's two reads, a run's
+     `pull_requests` and its jobs, have not yet run with the workflow
+     token. If either comes back empty, the release waits with a green run
+     and nothing is posted on the PR. If the summary still gives that
+     reason with `check` green, set `RELEASE_AUTOPILOT` off and report it.
 - First merge with both variables unset. Verify labels, App permissions, the
   approver App live check, environment protections, default-branch/main
   availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
