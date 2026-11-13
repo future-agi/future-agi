@@ -128,7 +128,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       wrapperBorder: { width: 0 },
       wrapperBorderRadius: 0,
       rowBorder: { width: 1, color: theme.palette.divider },
-      headerFontSize: "13px",
+      headerFontSize: "12px",
       headerFontWeight: 500,
       headerBackgroundColor: "transparent",
       headerTextColor: theme.palette.text.primary,

@@ -62,7 +62,7 @@ const getUsersGridThemeParams = (theme) => ({
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
   rowBorder: { width: 1, color: theme.palette.border.subtle },
-  headerFontSize: "13px",
+  headerFontSize: "12px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
