@@ -107,6 +107,24 @@ def release_options(*, principal, resource_id, kind, candidate_version_id):
                     "evidence_mismatch",
                 }:
                     raise
+    # The composer lists each run with its own reduced outcome (the same summary the
+    # review packet shows), so a verified run never reads as "result not recorded".
+    from model_hub.services.skills_hub.r3.release_inspection import _summary
+
+    for ref in evidence:
+        ref["outcome"], ref["counts"] = None, None
+        if ref["source"] != "simulation_native":
+            continue
+        summary = _summary(principal, ref)
+        if summary["result"] is None:
+            continue
+        ref["outcome"] = summary["result"]["state"]
+        ref["counts"] = {
+            "graded": summary["graded"],
+            "planned": summary["planned"],
+            "regressed": summary["regressions"],
+            "disagreements": summary["disagreements"],
+        }
     return {"recipients": recipients, "targets": targets, "evidence": evidence}
 
 

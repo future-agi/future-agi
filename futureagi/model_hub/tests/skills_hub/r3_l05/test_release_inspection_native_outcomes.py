@@ -201,3 +201,45 @@ def test_text_and_unavailable_summaries_declare_no_native_outcomes(admin, hub_sk
     assert inspected.status_code == 200, inspected.data
     summary = inspected.data["result"]["summaries"][0]
     assert summary["result"] is None and summary["cases"] == []
+
+
+def test_composer_lists_a_completed_run_with_its_own_outcome(
+    actors, hub_skill, candidate, evidence, native_configuration, mocker
+):
+    from model_hub.services.skills_hub.r3.release_options import release_options
+
+    author, _ = actors
+    case_id, _ = _repair()
+    job = evidence.simulation_job
+    job.payload = {
+        "skills_context": {"id": "synthetic"},
+        "skills_native_control": {
+            "arms": {"candidate": {"version": 2}, "reference": {"version": 1}},
+            "cases": [{"id": case_id, "title": "Blender refund"}],
+        },
+    }
+    job.save(update_fields=["payload"])
+    reduced = reduce_native_results(
+        matrix=planned_matrix(case_ids=[case_id], baselines=["reference"], repetitions=1),
+        required_checks=_checks(case_id),
+        trials=[_trial(case_id, "candidate", {}), _trial(case_id, "reference", {"tools": "fail"})],
+        reproduction_checks={case_id: "tools"},
+    )
+    mocker.patch("model_hub.services.skills_hub.r3.native_runs._reduce", return_value=(reduced, {}))
+    evidence.configuration = {
+        "schema": 1,
+        "digest": canonical_digest(native_configuration),
+        "native": native_configuration,
+    }
+    evidence.candidate_digest = candidate[1].digest
+    evidence.visibility = "workspace"
+    evidence.save(update_fields=["configuration", "candidate_digest", "visibility"])
+    text = base.fixtures.text_run(author, hub_skill, candidate[1])
+    value = release_options(
+        principal=author, resource_id=hub_skill.pk, kind=hub_skill.kind, candidate_version_id=candidate[1].pk
+    )
+    rows = {ref["source"]: ref for ref in value["evidence"]}
+    assert rows["simulation_native"]["outcome"] == "works_on_examples"
+    assert rows["simulation_native"]["counts"] == {"graded": 2, "planned": 2, "regressed": 0, "disagreements": 0}
+    assert rows["skills_text"]["source_id"] == str(text.pk)
+    assert rows["skills_text"]["outcome"] is rows["skills_text"]["counts"] is None

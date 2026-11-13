@@ -239,10 +239,23 @@ class ReviewTarget(ctx.ContextSerializer):
     target = r3.TargetConfiguration()
 
 
+class OptionCounts(ctx.ContextSerializer):
+    graded = Integer(min_value=0, allow_null=True)
+    planned = Integer(min_value=0, allow_null=True)
+    regressed = Integer(min_value=0, allow_null=True)
+    disagreements = Integer(min_value=0)
+
+
+class OptionEvidence(r3.EvidenceRef):
+    # Display only, never part of a packet: a completed application run's reduced state.
+    outcome = s.CharField(allow_null=True)
+    counts = OptionCounts(allow_null=True)
+
+
 class ReviewOptions(ctx.ContextSerializer):
     recipients = Reviewer(many=True)
     targets = ReviewTarget(many=True)
-    evidence = r3.EvidenceRef(many=True)
+    evidence = OptionEvidence(many=True)
 
 
 class AuthoredItem(RequestReceipt):

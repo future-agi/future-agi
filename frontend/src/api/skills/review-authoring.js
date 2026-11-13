@@ -20,6 +20,8 @@ export function useReviewSubjects(kind, page, search = '') {
     url: () => kind === 'agent_context' ? contextEndpoints.list() : endpoints.list(),
     params: { page, page_size: 25, search }, mapper: (value) => value });
 }
+// A listed application run's reduced state, as a status badge; anything else stays unrecorded.
+const OPTION_OUTCOME = { works_on_examples: 'pass', needs_changes: 'needs_changes', inconclusive: 'incomplete' };
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),
     load: async (config) => {
@@ -27,7 +29,7 @@ export function useReviewOptions(kind, resourceId, candidateId) {
         axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
         axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
       ]);
-      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map(mapEvidenceRef), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
+      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map((row) => ({ ...mapEvidenceRef(row), outcome: OPTION_OUTCOME[row.outcome], counts: row.counts || undefined })), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
     } });
 }
 export async function prepareReleaseReview(input, config) {
