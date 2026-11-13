@@ -18,6 +18,13 @@ Three passes run on the changed files under futureagi/:
 - `ruff format --check`, which fails only for a file that was formatted at the
   base, or is new, and is not formatted at the head.
 
+A config-only change has no changed Python files to compare; review that change
+separately. Changing formatter settings and reformatting in one PR will still
+be judged against the base formatter: land the settings first, then reformat.
+If Ruff settings later use nonstandard `extend` files, [project] target-version
+inference, or configs outside futureagi/, update config-change detection and
+the base-to-head config overlay together with the relevant test fixtures.
+
 Usage, from the repo root:
 
     python3 -I scripts/check_python_lint_delta.py --base <commit>
@@ -194,7 +201,16 @@ def changed_files(repo: Path, base: str) -> dict[str, str | None]:
 def changed_lint_configs(repo: Path, base_tree: Path, base: str) -> set[str]:
     """Find changed Ruff settings, ignoring unrelated pyproject metadata."""
     changed = run(
-        ["git", "diff", "--name-only", "-z", f"{base}...HEAD", "--", BACKEND_DIR],
+        [
+            "git",
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            f"{base}...HEAD",
+            "--",
+            BACKEND_DIR,
+        ],
         repo,
     ).stdout.split("\0")
     result = set()
@@ -210,42 +226,42 @@ def changed_lint_configs(repo: Path, base_tree: Path, base: str) -> set[str]:
                 except FileNotFoundError:
                     return None
                 try:
-                    return (
-                        tomllib.loads(data.decode("utf-8")).get("tool", {}).get("ruff")
-                    )
+                    tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
                 except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-                    # An invalid config cannot safely prove settings unchanged.
+                    # Invalid TOML cannot prove settings unchanged. Ruff will
+                    # report an included invalid config when it reads the tree.
                     return data
+                if not isinstance(tool, dict):
+                    raise GateError(f"{path}: tool must be a table")
+                ruff = tool.get("ruff")
+                if ruff is not None and not isinstance(ruff, dict):
+                    raise GateError(f"{path}: tool.ruff must be a table")
+                return ruff
 
             if ruff_section(base_tree) != ruff_section(repo):
                 result.add(path)
     return result
 
 
-def trusted_head_tree(
-    repo: Path, base_tree: Path, target: Path, paths: list[str]
-) -> None:
-    """Copy changed head sources alongside only base-branch Ruff configuration.
+def trusted_head_tree(base_tree: Path, head_tree: Path) -> None:
+    """Replace head settings with base settings without removing any head source.
 
-    Ruff discovers the nearest config from each file's ancestors. Supplying one
-    global --config would flatten nested settings and per-file path rules.
+    Both worktrees are full commits: Ruff uses sibling packages and __init__.py
+    files to resolve imports. A global --config would flatten nested settings
+    and per-file path rules, so copy the base's complete config layout instead.
     """
-    configs = run(["git", "ls-files", "-z"], base_tree).stdout.split("\0")
-    for path in configs:
-        if PurePosixPath(path).name not in {
-            "pyproject.toml",
-            "ruff.toml",
-            ".ruff.toml",
-        }:
-            continue
-        source = base_tree / path
-        dest = target / path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, dest, follow_symlinks=False)
-    for path in paths:
-        dest = target / path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(repo / path, dest, follow_symlinks=False)
+    names = {"pyproject.toml", "ruff.toml", ".ruff.toml"}
+    head_configs = run(["git", "ls-files", "-z"], head_tree).stdout.split("\0")
+    for path in head_configs:
+        if PurePosixPath(path).name in names:
+            (head_tree / path).unlink()
+    base_configs = run(["git", "ls-files", "-z"], base_tree).stdout.split("\0")
+    for path in base_configs:
+        if PurePosixPath(path).name in names:
+            source = base_tree / path
+            dest = head_tree / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest, follow_symlinks=False)
 
 
 def line_ranks(diff: str) -> dict[int, int]:
@@ -438,13 +454,12 @@ def formatting_only_files(
     base_tree: Path,
     files: dict[str, str | None],
     base_broken: set[str],
-    config_affected: set[str] | frozenset[str] = frozenset(),
 ) -> set[str]:
     """Prove exact formatter output, using raw base bytes and base-side config.
 
-    Only a file at an unchanged path with unchanged governing lint settings
-    qualifies: a moved file can fall under other per-file rules, and a config
-    edit can change which findings exist even with identical formatter output.
+    Only a file at an unchanged path qualifies: a moved file can fall under
+    other per-file rules. Both trees use the same base lint settings even when
+    the change also edits a config.
     A file excluded in either tree is skipped before reading; the format pass
     fails closed for an included unreadable file.
 
@@ -455,7 +470,7 @@ def formatting_only_files(
     candidates = sorted(
         path
         for path, base_path in files.items()
-        if base_path == path and path not in base_broken and path not in config_affected
+        if base_path == path and path not in base_broken
     )
     if not candidates:
         return set()
@@ -586,20 +601,25 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             ["git", "worktree", "add", "--detach", "--quiet", str(base_tree), base],
             repo,
         )
+        head_tree = repo
         try:
             changed_configs = changed_lint_configs(repo, base_tree, base)
-            config_affected = {
-                path
-                for path in head_paths
-                if any(
-                    PurePosixPath(config).parent in PurePosixPath(path).parents
-                    for config in changed_configs
-                )
-            }
-            head_tree = repo
             if changed_configs:
-                head_tree = Path(tmp) / "head"
-                trusted_head_tree(repo, base_tree, head_tree, head_paths)
+                full_head = Path(tmp) / "head"
+                run(
+                    [
+                        "git",
+                        "worktree",
+                        "add",
+                        "--detach",
+                        "--quiet",
+                        str(full_head),
+                        "HEAD",
+                    ],
+                    repo,
+                )
+                head_tree = full_head
+                trusted_head_tree(base_tree, head_tree)
             head = dedupe(
                 ruff_check(ruff, head_tree, head_paths, None)
                 + ruff_check(ruff, head_tree, app_head, BANNED_RULES)
@@ -614,7 +634,7 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             head_broken = {v.path for v in head if v.code == SYNTAX_ERROR}
             base_broken = {v.path for v in old if v.code == SYNTAX_ERROR}
             formatting_only = formatting_only_files(
-                ruff, head_tree, base_tree, files, base_broken, config_affected
+                ruff, head_tree, base_tree, files, base_broken
             )
             head_dirty = ruff_unformatted(
                 ruff, head_tree, [p for p in head_paths if p not in head_broken]
@@ -623,11 +643,11 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
                 ruff, base_tree, [p for p in base_paths if p not in base_broken]
             )
         finally:
-            run(
-                ["git", "worktree", "remove", "--force", str(base_tree)],
-                repo,
-                ok_codes=(0, 128),
-            )
+            try:
+                if head_tree != repo:
+                    run(["git", "worktree", "remove", "--force", str(head_tree)], repo)
+            finally:
+                run(["git", "worktree", "remove", "--force", str(base_tree)], repo)
 
     found = new_violations(head, old, files, ranks, formatting_only)
     for path in sorted(head_dirty):

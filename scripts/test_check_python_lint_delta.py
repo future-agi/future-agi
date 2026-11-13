@@ -365,7 +365,13 @@ class WorkflowTests(unittest.TestCase):
         )
         summary = job_block(self.text, "python-lint-pass")
         self.assertRegex(summary, r"(?m)^    name: Python Lint Pass\s*$")
-        self.assertRegex(summary, r"(?m)^    needs: \[changes, ruff-delta\]\s*$")
+        self.assertRegex(
+            summary, r"(?m)^    needs: \[changes, ruff-delta, ruff-self-test\]\s*$"
+        )
+        self.assertRegex(
+            summary,
+            r"(?m)^          SELF_TEST: \$\{\{ needs\.ruff-self-test\.result \}\}\s*$",
+        )
         # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
         self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
         # The script below reads these; wired to anything else, its test proves nothing.
@@ -397,8 +403,24 @@ class WorkflowTests(unittest.TestCase):
             ruff,
         )
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
-        # The self-test runs only when the branch carries it.
-        self.assertIn("if [ -f scripts/test_check_python_lint_delta.py ]; then", ruff)
+        # No head-provided executable runs before the reporting step in this job.
+        self.assertNotIn("scripts/test_check_python_lint_delta.py", ruff)
+        self.assertNotIn("Install ruff for head self-tests", ruff)
+        self.assertNotIn("Self-test the gate", ruff)
+        self.assertLess(
+            ruff.index("actions/checkout@v4"), ruff.index("Report new violations")
+        )
+        self.assertNotRegex(
+            ruff.split("      - name: Report new violations", 1)[0], r"(?m)^\s*run:"
+        )
+        self.assertIn(
+            "if [ -f scripts/test_check_python_lint_delta.py ]; then",
+            job_block(self.text, "ruff-self-test"),
+        )
+        self.assertIn(
+            "python3 -I scripts/test_check_python_lint_delta.py",
+            job_block(self.text, "ruff-self-test"),
+        )
 
     def test_nothing_turns_a_failure_into_a_pass(self):
         # continue-on-error on any job or step can report a real failure as
@@ -411,28 +433,29 @@ class WorkflowTests(unittest.TestCase):
     def test_the_summary_fails_closed(self):
         script = run_script(job_block(self.text, "python-lint-pass"))
         cases = [
-            # (changes result, python output, ruff-delta result, passes)
-            ("success", "true", "success", True),
-            ("success", "false", "skipped", True),
-            ("success", "true", "failure", False),
-            ("success", "true", "cancelled", False),
-            # Skipped although Python changed, or without an answer from changes.
-            ("success", "true", "skipped", False),
-            ("success", "", "skipped", False),
-            ("success", "false", "failure", False),
-            ("failure", "", "skipped", False),
-            ("cancelled", "", "skipped", False),
-            ("skipped", "", "skipped", False),
-            ("failure", "true", "success", False),
-            # A changes job that set its output and then did not succeed.
-            ("failure", "false", "skipped", False),
-            ("cancelled", "false", "skipped", False),
-            ("skipped", "false", "skipped", False),
+            # (changes result, python output, gate result, test result, passes)
+            ("success", "true", "success", "success", True),
+            ("success", "false", "skipped", "skipped", True),
+            ("success", "true", "failure", "success", False),
+            ("success", "true", "success", "failure", False),
+            ("success", "true", "success", "cancelled", False),
+            ("success", "true", "cancelled", "success", False),
+            ("success", "true", "skipped", "success", False),
+            ("success", "true", "success", "skipped", False),
+            ("success", "", "skipped", "skipped", False),
+            ("success", "false", "failure", "skipped", False),
+            ("success", "false", "skipped", "failure", False),
+            ("success", "false", "success", "success", False),
+            ("failure", "", "skipped", "skipped", False),
+            ("cancelled", "", "skipped", "skipped", False),
+            ("skipped", "", "skipped", "skipped", False),
+            ("failure", "true", "success", "success", False),
+            ("failure", "false", "skipped", "skipped", False),
         ]
         with tempfile.TemporaryDirectory(prefix="lint-summary-test-") as tmp:
             path = Path(tmp) / "summary.sh"
             path.write_text(script)
-            for changes, python, ruff, passes in cases:
+            for changes, python, ruff, self_test, passes in cases:
                 # The shell GitHub runs a step's script with.
                 proc = subprocess.run(
                     ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
@@ -444,9 +467,12 @@ class WorkflowTests(unittest.TestCase):
                         "CHANGES": changes,
                         "PYTHON_CHANGED": python,
                         "RUFF": ruff,
+                        "SELF_TEST": self_test,
                     },
                 )
-                with self.subTest(changes=changes, python=python, ruff=ruff):
+                with self.subTest(
+                    changes=changes, python=python, ruff=ruff, self_test=self_test
+                ):
                     self.assertEqual(
                         proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr
                     )
@@ -735,7 +761,105 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
                 )
                 self.git("reset", "--hard", base)
 
-    def test_changed_banned_api_config_requires_strict_text_matching(self):
+    def test_full_head_tree_keeps_relative_import_resolution(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"accounts.services.token_service.issue_sos_tokens" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/accounts/__init__.py", "")
+        self.write("futureagi/accounts/services/__init__.py", "")
+        self.write(
+            "futureagi/accounts/services/token_service.py",
+            "def issue_sos_tokens():\n    pass\n",
+        )
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            config.replace("Use another API.", "Use a reviewed API."),
+        )
+        path = "futureagi/accounts/services/new.py"
+        self.write(
+            path,
+            "from .token_service import issue_sos_tokens\n\n\nissue_sos_tokens()\n",
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "TID251"), found, proc.stdout)
+
+    def test_full_head_tree_keeps_first_party_import_classification(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "I"]'
+        )
+        config = config.replace("line-length = 88", 'line-length = 88\nsrc = ["."]')
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/tfc/__init__.py", "")
+        self.write("futureagi/tfc/utils/__init__.py", "")
+        self.write(
+            "futureagi/tfc/utils/general_methods.py",
+            "class GeneralMethods:\n    pass\n",
+        )
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml", config.replace('"app/cli.py"', '"app/other.py"')
+        )
+        path = "futureagi/app/new.py"
+        self.write(
+            path,
+            'import django\nfrom tfc.utils.general_methods import GeneralMethods\n\n__all__ = ["GeneralMethods", "django"]\n',
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "I001"), found, proc.stdout)
+
+    def test_renaming_config_away_still_uses_base_settings(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        base = self.commit()
+        self.git("mv", "futureagi/pyproject.toml", "futureagi/pyproject.toml.disabled")
+        path = "futureagi/app/new.py"
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "TID251"), found, proc.stdout)
+
+    def test_non_table_tool_or_ruff_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        for content in ('tool = "x"\n', '[tool]\nruff = "x"\n'):
+            with self.subTest(content=content):
+                self.write("futureagi/app/pyproject.toml", content)
+                self.write("futureagi/app/new.py", 'print("new")\n')
+                self.commit()
+                code, found, proc = self.gate(base)
+                self.assertEqual(code, 2, proc.stdout + proc.stderr)
+                self.assertIn("title=Python lint gate", proc.stdout)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.git("reset", "--hard", base)
+
+    def test_symlinked_python_file_with_config_edit_keeps_its_target(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/real.py", 'print("old")\n')
+        base = self.commit()
+        (self.repo / "futureagi/app/link.py").symlink_to("real.py")
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace("line-length = 88", "line-length = 89"),
+        )
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertIn(code, (0, 1), proc.stdout + proc.stderr)
+        self.assertNotIn("title=Python lint gate", proc.stdout)
+
+    def test_config_edit_and_exact_reformat_keep_old_counts(self):
         self.write("futureagi/pyproject.toml", CONFIG)
         path = "futureagi/app/mod.py"
         self.write(path, "print('old')\n")
@@ -748,24 +872,15 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
         self.format_file(path)
         self.commit()
 
-        # The exact reformat would normally use per-rule counts, but changing
-        # a governing lint setting requires line-text matching instead.
+        # Both trees use the base settings. A config edit cannot turn this
+        # old finding into a new one just because the formatter changed quotes.
         code, found, proc = self.gate(base)
-        self.assertEqual(
-            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            base_tree = Path(tmp) / "base"
-            self.git("worktree", "add", "--detach", "--quiet", str(base_tree), base)
-            try:
-                self.assertNotIn(
-                    path,
-                    gate.formatting_only_files(
-                        RUFF, self.repo, base_tree, {path: path}, set(), {path}
-                    ),
-                )
-            finally:
-                self.git("worktree", "remove", "--force", str(base_tree))
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.write(path, (self.repo / path).read_text() + 'print("new")\n')
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 2, "T201"), found, proc.stdout)
 
     def test_ordinary_reformat_still_uses_count_comparison(self):
         self.write("futureagi/pyproject.toml", CONFIG)
@@ -1072,7 +1187,12 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
 
     def run_step(self, name, workflow_version="99.99.99"):
         step = (
-            job_block(WORKFLOW.read_text(), "ruff-delta")
+            job_block(
+                WORKFLOW.read_text(),
+                "ruff-self-test"
+                if name == "Install ruff for head self-tests"
+                else "ruff-delta",
+            )
             .split(f"      - name: {name}\n", 1)[1]
             .split("      - name:", 1)[0]
         )
