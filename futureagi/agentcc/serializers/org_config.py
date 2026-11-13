@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from agentcc.guardrail_settings import normalize_guardrail_settings
+from agentcc.guardrail_settings import (
+    normalize_guardrail_settings,
+    normalize_saved_guardrail_settings,
+)
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import (
     default_cache_config,
@@ -18,7 +21,10 @@ class AgentccOrgConfigSerializer(serializers.ModelSerializer):
         )
         data["cache"] = normalize_cache_config(data.get("cache"))
         # Legacy aliases must not survive hydration: UI edits use canonical keys.
-        data["guardrails"] = normalize_guardrail_settings(data.get("guardrails") or {})
+        # Saved versions are read, never refused, so every version stays loadable.
+        data["guardrails"] = normalize_saved_guardrail_settings(
+            data.get("guardrails") or {}
+        )
         return data
 
     class Meta:

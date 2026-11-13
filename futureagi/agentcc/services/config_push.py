@@ -15,7 +15,7 @@ from agentcc.contracts.gateway_admin import (
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
-from agentcc.guardrail_settings import normalize_guardrail_settings
+from agentcc.guardrail_settings import normalize_saved_guardrail_settings
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -208,7 +208,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
-    guardrails_data = normalize_guardrail_settings(copy.deepcopy(guardrails_data))
+    guardrails_data = normalize_saved_guardrail_settings(copy.deepcopy(guardrails_data))
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
 
