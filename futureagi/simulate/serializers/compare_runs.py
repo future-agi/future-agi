@@ -84,7 +84,7 @@ class HarnessCompareGroupSerializer(serializers.Serializer):
     """A group of scenario rows; ``row_ids`` are the ones on this page."""
 
     key = serializers.CharField()
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]
     row_ids = serializers.ListField(child=serializers.CharField())
     row_count = serializers.IntegerField(
         help_text="The scenario rows in this group on every page."

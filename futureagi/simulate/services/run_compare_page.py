@@ -142,7 +142,7 @@ def _read_compare_facts(
         row["id"]: row["result_goal"] for rows in rows_by_run.values() for row in rows
     }
     # Only what the row-level columns read.
-    calls = list(
+    calls: list[CallExecution] = list(
         CallExecution.objects.filter(id__in=list(representatives))
         .select_related("scenario")
         .only(
@@ -152,7 +152,7 @@ def _read_compare_facts(
         .order_by()
     )
     for call in calls:
-        call.result_goal = goals.get(str(call.id))
+        call.result_goal = goals.get(str(call.id))  # type: ignore[attr-defined]
     dataset_rows, dimensions = call_dataset_rows(calls)
     versions: dict[Any, dict[str, str]] = defaultdict(dict)
     shown: dict[Any, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -431,7 +431,7 @@ def build_compare_page(
         for entry in page_entries:
             for call_id in entry["calls"][execution.id]:
                 if (call := by_id.get(call_id)) is not None:
-                    call.result_goal = values[execution.id][call_id]["result_goal"]
+                    call.result_goal = values[execution.id][call_id]["result_goal"]  # type: ignore[attr-defined]
                     calls.append(call)
         columns, live_eval_ids = catalogs[execution.id]
         if calls:

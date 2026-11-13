@@ -5737,7 +5737,7 @@ class RunTestExecutionsView(APIView):
                 ).only("id", "test_execution_id")
             }
             graded = run_outcome_summaries(
-                [te for te in result_page if te.id in hosted_jobs]
+                [te for te in result_page or [] if te.id in hosted_jobs]
             )
             agent_turn_counts = {}
             chat_duration_map = {}

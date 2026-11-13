@@ -685,7 +685,7 @@ def harness_columns_cache_key(execution: TestExecution) -> str | None:
 def build_evaluation_catalog(
     execution: TestExecution,
     *,
-    configs: list[dict[str, Any]] | None = None,
+    configs: list[Any] | None = None,
     cached_columns: Any = None,
 ) -> tuple[list[dict[str, str]], set[str]]:
     """Return stable configured and harness-native columns for an execution.

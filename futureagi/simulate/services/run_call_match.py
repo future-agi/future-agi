@@ -208,7 +208,7 @@ def read_call_facts(execution_ids: list[Any]) -> dict[Any, dict[str, CallFacts]]
         .values_list("test_execution_id", "suite_version_id")
     )
     rows = list(calls)
-    members: dict[tuple[Any, str], Any] = {}
+    members: dict[tuple[Any, str | None], Any] = {}
     if suites:
         keys = {
             key
@@ -297,7 +297,7 @@ def matches(
     row: dict[str, Any],
     facts: CallFacts,
     search: str,
-    filters: dict[str, list[str]],
+    filters: dict[str, list[Any]],
 ) -> bool:
     """Whether ``apply_run_call_query`` keeps this call; ``search`` is folded."""
     if search and not any(
@@ -333,7 +333,7 @@ def matches(
     for key, field in TEXT_FILTERS.items():
         # Folded in ``filter_rows``, as ``icontains`` folds both sides.
         if (values := filters.get(key)) and not any(
-            v in _folded_goal(row[field]) for v in values
+            v in (_folded_goal(row[field]) or "") for v in values
         ):
             return False
     return True

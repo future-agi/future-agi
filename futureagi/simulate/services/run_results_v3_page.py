@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from django.core.cache import cache
 from django.db.models import Count, Func, JSONField, QuerySet
@@ -244,7 +244,7 @@ def cached_run_values(
     if stamps is not None:
         stamps.update(
             {
-                execution_id: cached[_stamp_key(keys[execution_id])]
+                execution_id: cached[_stamp_key(cast(str, keys[execution_id]))]
                 for execution_id in values
             }
         )
@@ -677,7 +677,7 @@ def load_row_calls(
         # call_metadata itself stays deferred; build_call_rows reads this subset.
         .annotate(row_metadata=JsonbKeySubset("call_metadata", CALL_ROW_METADATA_KEYS))
     )
-    by_id = {}
+    by_id: dict[str, CallExecution] = {}
     for call in queryset:
         if (execution := executions.get(call.test_execution_id)) is not None:
             call.test_execution = execution
@@ -692,7 +692,7 @@ def page_calls(page: dict[str, Any], execution: TestExecution) -> list[CallExecu
     for call_id in page["page_ids"]:
         if (call := by_id.get(call_id)) is None:
             continue
-        call.result_goal = goals[call_id]
+        call.result_goal = goals[call_id]  # type: ignore[attr-defined]
         calls.append(call)
     return calls
 
