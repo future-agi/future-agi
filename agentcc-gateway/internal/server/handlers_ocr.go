@@ -50,6 +50,7 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 	rc.OCRRequest = &req
 
 	// Pass Authorization header for auth plugin.
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 

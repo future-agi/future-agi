@@ -66,14 +66,14 @@ troubleshooting.
 # From repo root — installs husky hooks and lint-staged tooling.
 yarn install
 
-# For Python hooks (black, isort, mypy, Django system checks):
+# For the Python pre-commit hooks (ruff check --fix, ruff format, mypy, file checks):
 cd futureagi && make pre-commit-install
 ```
 
 On every commit, `lint-staged` auto-formats and lints the staged files:
 
 - `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- `futureagi/**/*.py` → `ruff check --fix`, then `ruff format` (`scripts/lint-staged-python.sh`)
 
 Branch names are validated on `git push`.
 
@@ -152,8 +152,8 @@ Framework integrations live in the `traceAI` SDK (separate repo). For Python: [g
 
 We follow:
 
-- **Python:** PEP 8 via Ruff + Black (line length 88)
-- **Imports:** `isort` with Black profile
+- **Python:** PEP 8 via Ruff: `ruff check` and `ruff format` (line length 88)
+- **Imports:** sorted by Ruff's isort rules (`I`)
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)
