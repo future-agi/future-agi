@@ -20,6 +20,30 @@ export function useEvidenceReference(source, sourceId) {
 export function useEvidenceAnnotations(source, sourceId, page) {
   return useSkillV11Query({ parts: [...parts(source, sourceId), 'page', page], url: () => endpoint(source, sourceId, true), params: v11PageParams({ page, pageSize: 25 }), mapper: (value) => mapV11Page(value, mapAnnotation), enabled: Boolean(sourceId) });
 }
+// Read every page through the scoped endpoint; never follow a server-provided URL.
+export async function loadEvidenceAnnotations(source, sourceId, config) {
+  const results = [];
+  const ids = new Set();
+  for (let page = 1; page <= 1000; page += 1) {
+    const value = skillV11Result(await axios.get(endpoint(source, sourceId, true), {
+      ...config, params: v11PageParams({ page, pageSize: 100 }),
+    }));
+    for (const row of value.results) {
+      if (ids.has(row.id)) throw new Error('Human reviews changed while loading. Retry to read the complete history.');
+      ids.add(row.id);
+      results.push(mapAnnotation(row));
+    }
+    if ('next' in value ? value.next === null : Number.isSafeInteger(value.total_pages) && page >= value.total_pages) return { results };
+    if (!value.results.length) throw new Error('The complete human review history is unavailable.');
+  }
+  throw new Error('The complete human review history is unavailable.');
+}
+export function useAllEvidenceAnnotations(source, sourceId) {
+  return useSkillV11Query({
+    parts: [...parts(source, sourceId), 'all'], enabled: Boolean(sourceId),
+    load: (config) => loadEvidenceAnnotations(source, sourceId, config),
+  });
+}
 export function useAppendEvidenceAnnotation(source, sourceId) {
   return useSkillV11Mutation({
     send: async (input, config) => {

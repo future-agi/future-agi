@@ -22,7 +22,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({}), useRuntimeConfiguration: () => ({}),
   useCreateNativeTarget: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle, usePrepareReleasePacket: idle,
 }));
-vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
+vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
 const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'v4', number: 4, digest };
@@ -35,9 +35,9 @@ it('shows regression cases, application verification and whole-context tests in 
   expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
   expect(screen.getByRole('table', { name: 'Context regression cases' })).toHaveTextContent('Refund failure');
   expect(screen.getByText('Application target')).toBeVisible();
-  expect(screen.getByText('Matched application run')).toBeVisible();
-  expect(screen.getByText('Test the whole context')).toBeVisible();
-  expect(screen.getByText(`Release v4 · ${digest}`)).toBeVisible();
+  expect(screen.getByText('Verify on the application')).toBeVisible();
+  expect(screen.getByText('Check answers with this context')).toBeVisible();
+  expect(screen.getByText('Release v4')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toBeInTheDocument();
 });
 it('keeps application verification when whole-context testing is unavailable', () => {
@@ -57,22 +57,22 @@ it('switches only the whole-context candidate to the saved draft', () => {
   const onSelect = vi.fn();
   const source = { testingDraft: false, draftAvailable: true, releaseAvailable: true, onSelect };
   const view = mount({ source });
-  fireEvent.click(screen.getByRole('button', { name: 'Test saved draft' }));
+  fireEvent.click(screen.getByRole('radio', { name: 'Saved draft' }));
   expect(onSelect).toHaveBeenCalledWith(true);
   view.rerender(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version]} canWrite source={{ ...source, testingDraft: true }} draft={{ revision: 9, digest }} /></MemoryRouter>);
-  expect(screen.getByText(`Saved draft revision 9 · ${digest}`)).toBeVisible();
+  expect(screen.getByText('Saved draft revision 9')).toBeVisible();
   // Application verification still names the viewed release.
   expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Test saved draft' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Test viewed release' })).toBeEnabled();
+  expect(screen.getByRole('radio', { name: 'Saved draft' })).toBeChecked();
+  expect(screen.getByRole('radio', { name: 'Published version' })).toBeEnabled();
 });
 it('never falls back to the release while the saved draft is loading or failed', () => {
   const source = { testingDraft: true, draftAvailable: true, releaseAvailable: true, onSelect: () => {}, isError: true, onRetry: () => {} };
   mount({ source });
   expect(screen.getByText('Saved draft unavailable')).toBeVisible();
-  expect(screen.queryByText(`Release v4 · ${digest}`)).not.toBeInTheDocument();
+  expect(screen.queryByText('Release v4')).not.toBeInTheDocument();
   // The switch remains so the author can go back to the viewed release.
-  expect(screen.getByRole('button', { name: 'Test viewed release' })).toBeEnabled();
+  expect(screen.getByRole('radio', { name: 'Published version' })).toBeEnabled();
 });
 it('hands the editor draft off to the saved-revision tests without an inline run', () => {
   const onOpen = vi.fn();

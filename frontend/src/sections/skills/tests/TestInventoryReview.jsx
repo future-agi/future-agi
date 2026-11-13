@@ -2,17 +2,20 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   Checkbox,
   FormControlLabel,
   MenuItem,
   Stack,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TextField,
   Typography,
 } from "@mui/material";
 
 import Section from "src/components/section";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
+import IdentityChip from "../components/IdentityChip";
+import InventoryFileDrawer from "./InventoryFileDrawer";
 
 const fileKey = (skillId, file) => `${skillId}:${file.path}:${file.sha256}`;
 
@@ -21,7 +24,10 @@ export default function TestInventoryReview({
   value,
   onChange,
   disabled = false,
+  subjectKind,
+  subjectId,
 }) {
+  const [inspected, setInspected] = useState(null);
   const flagged = preview.inventory.flatMap((bundle) =>
     bundle.files
       .filter(
@@ -107,53 +113,20 @@ export default function TestInventoryReview({
         description="All listed files remain available. To remove answer keys, edit the real draft and preview again."
       >
         <Stack spacing={1.5}>
-          {preview.inventory.map((bundle, index) => (
-            <Box
-              key={`${bundle.skillId}:${bundle.digest}:${index}`}
-              sx={{ minWidth: 0 }}
-            >
-              <Typography
-                variant="s3"
-                color="text.secondary"
-                sx={{ overflowWrap: "anywhere" }}
-              >
-                Skill {bundle.skillId} · {bundle.digest}
-              </Typography>
-              {bundle.files.map((file) => (
-                <Box
-                  key={file.path}
-                  sx={{
-                    py: 1,
-                    borderBottom: 1,
-                    borderColor: "divider",
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  <Typography variant="s1" display="block" sx={{ fontFamily: "monospace" }}>
-                    {file.path}
-                  </Typography>
-                  <Typography variant="s3" display="block" color="text.secondary">
-                    {file.sizeBytes} bytes · SHA-256 {file.sha256}
-                  </Typography>
-                  {file.flags.length > 0 && (
-                    <Typography
-                      variant="s3"
-                      component="p"
-                      color="text.secondary"
-                    >
-                      Flags:{" "}
-                      {file.flags
-                        .map((flag) => flag.replaceAll("_", " "))
-                        .join(", ")}
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Box>
-          ))}
+          <TableContainer><Table size="small" aria-label="Model-visible inventory">
+            <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
+            <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
+              <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="s1">{file.path}</Typography></TableCell>
+              <TableCell><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TableCell>
+              <TableCell><Typography variant="s3">{file.flags.length ? file.flags.map((flag) => flag.replaceAll('_', ' ')).join(', ') : 'None'}</Typography></TableCell>
+              <TableCell><Typography variant="s3">{file.sizeBytes} bytes</Typography></TableCell>
+              <TableCell><Button size="small" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
+            </TableRow>))}</TableBody>
+          </Table></TableContainer>
+          {inspected && inspected.fingerprint === preview.fingerprint && <InventoryFileDrawer key={`${preview.fingerprint}:${inspected.file.path}:${inspected.file.sha256}`} subjectKind={subjectKind} subjectId={subjectId} candidate={[preview.candidate, preview.production, preview.reference, ...(preview.competitors || [])].find((item) => item?.digest === inspected.bundle.digest && (item.skillId ?? item.skill_id) === inspected.bundle.skillId)} bundle={inspected.bundle} file={inspected.file} onClose={() => setInspected(null)} />}
           {uniqueFlagged.length > 1 && (
             <Stack spacing={1} data-testid="bulk-classification">
-              <Typography variant="s2">
+              <Typography variant="s1">
                 {uniqueFlagged.length} files are flagged. Classify them together
                 after reading the list above; each file keeps its own record and
                 can still be changed below.
@@ -347,4 +320,6 @@ TestInventoryReview.propTypes = {
   value: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  subjectKind: PropTypes.string,
+  subjectId: PropTypes.string,
 };
