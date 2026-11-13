@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
-import { JPX_SWATCH_RGB, PDF_EXTERNAL_LINK, uploadPdfFixture } from '../../lib/pdf-fixture';
+import type { Locator } from '@playwright/test';
+import { JPX_SWATCH_RGB, PDF_EXTERNAL_LINK, PDF_LINK_IDS, pdfNotes, uploadPdfFixture } from '../../lib/pdf-fixture';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
@@ -13,6 +14,18 @@ const CREATE_EXPERIMENT = '/model-hub/experiments/';
 const PREVIEW_BUTTON = '.icon-actions button';
 const UI_READY = 60_000;
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+// PdfDocumentPreview.jsx scrolls the box directly around react-pdf's Document.
+const pdfLink = (preview: Locator, id: string) => preview.locator(`.annotationLayer [data-annotation-id="${id}"] a`);
+const scrollTop = (preview: Locator) => preview.locator('.react-pdf__Document')
+  .evaluate(element => (element.parentElement as HTMLElement).scrollTop);
+const setScrollTop = (preview: Locator, top: number) => preview.locator('.react-pdf__Document')
+  .evaluate((element, value) => { (element.parentElement as HTMLElement).scrollTop = value; }, top);
+// Pixels from the top of the visible preview to the top of a text-layer line.
+const belowViewTop = (preview: Locator, text: string) => preview.locator('.textLayer')
+  .getByText(text, { exact: true }).evaluate(element => {
+    const box = element.closest('.react-pdf__Document')!.parentElement!;
+    return { offset: element.getBoundingClientRect().top - box.getBoundingClientRect().top, view: box.clientHeight };
+  });
 
 for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E-004']] as const) {
   test(`${id}: ${entry} PDFs render without a runtime CDN worker`, {
@@ -23,17 +36,19 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
       steps: ['create a document dataset and upload a synthetic PDF through the product input',
         `open the ${entry} document preview with external runtime requests denied`,
         'read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2,'
+          + ' follow section links to a position on the same page and on page 2,'
           + ' close and reopen, then download the PDF',
         'upload an unreadable PDF and verify the error state with no rendered page'],
       backendChecks: ['the stored dataset and document cell belong to the actor scope',
         'the storage URL and browser download return exactly the uploaded PDF bytes',
         'the document cell opens the correct PDF through a same-origin worker without a CDN request',
         'the JPEG 2000 image is decoded with same-origin decoder files and painted on the page',
-        'the in-document link moves the preview to its page and the external link opens in a new tab'],
+        'the in-document link moves the preview to its page and the external link opens in a new tab',
+        'a section link scrolls its destination position to the top of the preview, on its own page or another'],
     }),
   }, async ({ page, context, actor, probe }, testInfo) => {
-    // 2 * (ASYNC_JOB 60s + 8 UI_READY 60s) + 120s setup headroom.
-    test.setTimeout(1_200_000);
+    // 2 * (ASYNC_JOB 60s + 15 UI_READY 60s) + 120s setup headroom.
+    test.setTimeout(2_040_000);
     page.setDefaultTimeout(UI_READY);
     const blocked: string[] = [];
     const workers: string[] = [];
@@ -155,9 +170,32 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
           const external = preview.locator(`.annotationLayer a[href="${PDF_EXTERNAL_LINK}"]`);
           await expect(external).toHaveAttribute('target', '_blank', { timeout: UI_READY });
           expect((await external.getAttribute('rel'))?.split(' ')).toEqual(expect.arrayContaining(['noopener', 'noreferrer']));
-          await preview.locator('.annotationLayer a[href="#"]').click();
+          // The /Fit link opens page 2 from the top, with the page buttons in view.
+          await setScrollTop(preview, 100);
+          await pdfLink(preview, PDF_LINK_IDS.internal).click();
           await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
           await expect(preview.getByText('Page 2 of 2', { exact: true })).toBeVisible();
+          await expect.poll(() => scrollTop(preview), { timeout: UI_READY }).toBe(0);
+          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
+          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          // /XYZ links: each note starts below the visible preview and its link brings it to the top.
+          const notes = pdfNotes(1, name);
+          await expect(preview.locator('.textLayer').getByText(notes, { exact: true })).toBeAttached({ timeout: UI_READY });
+          const start = await belowViewTop(preview, notes);
+          expect(start.offset).toBeGreaterThan(start.view);
+          await pdfLink(preview, PDF_LINK_IDS.notes).click();
+          await expect.poll(async () => (await belowViewTop(preview, notes)).offset, { timeout: UI_READY })
+            .toBeLessThan(24);
+          expect((await belowViewTop(preview, notes)).offset).toBeGreaterThanOrEqual(0);
+          await expect(preview.getByText('Page 1 of 2', { exact: true })).toBeAttached();
+          await pdfLink(preview, PDF_LINK_IDS.otherNotes).click();
+          await expect(preview.getByText('Page 2 of 2', { exact: true })).toBeAttached({ timeout: UI_READY });
+          const otherNotes = pdfNotes(2, name);
+          await expect(preview.locator('.textLayer').getByText(otherNotes, { exact: true })).toBeAttached({ timeout: UI_READY });
+          await expect.poll(async () => (await belowViewTop(preview, otherNotes)).offset, { timeout: UI_READY })
+            .toBeLessThan(24);
+          expect((await belowViewTop(preview, otherNotes)).offset).toBeGreaterThanOrEqual(0);
+          await setScrollTop(preview, 0);
           await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
           await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
           await preview.getByRole('button', { name: 'Close', exact: true }).click();

@@ -820,7 +820,7 @@
 
 **Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
 
-**Spec:** `flows/datasets/pdf-document-preview.spec.ts:18`
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
 
 **Tags:** —
 
@@ -828,7 +828,7 @@
 
 1. create a document dataset and upload a synthetic PDF through the product input
 2. open the dataset document preview with external runtime requests denied
-3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, close and reopen, then download the PDF
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
 4. upload an unreadable PDF and verify the error state with no rendered page
 
 **Backend state verified:**
@@ -838,12 +838,13 @@
 - the document cell opens the correct PDF through a same-origin worker without a CDN request
 - the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
 - the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
 
 ### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
 
 **Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
 
-**Spec:** `flows/datasets/pdf-document-preview.spec.ts:18`
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
 
 **Tags:** —
 
@@ -851,7 +852,7 @@
 
 1. create a document dataset and upload a synthetic PDF through the product input
 2. open the experiment document preview with external runtime requests denied
-3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, close and reopen, then download the PDF
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
 4. upload an unreadable PDF and verify the error state with no rendered page
 
 **Backend state verified:**
@@ -861,6 +862,7 @@
 - the document cell opens the correct PDF through a same-origin worker without a CDN request
 - the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
 - the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
 
 ## error-feed
 
