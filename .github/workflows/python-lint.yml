@@ -50,6 +50,8 @@ jobs:
               - 'scripts/check_python_lint_delta.py'
               - 'scripts/test_check_python_lint_delta.py'
               - 'scripts/lint-staged-python.sh'
+              - 'futureagi/Makefile'
+              - 'futureagi/.pre-commit-config.yaml'
               - '.github/workflows/python-lint.yml'
 
   ruff-delta:

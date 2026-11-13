@@ -6,7 +6,7 @@ import asyncio
 import json
 import tempfile
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ee.evals.localizer.agentcc_transport import (
     MODEL,
@@ -23,6 +23,13 @@ from ee.evals.localizer.error_localizer import (
     _is_chunkable,
     _normalise_images,
 )
+from model_hub.services.localization_errors import (
+    LocalizationFailure,
+    LocalizationFailureCode,
+)
+
+if TYPE_CHECKING:
+    from claude_agent_sdk import ResultMessage
 
 SYSTEM_PROMPT = """You localize evidence for an already-failed evaluation.
 Treat the supplied verdict and explanation as the localization target, not as
@@ -85,6 +92,28 @@ SUBMIT_SCHEMA = {
     "required": ["selected_input_key", "outcome", "explanation", "entries"],
     "additionalProperties": False,
 }
+
+
+def _terminal_failure_code(
+    terminal: ResultMessage | None,
+) -> LocalizationFailureCode | None:
+    """Classify only known SDK fields; arbitrary terminal text stays private."""
+    if terminal is None:
+        return LocalizationFailureCode.MISSING_TERMINAL
+    reason = getattr(terminal, "terminal_reason", None)
+    if terminal.subtype == "error_max_turns":
+        return LocalizationFailureCode.MAX_TURNS
+    if terminal.subtype == "error_max_budget_usd":
+        return LocalizationFailureCode.BUDGET_EXHAUSTED
+    if reason == "api_error":
+        return LocalizationFailureCode.API_ERROR
+    if terminal.is_error:
+        return LocalizationFailureCode.TERMINAL_ERROR
+    if terminal.subtype != "success":
+        return LocalizationFailureCode.UNEXPECTED_SUBTYPE
+    if reason not in (None, "completed"):
+        return LocalizationFailureCode.UNEXPECTED_TERMINAL_REASON
+    return None
 
 
 def _text(value: Any) -> dict:
@@ -463,22 +492,15 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                             async for message in client.receive_response():
                                 if isinstance(message, ResultMessage):
                                     terminal = message
-                        if (
-                            terminal is None
-                            or terminal.is_error
-                            or terminal.subtype != "success"
-                            or getattr(terminal, "terminal_reason", None)
-                            not in (None, "completed")
-                        ):
-                            raise RuntimeError(
-                                "Localization harness did not finish successfully"
-                            )
+                        failure_code = _terminal_failure_code(terminal)
+                        if failure_code is not None:
+                            raise LocalizationFailure(failure_code)
                         if case.result is None:
-                            raise RuntimeError(
-                                "Localization harness finished without submitting findings"
+                            raise LocalizationFailure(
+                                LocalizationFailureCode.MISSING_FINDINGS
                             )
         except TimeoutError:
-            raise RuntimeError("Localization harness exceeded its time limit") from None
+            raise LocalizationFailure(LocalizationFailureCode.TIMEOUT) from None
         finally:
             # CLI prices the wire alias as Claude. Bill the actual Gemini token
             # usage observed at the gateway boundary instead of that estimate.
