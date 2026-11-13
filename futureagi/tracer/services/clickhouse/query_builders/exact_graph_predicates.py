@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -48,16 +49,16 @@ _SPANS_SOURCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
-# One PostgreSQL read of the UI tag overlay per compiled graph statement.
+# Shared deadline across paged UI assignments and CH liveness probes.
 GRAPH_TAG_OVERLAY_READ_MS = 5_000
 
 
 class GraphTagFilterTooBroadError(UnsupportedFilterShapeError):
     """A graph Tag leaf whose UI tag overlay exceeds the statement budget.
 
-    The overlay binds every trace and span tagged in the app with a filtered
-    name (any name for is null / is not null), plus the trace assignments that
-    hide a matching curated tag. It is a property of the project's tags, not a
+    A bounded graph binds live, in-window trace and span assignments carrying
+    a filtered name (any name for is null / is not null), plus trace assignments
+    that hide a matching curated tag. It is a property of the project's tags, not a
     transient fault, so it is a request error with its own copy, never a 503
     that asks the user to retry.
     """
@@ -592,6 +593,8 @@ def _compile_effective_tag_filter(
     observe_type: str,
     filter_index: int,
     deadline: Any,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[tuple[str, bool, dict[str, Any]], int]:
     """Compile an effective ``tag``/``tags`` leaf to a current-row predicate.
 
@@ -641,6 +644,8 @@ def _compile_effective_tag_filter(
         project_ids=(str(project_id),),
         values=values,
         deadline=deadline,
+        window_start=window_start,
+        window_end=window_end,
     )
     params.update(overlay_params)
     predicate = graph_row_tag_sql(
@@ -675,9 +680,18 @@ class EffectiveTagGraphCompiler:
     source-only graph.
     """
 
-    def __init__(self, *, project_id: str, observe_type: str) -> None:
+    def __init__(
+        self,
+        *,
+        project_id: str,
+        observe_type: str,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+    ) -> None:
         self.project_id = str(project_id)
         self.observe_type = observe_type
+        self.window_start = window_start
+        self.window_end = window_end
         self._deadline: ReadDeadline | None = None
         self._rendered = 0
 
@@ -701,6 +715,8 @@ class EffectiveTagGraphCompiler:
                 observe_type=self.observe_type,
                 filter_index=filter_index,
                 deadline=self._deadline,
+                window_start=self.window_start,
+                window_end=self.window_end,
             )
             self._rendered += rendered
             if self._rendered > MAX_TAG_OVERLAY_BYTES:
@@ -798,6 +814,8 @@ def compile_exact_graph_row_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -828,7 +846,10 @@ def compile_exact_graph_row_predicates(
     root_contribution = False
     bound_params: dict[str, Any] = {}
     tag_compiler = EffectiveTagGraphCompiler(
-        project_id=project_id, observe_type=normalized_observe_type
+        project_id=project_id,
+        observe_type=normalized_observe_type,
+        window_start=window_start,
+        window_end=window_end,
     )
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)

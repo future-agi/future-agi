@@ -225,6 +225,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 project_id=str(self.project_id),
                 observe_type=self.observe_type,
                 annotation_label_ids=self.annotation_label_ids,
+                window_start=self.start_date,
+                window_end=self.end_date,
             )
             extra_params = exact_filter_plan.params
         else:
@@ -850,6 +852,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             project_id=str(self.project_id),
             observe_type=self.observe_type,
             annotation_label_ids=self.annotation_label_ids,
+            window_start=self.start_date,
+            window_end=self.end_date,
         )
         self.params.update(exact_filter_plan.params)
         output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
@@ -946,6 +950,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 project_id=str(self.project_id),
                 observe_type=self.observe_type,
                 annotation_label_ids=self.annotation_label_ids,
+                window_start=self.start_date,
+                window_end=self.end_date,
             )
         self.params.update(exact_filter_plan.params)
         self.params.update(

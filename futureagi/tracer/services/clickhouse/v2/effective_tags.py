@@ -299,29 +299,34 @@ def graph_tag_overlay_params(
     project_ids: tuple[str, ...],
     values: tuple[str, ...] | None,
     deadline: ReadDeadline,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     execute: Callable[..., Any] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Bind one graph leaf's UI overlay now, with its rendered byte size.
 
     Graph statements also run on executors without a preparation hook (the
     background exact-aggregation worker), so they carry concrete parameters,
-    never an :class:`EffectiveTagRelation`. The scope is a window scan: the
-    graph's own replay decides liveness and the window. ``execute`` reads the
-    curated tags that decide which trace assignments suppress them; it
-    defaults to the CH25 analytics service and is used only when the project
-    has trace assignments that do not carry the leaf's names.
+    never an :class:`EffectiveTagRelation`. Window-scoped callers retain only
+    live matching assignment keys before binding them; the graph's replay
+    still decides final liveness. ``execute`` reads these candidates and any
+    curated tags whose trace assignments suppress them, defaulting to CH25.
     """
-    if not project_ids:
+    if not project_ids or (window_start is None) != (window_end is None):
         raise TagReadUnavailable("tag_scope_required")
+    reader = execute or (graph_overlay_executor() if window_start is not None else None)
     overlay = read_tag_overlay(
         project_ids=project_ids,
         trace_ids=None,
         values=values,
         deadline=deadline,
+        window_start=window_start,
+        window_end=window_end,
+        execute=reader,
     )
     if overlay.unmatched_trace_assignments:
         overlay.assigned |= legacy_suppressions(
-            execute or graph_overlay_executor(),
+            reader or graph_overlay_executor(),
             project_ids=project_ids,
             values=values,
             deadline=deadline,
@@ -540,6 +545,9 @@ def read_tag_overlay(
     trace_ids: tuple[str, ...] | None,
     values: tuple[str, ...] | None,
     deadline: ReadDeadline,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    execute: Callable[..., Any] | None = None,
 ) -> TagOverlay:
     """Resolve UI assignments for one leaf scope.
 
@@ -548,9 +556,9 @@ def read_tag_overlay(
     for the non-empty test). Every other trace assignment can only suppress a
     matching curated tag, and only a few of them actually do; the window scan
     records whether any exist, and :func:`legacy_suppressions` finds the ones
-    that matter. A project's lifetime count of trace assignments therefore
-    never reaches the overlay budget. Liveness and the window are applied
-    later, in SQL.
+    that matter. Window-scoped graph calls page matching assignments, then
+    check liveness in ClickHouse before counting keys against the bind budget.
+    The graph's own SQL remains the final authority on latest-state membership.
     """
     scope = Q(project_id__in=project_ids, entity_kind__in=("trace", "span"))
     overlay = TagOverlay()
@@ -566,6 +574,81 @@ def read_tag_overlay(
                 limit=0,
             )
         )
+    if window_start is not None and window_end is not None and trace_ids is None:
+        if execute is None:
+            raise TagReadUnavailable("tag_source_unavailable")
+        start, end = _utc(window_start), _utc(window_end)
+        hour_start, hour_end = _hours(start, end)
+        predicate &= Q(entity_kind="trace") | Q(
+            entity_kind="span", start_hour__gte=hour_start, start_hour__lt=hour_end
+        )
+        # A graph's trace witness needs a live root in the window. Span
+        # assignments additionally need their exact latest physical identity.
+        # Page PostgreSQL first; only live keys count against SQL bind limits.
+        for page in _assignment_pages(predicate, deadline=deadline):
+            candidates = TagOverlay()
+            for record in page:
+                candidates.add(record)
+            live: set[tuple] = set()
+            for batch, batch_overlay in _liveness_batches(
+                candidates.trace_names, candidates.span_names
+            ):
+                prefix = "tag_graph_live"
+                params = _scope_params(
+                    prefix,
+                    project_ids=project_ids,
+                    window_start=start,
+                    window_end=end,
+                    trace_ids=batch,
+                )
+                params[f"{prefix}_trace_keys"], params[f"{prefix}_span_keys"], _ = (
+                    batch_overlay.keys(None)
+                )
+                query = f"""
+                    SELECT DISTINCT toString(project_id) AS project_id, trace_id,
+                        if(is_root, '', id) AS span_id,
+                        if(is_root, 0, toInt64(toUnixTimestamp(start_hour))) AS hour,
+                        if(is_root, '', toString(observation_type)) AS observation_type,
+                        if(is_root, '', toString(service_name)) AS service_name
+                    FROM {live_tag_source_sql(prefix)}
+                    WHERE (is_root AND (toString(project_id), trace_id)
+                           IN %({prefix}_trace_keys)s)
+                       OR (NOT is_root AND {span_key_sql()} IN %({prefix}_span_keys)s)
+                    LIMIT %(tag_graph_live_limit)s
+                """
+                params["tag_graph_live_limit"] = MAX_TAG_OVERLAY_KEYS + 1
+                try:
+                    rows = _execute_overlay_read(
+                        execute,
+                        query,
+                        params,
+                        deadline=deadline,
+                        settings={},
+                        row_limit=MAX_TAG_OVERLAY_KEYS + 1,
+                    )
+                except (ReadDeadlineExceeded, ClickHouseError, OSError, EOFError):
+                    raise TagReadUnavailable("tag_source_unavailable") from None
+                if len(rows) > MAX_TAG_OVERLAY_KEYS:
+                    raise TagReadUnavailable("tag_overlay_budget_exceeded")
+                for row in rows:
+                    key = (
+                        (str(row["project_id"]), str(row["trace_id"]))
+                        if row["span_id"] == ""
+                        else (
+                            str(row["project_id"]),
+                            str(row["trace_id"]),
+                            str(row["span_id"]),
+                            int(row["hour"]),
+                            str(row["observation_type"]),
+                            str(row["service_name"]),
+                        )
+                    )
+                    live.add(key)
+            for record in page:
+                if _assignment_key(record) in live:
+                    overlay.add(record)
+            overlay.keys(values)
+        return overlay
     for record in _read_assignments(predicate, deadline=deadline):
         overlay.add(record)
     return overlay

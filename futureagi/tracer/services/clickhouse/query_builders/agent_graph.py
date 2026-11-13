@@ -1,14 +1,15 @@
-"""One-snapshot aggregate Agent Graph query for direct-write ClickHouse.
+"""Aggregate Agent Graph query for direct-write ClickHouse.
 
 ``edges`` are exact parent -> child topology transitions. ``path_edges`` stays
 empty because span hierarchy does not prove chronological execution paths;
 publishing the hierarchy twice under different labels would be misleading.
 
-Both, together with node metrics, are produced by one ClickHouse statement and
-one physical ``spans`` reference.  This matters on ClickHouse 25.3: named CTEs
-are expanded at every use, so separate edge/node statements (or a CTE reused by
-three UNION branches) can observe different ReplacingMergeTree part snapshots.
-The query below collapses every physical identity with ``argMax(_version)``,
+Both, together with node metrics, are produced by one ClickHouse statement.
+Ordinarily it uses one physical ``spans`` reference: ClickHouse 25.3 expands
+named CTEs at every use, so repeated references can observe different parts.
+For a Tag leaf, two disjoint hour scans avoid reading historical Tag JSON;
+these can observe separate parts snapshots during concurrent writes. The query
+collapses every physical identity with ``argMax(_version)``,
 applies mutable filters only after that collapse, packs each accepted trace into
 one compact array, and emits node/hierarchy/path events through one final
 ``arrayJoin``.
@@ -163,6 +164,8 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             # every contributing child of each matched trace.
             observe_type="trace",
             annotation_label_ids=self.annotation_label_ids,
+            window_start=self.start_date,
+            window_end=self.end_date,
         )
         self.params.update(plan.params)
 
@@ -243,6 +246,54 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
                 "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
             )
+
+        def physical_versions(projection: str, hour_condition: str) -> str:
+            return f"""
+                SELECT
+                    project_id,
+                    trace_id,
+                    argMax(
+                        tuple(
+{projection}
+                        ),
+                        {self.VERSION_COLUMN}
+                    ) AS graph_latest_row
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}
+                  {hour_condition}
+                GROUP BY
+                    project_id,
+                    observation_type,
+                    service_name,
+                    toStartOfHour(start_time),
+                    trace_id,
+                    id
+            """
+
+        if any(plan.event_window_only):
+            # Physical identities include start hour. Split disjoint hours
+            # before the collapse so remote monetary/attribute witnesses stay
+            # available without reading Tag JSON for their historical versions.
+            hour_window = (
+                "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
+                " AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
+            )
+            remote_predicates = tuple(
+                "0" if window_only else predicate
+                for predicate, window_only in zip(
+                    plan.predicates, plan.event_window_only, strict=True
+                )
+            )
+            remote_projection, _, _ = self._latest_projection(
+                remote_predicates, plan.contribution_predicates
+            )
+            versions_sql = (
+                physical_versions(tuple_sql, f"AND {hour_window}")
+                + "\nUNION ALL\n"
+                + physical_versions(remote_projection, f"AND NOT ({hour_window})")
+            )
+        else:
+            versions_sql = physical_versions(tuple_sql, physical_window)
 
         monetary_rows = graph_monetary_rows_sql(
             source="graph_latest_spans",
@@ -335,25 +386,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 trace_id,
 {projection_sql}
             FROM (
-                SELECT
-                    project_id,
-                    trace_id,
-                    argMax(
-                        tuple(
-{tuple_sql}
-                        ),
-                        {self.VERSION_COLUMN}
-                    ) AS graph_latest_row
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}
-                  {physical_window}
-                GROUP BY
-                    project_id,
-                    observation_type,
-                    service_name,
-                    toStartOfHour(start_time),
-                    trace_id,
-                    id
+{versions_sql}
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ),

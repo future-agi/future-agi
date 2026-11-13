@@ -601,6 +601,72 @@ def test_lifetime_trace_assignments_keep_the_window_scan_count(stores, monkeypat
     assert window_count(stores, monkeypatch, "wanted") == 4
 
 
+@pytest.mark.parametrize("graph", ["agent", "primary", "http"])
+def test_graph_tag_window_excludes_lifetime_matching_assignments(
+    stores, monkeypatch, graph
+):
+    """Only live, in-window assignments may consume the graph bind budget."""
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    seed(
+        stores,
+        "alpha",
+        span="child",
+        parent_span_id="root",
+        total_tokens=_tokens("alpha", "child"),
+    )
+    manual("alpha", ["wanted"])
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="trace",
+                trace_id=f"old-{index:05d}",
+                span_id="",
+                start_hour=TRACE_ASSIGNMENT_HOUR,
+                observation_type="",
+                service_name="",
+                manual_tags=[{"name": "wanted", "color": "#123456"}],
+            )
+            for index in range(LIFETIME_ASSIGNMENTS)
+        ]
+    )
+    item = leaf("tag", "wanted")
+    if graph == "agent":
+        assert agent_graph_traces(stores, item, ("alpha",)) == {"alpha"}
+    elif graph == "primary":
+        assert counted(stores, "trace", item) == {"alpha"}
+    else:
+        assert graph_total(post_graph(stores, monkeypatch, "trace", item)) == 3
+
+
+def test_graph_tag_window_excludes_lifetime_span_assignments(stores):
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    seed(
+        stores,
+        "alpha",
+        span="child",
+        parent_span_id="root",
+        total_tokens=_tokens("alpha", "child"),
+    )
+    manual("alpha", ["wanted"], span="child")
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="span",
+                trace_id="alpha",
+                span_id=f"old-{index:05d}",
+                start_hour=BEGIN - timedelta(hours=3),
+                observation_type="span",
+                service_name="svc",
+                manual_tags=[{"name": "wanted", "color": "#123456"}],
+            )
+            for index in range(LIFETIME_ASSIGNMENTS)
+        ]
+    )
+    assert agent_graph_traces(stores, leaf("tag", "wanted"), ("alpha",)) == {"alpha"}
+
+
 def test_curated_suppressions_page_when_curated_tags_are_everywhere(
     stores, monkeypatch
 ):
@@ -647,26 +713,26 @@ def test_unavailable_curated_read_is_retryable_not_unsuppressed(stores, monkeypa
     assert raised.value.retryable
 
 
+def test_live_matching_assignments_still_fail_closed_over_budget(stores, monkeypatch):
+    tagged_project(stores)
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad"
+
+
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
 @pytest.mark.parametrize("operation", ["is_null", "is_not_null"])
-def test_too_broad_tag_filter_is_a_clear_400_not_a_retry(
+def test_old_assignments_do_not_make_graph_presence_filter_too_broad(
     stores, monkeypatch, observe_type, operation
 ):
-    """What remains capped: more traces and spans tagged in the app with the
-    filtered name (any name for is null / is not null) than one statement can
-    bind. That is a property of the project, so the graph says so (400 with
-    its own code and copy) instead of a 503 that asks the user to retry."""
+    """Lifetime assignments outside the window cannot exhaust graph binds."""
     tagged_project(stores)
     lifetime_assignments(count=3 * 1_100)
     response = post_graph(
         stores, monkeypatch, observe_type, leaf("tag", None, operation)
     )
-    assert response.status_code == 400, response.data
-    assert response.data["code"] == "tag_filter_too_broad"
-    assert response.data["message"] == (
-        "The graph cannot apply this Tag filter: too many traces and spans "
-        "were tagged with it in the app. The list below is still filtered by it."
-    )
+    assert response.status_code == 200, response.data
 
 
 @pytest.mark.parametrize(
@@ -828,6 +894,14 @@ def test_agent_graph_tag_window_leaves_other_leaves_unbounded(stores):
     assert graphed == {"alpha"}
     sql, graphed = agent_graph_query(stores, leaf("tag", "sdk"), traces=traces)
     assert graphed == {"alpha", "beta"}
-    # A Tag leaf keeps the unpruned physical read: out-of-window intermediate
-    # spans still prove monetary ancestry for in-window usage.
-    assert AGENT_GRAPH_HOUR_PRUNE not in sql
+    # Remote hours still provide membership and monetary ancestry, but their
+    # physical projection must not evaluate the Tag JSON predicate.
+    assert sql.count("FROM spans") == 2
+    assert "graph_row_match_0" in sql
+    remote = sql.split("UNION ALL", 1)[1].split("AS graph_physical_versions", 1)[0]
+    assert "JSONExtractRaw(attributes_extra" not in remote
+    _, params = AgentGraphQueryBuilder(
+        project_id=PROJECT, filters=filters(leaf("tag", "sdk"))
+    ).build()
+    explain = stores.execute("EXPLAIN PLAN " + remote.rsplit(")", 1)[0], params)
+    assert "attributes_extra" not in "\n".join(row["explain"] for row in explain)
