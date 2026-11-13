@@ -13,7 +13,7 @@ from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.r3 import native_evidence, native_runs
 from model_hub.services.skills_hub.v11.principals import require_private_principal
 from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, header_uuid
-from model_hub.views.skills_hub import SkillsView
+from model_hub.views.skills_hub import SkillsView, domain_error
 from simulate.authentication import HarnessAttemptAuthentication
 from simulate.models.hosted_harness import HostedHarnessAttempt
 from simulate.services.hosted_harness import HostedHarnessError
@@ -190,15 +190,13 @@ class NativeGuestView(APIView):
     permission_classes = [IsAuthenticated]
 
     def handle_exception(self, exc):
+        # Guest refusals use the common error envelope; the runtime keys on
+        # the status and the envelope's code.
         if isinstance(exc, SkillsHubError):
-            return Response(
-                {"status": False, "error": {"code": exc.code, "message": str(exc)}},
-                status=exc.status,
-            )
+            return domain_error(exc)
         if isinstance(exc, HostedHarnessError):
-            return Response(
-                {"status": False, "error": {"code": exc.code}},
-                status=exc.status_code,
+            return GeneralMethods().custom_error_response(
+                exc.status_code, str(exc), code=exc.code
             )
         return super().handle_exception(exc)
 
@@ -223,10 +221,10 @@ def _guest_refusal(code: str, message: str, status: int):
     """A malformed guest body is refused with the same code the service uses."""
 
     def respond(_errors) -> Response:
-        return Response(
-            {"status": False, "error": {"code": code, "message": message}},
-            status=status,
+        response: Response = GeneralMethods().custom_error_response(
+            status, message, code=code
         )
+        return response
 
     return respond
 

@@ -1,4 +1,6 @@
-"""J2 guest channel: malformed bodies are refused with the service's own codes, before any write."""
+"""J2 guest channel: malformed bodies are refused with the service's own codes, before any write.
+
+Refusals use the common error envelope (status/type/code/detail)."""
 
 from types import SimpleNamespace
 from uuid import uuid4
@@ -68,7 +70,7 @@ def test_malformed_health_is_runtime_incompatible_without_a_write(body, monkeypa
         NativeGuestHealthView, body, monkeypatch, "record_guest_health"
     )
     assert response.status_code == 422
-    assert response.data["error"]["code"] == "runtime_incompatible"
+    assert response.data["code"] == "runtime_incompatible"
     assert calls == []
 
 
@@ -85,7 +87,7 @@ def test_malformed_observation_is_an_invalid_receipt_without_a_write(body, monke
         NativeGuestObservationView, body, monkeypatch, "ingest_observation"
     )
     assert response.status_code == 400
-    assert response.data["error"]["code"] == "invalid_receipt"
+    assert response.data["code"] == "invalid_receipt"
     assert calls == []
 
 
@@ -127,7 +129,8 @@ def test_guest_routes_require_the_fenced_attempt_identity(
     token = SimpleNamespace(pk=uuid4())
     response, calls = post(view, body, monkeypatch, service, token=token)
     assert response.status_code == 401
-    assert response.data["error"]["code"] == "authentication_required"
+    assert response.data["code"] == "authentication_required"
+    assert response.data["status"] is False and response.data["type"]
     assert calls == []
 
 
