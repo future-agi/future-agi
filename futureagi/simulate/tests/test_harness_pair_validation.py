@@ -1123,11 +1123,14 @@ class TestUnfinishedMoves:
             validation, "complete_move", side_effect=RuntimeError("database blip")
         ):
             assert validation.finish_validation(job.id) == "ready"
+        # The user reads the failure at once; the move is still tried again.
+        assert _activations(a2)[str(environment.id)] == "failed"
         assert "validation_move_result" not in _job_metadata(job)
 
         assert validation.finish_validation(job.id) == "ready"
         environment.refresh_from_db()
         assert environment.agent_version_id == a2.id
+        assert _activations(a2)[str(environment.id)] == "activated"
 
         environment2, b1, b2, job2 = self._passed(
             user, workspace, storage, "pv-raise-always"
@@ -1148,6 +1151,41 @@ class TestUnfinishedMoves:
         with patch.object(validation, "complete_move") as moved:
             assert validation.finish_validation(job.id) is None
         moved.assert_not_called()
+
+    def test_a_newer_move_replaces_a_move_still_to_be_tried_again(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2, job = self._passed(user, workspace, storage, "pv-replace")
+        with patch.object(validation, "complete_move", side_effect=RuntimeError):
+            validation.finish_validation(job.id)
+        assert _activations(a2)[str(environment.id)] == "failed"
+
+        # Keeping A1 by hand is the newer choice: the failed move is not tried again.
+        move_agent_default(environment, a1.id, expected_default_id=a1.id, user=user)
+        assert _job_metadata(job)["validation_move_result"] == "replaced"
+        assert _activations(a2)[str(environment.id)] == "superseded"
+        assert validation.finish_validation(job.id) is None
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a1.id
+
+    def test_a_later_try_never_overwrites_what_a_newer_move_recorded(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2, job = self._passed(user, workspace, storage, "pv-late")
+        with patch.object(validation, "complete_move", side_effect=RuntimeError):
+            validation.finish_validation(job.id)
+        # A2 lands by another way meanwhile, which records its own activation.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=a2
+        )
+        from simulate.services.harness_agent_versions import _record_activation
+
+        _record_activation(a2.id, {str(environment.id): "activated"})
+
+        assert validation.finish_validation(job.id) == "ready"
+
+        assert _job_metadata(job)["validation_move_result"] == "already_default"
+        assert _activations(a2)[str(environment.id)] == "activated"
 
     def test_the_nudge_tick_finishes_an_unfinished_move(self, user, workspace, storage):
         environment, a1, a2, job = self._passed(user, workspace, storage, "pv-tick")

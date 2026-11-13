@@ -62,6 +62,11 @@ _SANDBOX_SOURCES = frozenset(
 )
 
 
+# The per-tool and per-action certification an archive holds, and whether it was read.
+CertificationFiles = dict[str, list[Mapping[str, Any]]]
+_Read = tuple[CertificationFiles, bool]
+
+
 @dataclass(frozen=True)
 class Evidence:
     source: EvidenceSource
@@ -130,7 +135,7 @@ def _certification_files(
     return files
 
 
-def _read_once(object_key: str) -> tuple[dict[str, list[Mapping[str, Any]]], bool]:
+def _read_once(object_key: str) -> _Read:
     """The archive's certification files and whether it could be read, by one reader
     per archive: archives are content-addressed, so a key never changes what it holds.
     A request that finds another reading waits for its result, and is told to try again
@@ -140,7 +145,7 @@ def _read_once(object_key: str) -> tuple[dict[str, list[Mapping[str, Any]]], boo
         "harness-readiness-certification:"
         + hashlib.sha256(object_key.encode()).hexdigest()
     )
-    cached = cache.get(cache_key)
+    cached: _Read | None = cache.get(cache_key)
     if cached is not None:
         return cached
     reading = cache_key + ":reading"
@@ -164,9 +169,7 @@ def _read_once(object_key: str) -> tuple[dict[str, list[Mapping[str, Any]]], boo
         cache.delete(reading)
 
 
-def _read_certification_files(
-    object_key: str, cache_key: str
-) -> tuple[dict[str, list[Mapping[str, Any]]], bool]:
+def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
             object_key,
@@ -179,7 +182,7 @@ def _read_certification_files(
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable = ({name: [] for name in _FILES}, False)
+        unreadable: _Read = ({name: [] for name in _FILES}, False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     kept = assembly.certification_files(found, object_key)
@@ -216,7 +219,7 @@ def agent_tools(pairing: Pairing) -> list[Mapping[str, Any]] | None:
 
 def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Evidence:
     """A certified pair bundle, else the environment version's build certificate."""
-    if certified(bundle):
+    if certified(bundle) and bundle is not None and bundle.object_key:
         files = _certification_files(bundle, bundle.object_key)
         checks = (bundle.certificate or {}).get("checks")
         kept = (bundle.certificate or {}).get("tool_routing")
@@ -366,7 +369,7 @@ def _tool_discovery(evidence: Evidence) -> Reading:
             "tool_rejected",
             (
                 "Not discoverable: " + ", ".join(rejected)
-                if rejected
+                if rejected or ratio is None
                 else f"{ratio[0]} of {ratio[1]} tools were discovered"
             ),
             targets("tool", rejected, "rejected"),
@@ -395,7 +398,7 @@ def _tool_routing(evidence: Evidence) -> Reading:
             "action_failed",
             (
                 "Failed its probe: " + ", ".join(failed)
-                if failed
+                if failed or ratio is None
                 else f"{ratio[0]} of {ratio[1]} tool probes passed"
             ),
             targets("action", failed, "failed"),
@@ -568,15 +571,13 @@ def _cancel(pairing: Pairing) -> Reading:
         .order_by("-job__cancel_requested_at")
         .first()
     )
-    if attempt is None:
+    stopped = attempt.job.cancel_requested_at if attempt is not None else None
+    if attempt is None or stopped is None:
         return Reading(
             "not_run", "stop_not_observed", "No run of this agent stopped yet"
         )
     seen: list[EvidenceCheck] = [
-        {
-            "check": "stop_requested",
-            "result": attempt.job.cancel_requested_at.isoformat(),
-        }
+        {"check": "stop_requested", "result": stopped.isoformat()}
     ]
     if attempt.cleanup_verified_at is None:
         return Reading(
@@ -584,7 +585,7 @@ def _cancel(pairing: Pairing) -> Reading:
             "stop_unconfirmed",
             "The last Stop was asked for; our cleanup is not confirmed yet",
             evidence=seen,
-            checked_at=attempt.job.cancel_requested_at.isoformat(),
+            checked_at=stopped.isoformat(),
         )
     seen.append(
         {"check": "sandbox_absent", "result": attempt.cleanup_verified_at.isoformat()}

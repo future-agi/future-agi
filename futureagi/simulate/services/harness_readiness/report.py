@@ -4,7 +4,7 @@ the re-check that validates the pairing again."""
 from __future__ import annotations
 
 import hashlib
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import structlog
 from django.core.cache import cache
@@ -32,6 +32,7 @@ from simulate.services.harness_readiness.catalogue import (
     PairingView,
     RowView,
     Status,
+    VersionRef,
 )
 from simulate.services.harness_readiness.evidence import (
     agent_tools,
@@ -367,9 +368,9 @@ def _computed_report(
         counts[row["status"]] += 1
     return {
         "pairing": {
-            "agent_version": refs["agent"],
-            "environment_version": refs["environment"],
-            "suite_version": refs["suite"],
+            "agent_version": cast("VersionRef | None", refs["agent"]),
+            "environment_version": cast("VersionRef | None", refs["environment"]),
+            "suite_version": cast("VersionRef | None", refs["suite"]),
             "evidence": evidence.source,
             "agent_tools": {"read": tools is not None, "count": len(tools or [])},
             "evidence_unreadable": evidence.unreadable,
