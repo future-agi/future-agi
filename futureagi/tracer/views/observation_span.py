@@ -2774,6 +2774,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "span_id": span_id,
                 **_span_identity_payload(row),
                 **tag_fields(row),
+                # A root span shares its trace's tag assignment; the grid keys
+                # a drawer save to this row by it, as the backend does.
+                "parent_span_id": row["parent_span_id"],
                 "input": bound_observe_list_value(row.get("input", "")),
                 "output": bound_observe_list_value(row.get("output", "")),
                 "trace_id": str(row.get("trace_id", "")),
@@ -3256,6 +3259,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "span_id": span_id,
                 **_span_identity_payload(row),
                 **tag_fields(row),
+                # A root span shares its trace's tag assignment; the grid keys
+                # a drawer save to this row by it, as the backend does.
+                "parent_span_id": row["parent_span_id"],
                 "input": row.get("input", ""),
                 "output": row.get("output", ""),
                 "trace_id": str(row.get("trace_id", "")),

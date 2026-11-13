@@ -2130,6 +2130,9 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
       ...(kind === "span"
         ? {
             span_id: spanId,
+            // As the span list sends it: a root span shares its trace's tag
+            // assignment, and the grid keys a drawer save by it.
+            parent_span_id: "",
             start_time: `2026-08-08T00:00:${String(index).padStart(2, "0")}Z`,
           }
         : {}),
@@ -2197,8 +2200,12 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
       tag_revision: 3,
     };
     act(() =>
+      // The drawer's entity is the trace, or the root span with its parent.
       drawer.onTagsSaved(result, {
-        entity: { tag_target: saved.tag_target },
+        entity:
+          kind === "span"
+            ? { tag_target: saved.tag_target, parent_span_id: "" }
+            : { tag_target: saved.tag_target },
         type: kind,
       }),
     );

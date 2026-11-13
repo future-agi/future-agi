@@ -166,3 +166,82 @@ def test_other_tag_shapes_are_a_request_error_not_a_server_error(
     response = post(stores, monkeypatch, kind, leaf("tag", value, operation))
     assert response.status_code == 400, response.data
     assert "could not be loaded" not in str(response.data)
+
+
+def test_span_list_rows_carry_the_parent_that_keys_their_tag_assignment(
+    stores, monkeypatch
+):
+    """A root span row shares its trace's assignment, a child has its own.
+
+    The grid applies a drawer save to the rows of the saved assignment, keyed
+    the way the backend keys it; without parent_span_id a root row is keyed as
+    a span of its own, misses the save and its next edit is refused as stale.
+    """
+    tagged(stores)
+    response = post(stores, monkeypatch, "span", leaf("tag", ["no-such-tag"], "not_in"))
+    assert response.status_code == 200, response.data
+    parents = {
+        f"{row['trace_id']}/{row['span_id']}": row["parent_span_id"]
+        for row in response.data["result"]["table"]
+    }
+    assert parents == {
+        "alpha/root": "",
+        "alpha/child": "root",
+        "beta/root": "",
+        "gamma/root": "",
+    }
+
+
+def test_prototype_span_list_rows_carry_the_parent_span_id(stores, monkeypatch):
+    """The same contract on the prototype/experiment span list."""
+    seed(stores, "alpha", project_version_id=readback.PV)
+    seed(
+        stores,
+        "alpha",
+        span="child",
+        parent_span_id="root",
+        project_version_id=readback.PV,
+    )
+    view = span_views.ObservationSpanView()
+    version = SimpleNamespace(id=readback.PV, project_id=PROJECT)
+    monkeypatch.setattr(
+        span_views.ProjectVersion,
+        "objects",
+        SimpleNamespace(get=lambda *a, **k: version),
+    )
+    request = Request(
+        APIRequestFactory().post(
+            "/",
+            {
+                "project_version_id": readback.PV,
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [BEGIN.isoformat(), END.isoformat()],
+                        },
+                    }
+                ],
+            },
+            format="json",
+        ),
+        parsers=[JSONParser()],
+    )
+    request.organization = SimpleNamespace(id="org")
+    request.workspace = SimpleNamespace(
+        id="ws", organization_id="org", is_default=False
+    )
+    request._user = SimpleNamespace(
+        is_authenticated=True, organization=request.organization
+    )
+    view.request = request
+    view.format_kwarg = None
+    response = view.list_spans(request)
+    assert response.status_code == 200, response.data
+    parents = {
+        row["span_id"]: row.get("parent_span_id", "<missing>")
+        for row in response.data["result"]["table"]
+    }
+    assert parents == {"root": "", "child": "root"}
