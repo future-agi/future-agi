@@ -643,6 +643,107 @@ def test_graph_tag_window_excludes_lifetime_matching_assignments(
         assert graph_total(post_graph(stores, monkeypatch, "trace", item)) == 3
 
 
+def test_window_graph_with_more_than_eight_pages_of_dead_trace_assignments(stores):
+    """The page count must not mistake dead lifetime keys for live graph binds."""
+    for trace in ("alpha", "beta", "gamma"):
+        seed(stores, trace)
+        manual(trace, ["wanted"])
+    lifetime_assignments(names=("wanted",), count=8_100)
+
+    assert counted(stores, "trace", leaf("tag", "wanted")) == {"alpha", "beta", "gamma"}
+
+
+@pytest.mark.unit
+def test_window_overlay_pages_do_not_budget_dead_lifetime_assignments(monkeypatch):
+    """Nine lifetime pages leave just three live keys in the narrow window."""
+    records = [
+        {
+            "project_id": PROJECT,
+            "entity_kind": "trace",
+            "trace_id": f"old-{index:05d}",
+            "span_id": "",
+            "start_hour": TRACE_ASSIGNMENT_HOUR,
+            "observation_type": "",
+            "service_name": "",
+            "manual_tags": [{"name": "wanted", "color": "#123456"}],
+        }
+        for index in range(8_100)
+    ]
+    records[-3:] = [
+        {**record, "trace_id": trace}
+        for record, trace in zip(records[-3:], ("alpha", "beta", "gamma"), strict=True)
+    ]
+    live_traces = {"alpha", "beta", "gamma"}
+    monkeypatch.setattr(
+        effective_tags, "_query_assignments", lambda *args, **kwargs: []
+    )
+    monkeypatch.setattr(
+        effective_tags,
+        "_assignment_pages",
+        lambda *args, **kwargs: (
+            records[index : index + 1_000] for index in range(0, len(records), 1_000)
+        ),
+    )
+
+    def execute(_sql, params, **_kwargs):
+        return SimpleNamespace(
+            data=[
+                {"project_id": PROJECT, "trace_id": trace, "span_id": ""}
+                for _, trace in params["tag_graph_live_trace_keys"]
+                if trace in live_traces
+            ]
+        )
+
+    overlay = effective_tags.read_tag_overlay(
+        project_ids=(PROJECT,),
+        trace_ids=None,
+        values=("wanted",),
+        deadline=ReadDeadline.start(60_000),
+        window_start=BEGIN,
+        window_end=END,
+        execute=execute,
+    )
+    assert {trace for _, trace in overlay.trace_names} == live_traces
+
+
+@pytest.mark.unit
+def test_large_curated_window_suppression_walk_is_capped(monkeypatch):
+    """A dense curated set cannot trigger an unlimited PG fallback walk."""
+    monkeypatch.setattr(effective_tags, "MAX_WINDOW_OVERLAY_PAGES", 2)
+    monkeypatch.setattr(
+        effective_tags, "_query_assignments", lambda *args, **kwargs: []
+    )
+    rows = [
+        {"legacy_project": PROJECT, "legacy_trace": f"curated-{index}"}
+        for index in range(effective_tags.MAX_TAG_OVERLAY_KEYS + 1)
+    ]
+
+    def execute(_sql, params, **_kwargs):
+        return SimpleNamespace(data=rows if not params["tag_suppress_scoped"] else [])
+
+    def pages(*args, **kwargs):
+        for index in range(3):
+            yield [
+                {
+                    "project_id": PROJECT,
+                    "entity_kind": "trace",
+                    "trace_id": f"unmatched-{index}",
+                    "manual_tags": [{"name": "other"}],
+                }
+            ]
+
+    monkeypatch.setattr(effective_tags, "_assignment_pages", pages)
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.legacy_suppressions(
+            execute,
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=ReadDeadline.start(10_000),
+            window_start=BEGIN,
+            window_end=END,
+        )
+
+
 def test_graph_tag_window_excludes_lifetime_span_assignments(stores):
     seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
     seed(
@@ -1027,22 +1128,21 @@ def test_exact_membership_scopes_tag_assignments_to_snapshot(stores):
     assert builder._filter_fragment()
 
 
-def test_window_overlay_walk_has_a_non_retryable_page_cap(stores, monkeypatch):
-    """Even dead assignments must not consume an unbounded windowed walk."""
+def test_window_overlay_walk_does_not_cap_dead_pages(stores, monkeypatch):
+    """Only the deadline and live bind count bound old assignments."""
     for index in range(3):
         manual(f"old-{index}", ["wanted"])
     monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
-    monkeypatch.setattr(effective_tags, "MAX_WINDOW_OVERLAY_PAGES", 1, raising=False)
-    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
-        effective_tags.read_tag_overlay(
-            project_ids=(PROJECT,),
-            trace_ids=None,
-            values=("wanted",),
-            deadline=ReadDeadline.start(10000),
-            window_start=BEGIN,
-            window_end=END,
-            execute=stores.analytics.execute_ch_query,
-        )
+    monkeypatch.setattr(effective_tags, "MAX_WINDOW_OVERLAY_PAGES", 1)
+    overlay = effective_tags.read_tag_overlay(
+        project_ids=(PROJECT,),
+        trace_ids=None,
+        values=("wanted",),
+        deadline=ReadDeadline.start(10000),
+        window_start=BEGIN,
+        window_end=END,
+        execute=stores.analytics.execute_ch_query,
+    )
+    assert overlay.trace_names == {}
     response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
-    assert response.status_code == 400, response.data
-    assert response.data["code"] == "tag_filter_too_broad"
+    assert response.status_code == 200, response.data

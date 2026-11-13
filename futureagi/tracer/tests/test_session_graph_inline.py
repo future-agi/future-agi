@@ -820,6 +820,25 @@ def test_the_has_annotation_shortcut_agrees_with_the_membership_plan(
 
 
 @pytest.mark.unit
+def test_tag_leaf_is_non_lean_without_compiling_an_unwindowed_overlay(monkeypatch):
+    from tracer.services.clickhouse import exact_graph_reads, session_graph
+
+    calls = []
+
+    def compile_plan(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("tag classification must not read the lifetime overlay")
+
+    monkeypatch.setattr(exact_graph_reads, "_session_membership_plan", compile_plan)
+    tag = _system("tag", "text", "equals", "wanted")
+    with override_settings(SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS=100):
+        assert not session_graph.session_latency_may_inline(
+            analytics=_Analytics(), project_id=PROJECT_ID, filters=[WINDOW, tag]
+        )
+    assert calls == []
+
+
+@pytest.mark.unit
 def test_a_classification_that_cannot_be_built_takes_the_background_path(
     scheduled, monkeypatch
 ):

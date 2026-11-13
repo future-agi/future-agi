@@ -7376,6 +7376,15 @@ def test_annotation_reader_sets_readonly_snapshot_without_statement_timeout(
     clock = iter((0.0, 1.25))
     monkeypatch.setattr(exact_module, "monotonic", lambda: next(clock, 1.25))
 
+    membership_calls = []
+    original_compile = exact_module._compile_membership_filter
+
+    def record_membership(**kwargs):
+        membership_calls.append(kwargs)
+        return original_compile(**kwargs)
+
+    monkeypatch.setattr(exact_module, "_compile_membership_filter", record_membership)
+
     result = read_exact_annotation_graph(
         analytics=_RelationSnapshotAnalytics(),
         project_id="11111111-1111-4111-8111-111111111111",
@@ -7388,6 +7397,11 @@ def test_annotation_reader_sets_readonly_snapshot_without_statement_timeout(
         observe_type="trace",
     )
 
+    assert [call["observe_type"] for call in membership_calls] == ["trace", "span"]
+    assert all(
+        call["window_start"] == start and call["window_end"] == end
+        for call in membership_calls
+    )
     assert [sql for sql, _ in pg.events if sql.startswith("SET TRANSACTION")] == [
         "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
     ] * 2

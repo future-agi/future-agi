@@ -46,7 +46,7 @@ MAX_TAG_CANDIDATE_TRACES = 512
 # those traces have an assignment; above it the assignments are paged instead.
 MAX_CURATED_SUPPRESSION_CANDIDATES = MAX_TAG_OVERLAY_KEYS
 _ASSIGNMENT_PAGE_SIZE = 1000
-# A graph must not walk an entire project's lifetime of dead assignments.
+# Dense curated suppression fallbacks cannot walk unlimited lifetime history.
 MAX_WINDOW_OVERLAY_PAGES = 8
 TAG_OVERLAY_SETTINGS = {
     "max_threads": 2,
@@ -621,11 +621,8 @@ def read_tag_overlay(
         # A graph's trace witness needs a live root in the window. Span
         # assignments additionally need their exact latest physical identity.
         # Page PostgreSQL first; only live keys count against SQL bind limits.
-        for page_number, page in enumerate(
-            _assignment_pages(predicate, deadline=deadline), start=1
-        ):
-            if page_number > MAX_WINDOW_OVERLAY_PAGES:
-                raise TagReadUnavailable("tag_overlay_budget_exceeded")
+        # The deadline, rather than lifetime page count, bounds dead history.
+        for page in _assignment_pages(predicate, deadline=deadline):
             candidates = TagOverlay()
             for record in page:
                 candidates.add(record)
@@ -818,7 +815,11 @@ def legacy_suppressions(
                 raise TagReadUnavailable(over_budget)
             suppressed = {_assignment_key(record) for record in records} & curated
         return suppressed
-    for page in _assignment_pages(unmatched, deadline=deadline):
+    for page_number, page in enumerate(
+        _assignment_pages(unmatched, deadline=deadline), start=1
+    ):
+        if live_roots and page_number > MAX_WINDOW_OVERLAY_PAGES:
+            raise TagReadUnavailable(over_budget)
         keys = {_assignment_key(record) for record in page}
         traces = sorted({trace for _, trace in keys})
         for start in range(0, len(traces), MAX_TAG_CANDIDATE_TRACES):
@@ -1095,10 +1096,10 @@ def _assignment_vocabulary(
                 row_limit=MAX_TAG_OVERLAY_KEYS + 1,
             ):
                 if row["span_id"] == "":
-                    key = (row["project_id"], row["trace_id"])
-                    found.update(trace_names.get(key, ()))
+                    trace_key = (row["project_id"], row["trace_id"])
+                    found.update(trace_names.get(trace_key, ()))
                 else:
-                    key = (
+                    span_key = (
                         row["project_id"],
                         row["trace_id"],
                         row["span_id"],
@@ -1106,7 +1107,7 @@ def _assignment_vocabulary(
                         row["observation_type"],
                         row["service_name"],
                     )
-                    found.update(span_names.get(key, ()))
+                    found.update(span_names.get(span_key, ()))
     return found, assigned
 
 

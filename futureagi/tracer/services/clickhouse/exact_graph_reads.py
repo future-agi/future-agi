@@ -4980,6 +4980,14 @@ def session_graph_reads_lean_roots(
     if _session_filters_need_message_aggregates(filters):
         return False
     span_filters = _session_span_filters(filters)
+    # Tag leaves need a window-scoped assignment overlay; the lean-shape
+    # probe must not compile an unwindowed overlay on the request path.
+    if any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId")) in {"tag", "tags"}
+        for item in span_filters
+    ):
+        return False
     if any(
         not _is_raw_attribute_filter(item)
         and (item.get("column_id") or item.get("columnId")) == "has_annotation"
