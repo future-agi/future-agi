@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import math
 import uuid
@@ -6026,6 +6027,19 @@ def _eval_usage_outside_project_ids(organization, project_ids) -> list[str] | No
     return [p for p in organization_projects if p not in listable]
 
 
+def _eval_usage_source_scope(project_ids, outside_project_ids) -> str | None:
+    """A short fingerprint of the project scope a Usage snapshot listed by."""
+    if project_ids is None:
+        return None
+    scope = json.dumps(
+        [
+            sorted(project_ids),
+            None if outside_project_ids is None else sorted(outside_project_ids),
+        ]
+    )
+    return hashlib.sha256(scope.encode()).hexdigest()[:32]
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -6138,6 +6152,17 @@ class EvalUsageStatsView(APIView):
                 end_date = timezone.now()
                 start_date = end_date - period_delta
 
+            clickhouse_usage_enabled = (
+                settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
+            )
+            source_project_ids = outside_project_ids = None
+            if clickhouse_usage_enabled:
+                source_project_ids = _eval_usage_source_project_ids(
+                    request, workspace, template_id
+                )
+                outside_project_ids = _eval_usage_outside_project_ids(
+                    organization, source_project_ids
+                )
             cache_identity = {
                 "organization_id": str(organization.id),
                 "workspace_id": str(workspace.id) if workspace else None,
@@ -6154,10 +6179,14 @@ class EvalUsageStatsView(APIView):
                 # source (TH-4804) dropped logs whose eval config had moved or
                 # been deleted; a new identity never serves them.
                 "trace_logs_by": EVAL_USAGE_TRACE_LOGS_BY,
+                # Which older logs are listed depends on the organization's
+                # projects (readable, deleted, other workspaces): a snapshot
+                # computed before a project was deleted, added or moved is
+                # never served.
+                "source_scope": _eval_usage_source_scope(
+                    source_project_ids, outside_project_ids
+                ),
             }
-            clickhouse_usage_enabled = (
-                settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
-            )
             if clickhouse_usage_enabled:
                 previous_exact = read_exact_snapshot("eval-usage", cache_identity)
                 if not eval_usage_snapshot_lists_by_source(previous_exact):
@@ -6198,16 +6227,11 @@ class EvalUsageStatsView(APIView):
             read_completeness = EvalUsageReadCompleteness.COMPLETE.value
             unavailable_fields: list[str] = []
             if clickhouse_usage_enabled:
-                project_ids = _eval_usage_source_project_ids(
-                    request, workspace, template_id
-                )
                 usage_read = read_eval_usage(
                     organization_id=str(organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
-                    project_ids=project_ids,
-                    outside_project_ids=_eval_usage_outside_project_ids(
-                        organization, project_ids
-                    ),
+                    project_ids=source_project_ids,
+                    outside_project_ids=outside_project_ids,
                     template_id=str(template_id),
                     start_date=start_date,
                     end_date=end_date,

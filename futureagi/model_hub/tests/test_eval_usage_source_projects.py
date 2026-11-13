@@ -540,6 +540,41 @@ def test_a_snapshot_listed_by_eval_config_is_never_served(
     assert result["stats"]["runs_period"] == 0
 
 
+def _cache_only_usage(auth_client, template, monkeypatch):
+    """GET the Usage page serving the exact-snapshot cache only; return the
+    response payload and the cache identity the view asked for."""
+    asked = []
+    cache_only = exact_aggregation_cache.read_or_schedule_exact_snapshot
+
+    def read(namespace, identity, **kwargs):
+        asked.append(identity)
+        return cache_only(namespace, identity, **{**kwargs, "schedule_on_miss": False})
+
+    monkeypatch.setattr(separate_evals, "read_or_schedule_exact_snapshot", read)
+    monkeypatch.setattr(
+        separate_evals, "eval_usage_snapshot_is_stale", lambda **kwargs: False
+    )
+    response = auth_client.get(
+        f"/model-hub/eval-templates/{template.id}/usage/",
+        {"page": 0, "page_size": 25, "period": "30d"},
+    )
+    assert response.status_code == 200, response.content
+    return response.json()["result"], asked[-1]
+
+
+def _cached_payload(template, stamp=None):
+    payload = {
+        "template_id": str(template.id),
+        "stats": {"runs_period": 7, "success_count": 7, "error_count": 0},
+        "query_complete": True,
+        "query_status": "complete",
+        "query_sampled": False,
+    }
+    if stamp is not None:
+        payload["trace_logs_by"] = stamp
+    return payload
+
+
 @pytest.mark.parametrize(
     "stamp",
     [None, "source_project", separate_evals.EVAL_USAGE_TRACE_LOGS_BY],
@@ -553,57 +588,63 @@ def test_a_snapshot_an_older_worker_cached_under_the_new_identity_is_a_miss(
     before older logs had to be unique in the organization ("source_project",
     which listed a readable replay of an unreadable source). Only a payload
     that names the current listing rule is served."""
-    stamped = stamp == separate_evals.EVAL_USAGE_TRACE_LOGS_BY
 
     settings.EVAL_USAGE_CLICKHOUSE_ENABLED = True
     monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
-    current_identity = {
-        "organization_id": str(organization.id),
-        "workspace_id": str(workspace.id),
-        "template_id": str(template.id),
-        "page": 0,
-        "page_size": 25,
-        "period": "30d",
-        "start_date": None,
-        "end_date": None,
-        "runs": "success",
-        "trace_logs_by": separate_evals.EVAL_USAGE_TRACE_LOGS_BY,
-    }
-    payload = {
-        "template_id": str(template.id),
-        "stats": {"runs_period": 7, "success_count": 7, "error_count": 0},
-        "query_complete": True,
-        "query_status": "complete",
-        "query_sampled": False,
-    }
-    if stamp is not None:
-        payload["trace_logs_by"] = stamp
-    publish_exact_snapshot("eval-usage", current_identity, payload)
-    cache_only = exact_aggregation_cache.read_or_schedule_exact_snapshot
-    monkeypatch.setattr(
-        separate_evals,
-        "read_or_schedule_exact_snapshot",
-        lambda namespace, identity, **kwargs: cache_only(
-            namespace, identity, **{**kwargs, "schedule_on_miss": False}
-        ),
-    )
-    monkeypatch.setattr(
-        separate_evals, "eval_usage_snapshot_is_stale", lambda **kwargs: False
-    )
+    _, identity = _cache_only_usage(auth_client, template, monkeypatch)
+    assert identity["trace_logs_by"] == separate_evals.EVAL_USAGE_TRACE_LOGS_BY
+    publish_exact_snapshot("eval-usage", identity, _cached_payload(template, stamp))
 
-    response = auth_client.get(
-        f"/model-hub/eval-templates/{template.id}/usage/",
-        {"page": 0, "page_size": 25, "period": "30d"},
-    )
-
-    assert response.status_code == 200, response.content
-    result = response.json()["result"]
-    if stamped:
+    result, _ = _cache_only_usage(auth_client, template, monkeypatch)
+    if stamp == separate_evals.EVAL_USAGE_TRACE_LOGS_BY:
         assert result["query_status"] == "complete"
         assert result["stats"]["runs_period"] == 7
     else:
         assert result["query_status"] == "pending"
         assert result["stats"]["runs_period"] == 0
+
+
+@pytest.mark.parametrize("change", ["deleted", "moved", "added"])
+def test_a_snapshot_is_not_served_after_the_organization_projects_change(
+    auth_client, organization, user, workspace, template, settings, monkeypatch, change
+):
+    """Which older logs Usage lists depends on every project of the
+    organization: a copy of a log's trace in a deleted or unreadable project
+    hides it. A snapshot computed before a project was deleted, moved to
+    another workspace or added is a miss, not a stale list."""
+
+    settings.EVAL_USAGE_CLICKHOUSE_ENABLED = True
+    monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
+    source = _project(organization, workspace, "Original source")
+    _, identity = _cache_only_usage(auth_client, template, monkeypatch)
+    publish_exact_snapshot(
+        "eval-usage",
+        identity,
+        _cached_payload(template, separate_evals.EVAL_USAGE_TRACE_LOGS_BY),
+    )
+    served, _ = _cache_only_usage(auth_client, template, monkeypatch)
+    assert served["query_status"] == "complete"
+
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=str(uuid.uuid4()),
+        organization=organization,
+        created_by=user,
+        is_default=False,
+        is_active=True,
+    )
+    if change == "deleted":
+        Project.no_workspace_objects.filter(id=source.id).update(deleted=True)
+    elif change == "moved":
+        Project.no_workspace_objects.filter(id=source.id).update(
+            workspace=other_workspace
+        )
+    else:
+        _project(organization, other_workspace, "Replay target elsewhere")
+
+    result, changed = _cache_only_usage(auth_client, template, monkeypatch)
+    assert result["query_status"] == "pending"
+    assert result["stats"]["runs_period"] == 0
+    assert changed["source_scope"] != identity["source_scope"]
 
 
 def test_every_computed_usage_payload_names_its_listing_rule(
