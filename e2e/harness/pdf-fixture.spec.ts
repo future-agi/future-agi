@@ -14,10 +14,19 @@ for (const unreadable of [false, true]) {
     });
     expect(uploaded).toEqual({ name: `${marker}.pdf`, type: 'application/pdf', bytes: [...bytes] });
     if (!unreadable) {
-      const source = bytes.toString();
+      // latin1 maps each byte to one character, so string offsets are byte offsets.
+      const source = bytes.toString('latin1');
       const xref = Number(source.match(/startxref\n(\d+)/)![1]);
       expect(source.slice(xref, xref + 4)).toBe('xref');
+      const offsets = [...source.slice(xref).matchAll(/^(\d{10}) 00000 n $/gm)].map(match => Number(match[1]));
+      expect(offsets).toHaveLength(8);
+      offsets.forEach((offset, index) => expect(source.slice(offset)).toMatch(new RegExp(`^${index + 1} 0 obj\n`)));
       expect(source.match(/\/Type \/Page /g)).toHaveLength(2);
+      const image = source.match(/\/Filter \/JPXDecode \/Length (\d+) >>\nstream\n/)!;
+      const stream = bytes.subarray(image.index! + image[0].length, image.index! + image[0].length + Number(image[1]));
+      // JP2 signature box, then the end-of-codestream marker.
+      expect(stream.subarray(0, 12).toString('hex')).toBe('0000000c6a5020200d0a870a');
+      expect(stream.subarray(-2).toString('hex')).toBe('ffd9');
     }
   });
 }

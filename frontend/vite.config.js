@@ -1,12 +1,16 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 /* eslint-env node */
 import fs from "fs";
+import { createRequire } from "module";
 import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import checker from "vite-plugin-checker";
 
 // ----------------------------------------------------------------------
+
+const pdfjsVersion = createRequire(import.meta.url)("pdfjs-dist/package.json").version;
+const PDFJS_DECODER_FILES = new Set(["openjpeg.wasm", "openjpeg_nowasm_fallback.js"]);
 
 // Upload source maps to Sentry only when a build explicitly asks for it.
 // Without an auth token the plugin still runs sentry-cli, which falls back to
@@ -53,9 +57,13 @@ export default defineConfig({
         chunkFileNames: 'assets/[name]-[hash].js',
         // Serve the module worker as JavaScript on nginx installations whose
         // mime.types does not include .mjs. The pinned worker bytes stay unchanged.
-        assetFileNames: (asset) => asset.name === 'pdf.worker.min.mjs'
-          ? 'assets/[name]-[hash].js'
-          : 'assets/[name]-[hash].[ext]',
+        assetFileNames: (asset) => {
+          if (asset.name === 'pdf.worker.min.mjs') return 'assets/[name]-[hash].js';
+          // PDF.js loads its JPEG 2000 decoder files by name from one directory,
+          // so they keep their names in a directory versioned like the worker.
+          if (PDFJS_DECODER_FILES.has(asset.name)) return `assets/pdfjs-${pdfjsVersion}/[name].[ext]`;
+          return 'assets/[name]-[hash].[ext]';
+        },
         // Split vendor chunks to reduce memory usage
         manualChunks: {
           vendor: ['react', 'react-dom'],

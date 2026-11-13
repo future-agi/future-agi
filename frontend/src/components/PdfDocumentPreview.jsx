@@ -3,13 +3,21 @@ import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { Document, Page, pdfjs } from "react-pdf";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import openjpegWasmUrl from "pdfjs-dist/wasm/openjpeg.wasm?url";
+// PDF.js imports this by name from the same directory when WebAssembly is
+// unavailable; vite.config.js emits both decoder files there unhashed.
+import "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
 import { safePdfDocumentOptions } from "./pdf-document-options.mjs";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // The worker and renderer must come from the same pinned, patched PDF.js build.
 // Evaluation remains off as defense in depth, not as a dependency exception.
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-const documentOptions = safePdfDocumentOptions({ useSystemFonts: true });
+const documentOptions = safePdfDocumentOptions({
+  useSystemFonts: true,
+  // JPEG 2000 images (common in scanned PDFs) decode only with these files.
+  wasmUrl: new URL(".", new URL(openjpegWasmUrl, window.location.href)).href,
+});
 
 export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
   const container = useRef(null);

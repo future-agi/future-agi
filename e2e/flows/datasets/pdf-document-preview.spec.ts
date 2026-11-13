@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
-import { uploadPdfFixture } from '../../lib/pdf-fixture';
+import { JPX_SWATCH_RGB, uploadPdfFixture } from '../../lib/pdf-fixture';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
@@ -22,11 +22,12 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
       userGoal: `Read a stored PDF from a ${entry} cell without a CDN dependency and recognize an unreadable document`,
       steps: ['create a document dataset and upload a synthetic PDF through the product input',
         `open the ${entry} document preview with external runtime requests denied`,
-        'read both pages, navigate back, close and reopen, then download the PDF',
+        'read both pages and the JPEG 2000 image, navigate back, close and reopen, then download the PDF',
         'upload an unreadable PDF and verify the error state with no rendered page'],
       backendChecks: ['the stored dataset and document cell belong to the actor scope',
         'the storage URL and browser download return exactly the uploaded PDF bytes',
-        'the document cell opens the correct PDF through a same-origin worker without a CDN request'],
+        'the document cell opens the correct PDF through a same-origin worker without a CDN request',
+        'the JPEG 2000 image is decoded with same-origin decoder files and painted on the page'],
     }),
   }, async ({ page, context, actor, probe }, testInfo) => {
     // 2 * (ASYNC_JOB 60s + 8 UI_READY 60s) + 120s setup headroom.
@@ -36,7 +37,9 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
     const workers: string[] = [];
     const errors: string[] = [];
     const dialogs: string[] = [];
+    const warnings: string[] = [];
     page.on('worker', worker => workers.push(worker.url()));
+    page.on('console', message => { if (['warning', 'error'].includes(message.type())) warnings.push(message.text()); });
     page.on('pageerror', error => errors.push(error.message));
     page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
     // Real application and storage responses are never fulfilled or replaced.
@@ -130,6 +133,15 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
             }
             return ink;
           })).toBeGreaterThan(20);
+          // Page 1 paints a 200x100 pt JPEG 2000 swatch; without a working decoder that area stays blank.
+          await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement, [r, g, b]) => {
+            const pixels = element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data;
+            let swatch = 0;
+            for (let i = 0; i < pixels.length; i += 4) {
+              if (Math.abs(pixels[i] - r) <= 8 && Math.abs(pixels[i + 1] - g) <= 8 && Math.abs(pixels[i + 2] - b) <= 8) swatch++;
+            }
+            return swatch;
+          }, JPX_SWATCH_RGB), { timeout: UI_READY }).toBeGreaterThan(5_000);
           expect(workers.length).toBeGreaterThan(0);
           for (const worker of workers) expect(new URL(worker).origin).toBe(new URL(page.url()).origin);
           expect(blocked.filter(url => /pdf\.worker|pdfjs-dist|unpkg\.com/.test(url))).toEqual([]);
@@ -153,7 +165,7 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
       expect(errors.filter(error => /useLocation|Router|staticContext/.test(error))).toEqual([]);
     } finally {
       await testInfo.attach('runtime-network-and-errors', {
-        body: JSON.stringify({ blocked, workers, errors, dialogs }), contentType: 'application/json',
+        body: JSON.stringify({ blocked, workers, errors, dialogs, warnings }), contentType: 'application/json',
       });
     }
   });

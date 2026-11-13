@@ -2,6 +2,8 @@ import React from "react";
 import { act, fireEvent, render, screen } from "src/utils/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import localWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import openjpegWasmUrl from "pdfjs-dist/wasm/openjpeg.wasm?url";
+import openjpegFallbackUrl from "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
 import { safePdfDocumentOptions } from "../pdf-document-options.mjs";
 
 const { viewer, worker, preview, page } = vi.hoisted(() => ({
@@ -75,6 +77,23 @@ describe("PDF preview document boundary", () => {
     expect(viewer.props.file).toBe(preview.url);
     expect(worker.workerSrc).toBe(localWorkerUrl);
     expect(worker.workerSrc).not.toMatch(/^https?:\/\//);
+  });
+
+  it("loads the JPEG 2000 image decoder from the application origin", () => {
+    render(<PdfPreviewDrawer />);
+    const { wasmUrl } = viewer.props.options;
+    expect(wasmUrl).toEqual(expect.any(String));
+    // PDF.js requires a directory URL and loads each decoder file by name from it.
+    expect(wasmUrl).toMatch(/\/$/);
+    expect(new URL(wasmUrl).origin).toBe(window.location.origin);
+    for (const [name, url] of [
+      ["openjpeg.wasm", openjpegWasmUrl],
+      ["openjpeg_nowasm_fallback.js", openjpegFallbackUrl],
+    ]) {
+      expect(new URL(name, wasmUrl).href).toBe(
+        new URL(url, window.location.href).href,
+      );
+    }
   });
 
   it("forces PDF.js evaluation off without discarding normal document options", () => {
