@@ -118,7 +118,23 @@ export default function lazyWithRetry(
   importFn,
   maxRetries = CHUNK_IMPORT_MAX_RETRIES,
 ) {
-  return lazy(() => retryImport(importFn, maxRetries));
+  const Component = lazy(() => retryImport(importFn, maxRetries));
+  // Warm the chunk ahead of render (link hover, see routes/preload.js). The
+  // browser caches the module, so the later lazy() import resolves at once;
+  // a failed preload is ignored and the real import retries as usual. The
+  // counter tells index.html's vite:preloadError handler not to reload the
+  // page for a hover (a network blip or a stale tab would lose form state).
+  Component.preload = () => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    window.__fagiHoverPreloads = (window.__fagiHoverPreloads || 0) + 1;
+    Promise.resolve()
+      .then(importFn)
+      .catch(() => {})
+      .finally(() => {
+        window.__fagiHoverPreloads -= 1;
+      });
+  };
+  return Component;
 }
 
 // Exported for unit testing the post-deploy recovery logic directly.

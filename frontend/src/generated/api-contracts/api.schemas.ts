@@ -16008,12 +16008,15 @@ export interface ConfigureEvaluationsApi {
   config?: ConfigureEvaluationsApiConfig;
 }
 
+/**
+ * Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.
+ */
 export interface SDKConfigureEvaluationsRequestApi {
   eval_config: ConfigureEvaluationsApi;
   /** @minLength 1 */
   platform: string;
   custom_eval_name?: string;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKMessageResultApi {
@@ -16037,11 +16040,14 @@ export interface SDKErrorResponseApi {
 
 export type SDKStandaloneEvalRequestApiConfig = { [key: string]: string };
 
+/**
+ * One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.
+ */
 export interface SDKStandaloneEvalInputApi {
   input?: string;
   /** @minimum 1 */
   max_tokens?: number;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKStandaloneEvalRequestApi {
@@ -27073,6 +27079,7 @@ export type DashboardMetricsCatalogQueryApiCategory =
   (typeof DashboardMetricsCatalogQueryApiCategory)[keyof typeof DashboardMetricsCatalogQueryApiCategory];
 
 export const DashboardMetricsCatalogQueryApiCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -27084,6 +27091,7 @@ export type DashboardMetricsCatalogQueryApiRole =
   (typeof DashboardMetricsCatalogQueryApiRole)[keyof typeof DashboardMetricsCatalogQueryApiRole];
 
 export const DashboardMetricsCatalogQueryApiRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -27092,6 +27100,7 @@ export type DashboardMetricsCatalogQueryApiSource =
   (typeof DashboardMetricsCatalogQueryApiSource)[keyof typeof DashboardMetricsCatalogQueryApiSource];
 
 export const DashboardMetricsCatalogQueryApiSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",
@@ -39630,6 +39639,7 @@ export type SimulateApiRunTestsListSimulationType =
   (typeof SimulateApiRunTestsListSimulationType)[keyof typeof SimulateApiRunTestsListSimulationType];
 
 export const SimulateApiRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39708,6 +39718,7 @@ export type SimulateRunTestsListSimulationType =
   (typeof SimulateRunTestsListSimulationType)[keyof typeof SimulateRunTestsListSimulationType];
 
 export const SimulateRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39860,6 +39871,7 @@ export type SimulateV3TestExecutionCallsGroupBy =
   (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
 
 export const SimulateV3TestExecutionCallsGroupBy = {
+  "": "",
   goal: "goal",
   sub_goal: "sub_goal",
   accent: "accent",
@@ -40070,6 +40082,7 @@ export type TracerDashboardMetricsCategory =
   (typeof TracerDashboardMetricsCategory)[keyof typeof TracerDashboardMetricsCategory];
 
 export const TracerDashboardMetricsCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -40081,6 +40094,7 @@ export type TracerDashboardMetricsRole =
   (typeof TracerDashboardMetricsRole)[keyof typeof TracerDashboardMetricsRole];
 
 export const TracerDashboardMetricsRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -40089,6 +40103,7 @@ export type TracerDashboardMetricsSource =
   (typeof TracerDashboardMetricsSource)[keyof typeof TracerDashboardMetricsSource];
 
 export const TracerDashboardMetricsSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",

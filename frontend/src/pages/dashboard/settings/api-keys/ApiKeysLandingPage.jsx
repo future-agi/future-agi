@@ -2,6 +2,7 @@ import { Box, Button, Typography } from "@mui/material";
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef, useState } from "react";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { ShowComponent } from "src/components/show";

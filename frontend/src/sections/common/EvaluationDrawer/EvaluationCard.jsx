@@ -257,7 +257,7 @@ const EvaluationCard = ({
           <Typography
             sx={{
               fontWeight: 400,
-              fontSize: "13px",
+              fontSize: "12px",
               lineHeight: "22px",
               color: "text.primary",
             }}
@@ -411,7 +411,7 @@ const EvaluationCard = ({
                           handlePopperTagClick(tag);
                         }}
                         sx={{
-                          fontSize: "13px",
+                          fontSize: "12px",
                           fontWeight: 400,
                           color: "text.primary",
                           whiteSpace: "nowrap",

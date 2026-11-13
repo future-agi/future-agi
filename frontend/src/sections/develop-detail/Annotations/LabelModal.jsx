@@ -654,7 +654,7 @@ const LabelModal = ({
                                   sx={{
                                     fontWeight:
                                       theme.typography.fontWeightMedium,
-                                    fontSize: "13px",
+                                    fontSize: "12px",
                                   }}
                                 >
                                   Input*
@@ -689,7 +689,7 @@ const LabelModal = ({
                                     justifyContent={"space-between"}
                                   >
                                     <Typography
-                                      fontSize={13}
+                                      fontSize={12}
                                       color="text.primary"
                                     >
                                       Variable_{idx + 1}
@@ -783,7 +783,7 @@ const LabelModal = ({
                             color="text.primary"
                             sx={{
                               fontWeight: theme.typography.fontWeightMedium,
-                              fontSize: "13px",
+                              fontSize: "12px",
                             }}
                           >
                             Choices*
@@ -857,7 +857,7 @@ const LabelModal = ({
                                     fontWeight:
                                       theme.typography.fontWeightRegular,
                                   }}
-                                  fontSize={13}
+                                  fontSize={12}
                                 >
                                   {field?.label}
                                 </Typography>
@@ -917,7 +917,7 @@ const LabelModal = ({
                               helperText={""}
                               label={
                                 <Typography
-                                  fontSize={13}
+                                  fontSize={12}
                                   sx={{
                                     fontWeight:
                                       theme.typography.fontWeightMedium,
@@ -1002,7 +1002,7 @@ const LabelModal = ({
                   <Typography
                     color="text.primary"
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                       fontWeight: theme.typography.fontWeightBold,
                     }}
                   >
@@ -1026,7 +1026,7 @@ const LabelModal = ({
                         <Typography
                           color="text.primary"
                           sx={{
-                            fontSize: "13px",
+                            fontSize: "12px",
                             fontWeight: theme.typography.fontWeightRegular,
                           }}
                         >
@@ -1047,7 +1047,7 @@ const LabelModal = ({
                           <Typography
                             color="text.primary"
                             sx={{
-                              fontSize: "13px",
+                              fontSize: "12px",
                               fontWeight: theme.typography.fontWeightRegular,
                             }}
                           >
@@ -1105,7 +1105,7 @@ const LabelModal = ({
                                       sx={{
                                         px: "16px",
                                         py: "6px",
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                       }}
                                       fontWeight={400}
                                     >

@@ -4,7 +4,9 @@ import pytest
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.models.choices import DataTypeChoices, SourceChoices
+from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion, RunPrompter
 
 
 def _assert_field_error(response, field_name):
@@ -54,6 +56,53 @@ def _create_prompt_template(organization, workspace, user, name):
 
 @pytest.mark.django_db
 class TestDerivedVariableContracts:
+    @pytest.mark.parametrize("is_json", [True, False], ids=["json", "plain-text"])
+    def test_dataset_derived_variables_for_run_prompt_column(
+        self, auth_client, organization, workspace, is_json
+    ):
+        dataset = Dataset.no_workspace_objects.create(
+            name="Derived variables dataset",
+            organization=organization,
+            workspace=workspace,
+        )
+        expected_variables = {
+            "paths": ["customer.name"],
+            "full_variables": ["answer.customer.name"],
+            "schema": {"customer.name": {"type": "string", "sample": "Ada"}},
+        }
+        run_prompter = RunPrompter.no_workspace_objects.create(
+            dataset=dataset,
+            name="Derived variables run prompt",
+            model="test-model",
+            organization=organization,
+            workspace=workspace,
+            run_prompt_config={
+                "derived_variables": {**expected_variables, "is_json": is_json}
+            },
+        )
+        column = Column.no_workspace_objects.create(
+            dataset=dataset,
+            name="answer",
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.RUN_PROMPT.value,
+            source_id=run_prompter.id,
+        )
+        column.refresh_from_db()
+        run_prompter.refresh_from_db()
+        # Match the types read by the service's real ORM queries, not mocks.
+        assert isinstance(column.source_id, str)
+        assert isinstance(run_prompter.id, uuid.UUID)
+        assert column.source_id == str(run_prompter.id)
+
+        response = auth_client.get(
+            f"/model-hub/datasets/{dataset.id}/derived-variables/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == {
+            "derived_variables": {"answer": expected_variables} if is_json else {}
+        }
+
     def test_preview_extracts_nested_json_without_saving(self, auth_client):
         response = auth_client.post(
             "/model-hub/prompt-templates/derived-variables/preview/",

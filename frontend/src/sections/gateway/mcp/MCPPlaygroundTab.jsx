@@ -189,7 +189,7 @@ const MCPPlaygroundTab = ({ mcpTools, gatewayId }) => {
                 error={Boolean(jsonError)}
                 helperText={jsonError}
                 InputProps={{
-                  sx: { fontFamily: "monospace", fontSize: 13 },
+                  sx: { fontFamily: "monospace", fontSize: 12 },
                 }}
               />
               <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
