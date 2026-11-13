@@ -169,15 +169,25 @@ func (p *RealtimePolicy) Blocking(stage Stage) bool {
 // Check inspects a complete text unit before the original frames can be forwarded.
 // Rewriting a copy cannot redact the wire payload: a blocking rewrite is refused too.
 func (p *RealtimePolicy) Check(ctx context.Context, stage Stage, text string) error {
+	return p.CheckModel(ctx, stage, "", text)
+}
+
+// CheckModel is Check for a unit whose own request names its model, as Cartesia
+// synthesis does in each message after the session was bound. An empty model
+// means the session's model.
+func (p *RealtimePolicy) CheckModel(ctx context.Context, stage Stage, model, text string) error {
 	if p == nil {
 		return nil
 	}
+	if model == "" {
+		model = p.model
+	}
 	for _, rule := range p.rules[stage] {
 		content, _ := json.Marshal(text)
-		request := &models.ChatCompletionRequest{Model: p.model, Messages: []models.Message{{Role: "user", Content: content}}}
+		request := &models.ChatCompletionRequest{Model: model, Messages: []models.Message{{Role: "user", Content: content}}}
 		input := &CheckInput{Request: request, Metadata: maps.Clone(p.metadata)}
 		if stage == StagePost {
-			input.Response = &models.ChatCompletionResponse{Model: p.model, Choices: []models.Choice{{Message: models.Message{Role: "assistant", Content: content}}}}
+			input.Response = &models.ChatCompletionResponse{Model: model, Choices: []models.Choice{{Message: models.Message{Role: "assistant", Content: content}}}}
 		}
 		result, err := runRealtimeCheck(ctx, rule, input)
 		if err != nil || shouldTrigger(result, rule.threshold) {

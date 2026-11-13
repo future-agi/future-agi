@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -24,17 +25,22 @@ const (
 // Unknown protected event shapes fail closed rather than being forwarded blindly.
 // Each direction is used by just one relay reader.
 type SpeechGuardrails struct {
-	ctx     context.Context
-	policy  *guardrails.RealtimePolicy
-	vendor  string
+	ctx    context.Context
+	policy *guardrails.RealtimePolicy
+	vendor string
+	// model is the model last named on a Cartesia synthesis connection, which a
+	// request that names none inherits.
+	model   string
 	pending map[string]*speechText
 	bytes   int
 	frames  int
 }
 
 type speechText struct {
-	frames       []Frame
-	text         string
+	frames []Frame
+	text   string
+	// models are the distinct models the unit's requests name; "" is the session's.
+	models       []string
 	alternatives []string
 	utterances   []string
 	segments     []string
@@ -81,9 +87,15 @@ func (g *SpeechGuardrails) release(id string, stage guardrails.Stage) ([]Frame, 
 	if unit.alternatives == nil {
 		texts = []string{unit.text}
 	}
+	models := unit.models
+	if len(models) == 0 {
+		models = []string{""}
+	}
 	for _, text := range texts {
-		if err := g.policy.Check(g.ctx, stage, text); err != nil {
-			return nil, err
+		for _, model := range models {
+			if err := g.policy.CheckModel(g.ctx, stage, model, text); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return unit.frames, nil
@@ -99,6 +111,7 @@ func (g *SpeechGuardrails) Client(kind int, data []byte) ([]Frame, error) {
 		Type       string  `json:"type"`
 		Text       string  `json:"text"`
 		Transcript *string `json:"transcript"`
+		ModelID    string  `json:"model_id"`
 		ContextID  string  `json:"context_id"`
 		Continue   bool    `json:"continue"`
 		Cancel     bool    `json:"cancel"`
@@ -123,11 +136,19 @@ func (g *SpeechGuardrails) Client(kind int, data []byte) ([]Frame, error) {
 			return nil, speechRefused()
 		}
 	}
+	// Cartesia names the model in each request rather than the URL; check the unit
+	// against every model its requests name.
+	if event.ModelID != "" {
+		g.model = g.vendor + "/" + event.ModelID
+	}
 	if event.Transcript == nil || event.Cancel {
 		return nil, speechRefused()
 	}
 	if err := g.hold(event.ContextID, *event.Transcript, frame); err != nil {
 		return nil, err
+	}
+	if unit := g.pending[event.ContextID]; !slices.Contains(unit.models, g.model) {
+		unit.models = append(unit.models, g.model)
 	}
 	if event.Continue {
 		return nil, nil

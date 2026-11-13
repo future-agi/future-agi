@@ -50,7 +50,7 @@ func speechJSONValue(decoder *json.Decoder, depth int) error {
 				return speechRefused()
 			}
 			seen[key] = true
-			for _, canonical := range []string{"type", "text", "transcript", "context_id", "continue", "cancel", "is_final", "speech_final", "channel", "channel_index", "alternatives"} {
+			for _, canonical := range []string{"type", "text", "transcript", "model_id", "context_id", "continue", "cancel", "is_final", "speech_final", "channel", "channel_index", "alternatives"} {
 				if key != canonical && strings.EqualFold(key, canonical) {
 					return speechRefused()
 				}
