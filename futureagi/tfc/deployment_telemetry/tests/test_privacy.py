@@ -75,9 +75,17 @@ def test_staged_credential_files_are_treated_as_sensitive_bodies():
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
 
 
-@pytest.mark.parametrize("action", ["events", "session-store/append"])
-def test_builder_chat_guest_bodies_stay_off_spans_and_sentry(action):
-    path = f"/simulate/api/harness/conversations/{uuid4()}/{action}/"
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "harness/conversations/{id}/events/",
+        "harness/conversations/{id}/session-store/append/",
+        "agent-fix-engine/{id}/v1/chat/completions",
+        "agent-fix-engine/{id}/check-runs/",
+    ],
+)
+def test_guest_and_fix_engine_bodies_stay_off_spans_and_sentry(suffix):
+    path = "/simulate/api/" + suffix.format(id=uuid4())
     request = RequestFactory().post(
         path,
         data='{"events":[{"type":"tool_result","text":"the customer said"}]}',
