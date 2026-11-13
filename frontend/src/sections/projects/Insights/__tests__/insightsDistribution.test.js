@@ -64,15 +64,21 @@ describe("buildColorOrder", () => {
     expect(colorFor("x", order, "dark")).toBe(CATEGORY_PALETTE.dark[0]);
   });
 
-  it("uses each mode's own data steps for the same slots", () => {
-    const light = dsPalette("light").data;
-    const dark = dsPalette("dark").data;
-    expect(CATEGORY_PALETTE.light).toEqual([light[1], light[4], light[6]]);
-    expect(CATEGORY_PALETTE.dark).toEqual([dark[1], dark[4], dark[6]]);
-    const order = ["a", "b", "c"];
+  it("uses the brand set, each mode's own step, in slot order", () => {
+    const light = dsPalette("light").dataBrand;
+    const dark = dsPalette("dark").dataBrand;
+    // The org design guide's purple, green, red and amber.
+    expect(CATEGORY_PALETTE.light).toEqual([
+      "#7857FC",
+      "#22C55E",
+      "#EF4444",
+      "#F59E0B",
+    ]);
+    expect(CATEGORY_PALETTE.dark).toEqual(dark);
+    const order = ["a", "b", "c", "d"];
     order.forEach((id, slot) => {
-      expect(colorFor(id, order, "light")).toBe(light[[1, 4, 6][slot]]);
-      expect(colorFor(id, order, "dark")).toBe(dark[[1, 4, 6][slot]]);
+      expect(colorFor(id, order, "light")).toBe(light[slot]);
+      expect(colorFor(id, order, "dark")).toBe(dark[slot]);
     });
     expect(colorFor("a", order, "dark")).not.toBe(
       colorFor("a", order, "light"),
@@ -81,15 +87,15 @@ describe("buildColorOrder", () => {
       order,
       mode: "dark",
     });
-    expect(segment.color).toBe(dark[1]);
+    expect(segment.color).toBe(dark[0]);
   });
 
-  it("does not cycle hues beyond the three all-pairs-distinct system slots", () => {
+  it("does not cycle hues beyond the four brand slots", () => {
     const order = Array.from({ length: 9 }, (_, i) => `c${i}`);
-    expect(CATEGORY_PALETTE.light).toHaveLength(3);
-    expect(CATEGORY_PALETTE.dark).toHaveLength(3);
-    expect(colorFor("c2", order)).toBe(CATEGORY_PALETTE.light[2]);
-    expect(colorFor("c3", order)).toBeNull();
+    expect(CATEGORY_PALETTE.light).toHaveLength(4);
+    expect(CATEGORY_PALETTE.dark).toHaveLength(4);
+    expect(colorFor("c3", order)).toBe(CATEGORY_PALETTE.light[3]);
+    expect(colorFor("c4", order)).toBeNull();
     expect(colorFor("c8", order)).toBeNull();
   });
 });
@@ -107,10 +113,11 @@ describe("buildSegments", () => {
   it("orders by size, greys the unmatched bucket and sums to one", () => {
     const segments = buildSegments(items, { order });
     expect(segments.map((s) => s.id)).toEqual(["a", "b", "c", "d", "u"]);
+    // The fourth category takes the last brand slot (amber).
     expect(segments[3]).toMatchObject({
       id: "d",
       name: "D",
-      color: OTHER_COLOR.light,
+      color: CATEGORY_PALETTE.light[3],
       count: 5,
     });
     expect(segments.at(-1)).toMatchObject({
