@@ -41,6 +41,33 @@ type webhookResponse struct {
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
+// UnmarshalJSON requires a real verdict while retaining the optional legacy score.
+func (wr *webhookResponse) UnmarshalJSON(data []byte) error {
+	type fields webhookResponse
+	var value fields
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	var verdict struct {
+		Pass  *bool           `json:"pass"`
+		Score json.RawMessage `json:"score"`
+	}
+	if err := json.Unmarshal(data, &verdict); err != nil {
+		return err
+	}
+	if verdict.Pass == nil {
+		return fmt.Errorf("webhook requires a boolean pass")
+	}
+	if len(verdict.Score) > 0 && string(verdict.Score) == "null" {
+		return fmt.Errorf("webhook score must be numeric")
+	}
+	if math.IsNaN(value.Score) || math.IsInf(value.Score, 0) || value.Score < 0 || value.Score > 1 {
+		return fmt.Errorf("webhook score must be finite and in [0,1]")
+	}
+	*wr = webhookResponse(value)
+	return nil
+}
+
 // New creates a WebhookGuardrail from rule config.
 func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	g := &WebhookGuardrail{
@@ -94,8 +121,8 @@ func (g *WebhookGuardrail) RealtimeReady() error {
 
 // Check calls the webhook endpoint.
 func (g *WebhookGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
-	if g.url == "" {
-		return &guardrails.CheckResult{Pass: true, Err: errors.New("webhook URL is missing")}
+	if input == nil || g.url == "" {
+		return errorResult("webhook requires input and URL")
 	}
 
 	payload := webhookRequest{
@@ -154,13 +181,9 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 		return nil, fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 
-	const maxResponseBytes = 1 << 20
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	respBody, err := guardrails.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read webhook response: %v", err)
-	}
-	if len(respBody) > maxResponseBytes {
-		return nil, errors.New("webhook response exceeds size limit")
 	}
 
 	var wr webhookResponse
@@ -176,11 +199,11 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 		wr.Pass, wr.Score = pass, score
 	}
 	return &guardrails.CheckResult{
-		Err:     unavailable,
-		Pass:    wr.Pass,
-		Score:   wr.Score,
-		Message: wr.Message,
-		Details: wr.Details,
+		RealtimeErr: unavailable,
+		Pass:        wr.Pass,
+		Score:       wr.Score,
+		Message:     wr.Message,
+		Details:     wr.Details,
 	}, nil
 }
 
@@ -239,8 +262,8 @@ func exactVerdict(body []byte) (bool, float64, error) {
 
 func errorResult(msg string) *guardrails.CheckResult {
 	return &guardrails.CheckResult{
+		Err:     fmt.Errorf("%s", msg),
 		Pass:    false,
-		Err:     errors.New(msg),
 		Score:   1.0,
 		Message: msg,
 	}
