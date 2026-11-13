@@ -31,9 +31,24 @@ const AddTagsPopover = ({
   );
   const isBulk = items.length > 1;
   const selectedEntity = items.length === 1 ? items[0].entity : entity;
-  const selectedTags =
-    items.length === 1 ? items[0].currentTags || EMPTY_TAGS : currentTags;
+  const selectedType = items[0]?.type || (spanId ? "span" : "trace");
   const saveEntityTags = useSaveEntityTags();
+  // Keep the visible count, but write each shared assignment only once.
+  const uniqueItems = React.useMemo(() => {
+    const seen = new Set();
+    return items.filter((item) => {
+      const key = tagTargetKey(item.entity, item.type);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [items]);
+  // Mutations finish after a popover closes or changes selection. The session
+  // belongs to the request, never to the latest render's selection.
+  const session = React.useRef({ open, items, id: 0 });
+  if (session.current.open !== open || session.current.items !== items) {
+    session.current = { open, items, id: session.current.id + 1 };
+  }
 
   // The last acknowledged save of each entity (tagTargetKey -> result).
   // The owner's entity and tags can be older than it (a drawer
@@ -49,15 +64,19 @@ const AddTagsPopover = ({
   const seed = () => {
     if (isBulk) return [];
     const current = selectedEntityRef.current;
-    const state = latestTagState(current, acknowledged.current);
-    baseState.current = { key: tagTargetKey(current), state };
-    return normalizeTags(state === current ? selectedTags : state.tags);
+    const state = latestTagState(current, acknowledged.current, selectedType);
+    const visible = normalizeTags(state?.tags || currentTags);
+    baseState.current = {
+      key: tagTargetKey(current, selectedType),
+      state: state && { ...state, tags: visible },
+    };
+    return visible;
   };
   const [tags, setTags] = useState(seed);
   const confirmedTags = React.useRef(tags);
   const queryClient = useQueryClient();
 
-  const selectedKey = tagTargetKey(selectedEntity);
+  const selectedKey = tagTargetKey(selectedEntity, selectedType);
   React.useEffect(() => {
     if (open) {
       confirmedTags.current = seed();
@@ -67,21 +86,30 @@ const AddTagsPopover = ({
     // another entity; the entity is read through a ref so a new object for
     // the same entity does not reseed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedTags, selectedKey, selectedEntity?.tag_revision, isBulk]);
+  }, [open, currentTags, selectedKey, selectedEntity?.tag_revision, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
     // The saved entity travels with the request: the owner can select another
     // entity before the save is acknowledged.
-    mutationFn: ({ tags: newTags, entity: savedEntity, type, base }) => {
-      if (isBulk) {
-        // Merge with each item's existing tags to avoid overwriting.
-        // Backend PATCH replaces tags[], so we compute the full set here.
+    mutationFn: ({
+      tags: newTags,
+      entity: savedEntity,
+      type,
+      base,
+      bulk,
+      savedItems,
+    }) => {
+      if (bulk) {
+        // The backend replaces tags[]. Read both the list and revision from
+        // the same state, even if the selected grid row changed in place.
         return Promise.allSettled(
-          items.map((item) => {
-            const base = latestTagState(item.entity, acknowledged.current);
-            const merged = normalizeTags(
-              base === item.entity ? item.currentTags || [] : base.tags || [],
+          savedItems.map((item) => {
+            const state = latestTagState(
+              item.entity,
+              acknowledged.current,
+              item.type,
             );
+            const merged = normalizeTags(state?.tags || []);
             newTags.forEach((t) => {
               if (!merged.some((e) => e.name === t.name)) merged.push(t);
             });
@@ -89,16 +117,23 @@ const AddTagsPopover = ({
               entity: item.entity,
               type: item.type,
               tags: merged,
-              base,
+              base: state,
             });
           }),
         ).then((results) => {
           results.forEach((result, index) => {
             if (result.status === "fulfilled") {
-              acknowledged.current.set(
-                tagTargetKey(items[index].entity),
-                result.value,
+              const key = tagTargetKey(
+                savedItems[index].entity,
+                savedItems[index].type,
               );
+              const previous = acknowledged.current.get(key);
+              if (
+                !previous ||
+                result.value.tag_revision >= previous.tag_revision
+              ) {
+                acknowledged.current.set(key, result.value);
+              }
             }
           });
           const failed = results.find((result) => result.status === "rejected");
@@ -113,21 +148,31 @@ const AddTagsPopover = ({
         base,
       });
     },
-    onSuccess: (result, { entity: savedEntity, type, tags: savedTags }) => {
-      if (isBulk) confirmedTags.current = savedTags;
+    onSuccess: (
+      result,
+      {
+        entity: savedEntity,
+        type,
+        tags: savedTags,
+        bulk,
+        sessionId,
+        itemCount,
+      },
+    ) => {
+      if (bulk && sessionId !== session.current.id) return;
+      if (bulk) confirmedTags.current = savedTags;
       else {
-        acknowledged.current.set(tagTargetKey(savedEntity), result);
+        const key = tagTargetKey(savedEntity, type);
+        acknowledged.current.set(key, result);
         // Show it only if the popover still edits the entity it was saved for.
-        if (
-          tagTargetKey(savedEntity) === tagTargetKey(selectedEntityRef.current)
-        ) {
-          baseState.current = { key: tagTargetKey(savedEntity), state: result };
+        if (key === tagTargetKey(selectedEntityRef.current, selectedType)) {
+          baseState.current = { key, state: result };
           confirmedTags.current = normalizeTags(result.tags);
           setTags(confirmedTags.current);
         }
       }
       enqueueSnackbar(
-        isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
+        bulk ? `Tags applied to ${itemCount} items` : "Tags updated",
         { variant: "success" },
       );
       // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
@@ -135,13 +180,14 @@ const AddTagsPopover = ({
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       // A single save also hands back the acknowledged result and the saved
       // entity, so a grid can update that row without reloading the list.
-      onSuccess?.(result, isBulk ? undefined : { entity: savedEntity, type });
+      onSuccess?.(result, bulk ? undefined : { entity: savedEntity, type });
     },
-    onError: (error) => {
+    onError: (error, { bulk, sessionId }) => {
+      if (bulk && sessionId !== session.current.id) return;
       setTags(confirmedTags.current);
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(
-        `${isBulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
+        `${bulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
         { variant: "error" },
       );
     },
@@ -156,13 +202,17 @@ const AddTagsPopover = ({
         entity: selectedEntity,
         // Never another entity's state: then the entity's own revision.
         base:
-          baseState.current.key === tagTargetKey(selectedEntity)
+          baseState.current.key === tagTargetKey(selectedEntity, selectedType)
             ? baseState.current.state
             : selectedEntity,
-        type: items[0]?.type || (spanId ? "span" : "trace"),
+        type: selectedType,
+        bulk: isBulk,
+        savedItems: uniqueItems,
+        itemCount: items.length,
+        sessionId: session.current.id,
       });
     },
-    [saveTags, selectedEntity, items, spanId],
+    [saveTags, selectedEntity, selectedType, items, isBulk, uniqueItems],
   );
 
   const handleAdd = useCallback(

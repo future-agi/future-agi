@@ -379,6 +379,279 @@ describe("scoped entity tag writes", () => {
     });
   });
 
+  it("does not pair a stale bulk tag list with a row mutated by an inline acknowledgement", async () => {
+    const liveRow = { ...entity, tags: [...entity.tags] };
+    const staleTags = liveRow.tags;
+    const child = {
+      ...entity,
+      tag_target: { ...target, span_id: "child" },
+    };
+    renderEditor({
+      bulkItems: [
+        {
+          id: "root-1",
+          type: "trace",
+          entity: liveRow,
+          currentTags: staleTags,
+        },
+        { id: "child", type: "span", entity: child, currentTags: child.tags },
+      ],
+    });
+    // An inline popover closed before its response; applySavedEntityTags later
+    // mutates the selected grid row without replacing the bulk snapshot.
+    liveRow.tags = [{ name: "sdk" }, { name: "c" }];
+    liveRow.manual_tags = [{ name: "c" }];
+    liveRow.tag_revision = 1;
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    const body = axios.patch.mock.calls[0][1];
+    expect(
+      body.expected_tag_revision === 0 || body.tags.some((t) => t.name === "c"),
+    ).toBe(true);
+  });
+
+  it("does not pair a stale single-item seed with a mutated row revision", async () => {
+    const liveRow = { ...entity, tags: [...entity.tags] };
+    renderEditor({
+      entity: undefined,
+      bulkItems: [
+        {
+          id: "root-1",
+          type: "trace",
+          entity: liveRow,
+          currentTags: liveRow.tags,
+        },
+      ],
+    });
+    liveRow.tags = [{ name: "sdk" }, { name: "c" }];
+    liveRow.manual_tags = [{ name: "c" }];
+    liveRow.tag_revision = 1;
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    const body = axios.patch.mock.calls[0][1];
+    expect(
+      body.expected_tag_revision === 0 || body.tags.some((t) => t.name === "c"),
+    ).toBe(true);
+  });
+
+  it("bases a new bulk tag on each item's own result after a partial failure", async () => {
+    const child = { ...entity, tag_target: { ...target, span_id: "child" } };
+    axios.patch.mockResolvedValueOnce({
+      data: {
+        result: {
+          tags: [{ name: "sdk" }, { name: "a", color: "#123456" }],
+          manual_tags: [{ name: "a", color: "#123456" }],
+          source_tag_names: ["sdk"],
+          tag_revision: 1,
+        },
+      },
+    });
+    axios.post.mockRejectedValueOnce({ statusCode: 503 });
+    renderEditor({
+      bulkItems: [
+        { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+        { id: "child", type: "span", entity: child, currentTags: child.tags },
+      ],
+    });
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+    );
+    nextTag.name = "b";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.patch.mock.calls[1][1]).toMatchObject({
+      expected_tag_revision: 1,
+      tags: [
+        { name: "a", color: "#123456" },
+        { name: "b", color: "#123456" },
+      ],
+    });
+    expect(axios.post.mock.calls[1][1]).toMatchObject({
+      expected_tag_revision: 0,
+      tags: [{ name: "b", color: "#123456" }],
+    });
+  });
+
+  it("reuses acknowledged per-item revisions when bulk tags close and reopen", async () => {
+    const child = { ...entity, tag_target: { ...target, span_id: "child" } };
+    const items = [
+      { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+      { id: "child", type: "span", entity: child, currentTags: child.tags },
+    ];
+    const client = new QueryClient();
+    const popover = (open) => (
+      <QueryClientProvider client={client}>
+        <AddTagsPopover
+          open={open}
+          anchorEl={document.body}
+          onClose={vi.fn()}
+          bulkItems={items}
+        />
+      </QueryClientProvider>
+    );
+    const response = {
+      data: {
+        result: {
+          tags: [{ name: "sdk" }, { name: "a", color: "#123456" }],
+          manual_tags: [{ name: "a", color: "#123456" }],
+          source_tag_names: ["sdk"],
+          tag_revision: 1,
+        },
+      },
+    };
+    axios.patch.mockResolvedValueOnce(response);
+    axios.post.mockResolvedValueOnce(response);
+    const { rerender } = render(popover(true));
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+    );
+    rerender(popover(false));
+    rerender(popover(true));
+    nextTag.name = "b";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    for (const method of [axios.patch, axios.post]) {
+      expect(method.mock.calls[1][1]).toMatchObject({
+        expected_tag_revision: 1,
+        tags: [
+          { name: "a", color: "#123456" },
+          { name: "b", color: "#123456" },
+        ],
+      });
+    }
+  });
+
+  it("keeps an earlier bulk session's late success out of the reopened selection", async () => {
+    let resolveOld;
+    axios.patch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+    );
+    const child = { ...entity, tag_target: { ...target, span_id: "child" } };
+    const other = { ...entity, tag_target: { ...target, span_id: "other" } };
+    const first = [
+      { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+      { id: "child", type: "span", entity: child, currentTags: child.tags },
+    ];
+    const second = [
+      { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+      { id: "other", type: "span", entity: other, currentTags: other.tags },
+    ];
+    const onSuccess = vi.fn();
+    const client = new QueryClient();
+    const popover = (open, bulkItems) => (
+      <QueryClientProvider client={client}>
+        <AddTagsPopover
+          open={open}
+          anchorEl={document.body}
+          onClose={vi.fn()}
+          bulkItems={bulkItems}
+          onSuccess={onSuccess}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(popover(true, first));
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    rerender(popover(false, first));
+    rerender(popover(true, second));
+    await act(async () => resolveOld(success()));
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+    );
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
+      "Tags applied to 2 items",
+      { variant: "success" },
+    );
+  });
+
+  it("does not report an old bulk error as a new single-item error", async () => {
+    let rejectOld;
+    axios.patch.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectOld = reject;
+      }),
+    );
+    const child = { ...entity, tag_target: { ...target, span_id: "child" } };
+    const bulk = [
+      { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+      { id: "child", type: "span", entity: child, currentTags: child.tags },
+    ];
+    const client = new QueryClient();
+    const popover = (items) => (
+      <QueryClientProvider client={client}>
+        <AddTagsPopover
+          open
+          anchorEl={document.body}
+          onClose={vi.fn()}
+          bulkItems={items}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(popover(bulk));
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    rerender(popover([bulk[1]]));
+    await act(async () => rejectOld({ statusCode: 409 }));
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("saves one shared assignment for two root spans and can add again", async () => {
+    const rootA = { ...entity, parent_span_id: "", tag_target: target };
+    const rootB = {
+      ...entity,
+      parent_span_id: null,
+      tag_target: { ...target, span_id: "root-2" },
+    };
+    let revision = 0;
+    axios.post.mockImplementation(async (_url, body) => {
+      if (body.expected_tag_revision !== revision) throw { statusCode: 409 };
+      revision += 1;
+      return {
+        data: {
+          result: {
+            tags: [{ name: "sdk" }, ...body.tags],
+            manual_tags: body.tags,
+            source_tag_names: ["sdk"],
+            tag_revision: revision,
+          },
+        },
+      };
+    });
+    renderEditor({
+      bulkItems: [
+        { id: "root-1", type: "span", entity: rootA, currentTags: rootA.tags },
+        { id: "root-2", type: "span", entity: rootB, currentTags: rootB.tags },
+      ],
+    });
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+    );
+    nextTag.name = "b";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.post.mock.calls[1][1]).toMatchObject({
+      expected_tag_revision: 1,
+      tags: [
+        { name: "a", color: "#123456" },
+        { name: "b", color: "#123456" },
+      ],
+    });
+    expect(revision).toBe(2);
+  });
+
   it("uses a newer entity revision even when its tags are deep-equal", async () => {
     const client = new QueryClient();
     const popover = (selected) => (
@@ -689,7 +962,10 @@ describe("scoped entity tag writes", () => {
     // A and B are saved in turn (each acknowledged at revision 1) while the
     // owner's data stays at revision 0; back on A, its edit builds on A's save.
     const spanA = { ...entity, tag_target: { ...target, span_id: "span-a" } };
-    const spanB = { ...entity, tag_target: { ...target, span_id: "span-b" } };
+    const spanB = {
+      ...entity,
+      tag_target: { ...target, trace_id: "trace-2", span_id: "span-b" },
+    };
     const acknowledge = (method, name) =>
       method.mockResolvedValueOnce({
         data: {

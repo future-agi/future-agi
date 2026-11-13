@@ -45,13 +45,31 @@ export const hasTagTarget = (entity) =>
   Number.isSafeInteger(entity?.tag_revision) &&
   entity.tag_revision >= 0;
 
-// One physical target, for matching an acknowledged save to its entity.
-export const tagTargetKey = (entity) =>
-  entity?.tag_target
-    ? JSON.stringify(
-        TARGET_FIELDS.map((field) => entity.tag_target[field] ?? null),
-      )
-    : null;
+// A trace row and every root span share one tag assignment; non-root spans
+// are keyed by their physical target (as in applySavedEntityTags).
+export const tagTargetKey = (entity, type) => {
+  const target = entity?.tag_target;
+  if (!target) return null;
+  const isRoot =
+    Object.prototype.hasOwnProperty.call(entity, "parent_span_id") &&
+    (entity.parent_span_id == null || entity.parent_span_id === "");
+  if (type === "trace" || isRoot) {
+    return JSON.stringify(["trace", target.project_id, target.trace_id]);
+  }
+  return JSON.stringify([
+    "span",
+    JSON.stringify(
+      [
+        "project_id",
+        "trace_id",
+        "span_id",
+        "start_hour",
+        "observation_type",
+        "service_name",
+      ].map((field) => target[field] ?? null),
+    ),
+  ]);
+};
 
 // The newest tag state an editor knows for an entity: the entity as loaded,
 // or a later acknowledged save of the same target (a save result has tags,
@@ -60,8 +78,8 @@ export const tagTargetKey = (entity) =>
 // that moves between entities keeps each one's save. An editor builds its
 // next tag list from this state and sends it as the save's base, so the list
 // and the expected revision always come from the same state.
-export const latestTagState = (entity, acknowledged) => {
-  const key = tagTargetKey(entity);
+export const latestTagState = (entity, acknowledged, type) => {
+  const key = tagTargetKey(entity, type);
   const result = key === null ? undefined : acknowledged?.get(key);
   if (
     !result ||
