@@ -1,8 +1,10 @@
 """Read-only, fingerprint-bound release inspection; never infer native success.
 
 The existing packet service owns scope, visibility, expiry and currentness.
-Native completion is NOT an outcome: until the authenticated native result
-reader is available, show its planned denominator and unknown outcomes.
+Native completion is NOT an outcome: a native record carries outcomes only when
+its completed skills-native job is reduced from its own receipts (the same
+reduction the run result shows). Anything else keeps its planned denominator
+and unknown outcomes.
 """
 
 from model_hub.models.skills_hub import HubSkillVersion
@@ -46,6 +48,8 @@ def _summary(principal, ref):
         "delivery": "Not observed",
         "tools": "Not observed",
         "availability": "unavailable",
+        "result": None,
+        "cases": [],
     }
     if isinstance(record, HubSkillTestRun):
         counts, decision = record.counts, record.summary.get("decision", {})
@@ -80,7 +84,76 @@ def _summary(principal, ref):
             )
     else:
         value["planned"] = len(record.planned_matrix)
+        value.update(native_outcomes(record))
     return value
+
+
+def _family_outcome(cells, family):
+    verdicts = {cell[family] for cell in cells}
+    if not cells or verdicts - {"pass", "fail", "not_applicable"}:
+        # Incomplete, unverifiable or ungraded work never reads as an outcome.
+        return "fail" if "fail" in verdicts else "Not observed"
+    if "fail" in verdicts:
+        return "fail"
+    return "pass" if "pass" in verdicts else "Not applicable"
+
+
+def summarize_native(reduced, arms, titles):
+    """Map one native reduction to review outcomes. Pure; never upgrades a result."""
+    cells = reduced["cells"]
+    candidate = [cell for cell in cells if cell["variant"] == "candidate"]
+    return {
+        "planned": len(cells),
+        "graded": sum(
+            cell["status"] == "completed" and not cell["incomplete"] for cell in cells
+        ),
+        "incomplete": sum(cell["incomplete"] for cell in cells),
+        "regressions": reduced["regressed_cases"],
+        **{
+            family: _family_outcome(candidate, family)
+            for family in ("answer", "selection", "delivery", "tools")
+        },
+        "availability": "available",
+        "result": {
+            "state": reduced["state"],
+            "reproduction": reduced["reproduction"],
+            "repair_verified": reduced["repair_verified"],
+        },
+        "cases": [
+            {
+                "case_id": cell["case_id"],
+                "title": titles.get(cell["case_id"], ""),
+                "variant": cell["variant"],
+                "version": (arms.get(cell["variant"]) or {}).get("version"),
+                "repeat_index": cell["repeat_index"],
+                "status": cell["status"],
+                **{
+                    family: cell[family]
+                    for family in ("answer", "selection", "delivery", "tools")
+                },
+            }
+            for cell in cells
+        ],
+    }
+
+
+def native_outcomes(record):
+    """Outcomes of a completed, retained skills-native run; empty otherwise."""
+    from simulate.models.hosted_harness import HostedHarnessJob
+
+    from model_hub.services.skills_hub.r3.native_runs import _reduce
+
+    job = record.simulation_job
+    if (
+        job.state != HostedHarnessJob.State.COMPLETED
+        or not job.payload.get("skills_context")
+        or record.payload_purged_at is not None
+    ):
+        return {}
+    control = job.payload.get("skills_native_control") or {}
+    reduced, _ = _reduce(job)
+    titles = {case["id"]: case.get("title", "") for case in control.get("cases", [])}
+    return summarize_native(reduced, control.get("arms") or {}, titles)
 
 
 def inspect_release(*, principal, expected_fingerprint, **selection):

@@ -45,6 +45,25 @@ class CapabilityInspection(ctx.ContextSerializer):
     fingerprint = ctx.Digest()
 
 
+class NativeOutcomeResult(ctx.ContextSerializer):
+    state = s.CharField()
+    reproduction = s.CharField()
+    repair_verified = s.BooleanField()
+
+
+class NativeCaseOutcome(ctx.ContextSerializer):
+    case_id = s.CharField()
+    title = s.CharField(allow_blank=True)
+    variant = s.CharField()
+    version = Integer(min_value=1, allow_null=True)
+    repeat_index = Integer(min_value=0)
+    status = s.CharField()
+    answer = s.CharField()
+    selection = s.CharField()
+    delivery = s.CharField()
+    tools = s.CharField()
+
+
 class EvidenceSummary(ctx.ContextSerializer):
     source_id = s.UUIDField()
     annotation_revision = Integer(min_value=0)
@@ -59,6 +78,9 @@ class EvidenceSummary(ctx.ContextSerializer):
     delivery = s.CharField()
     tools = s.CharField()
     availability = s.ChoiceField(choices=["available", "unavailable"])
+    # Completed skills-native runs only: the reduced result and per-case cells.
+    result = NativeOutcomeResult(allow_null=True)
+    cases = NativeCaseOutcome(many=True)
 
     def get_fields(self):
         return {
