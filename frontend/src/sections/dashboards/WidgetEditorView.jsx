@@ -100,7 +100,10 @@ import {
 
 import {
   DEFAULT_DECIMALS,
+  buildDistributionQueryConfig,
   escapeHtml,
+  formatDistributionCount,
+  getDistributionConfigError,
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAggColumnLabel,
@@ -119,6 +122,7 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  isDistributionMetric,
   getVisibleIndices,
   resolveWidgetAxisPlan,
   resolveSavedSelection,
@@ -248,6 +252,12 @@ const CHART_TYPES = [
     value: "stacked_bar",
     icon: "solar:stars-minimalistic-linear",
     group: "bar",
+  },
+  {
+    label: "Distribution",
+    value: "distribution",
+    icon: "mdi:chart-histogram",
+    group: "other",
   },
   {
     label: "Pie",
@@ -1743,11 +1753,13 @@ function AggregationPicker({
   onChange,
   extraOptions,
   allowedAggregations,
+  disabled = false,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [showPercentiles, setShowPercentiles] = useState(false);
 
   const handleOpen = (e) => {
+    if (disabled) return;
     setAnchorEl(e.currentTarget);
     setShowPercentiles(false);
   };
@@ -1789,10 +1801,18 @@ function AggregationPicker({
         label={current?.label || value}
         size="small"
         variant="outlined"
-        onClick={handleOpen}
-        deleteIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
-        onDelete={handleOpen}
-        sx={{ mt: 1, cursor: "pointer" }}
+        disabled={disabled}
+        onClick={disabled ? undefined : handleOpen}
+        deleteIcon={
+          disabled ? undefined : (
+            <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+          )
+        }
+        onDelete={disabled ? undefined : handleOpen}
+        sx={{
+          mt: 1,
+          cursor: disabled ? "default" : "pointer",
+        }}
       />
       <Popper
         open={open}
@@ -1925,6 +1945,7 @@ AggregationPicker.propTypes = {
     }),
   ),
   allowedAggregations: PropTypes.arrayOf(PropTypes.string),
+  disabled: PropTypes.bool,
 };
 
 const inferFilterValueStorageType = (value, configuredType) => {
@@ -2873,15 +2894,22 @@ export default function WidgetEditorView() {
     [cursorAttributes, pickerMode, pickerCategory, pickerCapabilityContext],
   );
 
-  const pickerMetricOptions = useMemo(
-    () =>
-      mergeWidgetCursorAttributeOptions(
-        catalogMetricOptions,
-        cursorAttributeOptions,
-        cursorAttributePickerActive,
-      ),
-    [catalogMetricOptions, cursorAttributeOptions, cursorAttributePickerActive],
-  );
+  const pickerMetricOptions = useMemo(() => {
+    const options = mergeWidgetCursorAttributeOptions(
+      catalogMetricOptions,
+      cursorAttributeOptions,
+      cursorAttributePickerActive,
+    );
+    return chartType === "distribution" && pickerMode === "metric"
+      ? options.filter(isDistributionMetric)
+      : options;
+  }, [
+    catalogMetricOptions,
+    chartType,
+    cursorAttributeOptions,
+    cursorAttributePickerActive,
+    pickerMode,
+  ]);
 
   const isPickerInventoryLoading = isPaginatedLoading;
 
@@ -3154,7 +3182,7 @@ export default function WidgetEditorView() {
 
   const buildQueryConfig = useCallback(() => {
     const timeRange = buildTimeRangePayload(timePreset, customDateRange);
-    return {
+    const config = {
       project_ids: [],
       time_range: timeRange,
       granularity,
@@ -3167,7 +3195,23 @@ export default function WidgetEditorView() {
         .filter((b) => b.id)
         .map((b) => buildBreakdownPayload(b)),
     };
-  }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns]);
+    return chartType === "distribution"
+      ? buildDistributionQueryConfig(config)
+      : config;
+  }, [
+    timePreset,
+    customDateRange,
+    granularity,
+    metrics,
+    filters,
+    breakdowns,
+    chartType,
+  ]);
+
+  const distributionConfigError =
+    chartType === "distribution"
+      ? getDistributionConfigError(metrics, breakdowns)
+      : null;
 
   const previewQueryConfig = buildQueryConfig();
   const previewQuerySignature = JSON.stringify(previewQueryConfig);
@@ -3336,7 +3380,7 @@ export default function WidgetEditorView() {
   const previewTimerRef = useRef(null);
   useEffect(() => {
     const customWithoutRange = timePreset === "custom" && !customDateRange;
-    if (metrics.length > 0 && !customWithoutRange) {
+    if (metrics.length > 0 && !customWithoutRange && !distributionConfigError) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
         runPreviewQuery(buildQueryConfig());
@@ -3350,6 +3394,8 @@ export default function WidgetEditorView() {
     timePreset,
     customDateRange,
     granularity,
+    chartType,
+    distributionConfigError,
     metrics
       .map(
         (m) =>
@@ -3387,8 +3433,12 @@ export default function WidgetEditorView() {
     // id = backend key, name = display name, type = frontend category key
     if (pickerMode === "metric") {
       // Determine default aggregation based on output type (dataset evals)
-      let defaultAgg = "avg";
-      if (option.outputType && EVAL_DEFAULT_AGGREGATIONS[option.outputType]) {
+      let defaultAgg = chartType === "distribution" ? "count" : "avg";
+      if (
+        chartType !== "distribution" &&
+        option.outputType &&
+        EVAL_DEFAULT_AGGREGATIONS[option.outputType]
+      ) {
         defaultAgg = EVAL_DEFAULT_AGGREGATIONS[option.outputType];
       } else if (option.columnDataType === "boolean") {
         defaultAgg = "true_rate";
@@ -3436,7 +3486,7 @@ export default function WidgetEditorView() {
         updated[pickerTargetIndex] = newMetric;
         setMetrics(updated);
       } else {
-        if (metrics.length >= 5) return;
+        if (metrics.length >= (chartType === "distribution" ? 1 : 5)) return;
         setMetrics([...metrics, newMetric]);
       }
     } else if (pickerMode === "filter") {
@@ -3563,9 +3613,19 @@ export default function WidgetEditorView() {
   };
 
   const handleUpdateMetricAggregation = (index, agg) => {
+    if (chartType === "distribution") return;
     const updated = [...metrics];
     updated[index] = { ...updated[index], aggregation: agg };
     setMetrics(updated);
+  };
+
+  const handleChartTypeChange = (nextChartType) => {
+    setChartType(nextChartType);
+    if (nextChartType === "distribution") {
+      setMetrics((currentMetrics) =>
+        currentMetrics.map((metric) => ({ ...metric, aggregation: "count" })),
+      );
+    }
   };
 
   const handleRemoveMetricFilter = (metricIdx, filterIdx) => {
@@ -3602,6 +3662,10 @@ export default function WidgetEditorView() {
   const handleSave = async () => {
     if (metrics.length === 0) {
       enqueueSnackbar("Add at least one metric", { variant: "warning" });
+      return;
+    }
+    if (distributionConfigError) {
+      enqueueSnackbar(distributionConfigError, { variant: "warning" });
       return;
     }
 
@@ -3661,8 +3725,11 @@ export default function WidgetEditorView() {
   const previewResult = activeExactPreview?.result;
   const { renderableMetrics: previewRenderableMetrics, series: previewSeries } =
     useMemo(
-      () => getDashboardMetricSeriesState(previewResult?.metrics),
-      [previewResult?.metrics],
+      () =>
+        getDashboardMetricSeriesState(previewResult?.metrics, {
+          distribution: chartType === "distribution",
+        }),
+      [previewResult?.metrics, chartType],
     );
 
   // Current selection as stable keys for persistence; null = all visible.
@@ -3719,6 +3786,7 @@ export default function WidgetEditorView() {
       stacked_column: "bar",
       bar: "bar",
       stacked_bar: "bar",
+      distribution: "bar",
       pie: "pie",
       table: "line",
       metric: "line",
@@ -3730,6 +3798,8 @@ export default function WidgetEditorView() {
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isDistribution = chartType === "distribution";
+  const maxMetrics = isDistribution ? 1 : 5;
   const isLineChart = apexType === "line";
 
   const aggColumnLabel = useMemo(
@@ -3917,7 +3987,13 @@ export default function WidgetEditorView() {
       (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
       (val) =>
         formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
-    const formatVal = makeFormatter(leftAxisFormatConfig);
+    const formatVal = isDistribution
+      ? formatDistributionCount
+      : makeFormatter(leftAxisFormatConfig);
+    const xAxisLabel =
+      axisConfig.xAxis.label || (isDistribution ? "Score range" : "");
+    const yAxisLabel =
+      axisConfig.leftY.label || (isDistribution ? "Count" : "");
     const isDenseSeries = isDenseChartSeries(plottedChartSeries);
     return {
       chart: {
@@ -4039,19 +4115,24 @@ export default function WidgetEditorView() {
           },
         },
       },
-      dataLabels: isHorizontal
-        ? {
-            enabled: true,
-            style: { fontSize: "13px", fontWeight: 500 },
-            formatter: formatVal,
-            offsetX: 6,
-          }
-        : { enabled: false },
+      dataLabels:
+        isHorizontal || isDistribution
+          ? {
+              enabled: true,
+              style: { fontSize: "13px", fontWeight: 500 },
+              formatter: formatVal,
+              offsetX: isHorizontal ? 6 : 0,
+            }
+          : { enabled: false },
       plotOptions: {
         bar: {
           horizontal: isHorizontal,
           barHeight: isHorizontal ? "50%" : undefined,
-          columnWidth: !isHorizontal ? "60%" : undefined,
+          columnWidth: !isHorizontal
+            ? isDistribution
+              ? "55%"
+              : "60%"
+            : undefined,
           borderRadius: 4,
           distributed: isHorizontal,
         },
@@ -4066,26 +4147,26 @@ export default function WidgetEditorView() {
             axisTicks: { show: false },
           }
         : {
-            type: "datetime",
-            // Span the window that was queried, not just the buckets that
-            // reported.
-            ...(chartTimeWindow || {}),
+            type: isDistribution ? "category" : "datetime",
+            ...(!isDistribution && (chartTimeWindow || {})),
             labels: {
               show: axisConfig.xAxis.visible,
               style: { colors: theme.palette.text.secondary, fontSize: "12px" },
-              datetimeUTC: false,
-              datetimeFormatter: {
-                year: "MMMM",
-                month: "MMMM",
-                day: "MMM dd",
-                hour: "HH:mm",
-              },
+              ...(!isDistribution && {
+                datetimeUTC: false,
+                datetimeFormatter: {
+                  year: "MMMM",
+                  month: "MMMM",
+                  day: "MMM dd",
+                  hour: "HH:mm",
+                },
+              }),
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
-            ...(axisConfig.xAxis.label && {
+            ...(xAxisLabel && {
               title: {
-                text: axisConfig.xAxis.label,
+                text: xAxisLabel,
                 style: {
                   fontSize: "12px",
                   color: theme.palette.text.secondary,
@@ -4121,9 +4202,9 @@ export default function WidgetEditorView() {
             // Never emit null — see the note in WidgetChart.jsx.
             ...(min != null && { min }),
             ...(max != null && { max }),
-            ...(axisConfig.leftY.label && {
+            ...(yAxisLabel && {
               title: {
-                text: axisConfig.leftY.label,
+                text: yAxisLabel,
                 style: {
                   fontSize: "12px",
                   color: theme.palette.text.secondary,
@@ -4218,56 +4299,67 @@ export default function WidgetEditorView() {
       },
       colors: chartColors,
       legend: { show: false, height: 0 },
-      tooltip: isStacked
+      tooltip: isDistribution
         ? {
             enabled: true,
-            shared: true,
-            intersect: false,
+            shared: false,
+            intersect: true,
             theme: theme.palette.mode,
             style: { fontSize: "12px" },
-            x: {
-              format: "MMM dd, yyyy",
-            },
+            x: { formatter: (value) => `Score range: ${value}` },
             y: {
-              formatter: (val, { seriesIndex, dataPointIndex, w } = {}) =>
-                isAbsentChartPoint(w, seriesIndex, dataPointIndex)
-                  ? "-"
-                  : formatVal(val),
+              formatter: (value) =>
+                `${formatDistributionCount(value)} evaluations`,
             },
           }
-        : {
-            enabled: true,
-            shared: false,
-            // A series without markers has nothing to intersect, so a dense chart
-            // finds the hovered point by position instead.
-            intersect: isLineChart && !isDenseSeries,
-            custom: ({ series, seriesIndex, dataPointIndex, w }) => {
-              const sName = w.globals.seriesNames[seriesIndex] || "";
-              const color =
-                w.globals.colors[seriesIndex] || seriesColors(theme)[0];
-              const val = series[seriesIndex]?.[dataPointIndex];
-              const prevVal =
-                dataPointIndex > 0
-                  ? series[seriesIndex]?.[dataPointIndex - 1]
-                  : null;
-              const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
-              const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-              const fmtVal = formatVal(val);
-              const bg = theme.palette.background.paper;
-              const border = theme.palette.divider;
-              const textPrimary = theme.palette.text.primary;
-              const textSecondary = theme.palette.text.secondary;
-              let changeHtml = "";
-              if (prevVal != null && prevVal !== 0 && val != null) {
-                const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
-                const sign = pct >= 0 ? "+" : "";
-                const changeColor = statusColors(
-                  theme,
-                  pct >= 0 ? "success" : "danger",
-                ).fg;
-                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
-              }
-              return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+        : isStacked
+          ? {
+              enabled: true,
+              shared: true,
+              intersect: false,
+              theme: theme.palette.mode,
+              style: { fontSize: "12px" },
+              x: { format: "MMM dd, yyyy" },
+              y: {
+                formatter: (val, { seriesIndex, dataPointIndex, w } = {}) =>
+                  isAbsentChartPoint(w, seriesIndex, dataPointIndex)
+                    ? "-"
+                    : formatVal(val),
+              },
+            }
+          : {
+              enabled: true,
+              shared: false,
+              // A series without markers has nothing to intersect, so a dense chart
+              // finds the hovered point by position instead.
+              intersect: isLineChart && !isDenseSeries,
+              custom: ({ series, seriesIndex, dataPointIndex, w }) => {
+                const sName = w.globals.seriesNames[seriesIndex] || "";
+                const color =
+                  w.globals.colors[seriesIndex] || seriesColors(theme)[0];
+                const val = series[seriesIndex]?.[dataPointIndex];
+                const prevVal =
+                  dataPointIndex > 0
+                    ? series[seriesIndex]?.[dataPointIndex - 1]
+                    : null;
+                const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
+                const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
+                const fmtVal = formatVal(val);
+                const bg = theme.palette.background.paper;
+                const border = theme.palette.divider;
+                const textPrimary = theme.palette.text.primary;
+                const textSecondary = theme.palette.text.secondary;
+                let changeHtml = "";
+                if (prevVal != null && prevVal !== 0 && val != null) {
+                  const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
+                  const sign = pct >= 0 ? "+" : "";
+                  const changeColor = statusColors(
+                    theme,
+                    pct >= 0 ? "success" : "danger",
+                  ).fg;
+                  changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+                }
+                return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
                                 <div style="padding:14px 16px;flex:1">
                   <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                   <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
@@ -4277,14 +4369,15 @@ export default function WidgetEditorView() {
                   ${changeHtml}
                 </div>
               </div>`;
+              },
             },
-          },
     };
   }, [
     apexType,
     isLineChart,
     isStacked,
     isHorizontal,
+    isDistribution,
     chartType,
     chartSeries,
     plottedChartSeries,
@@ -4330,7 +4423,9 @@ export default function WidgetEditorView() {
   // A preview query only fires when there's at least one metric AND (if a custom
   // range is chosen) a range is actually set — mirrors the auto-preview effect.
   const canPreview =
-    metrics.length > 0 && !(timePreset === "custom" && !customDateRange);
+    metrics.length > 0 &&
+    !distributionConfigError &&
+    !(timePreset === "custom" && !customDateRange);
 
   const serverPreviewState = getWidgetPreviewState(
     queryMutation.data?.data?.result,
@@ -4977,7 +5072,7 @@ export default function WidgetEditorView() {
             <FormControl size="small" sx={{ minWidth: 120 }}>
               <Select
                 value={chartType}
-                onChange={(e) => setChartType(e.target.value)}
+                onChange={(e) => handleChartTypeChange(e.target.value)}
                 sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
                 renderValue={(val) => {
                   const ct = CHART_TYPES.find((t) => t.value === val);
@@ -5676,7 +5771,9 @@ export default function WidgetEditorView() {
                                           whiteSpace: "nowrap",
                                         }}
                                       >
-                                        {format(new Date(pt.x), dateFmt)}
+                                        {isDistribution
+                                          ? pt.x
+                                          : format(new Date(pt.x), dateFmt)}
                                       </td>
                                       {chartSeries.map((s, si) => {
                                         const val = s.data[ri]?.y;
@@ -6430,17 +6527,19 @@ export default function WidgetEditorView() {
                       justifyContent="space-between"
                       alignItems="center"
                       onClick={(e) => {
-                        if (metrics.length < 5) openPicker(e, "metric");
+                        if (metrics.length < maxMetrics)
+                          openPicker(e, "metric");
                       }}
                       sx={{
-                        cursor: metrics.length >= 5 ? "default" : "pointer",
+                        cursor:
+                          metrics.length >= maxMetrics ? "default" : "pointer",
                         borderRadius: 1,
                         px: 1,
                         py: 0.5,
                         mx: -1,
                         transition: "background-color 0.15s",
                         "&:hover":
-                          metrics.length < 5
+                          metrics.length < maxMetrics
                             ? {
                                 bgcolor: "action.hover",
                                 "& .metric-section-title": {
@@ -6466,7 +6565,7 @@ export default function WidgetEditorView() {
                         width={20}
                         sx={{
                           color:
-                            metrics.length >= 5
+                            metrics.length >= maxMetrics
                               ? "text.disabled"
                               : "text.secondary",
                         }}
@@ -6574,6 +6673,7 @@ export default function WidgetEditorView() {
                         onChange={(val) =>
                           handleUpdateMetricAggregation(i, val)
                         }
+                        disabled={isDistribution}
                         allowedAggregations={m.allowedAggregations}
                         extraOptions={
                           m.source === "datasets" ||
