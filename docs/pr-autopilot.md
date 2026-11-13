@@ -199,8 +199,9 @@ checks, so a check an administrator adds later is respected too.
   autopilot counts the success. A newer failed, cancelled or unfinished run
   still overrules an older success.
 - Skipped runs are ignored, because a summary job skipped by its own `if:`
-  still adds a check run, and GitHub counts a skipped required check as
-  passing. "Python Types Pass" (`python-types.yml`, not required today)
+  still adds a check run. GitHub's documentation says a skipped required
+  check counts as passing; this was not tested here, because no required
+  check skips today. "Python Types Pass" (`python-types.yml`, not required today)
   skips on an ordinary title or body edit. On PR 3973 on 13 Nov its head
   carried a success and, 10 seconds later, a skipped run. A head whose only
   runs of a required check were skipped waits, with no note on the PR.
