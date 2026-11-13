@@ -60,14 +60,15 @@ def assignment_schema(django_db_blocker):
             )
         try:
             loader = MigrationLoader(None, ignore_no_migrations=True)
-            assert loader.graph.leaf_nodes("tracer") == [
-                ("tracer", "0132_entity_tag_assignment")
-            ]
+            # One tracer leaf: a second leaf (for example two 0132s after a
+            # dev merge) makes `migrate` refuse to run at all.
+            assert "tracer" not in loader.detect_conflicts()
+            assert ("tracer", "0133_entity_tag_assignment") in loader.graph.nodes
             migration = importlib.import_module(
-                "tracer.migrations.0132_entity_tag_assignment"
-            ).Migration("0132_entity_tag_assignment", "tracer")
+                "tracer.migrations.0133_entity_tag_assignment"
+            ).Migration("0133_entity_tag_assignment", "tracer")
             assert migration.dependencies == [
-                ("tracer", "0131_merge_sql_workbench_and_observationspan_internal_type")
+                ("tracer", "0132_merge_alert_webhook_and_sql_workbench")
             ]
             state = loader.project_state(migration.dependencies)
             with connection.schema_editor() as editor:

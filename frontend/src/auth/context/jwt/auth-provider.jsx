@@ -18,7 +18,7 @@ import { identifyPostHogUser, resetPostHogUser } from "src/utils/PostHog";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
-import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { resetAllUserStores } from "src/utils/auth/clearStores";
 import {
   SS_KEY_ORG_DISPLAY_NAME,
   SS_KEY_ORG_ID,
@@ -339,7 +339,7 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem("2fa_challenge");
       sessionStorage.removeItem(SS_KEY_USER_ID);
       localStorage.removeItem("initial-render"); // Clear flag so next login triggers redirect logic
-      useFalconStore.getState().resetAll();
+      resetAllUserStores();
       dispatch({
         type: "LOGOUT",
       });
@@ -352,10 +352,14 @@ export function AuthProvider({ children }) {
           },
         },
       );
-      queryClient.clear();
     } catch (error) {
       logger.error("Logout Error:", error);
       throw error; // Ensure errors are caught by caller
+    } finally {
+      // Also when the logout request fails (expired token, network error):
+      // the tab is signed out either way, and the next account signed in on
+      // it must not get the previous account's cached responses.
+      queryClient.clear();
     }
   }, [queryClient]);
 

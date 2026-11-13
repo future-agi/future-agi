@@ -8,7 +8,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("tracer", "0131_merge_sql_workbench_and_observationspan_internal_type"),
+        ("tracer", "0132_merge_alert_webhook_and_sql_workbench"),
     ]
 
     operations = [

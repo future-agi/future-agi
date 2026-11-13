@@ -76700,6 +76700,8 @@ export const tracerUserAlertsListResponseResultsItemNotificationEmailsItemMax = 
 
 export const tracerUserAlertsListResponseResultsItemSlackWebhookUrlMax = 200;
 
+export const tracerUserAlertsListResponseResultsItemWebhookUrlMax = 200;
+
 export const TracerUserAlertsListResponse = zod.object({
   count: zod.number(),
   next: zod.string().url().optional(),
@@ -76790,6 +76792,11 @@ export const TracerUserAlertsListResponse = zod.object({
         .max(tracerUserAlertsListResponseResultsItemSlackWebhookUrlMax)
         .optional(),
       slack_notes: zod.string().optional(),
+      webhook_url: zod
+        .string()
+        .url()
+        .max(tracerUserAlertsListResponseResultsItemWebhookUrlMax)
+        .optional(),
       is_mute: zod.boolean().optional(),
       filters: zod.object({}).passthrough().optional(),
       logs: zod.array(zod.object({}).passthrough()).optional(),
@@ -76817,6 +76824,8 @@ export const tracerUserAlertsCreateBodyAutoThresholdTimeWindowMax = 2147483647;
 export const tracerUserAlertsCreateBodyNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsCreateBodySlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsCreateBodyWebhookUrlMax = 200;
 
 export const TracerUserAlertsCreateBody = zod.object({
   project: zod.string().uuid(),
@@ -76890,6 +76899,11 @@ export const TracerUserAlertsCreateBody = zod.object({
     .max(tracerUserAlertsCreateBodySlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsCreateBodyWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   organization: zod.string().uuid(),
@@ -77065,6 +77079,8 @@ export const tracerUserAlertsPreviewGraphBodyNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsPreviewGraphBodySlackWebhookUrlMax = 200;
 
+export const tracerUserAlertsPreviewGraphBodyWebhookUrlMax = 200;
+
 export const TracerUserAlertsPreviewGraphBody = zod.object({
   project: zod.string().uuid(),
   name: zod.string().optional(),
@@ -77137,6 +77153,11 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
     .max(tracerUserAlertsPreviewGraphBodySlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsPreviewGraphBodyWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   organization: zod.string().uuid(),
@@ -77197,6 +77218,8 @@ export const tracerUserAlertsReadResponseAutoThresholdTimeWindowMax = 2147483647
 export const tracerUserAlertsReadResponseNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsReadResponseSlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsReadResponseWebhookUrlMax = 200;
 
 export const TracerUserAlertsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -77281,6 +77304,11 @@ export const TracerUserAlertsReadResponse = zod.object({
     .max(tracerUserAlertsReadResponseSlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsReadResponseWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   logs: zod.array(zod.object({}).passthrough()).optional(),
@@ -77310,6 +77338,8 @@ export const tracerUserAlertsUpdateBodyAutoThresholdTimeWindowMax = 2147483647;
 export const tracerUserAlertsUpdateBodyNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsUpdateBodySlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsUpdateBodyWebhookUrlMax = 200;
 
 export const TracerUserAlertsUpdateBody = zod.object({
   project: zod.string().uuid(),
@@ -77383,6 +77413,11 @@ export const TracerUserAlertsUpdateBody = zod.object({
     .max(tracerUserAlertsUpdateBodySlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsUpdateBodyWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   organization: zod.string().uuid(),
@@ -77407,6 +77442,8 @@ export const tracerUserAlertsUpdateResponseAutoThresholdTimeWindowMax = 21474836
 export const tracerUserAlertsUpdateResponseNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsUpdateResponseSlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsUpdateResponseWebhookUrlMax = 200;
 
 export const TracerUserAlertsUpdateResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -77491,6 +77528,11 @@ export const TracerUserAlertsUpdateResponse = zod.object({
     .max(tracerUserAlertsUpdateResponseSlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsUpdateResponseWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   logs: zod.array(zod.object({}).passthrough()).optional(),
@@ -77520,6 +77562,8 @@ export const tracerUserAlertsPartialUpdateBodyAutoThresholdTimeWindowMax = 21474
 export const tracerUserAlertsPartialUpdateBodyNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsPartialUpdateBodySlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsPartialUpdateBodyWebhookUrlMax = 200;
 
 export const TracerUserAlertsPartialUpdateBody = zod.object({
   project: zod.string().uuid(),
@@ -77593,6 +77637,11 @@ export const TracerUserAlertsPartialUpdateBody = zod.object({
     .max(tracerUserAlertsPartialUpdateBodySlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsPartialUpdateBodyWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   organization: zod.string().uuid(),
@@ -77617,6 +77666,8 @@ export const tracerUserAlertsPartialUpdateResponseAutoThresholdTimeWindowMax = 2
 export const tracerUserAlertsPartialUpdateResponseNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsPartialUpdateResponseSlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsPartialUpdateResponseWebhookUrlMax = 200;
 
 export const TracerUserAlertsPartialUpdateResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -77701,6 +77752,11 @@ export const TracerUserAlertsPartialUpdateResponse = zod.object({
     .max(tracerUserAlertsPartialUpdateResponseSlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsPartialUpdateResponseWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   logs: zod.array(zod.object({}).passthrough()).optional(),
@@ -77734,6 +77790,8 @@ export const tracerUserAlertsMonitorDetailsResponseAutoThresholdTimeWindowMax = 
 export const tracerUserAlertsMonitorDetailsResponseNotificationEmailsItemMax = 254;
 
 export const tracerUserAlertsMonitorDetailsResponseSlackWebhookUrlMax = 200;
+
+export const tracerUserAlertsMonitorDetailsResponseWebhookUrlMax = 200;
 
 export const TracerUserAlertsMonitorDetailsResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -77818,6 +77876,11 @@ export const TracerUserAlertsMonitorDetailsResponse = zod.object({
     .max(tracerUserAlertsMonitorDetailsResponseSlackWebhookUrlMax)
     .optional(),
   slack_notes: zod.string().optional(),
+  webhook_url: zod
+    .string()
+    .url()
+    .max(tracerUserAlertsMonitorDetailsResponseWebhookUrlMax)
+    .optional(),
   is_mute: zod.boolean().optional(),
   filters: zod.object({}).passthrough().optional(),
   logs: zod.array(zod.object({}).passthrough()).optional(),
