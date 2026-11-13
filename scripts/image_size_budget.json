@@ -7,10 +7,7 @@
     "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
     "enforce=false: measured and reported, never fails."
   ],
-  "arches": [
-    "amd64",
-    "arm64"
-  ],
+  "arches": ["amd64", "arm64"],
   "images": [
     {
       "image": "futureagi/future-agi",
@@ -66,9 +63,7 @@
     {
       "image": "futureagi/serving",
       "tag_suffix": "-gpu",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 3800,
       "projected_mb": 3340
     },
@@ -79,9 +74,7 @@
     },
     {
       "image": "futureagi/future-agi-simulation-runner",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 1525,
       "projected_mb": 1325,
       "enforce": false,
@@ -90,10 +83,7 @@
   ],
   "standalone_install": {
     "app": "futureagi/standalone",
-    "with": [
-      "postgres:16",
-      "clickhouse/clickhouse-server:25.3-alpine"
-    ],
+    "with": ["postgres:16", "clickhouse/clickhouse-server:25.3-alpine"],
     "budget_mb": 934,
     "projected_mb": 909,
     "measured_mb": 908.6,
