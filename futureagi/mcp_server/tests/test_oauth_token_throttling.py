@@ -1049,3 +1049,228 @@ def test_fallback_concurrent_reservations_admit_exactly_the_limit(monkeypatch):
     for request in requests:
         throttles.release_token_attempt_reservation(request)
     assert cache.get(throttles._in_flight_key(requests[0])) is None
+
+
+def _finish_with_invalid_attempt(request):
+    # The view's order for a wrong secret: record the attempt, then release
+    # the slot once the response has been built.
+    record_invalid_token_attempt(request)
+    throttles.release_token_attempt_reservation(request)
+
+
+def _finish_after_next_reservation(monkeypatch, finish):
+    """Run finish() as soon as the next reservation step returns.
+
+    That is the point between a request taking its reservation and the
+    admission decision, where another request can finish and free its slot.
+    Returns a list that holds True once finish() has run.
+    """
+    real_add = throttles._add_reservation
+    fired = []
+
+    def add_then_finish(*args, **kwargs):
+        result = real_add(*args, **kwargs)
+        if not fired:
+            fired.append(True)
+            finish()
+        return result
+
+    monkeypatch.setattr(throttles, "_add_reservation", add_then_finish)
+    return fired
+
+
+def _clear_redis_attempts(redis_cache, client_id, addr):
+    from django_redis import get_redis_connection
+
+    probe = _reservation_request(client_id, addr)
+    redis_cache.delete(_invalid_attempt_key(probe))
+    redis_cache.delete(throttles._invalid_lockout_key(probe))
+    get_redis_connection("default").delete(throttles._in_flight_key(probe))
+
+
+def _assert_attempt_recorded_before_release_counts_once(client_id, addr):
+    first = _reservation_request(client_id, addr)
+    second = _reservation_request(client_id, addr)
+    third = _reservation_request(client_id, addr)
+    try:
+        assert throttles.reserve_token_attempt(first) is True
+        # first has failed its check and recorded it; its slot is released
+        # only after its response is built.
+        record_invalid_token_attempt(first)
+
+        # One recorded attempt and nothing else being verified: one more
+        # check fits within the limit of 2, and no more.
+        assert throttles.reserve_token_attempt(second) is True
+        assert throttles.reserve_token_attempt(third) is False
+    finally:
+        for request in (first, second, third):
+            throttles.release_token_attempt_reservation(request)
+
+
+def _assert_request_finishing_during_admission_counts_once(
+    monkeypatch, client_id, addr
+):
+    earlier = _reservation_request(client_id, addr)
+    request = _reservation_request(client_id, addr)
+    over = _reservation_request(client_id, addr)
+    try:
+        assert throttles.reserve_token_attempt(earlier) is True
+        fired = _finish_after_next_reservation(
+            monkeypatch, lambda: _finish_with_invalid_attempt(earlier)
+        )
+
+        # earlier finishes with an invalid attempt right after request takes
+        # its reservation. One recorded attempt plus request is the limit.
+        assert throttles.reserve_token_attempt(request) is True
+        assert fired == [True]
+        assert throttles.reserve_token_attempt(over) is False
+    finally:
+        for pending in (earlier, request, over):
+            throttles.release_token_attempt_reservation(pending)
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_attempt_recorded_before_release_counts_once(monkeypatch):
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    _assert_attempt_recorded_before_release_counts_once(
+        "recorded-client", "203.0.113.76"
+    )
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_request_finishing_during_admission_counts_once(monkeypatch):
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    _assert_request_finishing_during_admission_counts_once(
+        monkeypatch, "finishing-client", "203.0.113.77"
+    )
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_refused_reservation_does_not_take_a_slot_from_the_next_request(
+    monkeypatch,
+):
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    client_id, addr = "refused-client", "203.0.113.78"
+    held = [_reservation_request(client_id, addr) for _ in range(2)]
+    refused = _reservation_request(client_id, addr)
+    following = _reservation_request(client_id, addr)
+    outcome = {}
+
+    def finish_and_follow():
+        # One held request succeeds and frees its slot, and another request
+        # arrives while the refused one is still being turned away.
+        throttles.release_token_attempt_reservation(held[0])
+        outcome["following"] = throttles.reserve_token_attempt(following)
+
+    try:
+        for request in held:
+            assert throttles.reserve_token_attempt(request) is True
+        fired = _finish_after_next_reservation(monkeypatch, finish_and_follow)
+
+        assert throttles.reserve_token_attempt(refused) is False
+        assert fired == [True]
+        # held[1] and following are in flight: exactly the limit.
+        assert outcome["following"] is True
+    finally:
+        for request in (*held, refused, following):
+            throttles.release_token_attempt_reservation(request)
+
+
+@override_settings(
+    **{**_RESERVATION_SETTINGS, "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT": 5}
+)
+def test_valid_exchange_is_admitted_when_an_earlier_request_finishes_meanwhile(
+    api_client, user, workspace, oauth_client_app, monkeypatch
+):
+    addr = "203.0.113.79"
+    held = [_reservation_request(oauth_client_app.client_id, addr) for _ in range(4)]
+    auth_code = _create_auth_code(user, workspace, oauth_client_app)
+    try:
+        for request in held:
+            assert throttles.reserve_token_attempt(request) is True
+        # Four requests are being verified. The first finishes with an
+        # invalid attempt just after the valid exchange takes its slot: one
+        # recorded attempt plus four in flight is exactly the limit of 5.
+        fired = _finish_after_next_reservation(
+            monkeypatch, lambda: _finish_with_invalid_attempt(held[0])
+        )
+        response = _post_token(
+            api_client,
+            {
+                "grant_type": "authorization_code",
+                "code": auth_code.code,
+                "client_id": oauth_client_app.client_id,
+                "client_secret": CLIENT_SECRET,
+                "redirect_uri": auth_code.redirect_uri,
+            },
+            remote_addr=addr,
+        )
+    finally:
+        for request in held:
+            throttles.release_token_attempt_reservation(request)
+
+    assert fired == [True]
+    assert response.status_code == 200, response.data
+    assert response.data["access_token"]
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_redis_attempt_recorded_before_release_counts_once(redis_cache):
+    client_id = f"redis-recorded-{uuid.uuid4().hex}"
+    addr = "203.0.113.81"
+    try:
+        _assert_attempt_recorded_before_release_counts_once(client_id, addr)
+    finally:
+        _clear_redis_attempts(redis_cache, client_id, addr)
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_redis_request_finishing_during_admission_counts_once(redis_cache, monkeypatch):
+    client_id = f"redis-finishing-{uuid.uuid4().hex}"
+    addr = "203.0.113.82"
+    try:
+        _assert_request_finishing_during_admission_counts_once(
+            monkeypatch, client_id, addr
+        )
+    finally:
+        _clear_redis_attempts(redis_cache, client_id, addr)
+
+
+@override_settings(
+    **{**_RESERVATION_SETTINGS, "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT": 5}
+)
+def test_redis_recorded_attempts_and_reservations_share_the_limit(redis_cache):
+    client_id = f"redis-shared-{uuid.uuid4().hex}"
+    addr = "203.0.113.83"
+    probe = _reservation_request(client_id, addr)
+    callers = 8
+    barrier = Barrier(callers)
+    requests = [_reservation_request(client_id, addr) for _ in range(callers)]
+
+    def reserve(request):
+        barrier.wait(timeout=5)
+        return throttles.reserve_token_attempt(request)
+
+    try:
+        for _ in range(2):
+            assert record_invalid_token_attempt(probe) == 0
+        # The counter is the one the Django cache API reads and writes.
+        assert redis_cache.get(_invalid_attempt_key(probe)) == 2
+
+        # Two recorded attempts leave room for three concurrent checks.
+        with ThreadPoolExecutor(max_workers=callers) as workers:
+            admitted = list(workers.map(reserve, requests))
+        assert sum(admitted) == 3
+        for request in requests:
+            throttles.release_token_attempt_reservation(request)
+
+        # Reaching the limit still sets the lockout and resets the counter.
+        assert record_invalid_token_attempt(probe) == 0
+        assert record_invalid_token_attempt(probe) == 0
+        assert record_invalid_token_attempt(probe) == 60
+        assert get_invalid_attempt_lockout_wait(probe) > 0
+        assert redis_cache.get(_invalid_attempt_key(probe)) is None
+    finally:
+        for request in requests:
+            throttles.release_token_attempt_reservation(request)
+        _clear_redis_attempts(redis_cache, client_id, addr)

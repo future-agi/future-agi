@@ -523,3 +523,48 @@ async def test_sdk_token_lockout_uses_the_proxy_added_forwarded_line(monkeypatch
         statuses.append(response.status_code)
     assert statuses == [401, 401, 429, 429]
     assert len(lookups) == 2
+
+
+@override_settings(**{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT": 5})
+async def test_sdk_valid_exchange_is_admitted_when_an_earlier_request_finishes_meanwhile(
+    monkeypatch,
+):
+    from mcp_server import oauth_sdk_throttle, throttles
+
+    client_id, secret = await _register()
+    addr = "203.0.113.144"
+    scope = {"type": "http", "client": (addr, 40000), "headers": []}
+    held = [
+        oauth_sdk_throttle._ThrottleRequest(scope, {"client_id": client_id})
+        for _ in range(4)
+    ]
+    for request in held:
+        assert throttles.reserve_token_attempt(request) is True
+
+    real_add = throttles._add_reservation
+    fired = []
+
+    def add_then_finish(*args, **kwargs):
+        # The first held request finishes with an invalid attempt just after
+        # the valid exchange takes its slot: one recorded attempt plus four
+        # in flight is exactly the limit of 5.
+        result = real_add(*args, **kwargs)
+        if not fired:
+            fired.append(True)
+            throttles.record_invalid_token_attempt(held[0])
+            throttles.release_token_attempt_reservation(held[0])
+        return result
+
+    monkeypatch.setattr(throttles, "_add_reservation", add_then_finish)
+    code, verifier = _seed_code(client_id)
+    try:
+        response = await _post(
+            "/token", _code_form(client_id, secret, code, verifier), addr
+        )
+    finally:
+        for request in held:
+            throttles.release_token_attempt_reservation(request)
+
+    assert fired == [True]
+    assert response.status_code == 200, response.text
+    assert response.json()["access_token"]
