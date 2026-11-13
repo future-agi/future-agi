@@ -1878,7 +1878,8 @@ def _apply_harness_evaluation_outputs(
     outputs = dict(call_execution.eval_outputs or {})
     run_test = call_execution.test_execution.run_test
     # Nobody reads the localizer on a fix's check run, so it is not paid for there.
-    localize = not is_fix_check_run(call_execution.test_execution_id)
+    # Asked once, and only when a localizer would run.
+    check_run: bool | None = None
     for evaluation in evaluations:
         if not isinstance(evaluation, dict):
             continue
@@ -1924,8 +1925,14 @@ def _apply_harness_evaluation_outputs(
         # that the native evaluator would create; merely setting
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
-        if localize and config is not None and config.error_localizer:
-            transcript = _render_harness_transcript(transcript_segments or [])
+        if config is not None and config.error_localizer:
+            if check_run is None:
+                check_run = is_fix_check_run(call_execution.test_execution_id)
+            transcript = (
+                ""
+                if check_run
+                else _render_harness_transcript(transcript_segments or [])
+            )
             if transcript:
                 from model_hub.tasks.user_evaluation import (
                     trigger_error_localization_for_simulate,
