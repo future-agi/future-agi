@@ -88,6 +88,7 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
                 await self._stop_subscriber()
 
     async def disconnect(self, close_code):
+        self._guard.stop()
         logger.info(
             "simulation_ws_disconnected",
             test_id=self.test_id,

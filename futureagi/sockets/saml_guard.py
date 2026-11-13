@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import structlog
@@ -41,12 +42,22 @@ class SamlSocketGuard:
         self._validated_once = False
         self._unavailable_since: float | None = None
         self._generation = 0
+        # Checks again once the window ends, so a pending socket that
+        # receives no traffic still closes.
+        self._window_timer: asyncio.TimerHandle | None = None
+        self._window_task: asyncio.Task | None = None
 
     @property
     def pending(self) -> bool:
         """Whether the last check could not complete."""
 
         return self._unavailable_since is not None
+
+    def stop(self) -> None:
+        """Cancel the scheduled window check; the socket has disconnected."""
+
+        self.closed = True
+        self._cancel_window_check()
 
     def expire(self) -> None:
         """Make the next push revalidate instead of reusing a recent result."""
@@ -88,6 +99,7 @@ class SamlSocketGuard:
             return False
         self._validated_once = True
         self._unavailable_since = None
+        self._cancel_window_check()
         if generation == self._generation:
             self._last_validated_at = now_monotonic
         return True
@@ -113,11 +125,14 @@ class SamlSocketGuard:
             error_type=error_type,
             transport="websocket",
         )
-        if not connecting and now - self._unavailable_since < window:
+        elapsed = now - self._unavailable_since
+        if not connecting and elapsed < window:
+            self._schedule_window_check(window - elapsed)
             return
         if self.closed or self.revoked:
             return
         self.closed = True
+        self._cancel_window_check()
         if connecting:
             # Accept first so the client sees 1011 rather than a refused
             # handshake, as the authentication middleware does.
@@ -150,10 +165,44 @@ class SamlSocketGuard:
         )
         AuthToken.objects.filter(id=token_id, is_active=True).update(last_used_at=now)
 
+    def _schedule_window_check(self, delay: float) -> None:
+        if self._window_timer is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._window_timer = loop.call_later(max(delay, 0.05), self._start_window_check)
+
+    def _start_window_check(self) -> None:
+        self._window_timer = None
+        if self.pending and not (self.revoked or self.closed):
+            self._window_task = asyncio.ensure_future(self._window_check())
+
+    async def _window_check(self) -> None:
+        try:
+            await self.ensure_live(inbound=True)
+        except Exception as exc:  # noqa: BLE001 - the socket may be gone
+            security_logger.warning(
+                "saml_socket_window_check_failed",
+                error_type=type(exc).__name__,
+                transport="websocket",
+            )
+
+    def _cancel_window_check(self) -> None:
+        if self._window_timer is not None:
+            self._window_timer.cancel()
+            self._window_timer = None
+        task = self._window_task
+        self._window_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
     async def _revoke(self, reason: str) -> None:
         if self.revoked or self.closed:
             return
         self.revoked = True
+        self._cancel_window_check()
         security_logger.warning(
             "saml_socket_revoked",
             reason=reason,

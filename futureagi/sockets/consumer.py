@@ -97,13 +97,17 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         if not text_data:
             return
+        if type(self).receive_json is not DataConsumer.receive_json:
+            # A subclass answers frames its own way; keep none for it.
+            return
         try:
             content = json.loads(text_data)
         except ValueError:
             return
         if not isinstance(content, dict):
             return
-        if content.get("type") in SUBSCRIPTION_FRAME_TYPES:
+        frame_type = content.get("type")
+        if isinstance(frame_type, str) and frame_type in SUBSCRIPTION_FRAME_TYPES:
             self._pending_subscription_frames.append(content)
 
     async def _answer_pending_subscription_frames(self) -> None:
@@ -205,6 +209,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "error", "message": "Unsupported message type."})
 
     async def disconnect(self, close_code):
+        self._guard.stop()
         if self.user_group_name:
             await self.channel_layer.group_discard(
                 self.user_group_name, self.channel_name

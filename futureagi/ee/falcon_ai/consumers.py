@@ -645,6 +645,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             self._agent_task = None
 
     async def disconnect(self, close_code):
+        self._guard.stop()
         logger.info(
             "falcon_ai_ws_disconnected",
             user_id=str(self.user.id) if self.user else None,

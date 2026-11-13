@@ -167,8 +167,13 @@ def test_saml_socket_answers_nothing_during_a_credential_outage_and_stays_open()
         socket = await open_direct_socket(member, org, saml=True)
         try:
             credential.failure = OperationalError("synthetic database outage")
+            checks = credential.checks
             await socket.send_json_to({"type": "ping"})
-            assert await socket.receive_nothing(timeout=0.5)
+            for _ in range(200):
+                if credential.checks > checks:
+                    break
+                await asyncio.sleep(0.025)
+            assert credential.checks > checks
             await broadcast(org, {"marker": uuid4().hex})
             events = await outputs(socket, settle=0.5)
             assert (frames(events), closed(events)) == ([], [])
@@ -178,7 +183,10 @@ def test_saml_socket_answers_nothing_during_a_credential_outage_and_stays_open()
             await broadcast(org, after)
             await socket.send_json_to({"type": "ping"})
             events = await outputs(socket, settle=0.5)
-            assert (frames(events), closed(events)) == ([after, {"type": "pong"}], [])
+            # The push and the client frame arrive on separate queues.
+            delivered = frames(events)
+            assert len(delivered) == 2 and closed(events) == []
+            assert after in delivered and {"type": "pong"} in delivered
         finally:
             await socket.disconnect()
 
@@ -189,10 +197,11 @@ def test_saml_socket_answers_nothing_during_a_credential_outage_and_stays_open()
 def membership_outage():
     from sockets.org_scope import organization_membership_is_active
 
-    database = {"available": True}
+    database = {"available": True, "failed_checks": 0}
 
     def membership_check(user_id, organization_id):
         if not database["available"]:
+            database["failed_checks"] += 1
             raise OperationalError("synthetic database outage")
         return organization_membership_is_active(user_id, organization_id)
 
@@ -200,6 +209,16 @@ def membership_outage():
         "sockets.membership.organization_membership_is_active",
         side_effect=membership_check,
     )
+
+
+async def until_failed_checks(database, count):
+    """Wait until the socket has run ``count`` failed membership checks."""
+
+    for _ in range(200):
+        if database["failed_checks"] >= count:
+            return
+        await asyncio.sleep(0.025)
+    raise AssertionError(f"only {database['failed_checks']} failed checks")
 
 
 async def send_to_target(org, target, message):
@@ -222,9 +241,11 @@ def test_subscription_sent_during_a_pending_check_is_answered_after_it(answered_
         try:
             database["available"] = False
             await notify_membership_changed(member, org)
-            assert await socket.receive_nothing(timeout=0.5)
+            await until_failed_checks(database, 1)
             await socket.send_json_to({"type": "subscribe", "uuid": target})
-            assert await socket.receive_nothing(timeout=0.5)
+            # The subscription meets a pending check and is not answered.
+            await until_failed_checks(database, 2)
+            assert await socket.receive_nothing(timeout=0.2)
 
             database["available"] = True
             if answered_by == "client-frame":
@@ -266,11 +287,12 @@ def test_subscriptions_kept_during_a_pending_check_are_bounded():
         try:
             database["available"] = False
             await notify_membership_changed(member, org)
-            assert await socket.receive_nothing(timeout=0.5)
+            await until_failed_checks(database, 1)
             for target in targets:
                 await socket.send_json_to({"type": "subscribe", "uuid": target})
             await socket.send_json_to({"type": "ping"})
-            assert await socket.receive_nothing(timeout=0.5)
+            await until_failed_checks(database, len(targets) + 2)
+            assert await socket.receive_nothing(timeout=0.2)
 
             database["available"] = True
             await socket.send_json_to({"type": "ping"})
@@ -361,3 +383,118 @@ def test_credential_check_running_before_expire_is_not_reused():
 
     with patch.object(SamlSocketGuard, "_validate", validate):
         asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [{"type": []}, {"type": {}}, ["subscribe"], "subscribe"],
+    ids=["list-type", "object-type", "list", "string"],
+)
+def test_unexpected_frame_during_a_pending_check_keeps_the_socket_open(frame):
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    database, membership = membership_outage()
+
+    async def run():
+        socket = await open_direct_socket(member, org, saml=False)
+        try:
+            database["available"] = False
+            await notify_membership_changed(member, org)
+            await until_failed_checks(database, 1)
+            await socket.send_json_to(frame)
+            await until_failed_checks(database, 2)
+            database["available"] = True
+            await socket.send_json_to({"type": "ping"})
+            events = await outputs(socket, settle=0.5)
+            assert (frames(events), closed(events)) == ([{"type": "pong"}], [])
+        finally:
+            await socket.disconnect()
+
+    with membership:
+        asyncio.run(run())
+
+
+def test_denial_read_before_a_membership_change_does_not_close_the_socket():
+    consumer = types.SimpleNamespace(
+        organization_id=str(uuid4()),
+        user=types.SimpleNamespace(id=uuid4()),
+        scope={},
+        close=AsyncMock(),
+    )
+    guard = MembershipSocketGuard(consumer)
+    answers = []
+
+    def database_sync_to_async(function):
+        async def check(*args):
+            return await answers.pop(0)
+
+        return check
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        earlier = loop.create_future()
+        answers.append(earlier)
+        delivery = asyncio.create_task(guard.ensure_member())
+        await asyncio.sleep(0)
+        # The membership is restored and the forced check sees it.
+        current = loop.create_future()
+        current.set_result(True)
+        answers.append(current)
+        assert await guard.ensure_member(force=True)
+        # The older read still saw the removed membership.
+        earlier.set_result(False)
+        assert not await delivery
+        assert not guard.closed
+
+    with patch("sockets.membership.database_sync_to_async", database_sync_to_async):
+        asyncio.run(run())
+    consumer.close.assert_not_awaited()
+
+
+def test_pending_socket_without_traffic_closes_when_the_window_ends(settings):
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.3
+    credential = Credential()
+    consumer = saml_consumer()
+    guard = SamlSocketGuard(consumer)
+
+    async def run():
+        assert await guard.ensure_live(inbound=True)
+        credential.failure = OperationalError("synthetic database outage")
+        assert not await guard.ensure_live(inbound=True)
+        consumer.close.assert_not_awaited()
+        # Nothing else arrives; the guard checks again when the window ends.
+        for _ in range(100):
+            if consumer.close.await_count:
+                break
+            await asyncio.sleep(0.02)
+
+    with credential.patch():
+        asyncio.run(run())
+    consumer.close.assert_awaited_once_with(code=RETRYABLE)
+    assert not guard.revoked
+
+
+def test_window_check_is_not_run_after_recovery_or_disconnect(settings):
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.2
+    credential = Credential()
+
+    async def run(stop):
+        consumer = saml_consumer()
+        guard = SamlSocketGuard(consumer)
+        assert await guard.ensure_live(inbound=True)
+        credential.failure = OperationalError("synthetic database outage")
+        assert not await guard.ensure_live(inbound=True)
+        credential.failure = None
+        checks = credential.checks
+        if stop:
+            guard.stop()
+        else:
+            assert await guard.ensure_live(inbound=True)
+            checks += 1
+        await asyncio.sleep(0.4)
+        assert credential.checks == checks
+        consumer.close.assert_not_awaited()
+
+    with credential.patch():
+        asyncio.run(run(stop=False))
+        asyncio.run(run(stop=True))
