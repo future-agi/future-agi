@@ -1989,6 +1989,11 @@ TOKEN_FILES = {
     "tracer/models/project.py": "declares the column and the manager",
     "tracer/migrations/0115_project_simulation_agent.py": "adds the column",
     "tracer/services/simulation_project.py": "creates the project, opens it for a run",
+    "model_hub/services/eval_log_source_navigation.py": (
+        "lists every project id of an organization, hidden ones included, only "
+        "to refuse an older eval log whose trace is also held outside the "
+        "readable scope; never reads or shows that project"
+    ),
 }
 
 _DETAIL = "tracer.services.clickhouse.v2.trace_detail_reads"
