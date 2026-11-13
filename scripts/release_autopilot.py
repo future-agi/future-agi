@@ -335,12 +335,12 @@ def callout_job(run_id):
 
 
 def callout_passed(runs, sha, number):
-    """Decide on the newest callout run of this release PR that ran its check job.
+    """Decide on the newest release-branch callout run that ran its check job.
 
-    A completed run whose check job was skipped is a run for a PR into dev and
-    is passed over. The first other run decides: its run and its check job
-    must both have completed with success. A run still queued or running, or
-    one with no check job listed, decides too, so an older pass never counts.
+    A completed run whose check job was skipped (a PR not into main, such as
+    one into dev) is passed over. The first other run decides: its run and
+    check job must both have completed with success. A run still queued or
+    running, or one with no check job listed, decides too, so no older pass counts.
     """
     callout = [run for run in runs if run.get("path") == CALLOUT_WORKFLOW and run.get("head_sha") == sha
                and run.get("head_branch") == BRANCH
@@ -369,10 +369,10 @@ def release_gates(pr, config, now):
     if not allowed:
         return False, reason
     runs = pages(f"actions/runs?head_sha={sha}&event=pull_request", "workflow_runs")
-    # Keep only runs of the release PR itself (its same-repository branch) before
-    # choosing: a PR from a fork or another branch at the same commit can then
-    # neither pass nor block this gate. Identified by workflow path, because its
-    # job is named "check", like other checks on release heads.
+    # Keep only runs from the same-repository release branch before choosing: a
+    # PR from a fork or another branch at the same commit can then neither pass
+    # nor block this gate. Any PR from the release branch still counts (see the
+    # doc). Identified by workflow path: its job is named "check", like others.
     if type(pr.get("number")) is not int or not callout_passed(runs, sha, pr["number"]):
         return False, "the migrations-callout workflow has not passed on this head"
     main_sha = (api("git/ref/heads/main").get("object") or {}).get("sha", "")

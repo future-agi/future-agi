@@ -828,17 +828,18 @@ bump could compare between the pinned and the new backend digest.
   run records the refused
   head in a PR comment, keeps the approval and ends green; the next eligible run
   retries once, and a second refusal of the same head fails the run.
-- **Which callout run counts.** Only runs of the release PR itself count. The
-  run's head branch must be `release-please--branches--main` in
-  `future-agi/future-agi`, and the run must list this PR, with base `main`,
-  among its pull requests. Runs from a fork or another branch at the same
-  commit are ignored. The callout workflow (from dev, 10 Nov) runs for PRs
+- **Which callout run counts.** The run's head branch must be
+  `release-please--branches--main` in `future-agi/future-agi`, and the run
+  must list this PR, with base `main`, among its pull requests. Runs from a
+  fork or another branch at the same commit are ignored. A run does not say
+  which PR started it. GitHub lists every open PR from a branch on each of its
+  runs (seen on PRs #549 and #550: each run of their branch lists both). So a
+  run from any PR whose head is the release branch counts, not only runs of
+  the release PR itself. The callout workflow (from dev, 10 Nov) runs for PRs
   into `dev` and `main`. Its `self-test` job runs on every PR. Its `check` job
   runs only for a `release-please--` head into `main`; on a PR into dev it is
   skipped and the run still ends green (run 43330391546, for PR #3872 into
-  dev, shows that shape). GitHub lists every open PR from a branch on each of its runs
-  (seen on PRs #549 and #550), so a second PR from the release branch into
-  dev would show up on the release PR's runs. The gate therefore decides on
+  dev, shows that shape). The gate therefore decides on
   the `check` job, not on the run. It reads each run's jobs, newest run first,
   and passes over a completed run whose `check` job was skipped. The first
   other run decides: the run and its `check` job must both have completed
@@ -846,6 +847,27 @@ bump could compare between the pinned and the new backend digest.
   a malformed job list makes the release wait, so an older pass never counts
   over a newer run that has not finished. GitHub allows one open PR per head
   branch and base.
+- **A writer can make the callout gate pass.** The skipped `check` job is
+  the only thing that sets another PR's run apart, and it does so only for
+  PRs into dev, which run dev's copy of the workflow. A writer can create a
+  branch, change its copy of `migrations-callout-check.yml` so that it runs
+  for PRs into that branch and its `check` job always succeeds, then open a
+  PR from the release branch into it. A PR run uses the workflow file in its
+  merge preview. Here that is the writer's copy, because the release branch
+  changes only release metadata, not that file. That run has the same
+  workflow path, head commit, head branch and repository, and it lists the
+  release PR with base `main`. Its `check` job succeeds and, as the newest
+  run, it decides the gate, even if the release PR's own check failed. The
+  autopilot can then merge a release that adds migrations while its notes
+  lack the callout. This was read from the code and GitHub's documented
+  behaviour, not tested; only the PR listing was seen on real runs. It gives
+  the writer little: the callout check is not a required check on main, and
+  one writer can already approve and merge the release PR by hand. The
+  writer could also add the callout by editing the release PR body. The
+  tag-time migration count still selects Production review for any
+  migration or schema file in this repository that it counts. The gate does
+  not refuse when another PR from the release branch is open, because the
+  writer can close that PR after its run.
 - **What the callout check reads.** On a PR event the `check` job's script
   (`.github/scripts/migrations_callout.py`) reads the run's own merge preview:
   `GITHUB_SHA`, the `refs/pull/N/merge` commit that the checkout fetched. It
