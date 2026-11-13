@@ -9,8 +9,8 @@ model reply so the outcome depends only on the pipeline, never on a model:
     enclosed in its own markers, and recorded text cannot forge a marker. The
     system prompt says the block is data. Instruction-like text inside a span
     does not change a verdict computed from the same reply.
-  * A FAIL survives only when its quote is found in the recorded text of the
-    span field it cites. The prompt also holds our own instructions and
+  * A FAIL survives only when each passage it quotes is found in the recorded
+    text of the span field it cites for that passage. The prompt also holds our own instructions and
     framing; a quote of those, or a quote placed on the wrong span or field,
     is not evidence of anything the agent did.
 
@@ -355,6 +355,155 @@ class TestQuotesMustBeBoundToTheTrace:
         assert _issues(result) == CONTROL
 
 
+def _cite(span, field, quote):
+    return {"span": span, "field": field, "quote": quote}
+
+
+# A tool span that recorded nothing but its status, under an answer that
+# reports the step as done.
+STATUS_TOOL = "tool-2"
+REFUND_ANSWER = "Your refund of $40 has been issued and will reach your card in 3 days."
+
+
+def _status_only_trace(status="Error"):
+    trace = _trace(request="Please refund order 1182.", answer=REFUND_ANSWER)
+    trace["spans"][0]["child_spans"] = [
+        {
+            "span_id": STATUS_TOOL,
+            "span_name": "issue_refund",
+            "duration": "PT0.2S",
+            "status_code": status,
+            "span_attributes": {"span.kind": "TOOL"},
+            "child_spans": [],
+        }
+    ]
+    return trace
+
+
+TOOLS_ISSUE = {
+    "dim": "tools",
+    "cat": "Tool-related",
+    "conf": "H",
+    "brief": "reported a refund the refund tool failed to issue",
+}
+
+
+class TestAStatusOnlyToolErrorCanBeCited:
+    """A tool span whose only record of failure is status=Error has no input or
+    output to quote, so its status is what a TOOLS FAIL cites."""
+
+    def test_the_status_only_span_is_in_the_prompt(self):
+        _, messages = _scan(
+            _status_only_trace(), _reply({"tools": {"verdict": "PASS"}}, [])
+        )
+        assert f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error" in (
+            messages[1]["content"]
+        )
+
+    def test_a_tools_fail_citing_the_error_status_and_the_answer_is_kept(self):
+        tools = {
+            "evidence": f"issue_refund status=Error. {REFUND_ANSWER}",
+            "verdict": "FAIL",
+            "cite": [
+                _cite(STATUS_TOOL, "status", "status=Error"),
+                _cite(ROOT, "out", "Your refund of $40 has been issued"),
+            ],
+        }
+        result, _ = _scan(
+            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
+        )
+        assert _issues(result) == [("Tool-related", "H")]
+
+    def test_a_tools_fail_citing_only_the_error_status_is_kept(self):
+        tools = {
+            "evidence": "issue_refund status=Error",
+            "verdict": "FAIL",
+            "cite": [{"span": STATUS_TOOL, "field": "status"}],
+        }
+        result, _ = _scan(
+            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
+        )
+        assert _issues(result) == [("Tool-related", "H")]
+
+    @pytest.mark.parametrize("recorded", ["Ok", "Unset"])
+    def test_an_error_status_the_span_did_not_record_is_dropped(self, recorded):
+        tools = {
+            "evidence": f"issue_refund status=Error. {REFUND_ANSWER}",
+            "verdict": "FAIL",
+            "cite": [
+                _cite(STATUS_TOOL, "status", "status=Error"),
+                _cite(ROOT, "out", "Your refund of $40 has been issued"),
+            ],
+        }
+        result, _ = _scan(
+            _status_only_trace(status=recorded),
+            _reply({"tools": tools}, [TOOLS_ISSUE]),
+        )
+        assert _issues(result) == []
+
+
+GOAL_ISSUE = {
+    "dim": "goal",
+    "cat": "Goal Deviation",
+    "conf": "M",
+    "brief": "answered a different question",
+}
+REAL_REQUEST_PASSAGE = "how many files did it write?"
+REAL_ANSWER_PASSAGE = "wrote 9 files to the bucket"
+INVENTED_PASSAGE = "The archive now holds twelve exported reports."
+
+
+class TestEveryPassageIsCheckedAgainstItsOwnField:
+    """A FAIL quoting several passages is kept only when each passage is found
+    in the field cited for it."""
+
+    @staticmethod
+    def _goal(*cites, evidence=None):
+        return {
+            "evidence": evidence or " ".join(c["quote"] for c in cites),
+            "verdict": "FAIL",
+            "cite": list(cites),
+        }
+
+    def _scan_goal(self, goal):
+        result, _ = _scan(
+            _trace(),
+            _reply({"grounding": GROUNDING, "goal": goal}, [GROUNDING_ISSUE, GOAL_ISSUE]),
+        )
+        return _issues(result)
+
+    def test_two_real_passages_are_kept(self):
+        goal = self._goal(
+            _cite(ROOT, "in", REAL_REQUEST_PASSAGE),
+            _cite(ROOT, "out", REAL_ANSWER_PASSAGE),
+        )
+        assert self._scan_goal(goal) == sorted(CONTROL + [("Goal Deviation", "M")])
+
+    def test_one_real_and_one_invented_passage_is_dropped(self):
+        goal = self._goal(
+            _cite(ROOT, "in", REAL_REQUEST_PASSAGE),
+            _cite(ROOT, "out", INVENTED_PASSAGE),
+        )
+        assert self._scan_goal(goal) == CONTROL
+
+    def test_real_passages_cited_on_each_others_fields_are_dropped(self):
+        goal = self._goal(
+            _cite(ROOT, "out", REAL_REQUEST_PASSAGE),
+            _cite(ROOT, "in", REAL_ANSWER_PASSAGE),
+        )
+        assert self._scan_goal(goal) == CONTROL
+
+    def test_a_joined_quote_with_an_invented_passage_is_dropped(self):
+        """Without per-cite quotes the evidence is read as one passage per
+        cite, in order."""
+        goal = {
+            "evidence": f"{REAL_REQUEST_PASSAGE} {INVENTED_PASSAGE}",
+            "verdict": "FAIL",
+            "cite": [{"span": ROOT, "field": "in"}, {"span": ROOT, "field": "out"}],
+        }
+        assert self._scan_goal(goal) == CONTROL
+
+
 class TestLegacyCallersWithoutATrace:
     """Callers that hold no trace keep the original prompt-text gate."""
 
@@ -395,5 +544,11 @@ class TestTheOutputTemplateIsStillJSON:
         dims = json.loads(self._template())["dimensions"]
         for name in ("goal", "grounding", "tools", "instruction"):
             assert "cite" in dims[name], name
-        assert dims["goal"]["cite"] == [{"span": "<span id>", "field": "in|out"}]
+        assert dims["goal"]["cite"] == [
+            {
+                "span": "<span id>",
+                "field": "in|out|status",
+                "quote": "<the passage, copied from that field>",
+            }
+        ]
         assert "span" in dims["completion"]

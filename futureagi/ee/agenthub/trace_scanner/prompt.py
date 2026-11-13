@@ -166,18 +166,20 @@ WHAT COUNTS AS EVIDENCE — this is strict, and quoting the wrong thing invalida
   the user's message. If the sentence you want to quote appears anywhere in a tool result or
   in the user's own words, it IS sourced and this dimension PASSES. Numbers the agent
   legitimately DERIVED (sums, counts, percentages of returned values) are grounded.
-- TOOLS: quote the tool error or wrong result AND the agent's contradicting assertion.
+- TOOLS: quote the tool error or wrong result AND the agent's contradicting assertion. A
+  tool span that recorded only status=Error (no input or output) is quoted as its status.
 - INSTRUCTION: quote TWO things — the rule as stated in the input, AND the response text that
   violates it. Quoting the rule alone is not evidence of a violation.
 - COMPLETION: quote the end of the final response showing it stops early — or, for an
   absent response, name the span instead (see the dimension).
 
 CITE WHERE EVERY QUOTE CAME FROM. Each FAIL carries "cite": one entry per quoted passage, at
-most three, each naming the span id (the [id] on that span's line) and the field the passage
-was copied from, "in" or "out". The evidence is checked in code against the recorded text of
-exactly the fields you cite. A FAIL that cites nothing, cites a span or field that does not
-contain its quote, or quotes these instructions or the trace's framing instead of a span field
-is discarded. COMPLETION names its span with "span" instead (see the dimension).
+most three, each naming the span id (the [id] on that span's line), the field the passage
+was copied from — "in", "out", or "status" for a span whose only record of the failure is
+its status — and the passage itself as "quote". Each passage is checked in code against the
+recorded text of the one field it cites. A FAIL that cites nothing, has any passage that is
+not in the field it cites, or quotes these instructions or the trace's framing instead of a
+span field is discarded. COMPLETION names its span with "span" instead (see the dimension).
 
 Never cite a closing pleasantry ("You're welcome", "Have a great day", "Let me know if...")
 as evidence of any failure.
@@ -232,7 +234,8 @@ OUTPUT — strict JSON, no prose outside it:
 {
   "dimensions": {
     "goal":        {"evidence": "<verbatim quote or empty>", "verdict": "PASS|FAIL",
-                    "cite": [{"span": "<span id>", "field": "in|out"}]},
+                    "cite": [{"span": "<span id>", "field": "in|out|status",
+                              "quote": "<the passage, copied from that field>"}]},
     "grounding":   {"evidence": "...", "verdict": "PASS|FAIL", "cite": [...]},
     "tools":       {"evidence": "...", "verdict": "PASS|FAIL", "cite": [...]},
     "instruction": {"evidence": "...", "verdict": "PASS|FAIL", "cite": [...]},

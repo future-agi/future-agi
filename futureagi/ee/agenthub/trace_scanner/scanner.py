@@ -207,19 +207,34 @@ def _evidence_is_quotable(evidence, haystack_norm: str) -> bool:
     return hits / len(grams) >= _EVIDENCE_TRIGRAM_FLOOR
 
 
-# The two recorded fields a span carries, as the prompt names them.
+# The recorded fields a FAIL can cite, as the prompt names them. A tool span
+# whose only record of failure is its status (no input, no output) is cited by
+# that status.
 _FIELD_KEYS = {"in": "input.value", "out": "output.value"}
-_FIELD_ALIASES = {"in": "in", "input": "in", "out": "out", "output": "out"}
+_STATUS_FIELD = "status"
+_FIELD_ALIASES = {
+    "in": "in",
+    "input": "in",
+    "out": "out",
+    "output": "out",
+    "status": _STATUS_FIELD,
+    "status_code": _STATUS_FIELD,
+}
+# Status values that record nothing: the span never set one.
+_NO_STATUS = {"", "unset", "status_code_unset", "none"}
 # A quote is bound to the passages it was copied from. GOAL, TOOLS and
 # INSTRUCTION each ask for two passages that usually live in different fields;
 # a third is slack. Citing more than that binds the quote to nothing in
 # particular, so it is refused rather than truncated.
 _MAX_CITES = 3
+# Where a quote without per-cite passages is split into one passage per cite.
+_PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
 
 def _cites(verdict: dict[str, Any]):
-    """The (span id, field) pairs a FAIL says its evidence came from.
+    """The (span id, field, passage) entries a FAIL says its evidence came from.
 
+    ``passage`` is the entry's own ``quote``, or ``None`` when it gives none.
     ``[]`` when it cites nothing; ``None`` when it cites something that cannot
     be read as a span field, or more passages than a quote can be bound to.
     A bare ``span``/``field`` pair on the verdict is read as one citation.
@@ -233,52 +248,95 @@ def _cites(verdict: dict[str, Any]):
         return []
     if not isinstance(raw, list) or len(raw) > _MAX_CITES:
         return None
-    pairs = []
+    entries = []
     for entry in raw:
         if not isinstance(entry, dict):
             return None
         span_id = str(entry.get("span") or "").strip()
         name = _FIELD_ALIASES.get(str(entry.get("field") or "").strip().lower())
-        if not span_id or not name:
+        quote = entry.get("quote")
+        if not span_id or not name or not isinstance(quote, (str, type(None))):
             return None
-        pairs.append((span_id, name))
-    return pairs
+        entries.append((span_id, name, quote.strip() if quote else None))
+    return entries
 
 
-def _cited_text(trace, pairs) -> str | None:
-    """Recorded text of exactly the cited fields, or None if one is not there.
+def _cited_passages(verdict: dict[str, Any], entries) -> list[str] | None:
+    """One passage per cite, in cite order, or None if they cannot be paired.
+
+    Each cite's own ``quote`` when every cite carries one. Without them, a
+    single cite takes the whole evidence, and several cites take the evidence's
+    sentences in order, one each; a quote that does not split into exactly one
+    passage per cite cannot say which passage came from which field.
+    """
+    quotes = [quote for _span_id, _name, quote in entries]
+    if all(quotes):
+        return quotes
+    if any(quotes):
+        return None
+    evidence = str(verdict.get("evidence") or "").strip()
+    if len(entries) == 1:
+        return [evidence]
+    passages = [p for p in _PASSAGE_BREAK.split(evidence) if p.strip()]
+    return passages if len(passages) == len(entries) else None
+
+
+def _field_values(trace, span_id: str, name: str) -> list[str]:
+    """Recorded values of one cited field, one per copy of the span.
 
     Read from the trace itself, never from the prompt: the prompt also carries
     our instructions and framing, and a quote that only matches those is not a
-    quote from the trace. Neutralised as the prompt neutralised it, so a quote
-    of a field that contained a marker still matches. Every copy of a duplicated
-    span id counts, as it does for the completion gate.
+    quote from the trace. Neutralised as the prompt neutralised them, so a
+    quote of a field that contained a marker still matches. Every copy of a
+    duplicated span id counts, as it does for the completion gate. ``[]`` when
+    the span is unknown or recorded nothing in that field.
     """
-    texts = []
-    for span_id, name in pairs:
-        values = [
-            str((s.get("span_attributes") or {}).get(_FIELD_KEYS[name]) or "")
-            for s in _named_spans(trace, span_id)
-        ]
-        values = [v for v in values if v.strip()]
-        if not values:
-            return None
-        texts.extend(neutralize(v) for v in values)
-    return "\n".join(texts)
+    spans = _named_spans(trace, span_id)
+    if name == _STATUS_FIELD:
+        values = [str(s.get("status_code") or "").strip() for s in spans]
+        return [neutralize(v) for v in values if v.casefold() not in _NO_STATUS]
+    values = [
+        str((s.get("span_attributes") or {}).get(_FIELD_KEYS[name]) or "")
+        for s in spans
+    ]
+    return [neutralize(v) for v in values if v.strip()]
+
+
+def _passage_in_field(passage: str, name: str, values: list[str]) -> bool:
+    """Is this passage a quote of the cited field?
+
+    A status is a single recorded word ("Error"), shorter than any quote the
+    text gate accepts, so a passage citing it must name that exact status.
+    """
+    if name == _STATUS_FIELD:
+        said = _norm_for_match(passage)
+        return any(
+            re.search(rf"(?<![a-z0-9]){re.escape(_norm_for_match(v))}(?![a-z0-9])", said)
+            for v in values
+        )
+    return _evidence_is_quotable(passage, _norm_for_match("\n".join(values)))
 
 
 def _unbound_reason(verdict: dict[str, Any], trace) -> str | None:
-    """Why this FAIL's evidence is not bound to the trace, or None if it is."""
-    pairs = _cites(verdict)
-    if pairs is None:
+    """Why this FAIL's evidence is not bound to the trace, or None if it is.
+
+    Every cited passage is checked against its own cited field, so one real
+    passage cannot carry another that is not in the trace.
+    """
+    entries = _cites(verdict)
+    if entries is None:
         return "unreadable_cite"
-    if not pairs:
+    if not entries:
         return "uncited"
-    text = _cited_text(trace, pairs)
-    if text is None:
-        return "cited_field_missing"
-    if not _evidence_is_quotable(verdict.get("evidence"), _norm_for_match(text)):
-        return "not_in_cited_field"
+    passages = _cited_passages(verdict, entries)
+    if passages is None:
+        return "unpaired_passages"
+    for (span_id, name, _quote), passage in zip(entries, passages):
+        values = _field_values(trace, span_id, name)
+        if not values:
+            return "cited_field_missing"
+        if not _passage_in_field(passage, name, values):
+            return "not_in_cited_field"
     return None
 
 
@@ -691,8 +749,9 @@ class TraceScanner:
         enforced by the model on itself — nothing checked that the quote it
         returned was ever in front of it, and the quote was then discarded.
 
-        With the ``trace`` in hand, a FAIL's evidence must be found in the
-        recorded text of the span fields it cites (span id + "in"/"out"), read
+        With the ``trace`` in hand, each passage of a FAIL's evidence must be
+        found in the recorded text of the span field cited for it (span id +
+        "in"/"out", or "status" for a span that recorded only its status), read
         from the trace itself. Matching against the prompt instead would accept
         a quote of our own instructions or framing, and would not say where in
         the trace the quote came from. A FAIL that cites nothing, cites a field
