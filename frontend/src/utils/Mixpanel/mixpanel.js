@@ -6,6 +6,7 @@ import logger from "../logger";
 import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
 import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
+import { scrubAnalyticsProperties } from "src/utils/analytics-scrub";
 
 // Mixpanel is opt-in: skip init entirely on OSS builds where no token
 // is set. mixpanel-browser's init(undefined, ...) silently produces a
@@ -221,7 +222,7 @@ export const trackEvent = (eventName, properties) => {
       eventName,
       eventName === Events.customModelAdded
         ? customModelEventProperties(properties)
-        : properties,
+        : scrubAnalyticsProperties(properties),
     );
   } catch (error) {
     logger.error("Failed to track event:", error);
@@ -306,6 +307,21 @@ const pathToEventMapper = {
   "/dashboard/settings/ai-providers": Events.customModelPageVisited,
   "/dashboard/workbench": Events.promptManagementPageVisited,
   "/dashboard/keys": Events.apiPageVisited,
+};
+
+// Auth links carry a one-time token in the path; page views report the route
+// pattern for those instead of the literal path.
+const TOKEN_PAGE_PATTERNS = [
+  "/auth/jwt/invitation/accept/:uuid/:token",
+  "/auth/jwt/invitation/set-password/:uuid/:token",
+  "/auth/jwt/verify/:uuid/:token",
+];
+
+export const pageViewPath = (pathname = "") => {
+  const pattern = TOKEN_PAGE_PATTERNS.find((candidate) =>
+    matchPath({ path: candidate, end: false }, pathname),
+  );
+  return pattern || pathname;
 };
 
 export const getPageViewEvent = (currentPath) => {
