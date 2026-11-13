@@ -18,7 +18,7 @@ import uvicorn
 from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
 from django.core.cache import cache
-from websockets.exceptions import InvalidStatus
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.sync.client import connect
 
 from accounts.models.organization import Organization
@@ -363,16 +363,19 @@ def test_removed_member_socket_receives_no_former_org_traffic(
             assert (status, leaked) == (403, None)
 
 
-def test_removed_member_socket_cannot_publish_to_former_org_stream(relay_server):
+def test_client_frames_never_reach_stream_subscribers(relay_server):
     org, owner, member, _ = create_organization()
     target = str(uuid4())
     with subscriber(relay_server, org, owner, target) as own:
-        # While still a member, a peer frame on the shared target reaches the owner.
+        # Stream frames come only from the server-side relay, even for members.
         with subscriber(relay_server, org, member, target) as peer:
             data = {"marker": uuid4().hex}
             peer.send(json.dumps({"type": "peer_msg", "uuid": target, "data": data}))
-            expected = {"type": "peer_msg", "data": data, "uuid": target}
-            assert json.loads(own.recv(timeout=10)) == expected
+            assert json.loads(peer.recv(timeout=10)) == {
+                "type": "error",
+                "message": "Unsupported message type.",
+            }
+            assert receive_optional(own) is None
 
         token = remove_member_and_log_in_again(relay_server, org, owner, member)
         url = f"{relay_server[2]}/ws/connect/?token={token['access']}"
@@ -382,3 +385,34 @@ def test_removed_member_socket_cannot_publish_to_former_org_stream(relay_server)
                 frame = {"type": "injected", "uuid": target, "data": {"text": "x"}}
                 removed.send(json.dumps(frame))
             assert (status, receive_optional(own)) == (403, None)
+
+
+def close_code(ws):
+    """Return the close code once the server closes ``ws``, failing on any frame."""
+
+    try:
+        frame = ws.recv(timeout=10)
+    except ConnectionClosed as exc:
+        return exc.rcvd.code if exc.rcvd is not None else None
+    raise AssertionError(f"unexpected frame before close: {frame}")
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+def test_open_member_socket_closes_when_membership_is_removed(relay_server, targeted):
+    org, owner, member, key = create_organization()
+    target = str(uuid4()) if targeted else None
+    with (
+        subscriber(relay_server, org, owner, target) as own,
+        subscriber(relay_server, org, member, target) as open_member,
+    ):
+        before, message = relay(relay_server, key_headers(key), target)
+        assert before.status_code == 200, before.text
+        assert json.loads(own.recv(timeout=10)) == message
+        assert json.loads(open_member.recv(timeout=10)) == message
+
+        remove_member_and_log_in_again(relay_server, org, owner, member)
+        after, message = relay(relay_server, key_headers(key), target)
+        assert after.status_code == 200, after.text
+        # The organization's remaining member is the positive control.
+        assert json.loads(own.recv(timeout=10)) == message
+        assert close_code(open_member) == 4002
