@@ -16,9 +16,6 @@ import {
   tableRowClasses,
 } from "@mui/material";
 
-import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
-import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   defaultTraceColumns,
   headCellSx,
@@ -27,24 +24,15 @@ import {
   TRACE_COLUMNS,
   HEAD_ROW_PX,
   GROUP_ROW_PX,
-  numCellSx,
   bodyCellSx,
-  runOutcome,
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
   pinnedLeftSx,
+  LIVE_CALL_STATUSES,
+  TRACE_CELL_KEYS,
+  TRACE_HEAD_WIDTH,
 } from "./traceTable.constants";
-import {
-  SubTasksCell,
-  TruncTooltip,
-} from "../../../scenarios/ScenarioTableCells";
-import {
-  CsatValue,
-  MetricValue,
-  Score,
-  Field,
-  UnscoredEval,
-} from "./traceCells";
+import { EvalCell, TraceCell } from "./traceRowCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -63,30 +51,6 @@ const lastRowDividersSx = {
     { borderBottomColor: "divider" },
 };
 
-/**
- * The per-call traces, as a grouped table. Real data only: rows read the mapped
- * `RunTask` scalars (no mock derivations); each evaluation renders as a heat-
- * tinted score column. Row-click opens the call; past results are read-only.
- */
-// The free-text columns stay narrow so a collapsed table (one count per group)
-// doesn't stretch; long text is cut at four lines — the drawer has the rest.
-const TEXT_COL_WIDTH = { long: 260, short: 200 };
-// A call still in flight — its eval cells can only be waiting. `analyzing`
-// is a finished conversation whose evals are grading (the chat path).
-const LIVE_CALL_STATUSES = new Set([
-  "pending",
-  "queued",
-  "ongoing",
-  "analyzing",
-]);
-const textCellSx = (width) => ({
-  ...bodyCellSx,
-  width,
-  minWidth: width,
-  maxWidth: width,
-  typography: "s2",
-  color: "text.secondary",
-});
 // The narrow first column that holds a call's tick when rows can be selected.
 const checkboxCellSx = {
   ...bodyCellSx,
@@ -106,19 +70,11 @@ const checkboxHeadSx = {
   textAlign: "center",
   verticalAlign: "middle",
 };
-const clampSx = {
-  display: "-webkit-box",
-  WebkitLineClamp: 4,
-  WebkitBoxOrient: "vertical",
-  overflow: "hidden",
-  wordBreak: "break-word",
-};
-
-// A persona is worth showing when any field is filled, not only the name: the
-// API sends name: null when the persona has no name key.
-const hasPersonaDetails = (p) =>
-  !!(p && (p.name || p.voice || p.age || p.traits?.length));
-
+/**
+ * The per-call traces, as a grouped table. Real data only: rows read the mapped
+ * `RunTask` scalars (no mock derivations); each evaluation renders as a heat-
+ * tinted score column. Row-click opens the call; past results are read-only.
+ */
 export default function TraceTable({
   groups,
   rows = null,
@@ -227,8 +183,6 @@ export default function TraceTable({
   }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
 
   const renderRow = (t) => {
-    const outcome = runOutcome(t.status);
-    const callLive = LIVE_CALL_STATUSES.has(t.executionStatus);
     const active = t.id === activeCallId;
     return (
       <TableRow
@@ -266,273 +220,12 @@ export default function TraceTable({
             )}
           </TableCell>
         )}
-        {show("callDetails") && (
-          // Indented past the group row's chevron so a call reads as nested
-          // under its group, lined up with the group name.
-          <TableCell sx={{ ...bodyCellSx, pl: 5 }} onClick={() => onOpen(t)}>
-            <Box minWidth={0}>
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.75}
-                sx={{ mb: 0.125 }}
-              >
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s2",
-                    fontWeight: "fontWeightSemiBold",
-                    maxWidth: 300,
-                  }}
-                >
-                  {t.scenario}
-                </Typography>
-                {t.critical && (
-                  <CustomTooltip
-                    show
-                    arrow
-                    title="Critical: a failure here is a release blocker"
-                  >
-                    <Box sx={{ display: "flex" }}>
-                      <Iconify
-                        icon="solar:danger-triangle-bold"
-                        width={12}
-                        sx={{ color: "status.danger.solid" }}
-                      />
-                    </Box>
-                  </CustomTooltip>
-                )}
-              </Stack>
-              <Stack direction="row" alignItems="center" spacing={0.75}>
-                <StatusBadge
-                  status={t.status}
-                  label={outcome.label}
-                  role={outcome.role}
-                  variant="dot"
-                />
-                {t.durationMs != null && (
-                  <>
-                    <Box
-                      sx={{
-                        width: 3,
-                        height: 3,
-                        borderRadius: "50%",
-                        bgcolor: "text.disabled",
-                      }}
-                    />
-                    <Typography
-                      sx={{ typography: "s3", color: "text.subtitle" }}
-                    >
-                      {(t.durationMs / 1000).toFixed(1)}s
-                    </Typography>
-                  </>
-                )}
-              </Stack>
-              {t.subGoalResults?.length > 0 && (
-                <Stack spacing={0.5} sx={{ mt: 1 }}>
-                  {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict = runOutcome(
-                      goal.passed === true
-                        ? "passed"
-                        : goal.passed === false
-                          ? "failed"
-                          : "inconclusive",
-                    );
-                    return (
-                      <Stack
-                        key={`${goal.name}-${goalIndex}`}
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.75}
-                      >
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {goal.name}
-                        </Typography>
-                        {goal.passed == null ? (
-                          <Typography
-                            sx={{ typography: "s3", color: verdict.color }}
-                          >
-                            {verdict.label}
-                          </Typography>
-                        ) : (
-                          <Box
-                            role="img"
-                            aria-label={verdict.label}
-                            title={verdict.label}
-                            sx={{ display: "flex", color: verdict.color }}
-                          >
-                            <Iconify
-                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
-                              width={16}
-                              aria-hidden="true"
-                            />
-                          </Box>
-                        )}
-                      </Stack>
-                    );
-                  })}
-                </Stack>
-              )}
-            </Box>
-          </TableCell>
-        )}
-
-        {show("persona") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {hasPersonaDetails(t.personaDetails) ? (
-              <Stack spacing={0.5} sx={{ minWidth: 210 }}>
-                <Field
-                  icon="solar:user-id-linear"
-                  label="Name"
-                  value={t.personaDetails.name}
-                />
-                <Field
-                  icon="solar:user-linear"
-                  label="Voice"
-                  value={t.personaDetails.voice}
-                />
-                <Field
-                  icon="solar:users-group-rounded-linear"
-                  label="Age"
-                  value={t.personaDetails.age}
-                />
-                <Field
-                  icon="solar:tag-linear"
-                  label="Traits"
-                  value={t.personaDetails.traits?.join(", ")}
-                />
-              </Stack>
-            ) : (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                -
-              </Typography>
-            )}
-          </TableCell>
-        )}
-
-        {show("scenario") && (
-          <TableCell
-            sx={textCellSx(TEXT_COL_WIDTH.long)}
-            onClick={() => onOpen(t)}
-          >
-            <Box sx={clampSx}>{t.scenario || "-"}</Box>
-          </TableCell>
-        )}
-
-        {show("situation") && (
-          <TableCell
-            sx={textCellSx(TEXT_COL_WIDTH.long)}
-            onClick={() => onOpen(t)}
-          >
-            <TruncTooltip title={t.scenarioDetails}>
-              <Box sx={clampSx}>{t.scenarioDetails || "-"}</Box>
-            </TruncTooltip>
-          </TableCell>
-        )}
-
-        {show("subGoals") && (
-          <TableCell
-            sx={textCellSx(TEXT_COL_WIDTH.long)}
-            onClick={() => onOpen(t)}
-          >
-            <SubTasksCell
-              subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
-            />
-          </TableCell>
-        )}
-
-        {show("idealOutcome") && (
-          <TableCell
-            sx={textCellSx(TEXT_COL_WIDTH.long)}
-            onClick={() => onOpen(t)}
-          >
-            <TruncTooltip title={t.idealOutcome}>
-              <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
-            </TruncTooltip>
-          </TableCell>
-        )}
-
-        {show("conversationBranch") && (
-          <TableCell
-            sx={textCellSx(TEXT_COL_WIDTH.short)}
-            onClick={() => onOpen(t)}
-          >
-            <Box sx={clampSx}>{t.conversationBranch || "-"}</Box>
-          </TableCell>
-        )}
-
-        {show("csat") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <CsatValue
-              value={t.csat}
-              status={t.csatStatus}
-              reason={t.csatReason}
-              callLive={callLive}
-            />
-          </TableCell>
-        )}
-        {show("turns") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="turns" value={t.turns} loading={callLive} />
-          </TableCell>
-        )}
-        {show("latency") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue
-              metric="latency"
-              value={t.latencyMs}
-              suffix="ms"
-              loading={callLive}
-            />
-          </TableCell>
-        )}
-        {show("stopLatency") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue
-              metric="stopLatency"
-              value={t.stopLatencyMs}
-              suffix="ms"
-              loading={callLive}
-            />
-          </TableCell>
-        )}
-        {show("aiInterruptions") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue
-              metric="aiInterruptions"
-              value={t.aiInterruptions}
-              loading={callLive}
-            />
-          </TableCell>
-        )}
-        {show("tokens") && (
-          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="tokens" value={t.tokens} loading={callLive} />
-          </TableCell>
-        )}
-
-        {scoredColumns.map((e) => {
-          const r = t.evalResults?.find((x) => x.id === e.id);
-          return (
-            <TableCell
-              key={e.id}
-              sx={{ ...bodyCellSx, p: 0, position: "relative" }}
-              onClick={() => onOpen(t)}
-            >
-              {r?.score != null || r?.label ? (
-                <Score result={r} />
-              ) : (
-                <UnscoredEval
-                  result={r}
-                  callLive={callLive}
-                  callStatus={t.executionStatus}
-                />
-              )}
-            </TableCell>
-          );
-        })}
+        {TRACE_CELL_KEYS.filter(show).map((key) => (
+          <TraceCell key={key} columnKey={key} task={t} onOpen={onOpen} />
+        ))}
+        {scoredColumns.map((e) => (
+          <EvalCell key={e.id} column={e} task={t} onOpen={onOpen} />
+        ))}
       </TableRow>
     );
   };
@@ -585,61 +278,16 @@ export default function TraceTable({
                   />
                 </TableCell>
               )}
-              {show("callDetails") && (
-                <TableCell sx={{ ...headSx, width: 200 }}>
-                  {firstColumnLabel}
+              {TRACE_CELL_KEYS.filter(show).map((key) => (
+                <TableCell
+                  key={key}
+                  sx={{ ...headSx, width: TRACE_HEAD_WIDTH[key] }}
+                >
+                  {key === "callDetails"
+                    ? firstColumnLabel
+                    : TRACE_COLUMNS.find((c) => c.key === key).label}
                 </TableCell>
-              )}
-              {show("persona") && (
-                <TableCell sx={{ ...headSx, width: 200 }}>Persona</TableCell>
-              )}
-              {show("scenario") && (
-                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
-                  Scenario
-                </TableCell>
-              )}
-              {show("situation") && (
-                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
-                  Situation
-                </TableCell>
-              )}
-              {show("subGoals") && (
-                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
-                  Sub-goals
-                </TableCell>
-              )}
-              {show("idealOutcome") && (
-                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
-                  Ideal outcome
-                </TableCell>
-              )}
-              {show("conversationBranch") && (
-                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.short }}>
-                  Conversation branch
-                </TableCell>
-              )}
-              {show("csat") && (
-                <TableCell sx={{ ...headSx, width: 84 }}>CSAT</TableCell>
-              )}
-              {show("turns") && (
-                <TableCell sx={{ ...headSx, width: 92 }}>Turns</TableCell>
-              )}
-              {show("latency") && (
-                <TableCell sx={{ ...headSx, width: 96 }}>Latency</TableCell>
-              )}
-              {show("stopLatency") && (
-                <TableCell sx={{ ...headSx, width: 140 }}>
-                  Stop latency
-                </TableCell>
-              )}
-              {show("aiInterruptions") && (
-                <TableCell sx={{ ...headSx, width: 150 }}>
-                  AI interruptions
-                </TableCell>
-              )}
-              {show("tokens") && (
-                <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
-              )}
+              ))}
               {scoredColumns.map((e) => {
                 // Sub-goal columns share this row but aren't evals, so only
                 // an eval's own column gets the action.

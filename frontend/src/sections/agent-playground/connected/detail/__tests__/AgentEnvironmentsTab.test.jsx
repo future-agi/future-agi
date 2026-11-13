@@ -63,6 +63,8 @@ beforeEach(() => {
           ...ENVIRONMENT_RUN,
           outcome_passed: 8,
           outcome_failed: 2,
+          pass_rate: 80,
+          measured: 10,
           completed_at: twoHoursAgo,
         }),
       },

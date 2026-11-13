@@ -106,6 +106,9 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
         improvement: (envId, fixId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
+        // The first run is the baseline.
+        compare: (envId, runIds) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare?runs=${runIds.map(encodeURIComponent).join(",")}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

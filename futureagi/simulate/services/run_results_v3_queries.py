@@ -70,6 +70,8 @@ from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenar
 from simulate.selectors.runs import user_executions
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
+from simulate.services.harness_scenarios import level_label
+from simulate.services.run_call_match import ENUM_FILTERS, TEXT_FILTERS
 from simulate.services.run_reliability_v3 import build_reliability
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
@@ -110,6 +112,8 @@ GROUP_FIELDS = {
     "status": "result_outcome",
 }
 UNGROUPED = "Ungrouped"
+# The facets a run's call-value rows count.
+ROW_FACETS = {"goal": "result_goal", "status": "result_outcome", **ENUM_FILTERS}
 LIST_AXES = frozenset({"sub_goal"})
 # The ``ordering`` values a run's calls sort by, and the field each one orders on.
 ORDERING_FIELDS = {
@@ -727,14 +731,8 @@ class _NativeHarnessVerdict(Func):
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
 
 
-def run_calls_queryset(
-    execution: TestExecution,
-    execution_ids: list[Any] | None = None,
-    *,
-    live_evals: LiveEvals | None = None,
-) -> QuerySet[CallExecution]:
-    if live_evals is None:
-        live_evals = live_eval_specs(execution.run_test_id)
+def _eval_verdict_qs(live_evals: LiveEvals) -> tuple[Q, Q, Q]:
+    """A call's failed, passed and errored eval verdicts under ``live_evals``."""
     live_evals.warn_invalid_thresholds()
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
@@ -751,6 +749,31 @@ def run_calls_queryset(
     failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
     passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
     errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
+    return failed_eval, passed_eval, errored_eval
+
+
+def run_calls_queryset(
+    execution: TestExecution,
+    execution_ids: list[Any] | None = None,
+    *,
+    live_evals: LiveEvals | None = None,
+    live_evals_by_run_test: dict[Any, LiveEvals] | None = None,
+) -> QuerySet[CallExecution]:
+    if live_evals_by_run_test is None:
+        if live_evals is None:
+            live_evals = live_eval_specs(execution.run_test_id)
+        failed_eval, passed_eval, errored_eval = _eval_verdict_qs(live_evals)
+    else:
+        # Runs of several run tests: each call is graded by its own run test's evals.
+        failed_eval = Q(pk__in=[])
+        passed_eval = Q(pk__in=[])
+        errored_eval = Q(pk__in=[])
+        for run_test_id, evals in live_evals_by_run_test.items():
+            own = Q(test_execution__run_test_id=run_test_id)
+            failed_q, passed_q, errored_q = _eval_verdict_qs(evals)
+            failed_eval |= own & failed_q
+            passed_eval |= own & passed_q
+            errored_eval |= own & errored_q
 
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while
@@ -874,6 +897,35 @@ def run_calls_queryset(
                 output_field=JSONField(),
             )
             for axis in LIST_AXES
+        },
+        # Twin: the authored values in run_results_v3_scan; change both.
+        result_persona_name=Coalesce(
+            *_member_first(
+                member,
+                _member_level("persona.name"),
+                authored.values(level=_authored_level("persona.name")),
+                TextField(),
+                empty=Value(""),
+            ),
+            Value(UNGROUPED),
+            output_field=CharField(),
+        ),
+        **{
+            field: Coalesce(
+                *_member_first(
+                    member,
+                    _member_level(column),
+                    authored.values(column),
+                    TextField(),
+                    empty=Value(""),
+                ),
+                Value(""),
+                output_field=CharField(),
+            )
+            for field, column in (
+                ("result_scenario_name", "name"),
+                ("result_situation", "instruction"),
+            )
         },
         result_eval_outcome=Case(
             When(failed_eval, then=Value("failed")),
@@ -1053,6 +1105,18 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
                 )
             )
         )
+    # Twin: ``run_call_match.matches``; the row fields are never NULL.
+    for key, field in ENUM_FILTERS.items():
+        if values := filters.get(key):
+            queryset = queryset.filter(**{f"{field}__in": values})
+        if values := filters.get(f"{key}_not"):
+            queryset = queryset.exclude(**{f"{field}__in": values})
+    for key, field in TEXT_FILTERS.items():
+        if values := filters.get(key):
+            contains = Q(pk__in=[])
+            for value in values:
+                contains |= Q(**{f"{field}__icontains": value})
+            queryset = queryset.filter(contains)
 
     group_by = query.get("group_by")
     group_key = query.get("group_key")
@@ -1208,6 +1272,24 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
+def row_facets(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Facets of call-value rows; the scenario enums leave out Ungrouped, as
+    ``field_catalogue`` does."""
+    facets = _value_facets(rows, ROW_FACETS)
+    for key in ENUM_FILTERS:
+        facets[key] = [one for one in facets[key] if one["value"] != UNGROUPED]
+    return facets
+
+
+def facet_level_labels(facets: dict[str, Any]) -> dict[str, str]:
+    """The Scenarios tab's names for the attack, task and sub-goal facet values."""
+    return {
+        one["value"]: level_label(one["value"])
+        for key in ("attack", "task", "sub_goal")
+        for one in facets.get(key) or []
+    }
+
+
 def run_call_facets(
     rows: Callable[[], list[dict[str, Any]]],
     calls: Callable[[], QuerySet],
@@ -1216,7 +1298,7 @@ def run_call_facets(
     """Facets of the call-value rows; ``calls`` are the same calls, unannotated."""
     if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
         return cached
-    facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
+    facets = row_facets(rows())
     facets["sub_goal"] = _sub_goal_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)

@@ -63,6 +63,9 @@ const IMPROVEMENT_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/improvements/:fixId`,
   end: false,
 };
+const COMPARE_PATTERN = {
+  path: `${paths.dashboard.simulate.environments.root}/:envId/compare`,
+};
 
 
 // Why the platform left observability off; the Environment builds either way.
@@ -269,6 +272,7 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+  const compareMatch = useMatch(COMPARE_PATTERN);
 
   if (notFound) {
     return (
@@ -368,8 +372,8 @@ export default function EnvironmentWorkspace() {
   // — a run opens as a page, not a body swapped inside the tabbed workspace. The
   // env is already resolved above, so the nested Outlet still receives it via
   // context and RunDetail owns the viewport (its own header + Test-runs tabs).
-  // A fix (improvement) opens as its own full page too, like a run.
-  if (improvementMatch) {
+  // A fix (improvement) and a run comparison open as their own full pages too.
+  if (improvementMatch || compareMatch) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         <Suspense fallback={<LoadingScreen />}>

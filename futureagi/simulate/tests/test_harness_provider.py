@@ -490,9 +490,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         for row in history.json()["results"]
         if row["id"] == str(first.test_execution_id)
     )
+    # A skipped receipt cancels its call, which the run detail grades as an
+    # error; the error counts as failed and neither call is measured.
     assert first_run["outcome_passed"] == 0
-    assert first_run["outcome_failed"] == 0
-    assert first_run["outcome_skipped"] == 2
+    assert first_run["outcome_failed"] == 2
+    assert first_run["outcome_skipped"] == 0
+    assert first_run["pass_rate"] is None
+    assert first_run["measured"] == 0
     receipts = list(
         HostedHarnessReceipt.no_workspace_objects.filter(job=first).order_by(
             "execution__trial_index"

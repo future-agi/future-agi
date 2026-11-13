@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 // jsdom can't lay the chart out; capture what it's handed instead.
 const chartProps = vi.fn();
@@ -19,9 +20,10 @@ vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
   return { ...actual, useEnvironmentRuns: vi.fn() };
 });
 
-const useCompareRuns = vi.fn();
-vi.mock("src/api/simulate-environments/compareRuns", () => ({
-  useCompareRuns: (...args) => useCompareRuns(...args),
+const navigate = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => navigate,
 }));
 
 const { useEnvironmentRuns } = await import("src/api/simulate-environments/runs");
@@ -30,15 +32,37 @@ const { STATUS_META } = await import("../../runs.constants");
 
 const RUNS = [
   {
-    id: "ex2", executionId: "ex2", ordinal: 2, label: "Run 2", status: "passed",
-    startedAt: "2026-01-13T16:40:00.000Z", finishedAt: "2026-01-13T16:42:10.000Z",
-    total: 20, passed: 15, failed: 5, agentVersion: "v2", durationS: 11.9,
+    id: "ex2",
+    executionId: "ex2",
+    ordinal: 2,
+    label: "Run 2",
+    status: "passed",
+    startedAt: "2026-01-13T16:40:00.000Z",
+    finishedAt: "2026-01-13T16:42:10.000Z",
+    total: 20,
+    passed: 15,
+    failed: 5,
+    passRate: 75,
+    measured: 20,
+    agentVersion: "v2",
+    durationS: 11.9,
     scores: { task_success: 58, policy_adherence: 39 },
   },
   {
-    id: "ex1", executionId: "ex1", ordinal: 1, label: "Run 1", status: "failed",
-    startedAt: "2026-01-12T11:05:00.000Z", finishedAt: "2026-01-12T11:07:30.000Z",
-    total: 20, passed: 10, failed: 10, agentVersion: "v1", durationS: 13.2,
+    id: "ex1",
+    executionId: "ex1",
+    ordinal: 1,
+    label: "Run 1",
+    status: "failed",
+    startedAt: "2026-01-12T11:05:00.000Z",
+    finishedAt: "2026-01-12T11:07:30.000Z",
+    total: 20,
+    passed: 10,
+    failed: 10,
+    passRate: 50,
+    measured: 20,
+    agentVersion: "v1",
+    durationS: 13.2,
     scores: { task_success: 49, policy_adherence: 28 },
   },
 ];
@@ -55,9 +79,11 @@ function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) 
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = () => (
-    <QueryClientProvider client={client}>
-      <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} {...props} />
-    </QueryClientProvider>
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} {...props} />
+      </QueryClientProvider>
+    </MemoryRouter>
   );
   const view = render(ui());
   return { rerender: () => view.rerender(ui()) };
@@ -110,10 +136,23 @@ describe("RunsSummary", () => {
     expect(screen.getByText("across 1 scenario")).toBeInTheDocument();
   });
 
-  it("shows a real pass rate per run", () => {
+  it("shows the server's graded pass rate per run", () => {
     renderSummary();
     expect(screen.getByText("75%")).toBeInTheDocument(); // Run 2: 15/20
     expect(screen.getByText("50%")).toBeInTheDocument(); // Run 1: 10/20
+  });
+
+  it("shows a dash, not 0%, for a run with no measured call", () => {
+    renderSummary({}, [{ ...RUNS[0], passRate: null, measured: 0 }]);
+    expect(screen.queryByText("0%")).toBeNull();
+    expect(screen.queryByText("75%")).toBeNull();
+    const pass = screen
+      .getAllByRole("columnheader")
+      .findIndex((th) => th.textContent === "Pass");
+    const row = screen
+      .getAllByRole("row")
+      .find((tr) => within(tr).queryByText(/^Run 2/));
+    expect(within(row).getAllByRole("cell")[pass]).toHaveTextContent(/^-$/);
   });
 
   it("renders the derived eval columns from the runs' score keys", () => {
@@ -132,11 +171,15 @@ describe("RunsSummary", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
   });
 
-  it("shows no run-compare checkboxes or compare hint with versioning off", () => {
+  it("offers compare without versioning", () => {
     renderSummary();
-    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-    expect(screen.queryByText(/to compare/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Compare" })).toBeNull();
+    expect(
+      screen.getAllByRole("checkbox", { name: /^Select Run/ }),
+    ).toHaveLength(2);
+    expect(
+      screen.getByText("Select 2 to 8 finished runs to compare"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare" })).toBeDisabled();
   });
 
   it("defers Choose winner behind a disabled 'coming soon' control", () => {
@@ -323,9 +366,7 @@ describe("RunsSummary", () => {
   });
 });
 
-// TODO: unskip when compare is shown again.
-describe.skip("RunsSummary compare", () => {
-  const versioned = { ...env, versioning: { enabled: true } };
+describe("RunsSummary compare", () => {
   const run = (ordinal, fields = {}) => ({
     ...RUNS[0],
     id: `ex${ordinal}`,
@@ -348,77 +389,62 @@ describe.skip("RunsSummary compare", () => {
 
   beforeEach(() => {
     useEnvironmentRuns.mockReset();
-    useCompareRuns.mockReset();
-    useCompareRuns.mockReturnValue({
-      data: undefined,
-      isPending: true,
-      isError: false,
-    });
+    navigate.mockReset();
   });
 
   it("lets only finished runs be ticked", () => {
-    renderSummary({ env: versioned }, COMPARE_RUNS);
+    renderSummary({}, COMPARE_RUNS);
     expect(box("Run 3")).toBeDisabled();
     expect(box("Run 4")).toBeEnabled();
     expect(box("Run 2")).toBeEnabled();
-    expect(
-      screen.getByText("Select 2 finished runs to compare"),
-    ).toBeInTheDocument();
     expect(compare()).toBeDisabled();
-  });
-
-  it("enables Compare at two runs and blocks a third", () => {
-    renderSummary({ env: versioned }, COMPARE_RUNS);
-    fireEvent.click(box("Run 4"));
-    expect(screen.getByText("1 of 2 selected")).toBeInTheDocument();
-    expect(compare()).toBeDisabled();
-
-    fireEvent.click(box("Run 1"));
-    expect(
-      screen.getByText("2 of 2 selected. Clear one to pick another"),
-    ).toBeInTheDocument();
-    expect(compare()).toBeEnabled();
-    expect(box("Run 2")).toBeDisabled();
-
-    fireEvent.click(box("Run 4"));
-    expect(box("Run 2")).toBeEnabled();
-    expect(compare()).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect(box("Run 1")).not.toBeChecked();
-    expect(
-      screen.getByText("Select 2 finished runs to compare"),
-    ).toBeInTheDocument();
   });
 
   it.each(["failed", "cancelled", "cancelling", "queued"])(
     "does not let a %s run be ticked",
     (runState) => {
-      renderSummary({ env: versioned }, [run(1, { runState })]);
+      renderSummary({}, [run(1, { runState })]);
       expect(box("Run 1")).toBeDisabled();
     },
   );
 
-  it("says why a box is disabled", async () => {
-    renderSummary({ env: versioned }, COMPARE_RUNS);
-    const hover = (label) =>
-      fireEvent.mouseOver(box(label).closest("td").firstChild);
+  it("enables Compare from two runs and takes up to eight", () => {
+    const many = Array.from({ length: 9 }, (_, i) => run(9 - i));
+    renderSummary({}, many);
+    fireEvent.click(box("Run 9"));
+    expect(screen.getByText("1 of 8 selected")).toBeInTheDocument();
+    expect(compare()).toBeDisabled();
 
-    hover("Run 3");
+    fireEvent.click(box("Run 8"));
+    expect(compare()).toBeEnabled();
+
+    ["Run 7", "Run 6", "Run 5", "Run 4", "Run 3", "Run 2"].forEach((label) =>
+      fireEvent.click(box(label)),
+    );
+    expect(
+      screen.getByText("8 of 8 selected. Clear one to pick another"),
+    ).toBeInTheDocument();
+    expect(box("Run 1")).toBeDisabled();
+    expect(compare()).toBeEnabled();
+
+    fireEvent.click(box("Run 9"));
+    expect(box("Run 1")).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(box("Run 8")).not.toBeChecked();
+    expect(compare()).toBeDisabled();
+  });
+
+  it("says why a box is disabled", async () => {
+    renderSummary({}, COMPARE_RUNS);
+    fireEvent.mouseOver(box("Run 3").closest("td").firstChild);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Only finished runs can be compared",
     );
-
-    fireEvent.click(box("Run 4"));
-    fireEvent.click(box("Run 1"));
-    hover("Run 2");
-    expect(
-      await screen.findByText("2 runs already selected"),
-    ).toBeInTheDocument();
   });
 
   it("will not compare a ticked run that is no longer finished", () => {
-    const { rerender } = renderSummary({ env: versioned }, COMPARE_RUNS);
+    const { rerender } = renderSummary({}, COMPARE_RUNS);
     fireEvent.click(box("Run 4"));
     fireEvent.click(box("Run 1"));
     expect(compare()).toBeEnabled();
@@ -435,7 +461,7 @@ describe.skip("RunsSummary compare", () => {
 
   it("keeps the selection across pages", () => {
     const firstPage = [run(12), run(11)];
-    renderSummary({ env: versioned }, firstPage, false, { count: 12 });
+    renderSummary({}, firstPage, false, { count: 12 });
     fireEvent.click(box("Run 12"));
     useEnvironmentRuns.mockImplementation((e, s, { page }) => ({
       runs: page ? [run(1)] : firstPage,
@@ -446,55 +472,30 @@ describe.skip("RunsSummary compare", () => {
     fireEvent.click(within(pager).getAllByRole("button").at(-1));
 
     fireEvent.click(box("Run 1"));
-    expect(
-      screen.getByText("2 of 2 selected. Clear one to pick another"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2 of 8 selected")).toBeInTheDocument();
     expect(compare()).toBeEnabled();
-  });
-
-  it("closes the comparison", async () => {
-    renderSummary({ env: versioned }, COMPARE_RUNS);
-    fireEvent.click(box("Run 4"));
-    fireEvent.click(box("Run 1"));
-    fireEvent.click(compare());
-    expect(
-      screen.getByRole("region", { name: "Compare runs" }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("region", { name: "Compare runs" })).toBeNull(),
-    );
   });
 
   it("does not open a run when it is ticked", () => {
     const onOpenRun = vi.fn();
-    renderSummary({ env: versioned, onOpenRun }, COMPARE_RUNS);
+    renderSummary({ onOpenRun }, COMPARE_RUNS);
     fireEvent.click(box("Run 4"));
     fireEvent.click(box("Run 4").closest("td"));
     expect(onOpenRun).not.toHaveBeenCalled();
     expect(box("Run 4")).toBeChecked();
   });
 
-  it("compares the newer run against the older, whichever was ticked first", () => {
-    renderSummary({ env: versioned }, COMPARE_RUNS);
-    fireEvent.click(box("Run 1"));
+  it("opens the compare page with the first run ticked as the baseline", () => {
+    renderSummary({}, COMPARE_RUNS);
     fireEvent.click(box("Run 4"));
-    expect(useCompareRuns).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      { enabled: true },
-    );
-    expect(screen.queryByRole("region", { name: "Compare runs" })).toBeNull();
+    fireEvent.click(box("Run 1"));
+    fireEvent.click(box("Run 2"));
+    expect(navigate).not.toHaveBeenCalled();
 
     fireEvent.click(compare());
 
-    expect(
-      screen.getByRole("region", { name: "Compare runs" }),
-    ).toBeInTheDocument();
-    expect(useCompareRuns).toHaveBeenLastCalledWith("env-1", "ex4", "ex1", {
-      enabled: true,
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/env-1/compare?runs=ex4,ex1,ex2",
+    );
   });
 });

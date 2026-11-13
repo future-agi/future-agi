@@ -102,6 +102,8 @@ export const ENVIRONMENT_RUN = {
   outcome_passed: 3,
   outcome_failed: 7,
   outcome_skipped: 0,
+  pass_rate: 30,
+  measured: 10,
   started_at: "2026-10-14T11:58:53.368130+00:00",
   completed_at: "2026-10-14T12:27:36.569945+00:00",
 };
@@ -118,6 +120,8 @@ export const SIMULATE_RUN = {
   outcome_passed: null,
   outcome_failed: null,
   outcome_skipped: null,
+  pass_rate: null,
+  measured: null,
   started_at: "2026-10-16T10:24:09.452801+00:00",
   completed_at: null,
 };

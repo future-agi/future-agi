@@ -24,7 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
-from simulate.selectors.run_resume import resume_state
+from simulate.selectors.run_resume import ResumeState, resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
@@ -32,6 +32,7 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.run_call_match import MATCH_FILTERS
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -50,6 +51,7 @@ from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
     build_run_analytics,
     build_run_reliability,
+    facet_level_labels,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
@@ -119,16 +121,7 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {
-            "goal",
-            "goal_not",
-            "sub_goal",
-            "sub_goal_not",
-            "status",
-            "status_not",
-            "goal_outcome",
-            "call_execution_id",
-        }
+        allowed = {*MATCH_FILTERS, "goal_outcome", "call_execution_id"}
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -367,10 +360,20 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LevelLabelsField(serializers.DictField):
+    """The Scenarios tab's names for the attack, task and sub-goal facet values."""
+
+    child = serializers.CharField()
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
     status = FacetValueSerializer(many=True)
+    persona = FacetValueSerializer(many=True)
+    age = FacetValueSerializer(many=True)
+    attack = FacetValueSerializer(many=True)
+    task = FacetValueSerializer(many=True)
 
 
 class EvaluationColumnSerializer(serializers.Serializer):
@@ -412,6 +415,7 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     results = RunCallSerializer(many=True)
     groups = RunGroupSerializer(many=True)
     facets = RunFacetsSerializer()
+    level_labels = LevelLabelsField()
     # Outcome counts under every filter but the status ones, for the status chips.
     status_counts = OutcomeCountsSerializer()
     evaluation_columns = EvaluationColumnSerializer(many=True)
@@ -635,15 +639,23 @@ def _execution_for_request(request, execution_id) -> TestExecution:
 
 
 def _execution_payload(
-    execution: TestExecution, summary: dict[str, Any]
+    execution: TestExecution,
+    summary: dict[str, Any],
+    *,
+    ordinal: int | None = None,
+    pinned: dict[str, Any] | None = None,
+    resume: ResumeState | None = None,
 ) -> dict[str, Any]:
+    """``ordinal``, ``pinned`` and ``resume`` let a caller of many runs batch them."""
     version = execution.agent_version or execution.run_test.agent_version
-    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
-    ordinal = (
-        user_executions()
-        .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
-        .count()
-    )
+    if pinned is None:
+        pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    if ordinal is None:
+        ordinal = (
+            user_executions()
+            .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
+            .count()
+        )
     # A check run is not counted among the user's runs, so it names its fix instead.
     job = getattr(execution, "hosted_harness_job", None)
     fix_run = (
@@ -673,7 +685,7 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
-        "resume": asdict(resume_state(execution)),
+        "resume": asdict(resume or resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
     }
@@ -799,9 +811,14 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v3:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
+        facets = run_call_facets(
+            lambda: _facet_rows(calls_page, execution, call_ids, live_evals),
+            lambda: _facet_calls(execution, call_ids),
+            facets_cache_key,
+        )
         response = {
             "execution": _execution_payload(execution, calls_page["execution_summary"]),
             "summary": {
@@ -826,11 +843,8 @@ class RunCallsV3View(APIView):
             "groups": page_groups(
                 execution, calls_page, query, columns, base_queryset, live_evals
             ),
-            "facets": run_call_facets(
-                lambda: _facet_rows(calls_page, execution, call_ids, live_evals),
-                lambda: _facet_calls(execution, call_ids),
-                facets_cache_key,
-            ),
+            "facets": facets,
+            "level_labels": facet_level_labels(facets),
             "status_counts": calls_page["status_counts"],
             "evaluation_columns": columns,
         }

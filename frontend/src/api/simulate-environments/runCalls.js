@@ -210,6 +210,38 @@ export function buildTraceColumns(columnOrder = []) {
 }
 
 /**
+ * One `/calls/` `groups[]` entry's figures, as the group header reads them:
+ * the call count, measured and passed calls, and the per-column aggregates.
+ * The caller adds the group's rows. Pure.
+ * @param {Object} group
+ */
+export function mapGroupAggregates(group) {
+  const aggregates = group?.aggregates ?? {};
+  const evals = Object.fromEntries(
+    Object.entries(aggregates.evaluations ?? {}).map(([id, aggregate]) => [
+      id,
+      { scored: aggregate.scored, scoreSum: aggregate.score_sum },
+    ]),
+  );
+  return {
+    label: group?.label,
+    count: group?.total,
+    measured: group?.measured,
+    passed: group?.outcomes?.passed ?? 0,
+    passRate: group?.pass_rate ?? null,
+    agg: {
+      csat: aggregates.csat ?? null,
+      turns: aggregates.turns ?? null,
+      latency: aggregates.latency_ms ?? null,
+      stopLatency: aggregates.avg_stop_time_after_interruption ?? null,
+      aiInterruptions: aggregates.ai_interruptions ?? null,
+      tokens: aggregates.tokens ?? null,
+      evals,
+    },
+  };
+}
+
+/**
  * The run header's read. Every calls page carries the same whole-run
  * `execution`, so the table feeds it and the header only fetches without one.
  * @param {string} executionId
@@ -325,39 +357,12 @@ export function useRunCalls(executionId, opts = {}) {
       const evalColumns = data.evaluation_columns ?? [];
       const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
       const rowsById = new Map(rows.map((row) => [row.id, row]));
-      const serverGroups = (data.groups ?? []).map((group) => {
-        const groupRows = (group.result_ids ?? [])
+      const serverGroups = (data.groups ?? []).map((group) => ({
+        ...mapGroupAggregates(group),
+        rows: (group.result_ids ?? [])
           .map((id) => rowsById.get(id))
-          .filter(Boolean);
-        const evals = Object.fromEntries(
-          Object.entries(group.aggregates?.evaluations ?? {}).map(
-            ([id, aggregate]) => [
-              id,
-              {
-                scored: aggregate.scored,
-                scoreSum: aggregate.score_sum,
-              },
-            ],
-          ),
-        );
-        return {
-          label: group.label,
-          rows: groupRows,
-          count: group.total,
-          measured: group.measured,
-          passed: group.outcomes?.passed ?? 0,
-          agg: {
-            csat: group.aggregates?.csat ?? null,
-            turns: group.aggregates?.turns ?? null,
-            latency: group.aggregates?.latency_ms ?? null,
-            stopLatency:
-              group.aggregates?.avg_stop_time_after_interruption ?? null,
-            aiInterruptions: group.aggregates?.ai_interruptions ?? null,
-            tokens: group.aggregates?.tokens ?? null,
-            evals,
-          },
-        };
-      });
+          .filter(Boolean),
+      }));
       return {
         tasks: rows,
         columns: buildTraceColumns(evalColumns),
@@ -369,6 +374,7 @@ export function useRunCalls(executionId, opts = {}) {
       };
     }, [data]);
   const statusCounts = useMemo(() => data?.status_counts ?? {}, [data]);
+  const levelLabels = useMemo(() => data?.level_labels ?? {}, [data]);
 
   return {
     tasks,
@@ -376,6 +382,7 @@ export function useRunCalls(executionId, opts = {}) {
     count,
     groups,
     facets,
+    levelLabels,
     statusCounts,
     summary,
     totalPages,

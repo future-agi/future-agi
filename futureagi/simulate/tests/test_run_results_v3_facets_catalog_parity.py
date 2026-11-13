@@ -14,9 +14,16 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import CallExecution, Scenarios, SimulateEvalConfig, TestExecution
+from simulate.models import (
+    CallExecution,
+    HostedHarnessScenario,
+    Scenarios,
+    SimulateEvalConfig,
+    TestExecution,
+)
 from simulate.models.run_test import RunTest
 from simulate.services import run_results_v3 as catalog_module
+from simulate.services.run_call_match import ENUM_FILTERS
 from simulate.services.run_results_v3 import (
     build_evaluation_catalog,
     receipt_sub_goal_names,
@@ -29,11 +36,13 @@ from simulate.services.run_results_v3_page import (
     run_calls_page,
 )
 from simulate.services.run_results_v3_queries import (
+    UNGROUPED,
     _result_sub_goals_expression,
     apply_run_call_query,
     run_call_facets,
     run_calls_queryset,
 )
+from simulate.tests.test_run_call_match_parity import _job
 
 
 def _reference_facets(queryset: QuerySet) -> dict[str, list[dict[str, Any]]]:
@@ -43,6 +52,15 @@ def _reference_facets(queryset: QuerySet) -> dict[str, list[dict[str, Any]]]:
         facets[name] = [
             {"value": row[field], "count": row["count"]}
             for row in queryset.values(field)
+            .annotate(count=Count("id"))
+            .order_by("-count", field)
+        ]
+    # The scenario enums leave out Ungrouped, as the Scenarios tab's catalogue does.
+    for name, field in ENUM_FILTERS.items():
+        facets[name] = [
+            {"value": row[field], "count": row["count"]}
+            for row in queryset.exclude(**{field: UNGROUPED})
+            .values(field)
             .annotate(count=Count("id"))
             .order_by("-count", field)
         ]
@@ -201,13 +219,50 @@ class TestFacetsFromRows:
             "goal": [],
             "status": [],
             "sub_goal": [],
+            "persona": [],
+            "age": [],
+            "attack": [],
+            "task": [],
         }
+
+    def test_scenario_enums_match_the_database(
+        self, execution, organization, workspace
+    ):
+        job = _job(
+            organization,
+            workspace,
+            run_test=execution.run_test,
+            test_execution=execution,
+        )
+        names = ["b", "B", "a", "a b", "ab", None]
+        ages = ["adult", "Adult", "", "senior", None, "teen"]
+        for index, (name, age) in enumerate(zip(names, ages, strict=True)):
+            for repeat in range(2):
+                call = _call(execution, status="completed")
+                HostedHarnessScenario.no_workspace_objects.create(
+                    job=job,
+                    scenario_key=f"k-{index}-{repeat}",
+                    call_execution=call,
+                    persona={"name": name, "age_group": age},
+                    coverage={"overlay": "none"} if repeat else {},
+                )
+
+        facets = _facets_from_rows(execution)
+
+        assert facets == _reference_facets(run_calls_queryset(execution))
+        assert UNGROUPED not in {one["value"] for one in facets["persona"]}
+        assert len(facets["persona"]) == 5
+        assert facets["task"] == []
 
     def test_missing_goal_sorts_after_a_tied_goal(self, execution):
         # Real calls always fall back to a scenario name, so the rows are built here.
         rows = [
-            {"result_goal": None, "result_outcome": "passed"},
-            {"result_goal": "A", "result_outcome": "passed"},
+            {
+                "result_goal": goal,
+                "result_outcome": "passed",
+                **dict.fromkeys(ENUM_FILTERS.values(), UNGROUPED),
+            }
+            for goal in (None, "A")
         ]
 
         facets = run_call_facets(

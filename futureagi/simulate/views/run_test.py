@@ -146,7 +146,7 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
-from simulate.services.harness_environment import receipt_outcome_counts
+from simulate.services.harness_environment import graded_outcomes
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
@@ -166,6 +166,7 @@ from simulate.services.run_regrade import (
     regrade_run_evals,
     regrade_still_finishing,
 )
+from simulate.services.run_results_v3_page import run_outcome_summaries
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -5735,7 +5736,9 @@ class RunTestExecutionsView(APIView):
                     test_execution_id__in=execution_ids
                 ).only("id", "test_execution_id")
             }
-            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
+            graded = run_outcome_summaries(
+                [te for te in result_page or [] if te.id in hosted_jobs]
+            )
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5952,30 +5955,7 @@ class RunTestExecutionsView(APIView):
                             if test_execution.completed_at
                             else None
                         ),
-                        "outcome_passed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "passed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_failed": (
-                            sum(
-                                outcome_counts.get(
-                                    hosted_jobs[test_execution.id], {}
-                                ).get(status, 0)
-                                for status in ("failed", "errored")
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_skipped": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "skipped", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
+                        **graded_outcomes(graded.get(test_execution.id)),
                         **_version_labels(version_labels, test_execution.id),
                     }
                 )

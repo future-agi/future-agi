@@ -27,9 +27,19 @@ export const WORKSPACE_TABS = [
     icon: "solar:shield-check-linear",
     badge: "evals",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   // Shown only once the environment has a fix (Fix my agent).
-  { id: "improvements", label: "Improvements", icon: "solar:magic-stick-3-linear", badge: "improvements" },
+  {
+    id: "improvements",
+    label: "Improvements",
+    icon: "solar:magic-stick-3-linear",
+    badge: "improvements",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
@@ -106,7 +116,8 @@ export const WORKSPACE_COPY = {
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
@@ -490,68 +501,63 @@ export const DRAFTS_COPY = {
     "Unsaved changes aren't part of this run. Save them first to include them.",
 };
 
-// Comparing two runs of the same environment, picked on the Runs tab, scenario
-// by scenario, on pass rates over trials.
+// Comparing 2 to 8 finished runs of the same environment, picked on the Runs
+// tab, scenario by scenario. The first run picked is the baseline.
 export const COMPARE_COPY = {
   heading: "Compare runs",
-  subtitle: (margin) =>
-    `Pass rate over trials, per scenario. Changes within ±${margin} points are not meaningful; evals are shown for context only.`,
-  pick: "Select 2 finished runs to compare",
+  pick: "Select 2 to 8 finished runs to compare",
   picked: (count) =>
-    count < 2
-      ? `${count} of 2 selected`
-      : "2 of 2 selected. Clear one to pick another",
+    count < 8
+      ? `${count} of 8 selected`
+      : "8 of 8 selected. Clear one to pick another",
   selectRun: (label) => `Select ${label}`,
   onlyFinished: "Only finished runs can be compared",
-  atCap: "2 runs already selected",
+  atCap: "8 runs already selected",
   compare: "Compare",
   clear: "Clear",
+  back: "Back to runs",
+  subtitle: (runs, scenarios, changed) =>
+    `${runs} runs · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"} · ${changed} ended differently`,
+  baseline: "baseline",
+  runLabel: (agent, environment) =>
+    [agent && `agent ${agent}`, environment && `environment ${environment}`]
+      .filter(Boolean)
+      .join(" × ") || "before versioning",
+  run: (ordinal) => `Run ${ordinal}`,
+  removeRun: (ordinal) => `Remove run ${ordinal}`,
+  removeFromComparison: "Remove from this comparison",
+  addRun: "Add run",
+  noMoreRuns: "No other finished runs",
   loading: "Comparing runs…",
-  error: "Couldn't compare these runs. Close this and select two other runs.",
-  versions: (label, pieces) => `${label}: ${pieces || "before versioning"}`,
-  pieces: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
-  verdicts: {
-    improved: "Improved",
-    regressed: "Regressed",
-    no_meaningful_change: "No meaningful change",
-    inconclusive: "Inconclusive",
-  },
-  bands: {
-    new: "New",
-    not_applicable: "N/A",
-    criteria_changed: "Criteria changed",
-  },
-  interval: (low, high) => `95% range ${low} to ${high} pts`,
-  newHint: "Only in this run",
-  newInComparedHint: "Only in the compared run",
-  notApplicableHint: "Not in this run",
-  notRunInComparedHint: "Not in the compared run",
-  removed: (reason, label) => {
-    const detail = (reason || "").replace(/^removed\s*/, "");
-    if (label)
-      return `Removed in Scenarios ${label}${detail ? ` (${detail})` : ""}`;
-    return reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null;
-  },
-  criteriaHint: (names) => `Sub-goal changed: ${names.join(", ")}`,
-  columns: {
-    scenario: "Scenario",
-    current: "This run",
-    against: "Compared run",
-    change: "Change",
-    verdict: "Verdict",
-    evals: "Evals",
-  },
-  passed: (passed, trials, undecided) =>
-    `${passed} / ${trials} trials${undecided ? ` · ${undecided} undecided` : ""}`,
-  summary: {
-    improved: "improved",
-    regressed: "regressed",
-    no_meaningful_change: "no meaningful change",
-    inconclusive: "inconclusive",
-    new: "new",
-    not_applicable: "n/a",
-    criteria_changed: "criteria changed",
-  },
+  error: "Couldn't compare these runs",
+  errorBody: "Go back to the runs and pick other finished runs.",
+  refused: (ordinal) =>
+    ordinal ? `Run ${ordinal} can't be compared` : "A run can't be compared",
+  removeRefused: (ordinal) =>
+    ordinal ? `Remove run ${ordinal}` : "Remove that run",
+  tooFew: "Pick at least 2 finished runs to compare",
+  empty: "No scenarios match",
+  chartTitle: "Score distribution",
+  chartEval: "Evaluation",
+  noScores: "No evaluation scores in these runs",
+  tableTitle: "Scenario by scenario",
+  tableSubtitle: (changed, count, shown) =>
+    `${changed} of ${count} ended differently · showing ${shown}`,
+  showDiff: "Show diff",
+  showDiffHint:
+    "Arrows show each call's change against the baseline run's call for the same trial.",
+  notRun: "Not run",
+  was: (label) => `was ${label}`,
+  subGoals: (met, total) => `${met}/${total} sub-goals`,
+  diffSpoken: ({ up, better, text }) =>
+    `${up ? "up" : "down"} ${text}, ${better ? "better" : "worse"}`,
+  scenarioColumn: "Scenario",
+  statusColumn: "Status",
+  scenarioCount: (n) => `${n} ${n === 1 ? "scenario" : "scenarios"}`,
+  drawerTitle: "Calls across runs",
+  openCall: "Open call",
+  trial: (n) => `Trial ${n}`,
+  trialPicker: "Trial",
 };
 
 // The run's agent is not the one its environment version was built with.

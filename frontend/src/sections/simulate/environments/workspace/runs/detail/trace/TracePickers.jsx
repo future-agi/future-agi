@@ -123,7 +123,8 @@ const toggled = (set, key) => {
 
 // Column-visibility picker, bucketed into sections in declaration order: the
 // fixed columns, then one entry per evaluation the run has. Those come from the
-// calls API, and an eval is shown unless the user turned it off.
+// calls API, and an eval is shown unless the user turned it off. `columns` and
+// `defaults` let a table offer its own fixed columns (run compare adds Status).
 export function TraceColumnsPicker({
   value,
   onChange,
@@ -131,10 +132,10 @@ export function TraceColumnsPicker({
   evals = [],
   hiddenEvals = new Set(),
   onHiddenEvalsChange,
+  columns = TRACE_COLUMNS,
+  defaults = defaultTraceColumns,
 }) {
-  const offered = hidden
-    ? TRACE_COLUMNS.filter((c) => !hidden.has(c.key))
-    : TRACE_COLUMNS;
+  const offered = hidden ? columns.filter((c) => !hidden.has(c.key)) : columns;
   const [anchor, setAnchor] = useState(null);
   const shownCount =
     offered.filter((c) => value.has(c.key)).length +
@@ -241,7 +242,7 @@ export function TraceColumnsPicker({
         <Divider sx={{ my: 0.5 }} />
         <MenuItem
           onClick={() => {
-            onChange(defaultTraceColumns());
+            onChange(defaults());
             onHiddenEvalsChange?.(new Set());
           }}
           sx={columnItemSx}
@@ -267,4 +268,12 @@ TraceColumnsPicker.propTypes = {
   ),
   hiddenEvals: PropTypes.instanceOf(Set),
   onHiddenEvalsChange: PropTypes.func,
+  columns: PropTypes.arrayOf(
+    PropTypes.shape({
+      key: PropTypes.string,
+      label: PropTypes.string,
+      group: PropTypes.string,
+    }),
+  ),
+  defaults: PropTypes.func,
 };

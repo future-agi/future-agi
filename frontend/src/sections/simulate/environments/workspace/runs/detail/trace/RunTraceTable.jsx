@@ -27,7 +27,6 @@ import {
   listMatchingCalls,
   uniqueScenarioKeys,
 } from "src/api/simulate-environments/rerunScenarios";
-import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
@@ -38,12 +37,20 @@ import RerunSelectionBar from "./RerunSelectionBar";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import {
+  buildTraceFilterFields,
+  countFilterValues,
+  panelResultToFilters,
+  statusChipOf,
+  toServerFilters,
+  withStatusChip,
+} from "./traceFilters";
+import {
   CLOSED_GROUP_VIEW,
   GROUPINGS,
-  OUTCOME_LABELS,
   VOICE_ONLY_COLUMNS,
   compactHiddenSx,
   defaultTraceColumns,
+  isChatRun,
   toolbarButtonSx,
 } from "./traceTable.constants";
 
@@ -128,19 +135,7 @@ export default function RunTraceTable({
   const expandedForRef = useRef(null);
   const [filters, setFilters] = useState(initialFilters);
 
-  const serverFilters = useMemo(() => {
-    const next = {};
-    if (filters.callExecutionId?.length)
-      next.call_execution_id = filters.callExecutionId;
-    if (filters.goal?.length) next.goal = filters.goal;
-    if (filters.goal_not?.length) next.goal_not = filters.goal_not;
-    if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
-    if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
-    if (filters.status?.length) next.status = filters.status;
-    if (filters.status_not?.length) next.status_not = filters.status_not;
-    if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    return next;
-  }, [filters]);
+  const serverFilters = useMemo(() => toServerFilters(filters), [filters]);
 
   // A pager click opens the new page at its first row. Not on a drawer step:
   // there the open call's row scrolls itself into view. The table scrolls in
@@ -194,6 +189,7 @@ export default function RunTraceTable({
     count = 0,
     groups = [],
     facets = {},
+    levelLabels,
     statusCounts: serverStatusCounts = {},
     totalPages = 1,
     agentType = null,
@@ -333,12 +329,7 @@ export default function RunTraceTable({
     measureBox();
   }, [bannerShown, measureBox]);
 
-  // A chat run has no voice metrics. Without the run's agent type, the calls
-  // decide.
-  const chatRun = agentType
-    ? agentType === AGENT_TYPES.CHAT
-    : tasks.length > 0 &&
-      tasks.every((t) => t.simulationCallType === AGENT_TYPES.CHAT);
+  const chatRun = isChatRun(agentType, tasks);
   const shownColumns = useMemo(
     () =>
       chatRun
@@ -375,45 +366,42 @@ export default function RunTraceTable({
     [columns],
   );
 
-  const goalOptions = useMemo(
-    () => (facets.goal ?? []).map((item) => item.value),
-    [facets.goal],
-  );
-  const subGoalOptions = useMemo(
-    () => (facets.sub_goal ?? []).map((item) => item.value),
-    [facets.sub_goal],
-  );
+  // Each facet, not the object: a missing one defaults to a new object per render.
+  const {
+    goal: goalFacet,
+    sub_goal: subGoalFacet,
+    persona: personaFacet,
+    age: ageFacet,
+    attack: attackFacet,
+    task: taskFacet,
+  } = facets;
   const filterFields = useMemo(
-    () => [
-      {
-        value: "goal",
-        label: "Use case",
-        type: "enum",
-        choices: goalOptions,
-      },
-      {
-        value: "subGoal",
-        label: "Sub-goal",
-        type: "enum",
-        choices: subGoalOptions,
-      },
-      {
-        value: "status",
-        label: "Status",
-        type: "enum",
-        choices: Object.keys(OUTCOME_LABELS),
-        choiceLabels: OUTCOME_LABELS,
-      },
+    () =>
+      buildTraceFilterFields(
+        {
+          goal: goalFacet,
+          sub_goal: subGoalFacet,
+          persona: personaFacet,
+          age: ageFacet,
+          attack: attackFacet,
+          task: taskFacet,
+        },
+        levelLabels,
+      ),
+    [
+      goalFacet,
+      subGoalFacet,
+      personaFacet,
+      ageFacet,
+      attackFacet,
+      taskFacet,
+      levelLabels,
     ],
-    [goalOptions, subGoalOptions],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.
   const affectedCalls = filters.callExecutionId?.length || 0;
-  const filterCount = Object.values(filters).reduce(
-    (a, v) => a + (v?.length || 0),
-    0,
-  );
+  const filterCount = countFilterValues(filters);
 
   // Counted under every filter but status, so the chips don't empty each other.
   const statusCounts = useMemo(
@@ -428,40 +416,15 @@ export default function RunTraceTable({
   );
   // The chips and the panel's Status field edit the same filter; a chip lights
   // up only when it alone describes it.
-  const statusChip = filters.status_not?.length
-    ? ""
-    : filters.status?.length === 1
-      ? filters.status[0]
-      : filters.status?.length
-        ? ""
-        : "all";
+  const statusChip = statusChipOf(filters);
 
   // The panel edits its own fields; the affected-calls scope stays until its chip
   // is dismissed.
   const { callExecutionId, ...panelFilters } = filters;
   const keepScope = (next) =>
     callExecutionId ? { ...next, callExecutionId } : next;
-  const applyFilters = (result) => {
-    if (!result) {
-      setFilters(keepScope({}));
-      return;
-    }
-    if (Array.isArray(result)) {
-      const flat = {};
-      result.forEach((r) => {
-        const values = Array.isArray(r.value)
-          ? r.value
-          : r.value != null
-            ? [r.value]
-            : [];
-        if (values.length)
-          flat[r.field] = [...(flat[r.field] || []), ...values];
-      });
-      setFilters(keepScope(flat));
-    } else {
-      setFilters(keepScope(result));
-    }
-  };
+  const applyFilters = (result) =>
+    setFilters(keepScope(panelResultToFilters(result)));
 
   // Like a "select all" box: on only while every group on screen is open,
   // however they were opened.
@@ -604,14 +567,7 @@ export default function RunTraceTable({
         value={statusChip}
         counts={statusCounts}
         onChange={(value) => {
-          setFilters((current) => {
-            const {
-              status: _status,
-              status_not: _statusNot,
-              ...rest
-            } = current;
-            return value === "all" ? rest : { ...rest, status: [value] };
-          });
+          setFilters((current) => withStatusChip(current, value));
           setPage(1);
         }}
       />

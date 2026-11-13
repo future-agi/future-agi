@@ -1,5 +1,7 @@
 """Deterministic, database-free preparation for each ASGI worker."""
 
+import gc
+
 from django.db.migrations.loader import MigrationLoader
 from django.urls import URLResolver, get_resolver
 
@@ -34,3 +36,9 @@ def warm_migration_modules() -> int:
     connection reads no database, so do it here instead of in a request.
     """
     return len(MigrationLoader(None, ignore_no_migrations=True).disk_migrations)
+
+
+def freeze_startup_heap() -> None:
+    """Keep start-up objects out of every later full collection."""
+    gc.collect()
+    gc.freeze()

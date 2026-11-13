@@ -1,4 +1,5 @@
-import { STATUS_META } from "../../runs.constants";
+import { AGENT_TYPES } from "src/sections/agents/constants";
+import { SCORING_STATUS, STATUS_META } from "../../runs.constants";
 
 // Trace-table vocabulary and grouping logic, ported from the designer's
 // TraceTable. Kept colour-free (colours are theme tokens named by status role,
@@ -114,6 +115,33 @@ export const TRACE_COLUMNS = [
 
 // Columns a chat run has no data for: interruptions only happen on a voice call.
 export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
+
+// A chat run has no voice metrics. Without the run's agent type, its calls
+// decide.
+export const isChatRun = (agentType, calls) =>
+  agentType
+    ? agentType === AGENT_TYPES.CHAT
+    : calls.length > 0 &&
+      calls.every((t) => t.simulationCallType === AGENT_TYPES.CHAT);
+
+// A group's numeric columns, in order: the field its aggregate reads, and how
+// that figure shows.
+export const GROUP_METRIC_COLUMNS = [
+  { key: "csat", field: "csat", metric: "csat" },
+  { key: "turns", field: "turns", metric: "turns" },
+  { key: "latency", field: "latency", suffix: "ms", metric: "latency" },
+  { key: "stopLatency", field: "stopLatency", suffix: "ms" },
+  { key: "aiInterruptions", field: "aiInterruptions" },
+  { key: "tokens", field: "tokens", aggregation: "Total" },
+];
+
+// Whether any of these calls still waits on this eval's grade.
+export const evalGrading = (calls, evalId) =>
+  calls.some((t) =>
+    t.evalResults?.some(
+      (r) => r.id === evalId && r.status === SCORING_STATUS.PENDING,
+    ),
+  );
 
 // Every group closed: the table's starting state, and Collapse all. Expand all
 // sets `all`; `expanded` holds the labels opened.
@@ -267,3 +295,50 @@ export function runOutcome(status) {
     color: `status.${role}.fg`,
   };
 }
+
+// The free-text columns stay narrow so a collapsed table (one count per group)
+// doesn't stretch; long text is cut at four lines — the drawer has the rest.
+export const TEXT_COL_WIDTH = { long: 260, short: 200 };
+
+// The head width of each fixed column.
+export const TRACE_HEAD_WIDTH = {
+  callDetails: 200,
+  persona: 200,
+  scenario: TEXT_COL_WIDTH.long,
+  situation: TEXT_COL_WIDTH.long,
+  subGoals: TEXT_COL_WIDTH.long,
+  idealOutcome: TEXT_COL_WIDTH.long,
+  conversationBranch: TEXT_COL_WIDTH.short,
+  csat: 84,
+  turns: 92,
+  latency: 96,
+  stopLatency: 140,
+  aiInterruptions: 150,
+  tokens: 120,
+};
+
+// The fixed columns a call row renders, in column order.
+export const TRACE_CELL_KEYS = TRACE_COLUMNS.filter(
+  (c) => c.key !== "subGoalEvals",
+).map((c) => c.key);
+
+// A call still in flight — its eval cells can only be waiting. `analyzing`
+// is a finished conversation whose evals are grading (the chat path).
+export const LIVE_CALL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "ongoing",
+  "analyzing",
+]);
+export const isCallLive = (task) =>
+  LIVE_CALL_STATUSES.has(task?.executionStatus);
+
+// A sub-goal's verdict, as a call outcome.
+export const subGoalOutcome = (goal) =>
+  runOutcome(
+    goal.passed === true
+      ? "passed"
+      : goal.passed === false
+        ? "failed"
+        : "inconclusive",
+  );

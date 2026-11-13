@@ -1399,7 +1399,7 @@ describe("RunTraceTable", () => {
     expect(screen.queryByPlaceholderText(/Ask AI/)).toBeNull();
   });
 
-  it("offers only Use case, Sub-goal, and Status filters", async () => {
+  it("offers the Scenarios tab's filters that have values", async () => {
     const user = userEvent.setup();
     renderTable();
 
@@ -1408,14 +1408,11 @@ describe("RunTraceTable", () => {
     const [fieldPicker] = screen.getAllByRole("combobox");
     await user.click(fieldPicker);
     expect(
-      screen.getByRole("option", { name: "Use case" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "Sub-goal" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Status" })).toBeInTheDocument();
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Scenario", "Use case", "Situation", "Sub-goal", "Status"]);
+    // No persona or coverage facet here, so those fields stay hidden.
+    expect(screen.queryByRole("option", { name: "Name" })).toBeNull();
     expect(screen.queryByRole("option", { name: "Persona" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Scenario" })).toBeNull();
   });
 
   it("shows an empty state instead of a table when there are no calls", () => {

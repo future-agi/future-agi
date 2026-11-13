@@ -21,7 +21,6 @@ export const runPath = (run) =>
 
 export function PassRateCell({ run }) {
   const rate = isRunning(run) ? null : run.passRate;
-  const measured = (run.passed ?? 0) + (run.failed ?? 0) + (run.skipped ?? 0);
   return (
     <Stack
       direction="row"
@@ -68,7 +67,7 @@ export function PassRateCell({ run }) {
             component="span"
             sx={{ color: "text.subtitle", fontWeight: 400 }}
           >
-            {` ${run.passed}/${measured}`}
+            {` ${run.passed}/${run.measured}`}
           </Box>
         )}
       </Typography>

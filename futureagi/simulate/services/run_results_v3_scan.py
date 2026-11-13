@@ -53,7 +53,7 @@ from simulate.services.run_results_v3_scoring import (
     live_eval_specs,
     score_tokens,
 )
-from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
+from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_sql
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -645,11 +645,13 @@ SELECT ce.id, ce.status, ce.duration_seconds,
       chr(30))
     FROM jsonb_each(ce.eval_outputs) e), '')
   ELSE ce.eval_outputs::text END,
-  NULLIF(s.metadata ->> 'use_case', ''), NULLIF(s.metadata ->> 'goal', ''), s.name
+  NULLIF(s.metadata ->> 'use_case', ''), NULLIF(s.metadata ->> 'goal', ''), s.name,
+  {scoring}
 FROM (
   SELECT id, status, duration_seconds, avg_agent_latency_ms, customer_cost_cents,
     avg_stop_time_after_interruption_ms, ai_interruption_count, row_id,
     scenario_id, started_at, conversation_metrics_data,
+    created_at, completed_at, ended_at, overall_score,
     -- Decompress each large JSON column once per row, not once per reference.
     jsonb_path_query_first(call_metadata, '$') AS call_metadata,
     jsonb_path_query_first(eval_outputs, '$') AS eval_outputs
@@ -662,6 +664,14 @@ JOIN {scenarios_table} s ON s.id = ce.scenario_id
 ORDER BY {ordering}
 """
 _CALL_FILTER = " AND id = ANY(%s::uuid[])"
+# ``scoring_values``' projection over the same row, in ``SCORING_ROW_FIELDS`` order
+# after ``status``; NULLs when the caller reads no scoring field.
+_SCORING_SQL = ", ".join(
+    ("ce.created_at", "ce.completed_at", "ce.ended_at", "ce.overall_score")
+    + scoring_sql("ce")
+)
+_SCORING_COLUMNS = 7
+_NO_SCORING_SQL = ", ".join(["NULL"] * _SCORING_COLUMNS)
 _CALLS_TABLE = CallExecution._meta.db_table
 
 
@@ -680,6 +690,9 @@ def _member_values(content: Any) -> dict[str, Any]:
     sub_goals = content.get("sub_goals")
     return {
         "use_case": _text_or_none(content.get("use_case")),
+        "name": _text_or_none(content.get("name")),
+        "instruction": _text_or_none(content.get("instruction")),
+        "persona_name": _text_or_none(persona.get("name")),
         "sub_goals_text": None if sub_goals is None else json.dumps(sub_goals),
         "accent": _text_or_none(persona.get("accent")),
         "age_group": _text_or_none(persona.get("age_group")),
@@ -706,6 +719,9 @@ _SCENARIO_FIELDS = (
     "age_group",
     "overlay",
     "task",
+    "name",
+    "instruction",
+    "persona_name",
 )
 
 
@@ -775,6 +791,7 @@ def scan_call_values(
                 calls_table=_CALLS_TABLE,
                 scenarios_table=Scenarios._meta.db_table,
                 call_filter="" if call_ids is None else _CALL_FILTER,
+                scoring=_SCORING_SQL if scoring else _NO_SCORING_SQL,
             ),
             params,
         )
@@ -786,27 +803,30 @@ def scan_call_values(
         # The driver holds the whole result; batches keep Python's copy small.
         while calls := cursor.fetchmany(_SCAN_BATCH_SIZE):
             for (
-                call_id,
-                status,
-                duration,
-                latency,
-                cost,
-                stop_latency,
-                ai_interruptions,
-                row_id,
-                harness_status,
-                scenario_key,
-                *metadata_goals,
-                metric_latency,
-                metric_turns,
-                metric_bot_messages,
-                metric_tokens,
-                metric_csat,
-                eval_text,
-                scenario_use_case,
-                scenario_goal,
-                scenario_name,
-            ) in calls:
+                (
+                    call_id,
+                    status,
+                    duration,
+                    latency,
+                    cost,
+                    stop_latency,
+                    ai_interruptions,
+                    row_id,
+                    harness_status,
+                    scenario_key,
+                    *metadata_goals,
+                    metric_latency,
+                    metric_turns,
+                    metric_bot_messages,
+                    metric_tokens,
+                    metric_csat,
+                    eval_text,
+                    scenario_use_case,
+                    scenario_goal,
+                    scenario_name,
+                ),
+                scoring_state,
+            ) in ((one[:-_SCORING_COLUMNS], one[-_SCORING_COLUMNS:]) for one in calls):
                 scores, failed, errored, passed = (
                     judge.judge_entries(_entries(eval_text, keys))
                     if eval_text is not None and eval_text.startswith(_ENTRIES_START)
@@ -842,8 +862,27 @@ def scan_call_values(
                     "result_outcome": _outcome(
                         status, harness_status, failed, errored, passed
                     ),
+                    "result_persona_name": UNGROUPED,
+                    "result_scenario_name": "",
+                    "result_situation": "",
                     "scores": scores,
                 }
+                if scoring:
+                    row.update(
+                        zip(
+                            SCORING_ROW_FIELDS,
+                            (
+                                status,
+                                *scoring_state[:4],
+                                # JSONField's own decoding, as ``scoring_values``.
+                                *(
+                                    None if value is None else json.loads(value)
+                                    for value in scoring_state[4:]
+                                ),
+                            ),
+                            strict=True,
+                        )
+                    )
                 unresolved.append(
                     (
                         row,
@@ -872,6 +911,7 @@ def scan_call_values(
             age_group=KeyTextTransform("age_group", "persona"),
             overlay=KeyTextTransform("overlay", "coverage"),
             task=KeyTextTransform("task", "coverage"),
+            persona_name=KeyTextTransform("name", "persona"),
         )
         .values_list(*_SCENARIO_FIELDS, named=True)
         if unresolved
@@ -916,6 +956,10 @@ def scan_call_values(
             row["result_age"] = _level(values["age_group"])
             row["result_attack"] = _level(values["overlay"])
             row["result_task"] = _level(values["task"])
+            # Twin: the same fields in ``run_calls_queryset``; change both.
+            row["result_persona_name"] = _level(values["persona_name"])
+            row["result_scenario_name"] = values["name"] or ""
+            row["result_situation"] = values["instruction"] or ""
         # Twin: ``result_goal``'s Coalesce in run_results_v3_queries; change both.
         row["result_goal"] = next(
             (
@@ -944,16 +988,4 @@ def scan_call_values(
             (value for value in (dataset_goal, *fallbacks) if value is not None),
             None,
         )
-    if rows and scoring:
-        # The scoring state comes from the projection ``_call_values`` reads,
-        # so the two paths agree on it by construction.
-        scoring = {
-            str(values["id"]): values
-            for values in scoring_values(
-                CallExecution.all_objects.filter(id__in=[row["id"] for row in rows])
-            )
-        }
-        for row in rows:
-            values = scoring[row["id"]]
-            row.update({field: values[field] for field in SCORING_ROW_FIELDS})
     return rows
