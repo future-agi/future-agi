@@ -3157,6 +3157,34 @@ class TestPullRequestDescription:
         )
         assert len(title) <= 120
 
+    def test_a_body_lists_the_first_50_files_and_counts_the_rest(self, source_run):
+        many = _diff(*((f"agent/module_{n}.py", 1, 0) for n in range(120)))
+
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, patch_body=many
+        )
+
+        assert "| `agent/module_49.py` | +1 | −0 |" in body
+        assert "module_50.py" not in body
+        assert "\n\nand 70 more files" in body
+
+    def test_a_body_too_long_for_github_is_cut_at_a_line_and_keeps_the_link(
+        self, source_run
+    ):
+        # GitHub refuses a body over 65,536 characters, after the branch is pushed.
+        causes = [f"Cause {n}: " + "the agent repeats itself " * 400 for n in range(20)]
+
+        candidate, _, body = self._described(source_run, diagnosis={"causes": causes})
+
+        assert len(body) <= 60_000
+        assert (
+            "*Cut to fit GitHub's size limit. The epoch's page has all of it.*" in body
+        )
+        run = candidate.fix_run
+        assert f"/improvements/{run.id})" in body
+        assert body.endswith("Opened by Epoch on Future AGI.")
+        assert body.count("<details>") == body.count("</details>")
+
     def test_a_limited_fix_without_a_diagnosis_is_titled_by_the_files_it_changes(
         self, source_run
     ):

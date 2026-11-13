@@ -42,6 +42,10 @@ _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
 _TITLE_CHARS = 120
+# GitHub refuses a pull request body over 65,536 characters; this leaves it room.
+_BODY_CHARS = 60_000
+# The changed files a body lists; the rest are counted.
+_FILES_LISTED = 50
 
 
 def open_pull_request(
@@ -383,9 +387,28 @@ def _files_section(files: list[tuple[str, int, int]]) -> str:
     if not files:
         return ""
     rows = "\n".join(
-        f"| `{_cell(path)}` | +{added} | −{removed} |" for path, added, removed in files
+        f"| `{_cell(path)}` | +{added} | −{removed} |"
+        for path, added, removed in files[:_FILES_LISTED]
     )
-    return f"### What changed\n\n| File | Added | Removed |\n|---|---|---|\n{rows}"
+    more = len(files) - _FILES_LISTED
+    tail = f"\n\nand {_plural(more, 'more file', 'more files')}" if more > 0 else ""
+    return (
+        f"### What changed\n\n| File | Added | Removed |\n|---|---|---|\n{rows}{tail}"
+    )
+
+
+def _fit(head: str, tail: str) -> str:
+    """The body under GitHub's size limit. Too long, the head is cut at a line and says
+    so; the link to the epoch and the closing line always stay."""
+    body = f"{head}\n\n{tail}" if head else tail
+    if len(body) <= _BODY_CHARS:
+        return body
+    note = "\n\n*Cut to fit GitHub's size limit. The epoch's page has all of it.*"
+    cut = head[: _BODY_CHARS - len(tail) - len(note) - len("\n</details>\n\n")]
+    cut = cut[: cut.rfind("\n")] if "\n" in cut else cut
+    if cut.count("<details>") > cut.count("</details>"):
+        cut += "\n</details>"
+    return f"{cut}{note}\n\n{tail}"
 
 
 def _why_section(candidate: AgentFixCandidate) -> str:
@@ -506,7 +529,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
         else "Verified"
     )
     files = _changed_files(patch)
-    body = "\n\n".join(
+    head = "\n\n".join(
         part
         for part in (
             _override_note(candidate) if overridden else "",
@@ -518,11 +541,15 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
             _risks_section(candidate, verdict),
             _evidence_origin(candidate),
             _notes_section(candidate),
-            _fix_link(candidate),
-            "Opened by Epoch on Future AGI.",
         )
         if part
     )
+    tail = "\n\n".join(
+        part
+        for part in (_fix_link(candidate), "Opened by Epoch on Future AGI.")
+        if part
+    )
+    body = _fit(head, tail)
     marks = ", ".join(
         mark
         for mark, applies in (
