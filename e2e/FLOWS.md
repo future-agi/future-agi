@@ -1347,6 +1347,32 @@
 - one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
 - the picker stays within the viewport at both heights
 
+### EVAL-E2E-014 — Recalculate on an eval task's result replaces it in place
+
+**Goal:** A user who disagrees with an eval task's verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span's current input
+
+**Spec:** `flows/evals/recalculate-task-result.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace through the collector, and register its trace and LLM span through the public trace and span API
+2. author an LLM-as-a-judge eval (mock LLM through the gateway) and run an eval task over the project
+3. leave feedback on the task's result for the LLM span (the Observe feedback form's request)
+4. re-send the span with a new value for the eval's mapped attribute
+5. open the eval, its Feedback tab, the feedback, Edit Feedback
+6. pick Re-calculate and re-tune and submit the feedback
+7. read the span's eval result in Observe
+
+**Backend state verified:**
+
+- the eval task completes with one live completed entry for the span and eval in PG tracer_eval_logger, its verdict naming the span's first input
+- Recalculate answers 200 and the feedback row records action recalculate with the user's note
+- afterwards the span and eval have exactly one live entry: completed, of the same eval task, a new row whose verdict names the span's new input (the judge ran again)
+- the previous entry is retired (deleted = true), not left live beside the new one
+- the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
