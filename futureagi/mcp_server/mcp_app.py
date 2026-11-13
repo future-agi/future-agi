@@ -177,8 +177,34 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
         )
 
     return _bind_context(
-        MCPRequestContext(user=user, organization=organization, workspace=workspace)
+        MCPRequestContext(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            oauth_scopes=_parse_oauth_scopes(payload.get("scope")),
+        )
     )
+
+
+def _parse_oauth_scopes(raw) -> frozenset[str]:
+    """The tool groups an access token's ``scope`` claim grants.
+
+    Tokens carry a list of group slugs; a space- or comma-separated string is
+    accepted too. Anything else grants nothing, so a malformed claim fails
+    closed rather than falling back to every group.
+    """
+    if isinstance(raw, str):
+        items = raw.replace(",", " ").split()
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        items = [item.strip() for item in raw if isinstance(item, str)]
+    else:
+        items = []
+    return frozenset(item for item in items if item)
+
+
+def _tool_in_token_scope(context: MCPRequestContext, tool) -> bool:
+    """Whether the caller's OAuth token, if any, was granted the tool's group."""
+    return context.oauth_scopes is None or tool.group in context.oauth_scopes
 
 
 def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
@@ -214,7 +240,15 @@ def _enabled_tools_for_context(context: MCPRequestContext):
     connection = get_or_create_connection(
         context.user, context.organization, context.workspace
     )
-    return connection, get_enabled_tools(connection)
+    enabled = get_enabled_tools(connection)
+    if context.oauth_scopes is not None:
+        enabled = {
+            name
+            for name in enabled
+            if (tool := registry.get(name)) is not None
+            and _tool_in_token_scope(context, tool)
+        }
+    return connection, enabled
 
 
 def _json_safe(value):
@@ -258,6 +292,13 @@ async def call_generated_tool(name: str, arguments: dict):
     tool = registry.get(name)
     if tool is None:
         return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
+    # Refuse out-of-scope tools before any bookkeeping, rate limiting or dispatch.
+    if not _tool_in_token_scope(context, tool):
+        return _error_result(
+            f"Tool is outside the token's granted scopes: {name}",
+            code="FORBIDDEN",
+            data={"required_scope": tool.group},
+        )
 
     from mcp_server.exceptions import RateLimitExceededError
     from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
