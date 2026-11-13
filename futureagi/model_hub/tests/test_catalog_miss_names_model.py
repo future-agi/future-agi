@@ -43,16 +43,19 @@ CATALOG_MISS = "not available in the current model catalog"
 # getSafeActionErrorMessage (frontend/src/utils/errorUtils.js); otherwise they
 # fall back to "Failed to run evaluation. Please retry.". Mirror its rules.
 UI_INTERNAL_ERROR_MARKERS = re.compile(
-    r"DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|"
+    r"DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|"
     r"maximum:\s*\d+|elapsed\s+\d+",
     re.IGNORECASE,
 )
+# Case-sensitive there too: prose "select" is shown, query text is not.
+UI_SQL_QUERY_MARKER = re.compile(r"\bSELECT\s|\bselect\s+\*")
 
 
 def assert_ui_shows(message):
     assert len(message) <= 240, message
     assert "\n" not in message and "\r" not in message, message
     assert not UI_INTERNAL_ERROR_MARKERS.search(message), message
+    assert not UI_SQL_QUERY_MARKER.search(message), message
 
 
 @pytest.mark.parametrize("model", [RETIRED_MODEL, "not-a-catalog-model"])

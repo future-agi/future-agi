@@ -18,7 +18,12 @@ const USER_FACING_ERROR_CODES = new Set(
   Object.values(DatasetLimitCheckFailedErrorApiCode),
 );
 const INTERNAL_ERROR_MARKERS =
-  /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|maximum:\s*\d+|elapsed\s+\d+/i;
+  /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|maximum:\s*\d+|elapsed\s+\d+/i;
+// Query text as the ORM and query builders print it (upper-case SELECT), or a
+// lower-case "select *". Case-sensitive on purpose: user-facing messages such
+// as "Please select a supported model" say "select" in prose and must still
+// be shown.
+const SQL_QUERY_MARKER = /\bSELECT\s|\bselect\s+\*/;
 
 /**
  * Return concise validation feedback, but never expose infrastructure/query
@@ -51,7 +56,8 @@ export function getSafeActionErrorMessage(error, fallback) {
     !message ||
     message.length > 240 ||
     /[\r\n]/.test(message) ||
-    INTERNAL_ERROR_MARKERS.test(message)
+    INTERNAL_ERROR_MARKERS.test(message) ||
+    SQL_QUERY_MARKER.test(message)
   ) {
     return fallback;
   }
