@@ -84,3 +84,9 @@ func shouldTrigger(result *CheckResult, threshold float64) bool {
 	}
 	return !result.Pass && result.Score <= 0
 }
+
+// RequestTextChecker is implemented by checks that inspect only request
+// messages. Realtime post-stage text is passed to them as a request message.
+type RequestTextChecker interface {
+	ChecksRequestTextOnly()
+}
