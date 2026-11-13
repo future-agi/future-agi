@@ -1080,6 +1080,11 @@ func Load(path string) (*Config, error) {
 		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
 	}
 
+	for name, p := range cfg.Providers {
+		ApplyProviderPreset(&p)
+		cfg.Providers[name] = p
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}

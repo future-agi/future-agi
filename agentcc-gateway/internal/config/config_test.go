@@ -746,3 +746,36 @@ func TestWarnUnreadKeys_ComposedReferenceAndLiteral(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadHuggingFacePresetMinimalConfig(t *testing.T) {
+	content := `
+providers:
+  hf:
+    type: "huggingface"
+    api_key: "hf_test_key"
+`
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() unexpected error for minimal huggingface preset: %v", err)
+	}
+
+	p, ok := cfg.Providers["hf"]
+	if !ok {
+		t.Fatal("provider hf not found")
+	}
+	if p.BaseURL != "https://router.huggingface.co" {
+		t.Errorf("BaseURL = %q, want %q", p.BaseURL, "https://router.huggingface.co")
+	}
+	if p.APIFormat != "openai" {
+		t.Errorf("APIFormat = %q, want %q", p.APIFormat, "openai")
+	}
+	if p.APIPathPrefix == nil || *p.APIPathPrefix != "/v1" {
+		t.Errorf("APIPathPrefix = %v, want %q", p.APIPathPrefix, "/v1")
+	}
+}
