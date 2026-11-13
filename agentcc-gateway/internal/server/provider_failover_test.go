@@ -114,7 +114,7 @@ func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
 					}
 					// Both breakers are open now: the org's for its own fast key
 					// and the operator's for slow. Nothing is called.
-					if i > 0 && status != http.StatusInternalServerError {
+					if i > 0 && status != http.StatusServiceUnavailable {
 						t.Fatalf("request %d with every breaker open: status=%d", i, status)
 					}
 				}

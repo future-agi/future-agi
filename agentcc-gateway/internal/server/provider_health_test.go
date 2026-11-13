@@ -199,7 +199,7 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 					// that target, fast then backup; then nothing is left to try.
 					wantOrgCalls = 2
 					if i == 2 {
-						want = http.StatusInternalServerError
+						want = http.StatusServiceUnavailable
 					}
 				}
 				if status != want {

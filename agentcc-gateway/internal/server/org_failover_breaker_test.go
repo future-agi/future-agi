@@ -66,22 +66,25 @@ func TestOrgConfiguredFailoverKeepsBreakers(t *testing.T) {
 
 func TestOrgFailoverAllRefusedOverHTTP(t *testing.T) {
 	srv, gateway, keyed := orgBreakerGatewayWithConfig(t, http.StatusUnauthorized, func(cfg *config.Config) {
-		cfg.Routing.Targets["adaptive-sample"] = []config.RoutingTargetConfig{{Provider: "primary"}}
+		// Keep two targets so requests use provider failover; both org keys
+		// reach the same synthetic failing upstream.
+		cfg.Providers["backup"] = cfg.Providers["primary"]
 	}, "synthetic-org-a-key")
 	orgCfg := *srv.handlers.tenantStore.Get("org-a")
+	orgCfg.Providers["backup"] = orgCfg.Providers["primary"]
 	orgCfg.Routing = &tenant.RoutingConfig{Failover: &tenant.FailoverConfig{Enabled: true, MaxAttempts: 2}}
 	srv.handlers.tenantStore.Set("org-a", &orgCfg)
 	for i := 0; i < 12; i++ {
 		status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", false, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
 		want := http.StatusUnauthorized
-		if i >= 2 {
+		if i >= 4 {
 			want = http.StatusServiceUnavailable
 		}
-		if status != want || (i >= 2 && !strings.Contains(body, "all_providers_unavailable")) {
+		if status != want || (i >= 4 && !strings.Contains(body, "all_providers_unavailable")) {
 			t.Fatalf("request %d: status=%d body=%s, want %d with clear unavailable error after breaker opens", i, status, body, want)
 		}
 	}
-	if got := keyed.count("synthetic-org-a-key"); got != 2 {
-		t.Fatalf("refused requests reached upstream: %d calls, want 2", got)
+	if got := keyed.count("synthetic-org-a-key"); got != 4 {
+		t.Fatalf("refused requests reached upstream: %d calls, want 4 (2 per provider)", got)
 	}
 }
