@@ -249,7 +249,8 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
 def readiness_report(
     pairing: Pairing, *, bundle: HarnessAssembledBundle | None = None
 ) -> ReadinessReport:
-    """The pairing's readiness, computed now from its evidence. No writes.
+    """The pairing's readiness, computed now from its evidence. Writes nothing but an
+    older row's certification files, kept once read.
 
     ``bundle`` is the pairing's bundle when the caller holds it already (a run's own);
     otherwise it is looked up as a run of the pairing would.

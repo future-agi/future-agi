@@ -1131,9 +1131,9 @@ class TestReviewFollowUps:
         # The archive's tail is lost: a full read fails, a streamed one never gets there.
         storage.objects["harness-sealed/stream/a.tar.gz"] = body[: len(body) // 2]
 
-        files = evidence._certification_files("harness-sealed/stream/a.tar.gz")
+        files, readable = evidence._read_once("harness-sealed/stream/a.tar.gz")
 
-        assert files == {"tools": TOOLS, "actions": ACTIONS}
+        assert (files, readable) == ({"tools": TOOLS, "actions": ACTIONS}, True)
 
     def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
         self, storage
@@ -1163,9 +1163,9 @@ class TestReviewFollowUps:
         # An older archive holds neither file: reading stops at the first member after
         # where they would sort, not at the archive's end.
         with patch.object(storage, "get_object", return_value=Counted(body)):
-            files = evidence._certification_files("harness-sealed/stream/old.tar.gz")
+            files, readable = evidence._read_once("harness-sealed/stream/old.tar.gz")
 
-        assert files == {"tools": [], "actions": []}
+        assert (files, readable) == ({"tools": [], "actions": []}, True)
         assert sum(read) < len(body) // 4
 
     def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
@@ -1179,7 +1179,7 @@ class TestReviewFollowUps:
             + hashlib.sha256(key.encode()).hexdigest()
         )
         cache.add(cache_key + ":reading", 1)
-        read = {"tools": TOOLS, "actions": []}
+        read = ({"tools": TOOLS, "actions": []}, True)
 
         def first_reader_finishes(_seconds):
             cache.set(cache_key, read)
@@ -1188,11 +1188,113 @@ class TestReviewFollowUps:
             patch.object(evidence.time, "sleep", side_effect=first_reader_finishes),
             patch.object(evidence.archives, "stream_members") as streamed,
         ):
-            files = evidence._certification_files(key)
+            files = evidence._read_once(key)
 
         assert files == read
         assert streamed.call_count == 0
         cache.delete(cache_key + ":reading")
+
+    def test_a_stored_bundle_keeps_its_certification_files_on_its_row(
+        self, user, workspace, storage
+    ):
+        """Under the production layout ``environment-bundle/`` sorts before the
+        certification files, so streaming them reads the whole bundle first; a bundle
+        stored now keeps them on its row and readiness never opens the archive."""
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        environment = _environment(user, workspace, storage, "rd-stored-files")
+        pairing = _pairing(environment)
+        sealed = {
+            assembly.SEALED_MANIFEST: b'{"digest": "sha256:' + b"a" * 64 + b'"}',
+            assembly.CERTIFICATE: json.dumps(
+                {"checks": PASSED, "compiler": {"bundle_digest": "sha256:" + "a" * 64}}
+            ).encode(),
+            "environment-bundle/world.bin": os.urandom(1024 * 1024),
+            harness_readiness.TOOL_CERTIFICATION: json.dumps({"tools": TOOLS}).encode(),
+            harness_readiness.ACTION_CERTIFICATION: json.dumps(
+                {"actions": ACTIONS}
+            ).encode(),
+        }
+        HarnessAssembledBundle._base_manager.filter(job_id=environment.id).delete()
+        bundle = assembly.seed_ready_bundle(
+            HarnessAssembledBundle,
+            job=environment,
+            runtime=pairing.runtime,
+            environment_version=pairing.environment_version,
+            suite_version=pairing.suite_version,
+            sealed=sealed,
+            object_key="harness-sealed/stored/never-read.tar.gz",
+            sha256="0" * 64,
+            size=1,
+        )
+
+        assert bundle.certification_files == {
+            "object_key": "harness-sealed/stored/never-read.tar.gz",
+            "tools": TOOLS,
+            "actions": ACTIONS,
+        }
+        with patch.object(evidence.archives, "stream_members") as streamed:
+            read = evidence.read_evidence(pairing, bundle)
+        streamed.assert_not_called()
+        assert (read.source, read.tools, read.actions) == (
+            "pair_certificate",
+            TOOLS,
+            ACTIONS,
+        )
+
+    def test_an_older_bundle_is_read_once_then_keeps_its_files(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_readiness import evidence
+
+        environment = _environment(user, workspace, storage, "rd-backfill-files")
+        _certify(environment, storage)
+        cache.clear()
+
+        first = _report(environment)
+        bundle = _bundle(environment)
+        assert bundle.certification_files == {
+            "object_key": bundle.object_key,
+            "tools": TOOLS,
+            "actions": ACTIONS,
+        }
+        cache.clear()
+        with patch.object(evidence.archives, "stream_members") as streamed:
+            second = _report(environment)
+
+        streamed.assert_not_called()
+        assert _rows(second) == _rows(first)
+
+    def test_a_reader_that_waits_too_long_is_told_to_retry_not_to_download(
+        self, storage
+    ):
+        import hashlib
+
+        from simulate.services.harness_readiness import evidence
+
+        key = "harness-sealed/stream/slow.tar.gz"
+        reading = (
+            "harness-readiness-certification:"
+            + hashlib.sha256(key.encode()).hexdigest()
+            + ":reading"
+        )
+        cache.add(reading, 1)
+        try:
+            with (
+                patch.object(evidence.time, "sleep"),
+                patch.object(evidence.archives, "stream_members") as streamed,
+                pytest.raises(HostedHarnessError) as refused,
+            ):
+                evidence._read_once(key)
+        finally:
+            cache.delete(reading)
+
+        streamed.assert_not_called()
+        assert refused.value.status_code == 503
+        assert refused.value.retryable is True
+        assert refused.value.as_dict()["retry_after"] > 0
 
     def test_recheck_needs_build_usage_unless_already_certified(
         self, user, workspace, storage, auth_client
