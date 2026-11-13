@@ -21,9 +21,8 @@ import (
 )
 
 // Chat and the other non-video routes record client_ip, which ip_acl and
-// per-key allowed_ips judge. These tests pin that the address comes from the
-// TCP peer, or from X-Forwarded-For only for the configured trusted hops, and
-// never from a header the caller chose.
+// per-key allowed_ips judge. These tests cover client_ip selection from the
+// TCP peer or the configured X-Forwarded-For hop across gateway routes.
 
 const (
 	clientIPTestKey   = "sk-client-ip-test-001"
@@ -109,26 +108,25 @@ func sendFrom(s *Server, path, body string, c clientIPReq) *httptest.ResponseRec
 	return w
 }
 
-// TestChatACLIgnoresSpoofedClientHeadersByDefault: with trusted_proxies 0 a
-// caller outside the global allowlist must not get in by sending an allowed
-// address in X-Forwarded-For or X-Real-IP, and an allowed peer must not be
-// refused because of what those headers say.
-func TestChatACLIgnoresSpoofedClientHeadersByDefault(t *testing.T) {
+// TestChatACLUsesPeerAddressByDefault: with trusted_proxies set to 0, the
+// global allow list uses the TCP peer address regardless of forwarding
+// headers.
+func TestChatACLUsesPeerAddressByDefault(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 	s := clientIPServer(t, mock.URL, config.IPACLConfig{Enabled: true, Allow: []string{"10.0.0.0/8"}}, nil)
 
 	for name, c := range map[string]clientIPReq{
-		"spoofed X-Forwarded-For": {peer: outsideClient, xff: allowedClient},
-		"spoofed X-Real-IP":       {peer: outsideClient, xRealIP: allowedClient},
-		"spoofed both":            {peer: outsideClient, xff: allowedClient + ", " + allowedClient, xRealIP: allowedClient},
+		"different X-Forwarded-For address":   {peer: outsideClient, xff: allowedClient},
+		"different X-Real-IP address":         {peer: outsideClient, xRealIP: allowedClient},
+		"different addresses in both headers": {peer: outsideClient, xff: allowedClient + ", " + allowedClient, xRealIP: allowedClient},
 	} {
 		if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, c); w.Code != 403 {
 			t.Errorf("%s: outside caller got %d %s", name, w.Code, w.Body.String())
 		}
 	}
 
-	// Positive controls: an allowed peer passes whatever the headers claim.
+	// Positive controls: an allowed peer receives 200 with each header combination.
 	for name, c := range map[string]clientIPReq{
 		"no headers":             {peer: allowedClient},
 		"denied X-Forwarded-For": {peer: allowedClient, xff: outsideClient},
@@ -140,31 +138,30 @@ func TestChatACLIgnoresSpoofedClientHeadersByDefault(t *testing.T) {
 	}
 }
 
-// TestChatACLDenyListIgnoresSpoofedForwardedFor: a denied peer must not escape
-// the deny list by claiming another address.
-func TestChatACLDenyListIgnoresSpoofedForwardedFor(t *testing.T) {
+// TestChatDenyListUsesPeerAddress: the deny list uses the TCP peer when
+// trusted_proxies is 0.
+func TestChatDenyListUsesPeerAddress(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 	s := clientIPServer(t, mock.URL, config.IPACLConfig{Enabled: true, Deny: []string{"192.0.2.0/24"}}, nil)
 
 	if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: outsideClient, xff: "198.51.100.7"}); w.Code != 403 {
-		t.Errorf("denied peer escaped via X-Forwarded-For: %d %s", w.Code, w.Body.String())
+		t.Errorf("peer-address deny-list case: got %d %s, want 403", w.Code, w.Body.String())
 	}
 	if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: "198.51.100.7"}); w.Code != 200 {
 		t.Errorf("other peer refused: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// TestChatKeyAllowedIPsIgnoresSpoofedForwardedFor: a key restricted to an
-// address range must not be usable from outside it by sending an in-range
-// address in X-Forwarded-For.
-func TestChatKeyAllowedIPsIgnoresSpoofedForwardedFor(t *testing.T) {
+// TestChatKeyAllowedIPsUsePeerAddress: per-key allowed_ips uses the TCP peer
+// when trusted_proxies is 0.
+func TestChatKeyAllowedIPsUsePeerAddress(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 	s := clientIPServer(t, mock.URL, config.IPACLConfig{}, []string{"10.0.0.0/8"})
 
 	if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: outsideClient, xff: allowedClient}); w.Code != 403 {
-		t.Errorf("key used from outside its range via X-Forwarded-For: %d %s", w.Code, w.Body.String())
+		t.Errorf("peer-address allowed_ips case: got %d %s, want 403", w.Code, w.Body.String())
 	}
 	if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: allowedClient}); w.Code != 200 {
 		t.Errorf("key used from inside its range: %d %s", w.Code, w.Body.String())
@@ -185,7 +182,7 @@ func TestChatACLBehindTrustedProxies(t *testing.T) {
 			t.Errorf("allowed client behind proxy got %d %s", w.Code, w.Body.String())
 		}
 		if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: proxyOutsideAllow, xff: allowedClient + ", " + outsideClient}); w.Code != 403 {
-			t.Errorf("caller-prepended allowed address accepted: %d %s", w.Code, w.Body.String())
+			t.Errorf("rightmost forwarded-address case: got %d %s, want 403", w.Code, w.Body.String())
 		}
 		if w := sendFrom(s, "/v1/chat/completions", clientIPChatBody, clientIPReq{peer: proxyOutsideAllow, xRealIP: allowedClient}); w.Code != 403 {
 			t.Errorf("X-Real-IP trusted behind proxy: %d %s", w.Code, w.Body.String())
