@@ -112,24 +112,44 @@ def test_compare_row_route_delete_is_method_guarded(auth_client):
 
 @pytest.mark.django_db
 def test_compare_delete_falls_back_to_synchronous_cleanup(
-    auth_client, monkeypatch, tmp_path
+    auth_client, compare_datasets, monkeypatch, tmp_path
 ):
     compare_id = uuid.uuid4()
     monkeypatch.chdir(tmp_path)
     compare_dir = Path(get_compare_local_dir(compare_id))
     compare_dir.mkdir(parents=True)
     (compare_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    dataset_ids = [
+        str(compare_datasets["base_dataset"].id),
+        str(compare_datasets["other_dataset"].id),
+    ]
+    # The comparison's shared metadata, as the page writer publishes it.
+    shared = {
+        f"compare/{compare_id}/metadata.json": {
+            "status": "completed",
+            "base_dataset_id": dataset_ids[0],
+            "comparison_datasets": dataset_ids,
+        }
+    }
+
+    def download(object_key, bucket_name=None):
+        if object_key not in shared:
+            raise ValueError(f"missing object {object_key}")
+        return shared[object_key]
 
     def raise_temporal_unavailable(*args, **kwargs):
         raise RuntimeError("Temporal unavailable")
 
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.download_json_from_s3", download
+    )
     monkeypatch.setattr(
         "tfc.temporal.drop_in.start_activity",
         raise_temporal_unavailable,
     )
     monkeypatch.setattr(
         "model_hub.views.develop_dataset.delete_compare_folder",
-        lambda compare_id: None,
+        lambda compare_id: shared.clear(),
     )
 
     response = auth_client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
@@ -138,6 +158,7 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
     assert response.json()["result"] == {"message": "File(s) deleted successfully"}
     assert compare_dir.resolve().parent == tmp_path / "media" / "compare"
     assert not compare_dir.exists()
+    assert shared == {}
 
 
 @pytest.mark.django_db
