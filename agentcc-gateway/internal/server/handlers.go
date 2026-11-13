@@ -502,6 +502,25 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 	return nil, failedID, "", firstErr
 }
 
+// effectiveProviderLock selects the org's policy without changing the shared
+// gateway resolver. An omitted policy inherits the gateway configuration.
+func (h *Handlers) effectiveProviderLock(orgCfg *tenant.OrgConfig) providerLockPolicy {
+	if orgCfg == nil || orgCfg.Routing == nil || orgCfg.Routing.ProviderLock == nil {
+		return h.providerLockResolver
+	}
+	cfg := orgCfg.Routing.ProviderLock
+	if !cfg.Enabled {
+		// Preserve nil-safe IsEnabled without the global constructor's
+		// "empty config means enabled" default for an explicitly disabled org.
+		return (*routing.ProviderLockResolver)(nil)
+	}
+	return &orgProviderLockResolver{
+		ProviderLockResolver: routing.NewProviderLockResolver(config.ProviderLockConfig{Enabled: true}),
+		allowed:              append([]string(nil), cfg.AllowedProviders...),
+		denied:               append([]string(nil), cfg.DenyProviders...),
+	}
+}
+
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
 	if orgCfg != nil && orgCfg.Routing != nil && (orgCfg.Routing.FallbackEnabled || (orgCfg.Routing.Failover != nil && orgCfg.Routing.Failover.Enabled)) {
 		foCfg := h.buildOrgFailoverConfig(orgCfg.Routing)
@@ -1143,10 +1162,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// 2. Provider locking — bypasses all routing if set.
 	var providerLocked bool
 	var lockedProvider providers.Provider
-	if h.providerLockResolver.IsEnabled() {
-		lockTarget := h.providerLockResolver.ExtractLock(rc, r.Header)
+	providerLockResolver := h.effectiveProviderLock(orgCfg)
+	if providerLockResolver.IsEnabled() {
+		lockTarget := providerLockResolver.ExtractLock(rc, r.Header)
 		if lockTarget != "" {
-			if err := h.providerLockResolver.Validate(lockTarget); err != nil {
+			if err := providerLockResolver.Validate(lockTarget); err != nil {
 				models.WriteError(w, models.ErrForbidden(err.Error()))
 				return
 			}
@@ -1252,6 +1272,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
 	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream {
+		// Select once so admission and dispatch use the same sampled target.
+		rule, ok := m.ShouldMirror(rc.Request.Model)
+		if !ok || h.orgFailoverAdmission(rc, orgCfg)(rule.TargetProvider) != nil {
+			return
+		}
 		reqCopy := *rc.Request
 
 		// Build production info for shadow result capture.
@@ -1274,7 +1299,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 				StatusCode: 200,
 			}
 		}
-		m.ExecuteAsync(&reqCopy, rc.Provider, rc.Model, prod)
+		m.ExecuteRuleAsync(&reqCopy, *rule, rc.Provider, rc.Model, prod)
 	}
 }
 
@@ -1449,6 +1474,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	servingProvider := provider
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
@@ -1464,7 +1490,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 		for _, fbModel := range modelChain {
 			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-			if !ok {
+			if !ok || admit(fbProviderID) != nil {
 				continue
 			}
 
@@ -1506,11 +1532,15 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	var servingProvider providers.Provider
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
+			if err := admit(providerID); err != nil {
+				return err
+			}
 			p, ok := h.registry.GetProvider(providerID)
 			if !ok {
 				return fmt.Errorf("provider %q not found", providerID)
@@ -1557,7 +1587,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 			for _, fbModel := range modelChain {
 				// Resolve fallback model: check org providers first, then global registry.
 				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-				if !ok {
+				if !ok || admit(fbProviderID) != nil {
 					continue
 				}
 
@@ -1625,6 +1655,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
@@ -1678,7 +1709,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			for _, fbModel := range modelChain {
 				fallbackModel := fbModel
 				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
-				if !ok {
+				if !ok || admit(fbProviderID) != nil {
 					continue
 				}
 
@@ -1698,6 +1729,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
 			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
+				if err := admit(providerID); err != nil {
+					return err
+				}
 				p, ok := h.registry.GetProvider(providerID)
 				if !ok {
 					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
