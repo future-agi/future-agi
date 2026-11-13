@@ -140,6 +140,9 @@ class HarnessEnvironmentVersion(_HarnessPieceVersion):
         blank=True,
         related_name="+",
     )
+    # The per-tool and per-action certification a combined archive holds, kept once
+    # read so the archive is not opened for it again.
+    certification_files = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_harness_environment_version"
@@ -544,6 +547,9 @@ class HarnessAssembledBundle(BaseModel):
     sha256 = models.CharField(max_length=64, null=True, blank=True)
     size = models.BigIntegerField(null=True, blank=True)
     certificate = models.JSONField(null=True, blank=True)
+    # The per-tool and per-action certification the sealed bundle holds, kept beside it
+    # so readiness never reads the archive for them.
+    certification_files = models.JSONField(null=True, blank=True)
     warnings = models.JSONField(default=list, blank=True)
     built_by_attempt = models.ForeignKey(
         "simulate.HostedHarnessAttempt",

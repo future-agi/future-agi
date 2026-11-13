@@ -14,7 +14,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, TypedDict
+from typing import Any, Final, Literal, TypedDict
 
 import structlog
 from django.conf import settings
@@ -56,7 +56,7 @@ CHECK_TIMED_OUT = "validation_timed_out"
 # The endings that are a check's verdict on the pairing; any other one is retried.
 CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed"})
 # A check that ended on our side, not the agent's: runs are not held for it.
-CHECK_UNAVAILABLE = "check_unavailable"
+CHECK_UNAVAILABLE: Final = "check_unavailable"
 # What a run refused after a failed check is told, by the check's ending.
 _FAILED_REASONS = {
     "authoring_runtime_validation_failed": "the agent did not pass this environment's checks",
@@ -109,7 +109,11 @@ def _ending(tail: str) -> tuple[str, str] | None:
     for line in tail.splitlines():
         phase = _PHASE_LINE.fullmatch(line)
         if phase is not None:
-            return phase.groups() if phase.group(1) == _ENDING_PHASE else None
+            return (
+                (phase.group(1), phase.group(2))
+                if phase.group(1) == _ENDING_PHASE
+                else None
+            )
         if _AGENT_OUTPUT in line:
             return None
     return None
@@ -171,6 +175,15 @@ def repeats_unavailable(bundle: HarnessAssembledBundle) -> bool:
 FAILURE_SOURCE = "validation"
 # A move whose validation ended before a check did is validated this many times more.
 MOVE_RESTARTS = 1
+# What a settled validation did with its move, kept apart from its outcome: a move not
+# made yet (the worker stopped, or making it raised) is made by the next settle.
+MOVE_RESULT = "validation_move_result"
+MOVE_TRIES_KEY = "validation_move_tries"
+# Making a move that raises is recorded as failed at once, as an activation's failure is,
+# and tried again this many times in all while no newer move replaces it.
+MOVE_TRIES = 3
+# A move still not made this long after its validation settled is made by the nudge tick.
+MOVE_RETRY_AFTER = timedelta(minutes=2)
 _LIVE_STATES = frozenset(
     set(HostedHarnessJob.State)
     - {
@@ -200,7 +213,7 @@ class AgentMove(TypedDict):
 class ValidationView(TypedDict):
     state: str
     job_id: str | None
-    purpose: str
+    purpose: str | None
     finished_at: str | None
     error: dict[str, Any] | None
 
@@ -244,7 +257,7 @@ class Validation:
 
 def failed_reason(error: dict[str, Any]) -> str:
     """A failed check's reason in plain words, from its bundle's ``error``."""
-    reason = _FAILED_REASONS.get(error.get("code"), "the check failed")
+    reason = _FAILED_REASONS.get(str(error.get("code")), "the check failed")
     actions = [
         str(one["action"])
         for one in error.get("failed_actions") or []
@@ -369,8 +382,8 @@ def agent_move(
 def start_validation(
     environment: HostedHarnessJob,
     agent_version: AgentVersion,
-    environment_version: HarnessEnvironmentVersion,
-    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion | None,
+    suite_version: HarnessSuiteVersion | None,
     *,
     purpose: Purpose,
     move: AgentMove | None = None,
@@ -378,7 +391,8 @@ def start_validation(
     """Validate this pairing, unless its bundle is already certified or its last check
     ended on our side for a cause that repeats on the same template.
 
-    Returns ``None`` when it cannot be validated (see ``can_validate``). A failed bundle
+    Returns ``None`` when it cannot be validated (see ``can_validate``), as without an
+    environment or suite version. A failed bundle
     is reset to pending; a validation already certifying the bundle is returned, carrying
     ``move`` from now on. A ``move`` replaces every other move still waiting on this
     environment. Takes the environment's lock; the job's workflow starts on commit.
@@ -386,7 +400,11 @@ def start_validation(
     from simulate.services.harness_versioning.backfill import effective_runtime
     from simulate.services.harness_versioning.versions import lock_environment
 
-    if not can_validate(environment, agent_version.id):
+    if (
+        environment_version is None
+        or suite_version is None
+        or not can_validate(environment, agent_version.id)
+    ):
         return None
     with transaction.atomic():
         locked = lock_environment(environment)
@@ -452,16 +470,16 @@ def start_validation(
                 environment_id=str(locked.id),
                 agent_version_id=str(agent_version.id),
                 bundle_id=str(bundle.id),
-                cause=bundle.error["last_attempt"].get("cause"),
+                cause=(bundle.error or {})["last_attempt"].get("cause"),
                 purpose=purpose,
                 caller=move["caller"] if move else None,
             )
             return Validation(CHECK_UNAVAILABLE, bundle, purpose)
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
-        job = live_validation(bundle.id)
-        if job is not None and (move is None or _carry_move(job, move)):
-            return Validation("validating", bundle, purpose, job)
+        live = live_validation(bundle.id)
+        if live is not None and (move is None or _carry_move(live, move)):
+            return Validation("validating", bundle, purpose, live)
         job = _create_job(
             locked,
             runtime,
@@ -528,6 +546,30 @@ def drop_waiting_moves(locked: HostedHarnessJob, agent_version_id: Any) -> None:
             environment_id=str(locked.id),
             job_id=str(job.id),
             agent_version_id=dropped["agent_version_id"],
+            by_agent_version_id=str(agent_version_id),
+        )
+    # A settled validation's move still to be tried again is replaced by this one. One
+    # being made right now is skipped: it rechecks the default under this lock.
+    unmade = (
+        _unmade(HostedHarnessJob.no_workspace_objects.filter(environment_id=locked.id))
+        .select_for_update(skip_locked=True)
+        .order_by("updated_at")
+    )
+    for job in unmade:
+        metadata = dict(job.payload.get("metadata") or {})
+        replaced = metadata["validation_move"]
+        metadata[MOVE_RESULT] = "replaced"
+        job.payload = {**job.payload, "metadata": metadata}
+        job.save(update_fields=["payload", "updated_at"])
+        if replaced["agent_version_id"] != str(agent_version_id):
+            _record_activation(
+                replaced["agent_version_id"], {str(locked.id): "superseded"}
+            )
+        logger.info(
+            "harness_pair_validation_move_replaced",
+            environment_id=str(locked.id),
+            job_id=str(job.id),
+            agent_version_id=replaced["agent_version_id"],
             by_agent_version_id=str(agent_version_id),
         )
 
@@ -686,35 +728,111 @@ def finish_validation(job_id: Any) -> str | None:
     Returns ``ready``, ``failed`` (the agent failed a check: the pairing is failed),
     ``unavailable`` (the check failed on our side: the pairing stays pending and holds
     nothing back) or ``retry`` (it ended before a check did: the pairing stays pending),
-    or ``None`` when the job is not terminal or was settled before.
+    or ``None`` when the job is not terminal, or was settled before with its move, if it
+    carries one, made. A settled job whose move was not made yet makes it now.
     """
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
         metadata = dict((job.payload or {}).get("metadata") or {})
-        if job.state in _LIVE_STATES or metadata.get("validation_outcome"):
+        if job.state in _LIVE_STATES:
             return None
-        outcome = _settle_bundle(job)
-        payload = dict(job.payload or {})
-        payload["metadata"] = {**metadata, "validation_outcome": outcome}
-        job.payload = payload
-        job.save(update_fields=["payload", "updated_at"])
-    logger.info(
-        "harness_pair_validation_finished",
-        **_check_log(job),
-        outcome=outcome,
-        code=(
-            CHECK_TIMED_OUT
-            if job.cancel_reason == CHECK_TIMED_OUT
-            else (job.failure or {}).get("code")
-        ),
-    )
-    move = metadata.get("validation_move")
-    if move:
-        _after_move_validated(job, move, outcome)
+        outcome = metadata.get("validation_outcome")
+        settled = outcome is None
+        if settled:
+            outcome = _settle_bundle(job)
+            payload = dict(job.payload or {})
+            payload["metadata"] = {**metadata, "validation_outcome": outcome}
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+        elif not _move_pending(metadata):
+            return None
+    if settled:
+        logger.info(
+            "harness_pair_validation_finished",
+            **_check_log(job),
+            outcome=outcome,
+            code=(
+                CHECK_TIMED_OUT
+                if job.cancel_reason == CHECK_TIMED_OUT
+                else (job.failure or {}).get("code")
+            ),
+        )
+    _finish_move(job_id)
     return outcome
 
 
+def _move_pending(metadata: dict[str, Any]) -> bool:
+    return bool(metadata.get("validation_move")) and MOVE_RESULT not in metadata
+
+
+def _finish_move(job_id: Any) -> None:
+    """Make a settled validation's move, once: the move and the record that it was made
+    commit together, so a worker stopped in between leaves it for the next settle."""
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        metadata = dict((job.payload or {}).get("metadata") or {})
+        if not _move_pending(metadata):
+            return
+        tries = int(metadata.get(MOVE_TRIES_KEY) or 0) + 1
+        result, again = _after_move_validated(
+            job,
+            metadata["validation_move"],
+            metadata["validation_outcome"],
+            tries=tries,
+        )
+        metadata[MOVE_TRIES_KEY] = tries
+        if not again:
+            metadata[MOVE_RESULT] = result
+        job.payload = {**(job.payload or {}), "metadata": metadata}
+        job.save(update_fields=["payload", "updated_at"])
+
+
+def _unmade(jobs: Any) -> Any:
+    """The settled validations among ``jobs`` whose move was not made."""
+    return (
+        jobs.filter(
+            payload__metadata__certify_only=True,
+            payload__metadata__validation_outcome__isnull=False,
+            payload__metadata__validation_move__isnull=False,
+        )
+        .exclude(state__in=_LIVE_STATES)
+        .exclude(payload__metadata__validation_move=None)
+        .exclude(**{f"payload__metadata__{MOVE_RESULT}__isnull": False})
+    )
+
+
+def unfinished_moves(*, limit: int) -> list[Any]:
+    """Environments with a settled validation whose move was not made, up to ``limit``,
+    longest waiting first. A validation settled within ``MOVE_RETRY_AFTER`` is left to
+    the settle still running."""
+    jobs = (
+        _unmade(
+            HostedHarnessJob.no_workspace_objects.filter(
+                updated_at__lte=timezone.now() - MOVE_RETRY_AFTER
+            )
+        )
+        .order_by("updated_at")
+        .values_list("environment_id", flat=True)
+    )
+    return list(dict.fromkeys(jobs[:limit]))
+
+
+def finish_unfinished_moves(environment_id: Any) -> None:
+    """Make every move the environment's settled validations left unmade."""
+    jobs = (
+        _unmade(
+            HostedHarnessJob.no_workspace_objects.filter(environment_id=environment_id)
+        )
+        .order_by("updated_at")
+        .values_list("id", flat=True)
+    )
+    for job_id in jobs:
+        finish_validation(job_id)
+
+
 def _settle_bundle(job: HostedHarnessJob) -> str:
+    if job.assembled_bundle_id is None:
+        return "retry"
     bundle = (
         HarnessAssembledBundle._base_manager.select_for_update()
         .filter(id=job.assembled_bundle_id)
@@ -780,12 +898,22 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
     return "retry"
 
 
-def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) -> None:
+def _after_move_validated(
+    job: HostedHarnessJob, move: AgentMove, outcome: str, *, tries: int = 1
+) -> tuple[str, bool]:
+    """Act on a settled validation's move: its result, and whether it is to be tried
+    again (making it raised, with tries left). A failure is recorded as the move's
+    activation at once; a later try records only a move that lands, so it never
+    overwrites what a newer move recorded."""
     from simulate.services.harness_agent_versions import _record_activation
 
-    environment = HostedHarnessJob.no_workspace_objects.filter(
-        id=job.environment_id
-    ).first()
+    again = False
+
+    environment = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job.environment_id).first()
+        if job.environment_id is not None
+        else None
+    )
     if environment is None:
         result = "environment_gone"
     elif outcome in ("ready", "unavailable"):
@@ -801,15 +929,17 @@ def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) 
                 "harness_pair_validation_move_failed",
                 environment_id=str(job.environment_id),
                 agent_version_id=move["agent_version_id"],
+                tries=tries,
             )
             result = "failed"
+            again = tries < MOVE_TRIES
     elif outcome == "retry" and move.get("restarts", 0) < MOVE_RESTARTS:
         result = _restart(environment, job, move)
     else:
         result = "pair_failed" if outcome == "failed" else "validation_retry"
         if move["caller"] == "land":
             _put_back_landing(environment, job, move)
-    if result != "activated":
+    if result != "activated" and (tries == 1 or result == "failed"):
         # A move's own replayed steps record its activation.
         _record_activation(move["agent_version_id"], {str(job.environment_id): result})
     logger.info(
@@ -819,7 +949,9 @@ def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) 
         caller=move["caller"],
         check=outcome,
         outcome=result,
+        tries=tries,
     )
+    return result, again
 
 
 def _restart(
@@ -996,7 +1128,11 @@ def _replay_after_move(
     if caller == "land":
         from simulate.services.harness_versioning.rebuild import _record_agent_move
 
-        nudge = HarnessNudge.no_workspace_objects.filter(id=move["nudge_id"]).first()
+        nudge = (
+            HarnessNudge.no_workspace_objects.filter(id=move["nudge_id"]).first()
+            if move["nudge_id"]
+            else None
+        )
         if nudge is not None:
             _record_agent_move(locked, nudge)
             return

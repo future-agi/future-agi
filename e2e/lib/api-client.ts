@@ -61,7 +61,7 @@ export class ApiClient {
 
   /** The status and body whatever the status, for a flow that asserts a refusal or a 202. */
   async request<T = unknown>(method: Method, path: string, opts: RequestOptions = {}): Promise<{ status: number; body: T }> {
-    const call = () => this.req[method](`${this.baseURL}${path}`, {
+    const request = () => this.req[method](`${this.baseURL}${path}`, {
       headers: { ...this.headers, ...opts.headers },
       params: opts.params,
       data: opts.data,
@@ -69,7 +69,7 @@ export class ApiClient {
     });
     let res;
     try {
-      res = await call();
+      res = await request();
     } catch (firstError) {
       // RFC 9110 §9.2.2 permits replaying an idempotent request after a closed
       // connection. Deliberately narrower here: GET/HEAD, no received status,
@@ -77,7 +77,7 @@ export class ApiClient {
       if ((method !== 'get' && method !== 'head') || !isResponseLessReset(firstError)) throw firstError;
       annotateRetry(method, path, firstError);
       try {
-        res = await call();
+        res = await request();
       } catch (retryError) {
         throw new AggregateError([firstError, retryError],
           `API ${method.toUpperCase()} ${path} transport retry failed; first: ${errorSummary(firstError)}; retry: ${errorSummary(retryError)}`);

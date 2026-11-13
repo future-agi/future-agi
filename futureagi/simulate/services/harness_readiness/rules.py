@@ -155,7 +155,9 @@ def rows(
                 reading=preflight,
                 reason_code=preflight.reason_code,
                 reason=preflight.reason,
-                checked_at=pairing.runtime.updated_at.isoformat(),
+                checked_at=(
+                    pairing.runtime.updated_at.isoformat() if pairing.runtime else None
+                ),
             )
         elif capability.id == "cancel":
             # Read from the agent's runs, not the certificate: never Stale or gated.
@@ -171,13 +173,13 @@ def rows(
                 checked_at=reading.checked_at,
             )
         elif capability.id in gap:
-            found = gap[capability.id]
+            found = _with_measured(gap[capability.id], reading)
             if capability.id == "tool_routing" and named:
                 names = [one["action"] for one in named]
                 found = Reading(
                     found.finding,
                     found.reason_code,
-                    found.reason + "; failed its probe: " + ", ".join(names),
+                    f"{found.reason}; failed its probe: " + ", ".join(names),
                     found.targets + targets("action", names, "failed"),
                 )
             status, _, _ = _status(found)
@@ -188,6 +190,13 @@ def rows(
                 reason_code=found.reason_code,
                 reason=found.reason,
             )
+            # The measured reading still holds the cases the gap's tools leave out.
+            if stale is not None:
+                row["stale_because"] = stale
+                if stale != "built_with_unknown":
+                    row["was"] = _gated(capability, reading, fresh)[0]
+            else:
+                row["blocked_by"] = _gated(capability, reading, statuses)[3]
         elif capability.id == "tool_routing" and named:
             names = [one["action"] for one in named]
             failed = Reading(
@@ -203,7 +212,7 @@ def rows(
                 reading=failed,
                 reason_code=failed.reason_code,
                 reason=failed.reason,
-                checked_at=bundle.updated_at.isoformat(),
+                checked_at=bundle.updated_at.isoformat() if bundle else None,
             )
         else:
             fresh[capability.id] = _gated(capability, reading, fresh)[0]
@@ -291,6 +300,25 @@ def _agent_gap(
     )
 
 
+def _with_measured(found: Reading, measured: Reading) -> Reading:
+    """The agent-side gap with the row's own measured failure kept beside it: a tool
+    the evidence failed stays failed whatever the agent version changed. A failure
+    naming no tool, on either side, holds every case."""
+    if measured.finding != "failed":
+        return found
+    reason = f"{found.reason}; {measured.reason}"
+    if found.finding != "failed":
+        return Reading(found.finding, found.reason_code, reason, [], measured.evidence)
+    named = found.targets and measured.targets
+    return Reading(
+        "failed",
+        found.reason_code,
+        reason,
+        found.targets + measured.targets if named else [],
+        measured.evidence,
+    )
+
+
 def _gated(
     capability: Capability, reading: Reading, statuses: Mapping[str, Status]
 ) -> tuple[Status, str | None, str | None, str | None]:
@@ -355,7 +383,7 @@ def _stale_reason(
             "Checked with the agent version the environment was built with",
         )
     now = _label(pairing.environment_version.version_number)
-    if stale == "environment_version":
+    if stale == "environment_version" and evidence.made_for is not None:
         was = _label(evidence.made_for.version_number)
         return (
             "environment_changed",
@@ -603,7 +631,10 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         }
     )
     code = row["reason_code"]
-    if code in ("preflight_failed", "preflight_pending"):
+    if (
+        code in ("preflight_failed", "preflight_pending")
+        and pairing.agent_version is not None
+    ):
         return {
             "type": "preflight",
             "category": "startup",
@@ -723,6 +754,7 @@ def answer(
         and not (row["id"] == "cancel" and row["status"] == "untested")
     )
     pair_failed = failed and not named
+    kind: Literal["ready", "blocked", "stale", "unchecked", "validating"]
     if validating:
         kind = "validating"
     elif lowest == "blocked" or pair_failed:
