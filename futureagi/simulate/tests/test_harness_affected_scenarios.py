@@ -870,6 +870,79 @@ class TestAgentGapCases:
         )
         assert plan.view["running"] == 0
 
+    def _stale_gap(self, user, workspace, storage, key, *, actions=None):
+        """A2 changes the refund tool's signature and has no pair check of its own:
+        its other rows read the build certificate, measured with A1. Every case is
+        proved, so only the rows can hold one."""
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            key,
+            tools=(SAME_TOOLS[0], _tool(REFUND, "order_id")),
+        )
+        _suite(environment, _ten())
+        _built(environment, contract=WORLD, actions=actions)
+        HarnessSuiteValidation.no_workspace_objects.update_or_create(
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+            defaults={
+                "status": "passed",
+                "proved_at": timezone.now(),
+                "proofs": {key: {"holds": True} for key in REFUND_KEYS + LOOKUP_KEYS},
+            },
+        )
+        cache.clear()
+        return environment, _pairing(environment, a2)
+
+    def test_a_changed_signature_keeps_the_other_cases_stale(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._stale_gap(
+            user, workspace, storage, "gap-cases-stale"
+        )
+
+        report = _select(environment, pairing=pairing)
+        routing = _rows(report)["tool_routing"]
+        chosen = report["selection"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "tool_signature_changed",
+        )
+        assert (routing["stale_because"], routing["was"]) == (
+            "agent_version",
+            "partial",
+        )
+        # Without the gap the lookup cases are Stale; the gap must not make them eligible.
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert chosen["lists"]["stale"]["keys"] == LOOKUP_KEYS
+        assert routing["affected"]["count"] == 10
+
+    def test_a_changed_signature_with_a_stale_failure_holds_both(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._stale_gap(
+            user,
+            workspace,
+            storage,
+            "gap-cases-stale-failed",
+            actions=[
+                {"action": LOOKUP, "status": "failed", "reason": "500"},
+                {"action": REFUND, "status": "passed", "reason": ""},
+            ],
+        )
+
+        report = _select(environment, pairing=pairing)
+        routing = _rows(report)["tool_routing"]
+
+        assert routing["status"] == "blocked"
+        assert {one["name"] for one in routing["targets"]} == {REFUND, LOOKUP}
+        assert routing["stale_because"] == "agent_version"
+        assert set(report["selection"]["lists"]["blocked"]["keys"]) == set(
+            REFUND_KEYS + LOOKUP_KEYS
+        )
+
     def test_an_unread_version_holds_back_no_case(self, user, workspace, storage):
         environment, pairing = self._a2(
             user, workspace, storage, "gap-cases-unread", None
@@ -1090,3 +1163,39 @@ def test_another_agent_s_tool_gap_keeps_the_production_only_tool_held(
     assert set(report["selection"]["lists"]["blocked"]["keys"]) == set(
         REFUND_KEYS + LOOKUP_KEYS
     )
+
+
+@pytest.mark.parametrize(
+    "stale_because, blocked_by, expected",
+    [
+        (None, None, "supported"),
+        ("agent_version", None, "stale"),
+        ("built_with_unknown", None, "untested"),
+        (None, "tool_discovery", "untested"),
+    ],
+)
+def test_a_case_beside_a_tool_row_s_targets_keeps_what_its_evidence_says(
+    stale_because, blocked_by, expected
+):
+    from simulate.services.harness_scenario_needs import CaseNeeds
+
+    row = {
+        "id": "tool_routing",
+        "status": "blocked",
+        "targets": [{"kind": "tool", "name": REFUND, "result": "failed"}],
+        "stale_because": stale_because,
+        "blocked_by": blocked_by,
+    }
+    lookup = CaseNeeds(
+        key="status-1",
+        number=1,
+        name="status-1",
+        persona="",
+        rows=frozenset({"tool_routing"}),
+        tools=frozenset({LOOKUP}),
+        unknown=False,
+        recorded=False,
+        grading_gap=None,
+    )
+
+    assert selection._status_for(row, lookup) == expected

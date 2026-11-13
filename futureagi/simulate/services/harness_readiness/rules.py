@@ -188,6 +188,13 @@ def rows(
                 reason_code=found.reason_code,
                 reason=found.reason,
             )
+            # The measured reading still holds the cases the gap's tools leave out.
+            if stale is not None:
+                row["stale_because"] = stale
+                if stale != "built_with_unknown":
+                    row["was"] = _gated(capability, reading, fresh)[0]
+            else:
+                row["blocked_by"] = _gated(capability, reading, statuses)[3]
         elif capability.id == "tool_routing" and named:
             names = [one["action"] for one in named]
             failed = Reading(
