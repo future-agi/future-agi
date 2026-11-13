@@ -15,7 +15,7 @@ describe("FileTree file actions", () => {
     render(<FileTree files={files} selectedPath="references/policy.md" onSelect={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} readOnly={false} />);
     const actions = screen.getByRole("group", { name: "File actions" });
     expect(actions).toHaveStyle({ flexWrap: "nowrap", flexDirection: "row" });
-    const names = ["Add file", "Rename", "Delete"];
+    const names = ["Add file", "Rename file", "Delete file"];
     const icons = ["solar:file-add-linear", "solar:pen-linear", "solar:trash-bin-trash-linear"];
     expect(within(actions).getAllByRole("button")).toHaveLength(3);
     for (const [index, name] of names.entries()) {
@@ -35,8 +35,8 @@ describe("FileTree file actions", () => {
     render(<FileTree files={Array.from({ length: LIMITS.MAX_FILES }, (_, index) => ({ path: index ? `file-${index}.md` : "SKILL.md" }))} selectedPath="SKILL.md" onSelect={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} readOnly={false} />);
     const create = screen.getByRole("button", { name: "Add file" });
     expect(create).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete file" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
     await user.hover(create.parentElement);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("File limit reached.");

@@ -259,7 +259,7 @@ export default function SkillCompareView() {
           {skill.data && (
             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
               {[...new Set([resolvedFrom, resolvedTo])]
-                .filter((ref) => typeof ref === "number")
+                .filter((ref) => typeof ref === "number" && ref !== latest)
                 .map((number) => (
                   <Button
                     key={number}

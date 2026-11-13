@@ -52,8 +52,8 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
     <Typography variant="m3" component="h2">Review one item</Typography>
-    <Typography variant="s1">Per-item decision{item ? ` for ${item.name || item.root}` : ''} only; the reviewed set is decided separately.</Typography>
-    <Tooltip title={new Date(plan.expiresAt).toLocaleString()}><Typography variant="s3" color="text.secondary" tabIndex={0}>{expired ? 'Expired' : `Expires in ${formatDistanceToNow(new Date(plan.expiresAt))}`}</Typography></Tooltip>
+    <Typography variant="s1">{item ? item.diverged ? `${item.name || item.root} changed both in your source and here. Choose which version to keep.` : `Choose which version of ${item.name || item.root} to keep.` : 'Choose an item to review its files and decide what to import.'}</Typography>
+    <Tooltip title={new Date(plan.expiresAt).toLocaleString()}><Typography variant="s3" color="text.secondary" tabIndex={0}>{expired ? 'This review expired. Preview again to continue.' : `This review expires in ${formatDistanceToNow(new Date(plan.expiresAt))}. You'll need to preview again after that.`}</Typography></Tooltip>
     <TechnicalDetails><Stack spacing={0.5}><IdentityChip value={plan.id} kind="id" label="Plan" /><IdentityChip value={plan.fingerprint} label="Fingerprint" /></Stack></TechnicalDetails>
     {expired && <Alert severity="warning">This plan expired. Preview the source again; no current bytes will be substituted.</Alert>}
     <AuthoringError error={operation.error} />
@@ -73,9 +73,9 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
         <FileChanges files={item.hubChanges} beforeTitle="Accepted source basis" afterTitle="Current Hub" />
       </>}
       {(item.diverged || item.hasDraft) && <Alert severity="warning" action={item.hasDraft ? <Button onClick={() => onPreserveDraft?.(item)} disabled={!onPreserveDraft || locked}>Preserve draft</Button> : undefined}>
-        {item.hasDraft ? 'You have a draft here. Save a recovery copy and pause that draft before replacing it, then preview again. ' : 'The source and this skill both changed. '}
-        Keep leaves this skill unchanged. Replace uses the source files instead; it does not combine both versions.
+        {item.hasDraft ? 'Preserve your draft before replacing it, then preview again.' : 'Keep leaves this skill unchanged; replace uses the source files without merging.'}
       </Alert>}
+      <Stack component="section" aria-label="Item decision" spacing={1.5} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
       <TextField {...selectProps("decision")} select size="small" label="Source update decision" value={decision} disabled={locked} onChange={(event) => { setDecision(event.target.value); setReviewed(false); }}>
         <MenuItem value="">Choose…</MenuItem><MenuItem value="keep">Keep Hub content</MenuItem><MenuItem value="replace">Replace with reviewed source</MenuItem><MenuItem value="manual">Reconcile manually in the editor</MenuItem>
       </TextField>
@@ -89,10 +89,11 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
       {tagsMode === "replace" && <TextField size="small" label="Tags, separated by commas" value={tags} disabled={locked} onChange={(event) => { setTags(event.target.value); setReviewed(false); }} error={!tagsValid} helperText="At most 20 unique lowercase tags; empty replaces with no tags." />}
       <FormControlLabel control={<Checkbox checked={rights} disabled={locked} onChange={(event) => setRights(event.target.checked)} />} label="I have reviewed source rights, licenses and retained notices." />
       <FormControlLabel control={<Checkbox checked={reviewed} disabled={locked} onChange={(event) => setReviewed(event.target.checked)} />} label="Apply this exact decision to the reviewed identity and head, without changing production." />
-      <Button variant="contained" onClick={accept} disabled={blocked || operation.pending || !commitDecision || !reviewed || (needsRights && !rights) || !tagsValid}>{operation.uncertain ? "Retry exact decision" : decision === "keep" ? "Record keep decision" : "Import reviewed item as draft"}</Button>
+      <Button variant="outlined" sx={{ alignSelf: 'flex-end' }} onClick={accept} disabled={blocked || operation.pending || !commitDecision || !reviewed || (needsRights && !rights) || !tagsValid}>{operation.uncertain ? "Retry exact decision" : decision === "keep" ? "Record keep decision" : "Import reviewed item as draft"}</Button>
       {receipts[selected] && <Alert severity="success">Decision recorded for this item. Receipt {receipts[selected].id || receipts[selected].receiptId}. Production was not changed.</Alert>}
+      </Stack>
     </>}
-    <Typography variant="s3" color="text.secondary">Mappings use immutable source identity, never a matching name. Changed Hub content is derived content, not an unchanged external version.</Typography>
+    <TechnicalDetails title="Source mapping details"><Typography variant="s3" color="text.secondary">Mappings use immutable source identity, never a matching name. Changed Hub content is derived content, not an unchanged external version.</Typography></TechnicalDetails>
   </Stack>;
 }
 Plan.propTypes = { scopeKey: PropTypes.string.isRequired, plan: PropTypes.object.isRequired, onAccept: PropTypes.func, onKeep: PropTypes.func, onPreserveDraft: PropTypes.func, onAccepted: PropTypes.func, onBusyChange: PropTypes.func };

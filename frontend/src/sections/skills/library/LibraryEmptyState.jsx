@@ -6,7 +6,7 @@ export default function LibraryEmptyState({ onCreate, onImport }) {
   return (
     <EmptyState variant="first-run" title="Give your agents a shared library" icon="solar:book-bookmark-linear"
       description="Skills are instructions an agent loads when it needs them. Agent contexts combine standing instructions with linked skills."
-      action={<Button variant="contained" onClick={() => onCreate("blank")}>Create your first skill</Button>}
+      action={<Button variant="contained" color="primary" onClick={() => onCreate("blank")}>Create your first skill</Button>}
       secondaryAction={<Button variant="outlined" onClick={onImport}>Import a folder or ZIP</Button>} />
   );
 }

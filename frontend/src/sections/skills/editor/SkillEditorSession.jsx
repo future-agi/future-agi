@@ -40,6 +40,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const navigate = useNavigate();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
+  const [mobilePanel, setMobilePanel] = useState(params.get('tab') === 'tests' ? 'review' : 'editor');
   const [panel, setPanel] = useState(params.get('tab') === 'tests' ? 'tests' : 'checks');
   const assistKind = !isContext && ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
   const sourceRunId = params.get('run');
@@ -184,16 +185,17 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
         {!isContext && <Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : !options.data?.assistEnabled ? 'AI assistance is not enabled for this workspace.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip>}
         <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
         {publishPending && <Typography variant="s3" color="text.secondary">{savingState(session) ? 'Save and checks pending' : validation.error ? 'Retry checks to publish' : 'Checking…'}</Typography>}
-        <Button variant="contained" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
+        <Button variant="contained" color="primary" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
       </Box>} sx={{ flexWrap: 'wrap', rowGap: 1.5, flexShrink: 0 }} />
     {operationError && <Alert severity="error">{operationError}</Alert>}
     {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
       {isContext ? `The content origin remains v${session.baseVersion}. Latest is v${skill.latestVersion}; review it separately without copying its files.` : `v${skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.`}
     </Alert>}
     {isContext && <TextField label="Context purpose" size="small" value={session.description ?? session.contextSpec?.description ?? ''} onChange={(event) => session.editFields({ description: event.target.value })} disabled={locked} inputProps={{ maxLength: 1024 }} helperText="Versioned with the standing instructions and accepted skills." />}
-    <Box sx={{ display: 'grid', flex: 1, minHeight: 0, gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '200px minmax(0, 1fr)', lg: '200px minmax(0, 1fr) 280px' }, gridTemplateRows: { xs: 'auto minmax(400px, 1fr) auto', md: 'minmax(0, 1fr) auto', lg: 'minmax(0, 1fr)' }, gap: 3 }}>
-      <Box sx={{ minWidth: 0, minHeight: 0, maxHeight: { xs: 240, md: 'none' }, overflowY: 'auto' }}>
-        <FileTree files={files} pinned={[root]} protectedPaths={[root]} isPathReadOnly={isContext ? contextReserved : undefined} selectedPath={selectedPath} onSelect={openFile} readOnly={locked}
+    <SegmentedTabs value={mobilePanel} onChange={(_, value) => setMobilePanel(value)} aria-label="Editor panels" sx={{ display: { xs: 'flex', md: 'none' }, flexShrink: 0 }}><Tab value="files" label="Files" /><Tab value="editor" label="Editor" /><Tab value="review" label="Checks and tests" /></SegmentedTabs>
+    <Box sx={{ display: 'grid', flex: 1, minHeight: 0, gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '200px minmax(0, 1fr)', lg: '200px minmax(0, 1fr) 280px' }, gridTemplateRows: { xs: 'minmax(400px, 1fr)', md: 'minmax(0, 1fr) auto', lg: 'minmax(0, 1fr)' }, gap: 3 }}>
+      <Box sx={{ display: { xs: mobilePanel === 'files' ? 'block' : 'none', md: 'block' }, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
+        <FileTree files={files} pinned={[root]} protectedPaths={[root]} isPathReadOnly={isContext ? contextReserved : undefined} selectedPath={selectedPath} onSelect={(path) => { openFile(path); setMobilePanel('editor'); }} readOnly={locked}
           onCreate={(path) => {
             if (locked || (isContext && contextReserved(path)) || session.files.some((item) => item.path.toLowerCase() === path.toLowerCase())) return;
             session.edit([...session.files, { path, content: '' }]); setSelectedPath(path); setTarget(null); setMode('edit');
@@ -203,14 +205,14 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
             session.edit(session.files.map((item) => item.path === from ? { ...item, path: to } : item)); setSelectedPath(to);
           }} onDelete={deleteFile} />
       </Box>
-      <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0 }}>
+      <Stack spacing={1.5} sx={{ display: { xs: mobilePanel === 'editor' ? 'flex' : 'none', md: 'flex' }, minWidth: 0, minHeight: 0 }}>
         {linked && <Alert severity="info">Linked or generated content is read-only. Only the current saved draft revision is shown.</Alert>}
         {!file && (readOnlyFileQuery?.error ? <ErrorState title="File unavailable" onRetry={readOnlyFileQuery.refetch} /> : linked ? <ContentSkeleton label="Loading the saved context file" /> : <Alert severity="info">Select a file in this draft.</Alert>)}
         {isMarkdown && file.path !== 'SKILL.md' && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view" sx={{ flexShrink: 0 }}><Tab value="edit" label={fileReadOnly ? 'Source' : 'Edit'} /><Tab value="preview" label="Preview" /></SegmentedTabs>}
         {file?.path === 'SKILL.md' && <SkillDocumentEditor file={file} target={target} readOnly={fileReadOnly} onOpenPath={openFile} onChange={changeContent} />}
         {file && file.path !== 'SKILL.md' && (isMarkdown && mode === 'preview' ? <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}><SkillMarkdownPreview literal={isContext} content={file.content} currentPath={file.path} onOpenPath={openFile} /></Box> : <SkillFileEditor key={file.path} file={file} target={target} readOnly={fileReadOnly} onChange={changeContent} />)}
       </Stack>
-      <Box sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', maxHeight: { xs: 320, md: 200, lg: 'none' }, gridColumn: { md: '1 / -1', lg: 'auto' } }}>
+      <Box sx={{ display: { xs: mobilePanel === 'review' ? 'block' : 'none', md: 'block' }, minWidth: 0, minHeight: 0, overflowY: 'auto', maxHeight: { md: 200, lg: 'none' }, gridColumn: { md: '1 / -1', lg: 'auto' } }}>
         <SegmentedTabs value={panel} onChange={(_, value) => setPanel(value)} aria-label="Draft review panels"><Tab value="checks" label="Checks" /><Tab value="tests" label="Tests" disabled={isContext && !contextControls.renderTests} /></SegmentedTabs>
         <Box sx={{ pt: 1.5 }} hidden={panel !== 'checks'}>{isContext ? <Stack spacing={1}>
           <Typography variant="s3">Checks cover the saved complete context, including accepted dependencies.</Typography>

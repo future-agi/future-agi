@@ -12,6 +12,7 @@ import {
   MenuItem,
   Stack,
   Typography,
+  Tooltip,
 } from "@mui/material";
 
 import { useSkillLabels, useSkillVersions } from "src/api/skills";
@@ -130,7 +131,7 @@ export default function VersionsTab({ skill }) {
       accessorKey: "labels",
       header: "Labels",
       size: 170,
-      cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status="unset" label={name} />) : '—' }</Stack>,
+      cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={name} />) : '—' }</Stack>,
     },
     {
       accessorKey: "digest",
@@ -189,11 +190,11 @@ export default function VersionsTab({ skill }) {
             >
               Set label
             </Button>
-            <IconButton size="small" aria-label="Label settings" onClick={(event) => setLabelMenu({ anchor: event.currentTarget })}><Iconify icon="solar:menu-dots-bold" /></IconButton>
+            <Button size="small" onClick={(event) => setLabelMenu({ anchor: event.currentTarget })}>Label settings</Button>
           </Stack>
         }
       >
-        <Typography variant="s3" color="text.secondary">Protected names: {skill.protectedLabelNames?.join(', ') || 'None'}. Protection remains even when a label is unassigned.</Typography>
+
         {labels.isLoading && (
           <ContentSkeleton variant="rows" rows={2} label="Loading labels" />
         )}
@@ -217,7 +218,7 @@ export default function VersionsTab({ skill }) {
             >
               <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="s1">{label.name} → v{label.version}</Typography>
-                {label.isProtected && <StatusBadge status="protected" label="Protected" />}
+                {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip title={`Only reviewers can move ${label.name}.`}><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
               </Stack>
               <IconButton size="small" aria-label={`Actions for ${label.name}`} onClick={(event) => setLabelMenu({ anchor: event.currentTarget, label })}><Iconify icon="solar:menu-dots-bold" /></IconButton>
             </Stack>
@@ -225,11 +226,11 @@ export default function VersionsTab({ skill }) {
       </Section>
       <Section
         title="Versions"
-        description="Select exactly two versions on this page to compare their files."
+        description="Select two versions on this page to compare their files."
       >
         <SelectionBar
           count={selected.length}
-          noun="versions"
+          noun="version"
           onCancel={() => setSelectedIds([])}
           actions={[
             {

@@ -180,8 +180,8 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       open
       onClose={onClose}
       title="Publish skill"
-      subTitle={comparisonReady ? sameAsLatest ? `Nothing changed since v${release.latestVersion}. ${consequence}` : consequence.replace(`${versionText}.`, `${versionText} from ${files.filter((file) => file.status !== 'unchanged').length} changed ${files.filter((file) => file.status !== 'unchanged').length === 1 ? 'file' : 'files'}.`) : 'Checking the changes in this draft…'}
-      actionBtnProps={{ color: 'inherit' }}
+      subTitle="Review what changes, then publish."
+      actionBtnProps={{ color: 'primary' }}
       actionBtnTitle={stale ? "Publish anyway" : publishTitle}
       onSubmit={submit}
       isValid={canPublish}
@@ -193,11 +193,11 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
-        <ReviewSection title={draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
+        <ReviewSection title={comparisonReady && files.every((file) => file.status === "unchanged") ? `No file changes since v${draft.baseVersion}` : draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
           {draft.baseVersion !== null && !comparison.isError && (comparison.isPending || !comparisonVerified || liveComparison.isFetching) && <ContentSkeleton variant="panel" label="Verifying reviewed file changes" />}
           {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
           {comparisonMismatch && <Alert severity="warning" action={<Button color="inherit" onClick={() => setConflict(true)}>Review changed draft</Button>}>The server draft changed after this review opened. Reload or overwrite it before reviewing the diff.</Alert>}
-          {comparisonReady && (
+          {comparisonReady && files.some((file) => file.status !== "unchanged") && (
             <Stack spacing={1.5}>
               <List dense aria-label="File changes" disablePadding>
                 {orderedFiles.map((file) => (
@@ -235,7 +235,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
             ))}
           </Stack>
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
-          {labels.map((name) => <Typography key={name} variant="s3">Move {name} from {release.labels?.find((item) => item.name === name)?.version ? `v${release.labels.find((item) => item.name === name).version}` : 'unassigned'} to the published version.</Typography>)}
+
         </ReviewSection>
       </Stack>
       <Typography variant="s1" role="status" sx={{ flexShrink: 0 }}>{consequence}</Typography>

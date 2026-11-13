@@ -65,18 +65,18 @@ describe('FileTree', () => {
   });
   it('protects SKILL.md and hides editing actions in read-only mode', () => {
     const { rerender } = render(<FileTree files={files} selectedPath="SKILL.md" onSelect={vi.fn()} />);
-    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename file' })).not.toBeInTheDocument();
     rerender(<FileTree files={files} selectedPath="SKILL.md" onSelect={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} readOnly={false} />);
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Rename file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete file' })).toBeDisabled();
   });
   it('creates a file using a folder prefix without persisting empty folders', () => {
     const create = vi.fn();
     render(<FileTree files={files} onSelect={vi.fn()} onCreate={create} readOnly={false} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add file' }));
     expect(create).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('File path')).toHaveValue('');
-    fireEvent.change(screen.getByLabelText('File path'), { target: { value: 'scripts/check.sh' } });
+    expect(screen.getByRole('combobox', { name: 'File path' })).toHaveValue('');
+    fireEvent.change(screen.getByRole('combobox', { name: 'File path' }), { target: { value: 'scripts/check.sh' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(create).toHaveBeenCalledWith('scripts/check.sh');
   });
@@ -84,19 +84,19 @@ describe('FileTree', () => {
     render(<FileTree files={files} onSelect={vi.fn()} onCreate={vi.fn()} readOnly={false} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add file' }));
     for (const value of ['../outside', 'skill.md', 'references', 'SKILL.md/child', 'a\\b']) {
-      fireEvent.change(screen.getByLabelText('File path'), { target: { value } });
+      fireEvent.change(screen.getByRole('combobox', { name: 'File path' }), { target: { value } });
       expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
     }
   });
   it('renames and deletes an ordinary file', () => {
     const rename = vi.fn(); const remove = vi.fn();
     render(<FileTree files={files} selectedPath="z.md" onSelect={vi.fn()} onRename={rename} onDelete={remove} readOnly={false} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-    fireEvent.change(screen.getByLabelText('File path'), { target: { value: 'notes.md' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename file' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'File path' }), { target: { value: 'notes.md' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(rename).toHaveBeenCalledWith('z.md', 'notes.md');
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete file' }));
+    fireEvent.click(screen.getByText('Delete file'));
     expect(remove).toHaveBeenCalledWith('z.md');
   });
 });

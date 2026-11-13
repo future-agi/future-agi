@@ -10,7 +10,7 @@ import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
 import ChecksList from "../components/ChecksList";
 import { FileChanges } from "../editor/HotfixHeadReview";
-import { classifyMigrationItem } from "./migration-batch";
+import { classifyMigrationItem, importBlockerSummary } from "./migration-batch";
 import MigrationContextAssembly from "./MigrationContextAssembly";
 
 // Intent: one reviewed decision over every retained item, with each exception
@@ -130,16 +130,17 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     : failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`;
   const disabledReason = !pending.length ? held.length ? 'Resolve the held items, then preview again' : 'No items ready to import' : undecided.length ? 'Choose keep or replace to continue' : excluded.length && !excludeAcknowledged ? 'Confirm the excluded items to continue' : !rights || rightsKey !== reviewKey ? 'Confirm your rights to continue' : warningRows.length && !warningsAcknowledged ? 'Review the publication warnings to continue' : !ready ? 'Import is unavailable for this selection' : '';
   const footer = <Stack spacing={0.5} sx={{ borderTop: 1, borderColor: "divider", pt: 1.5, bgcolor: "background.paper" }}>
+    {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.item.name || row.item.root} can’t be imported: {importBlockerSummary(row.item)}.</Typography>)}
     {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} blocked ${excluded.length === 1 ? "member" : "members"}. This is a supported-subset trial, not a complete migration.`} />}
     {pending.length > 0 && <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />}
     {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />}
     {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
     {!onConsequenceChange && <Typography variant="s1" role="status">{consequence}</Typography>}
-    <Stack direction="row" justifyContent="flex-end" useFlexGap flexWrap="wrap" spacing={1} alignItems="center">{!ready && <Typography variant="s3" color="text.secondary" role="status">{disabledReason}</Typography>}{onClose && <Button variant="outlined" disabled={running} onClick={onClose}>Cancel</Button>}<Button variant="contained" disabled={!ready || running} onClick={apply}>{label}</Button></Stack>
+    <Stack direction="row" justifyContent="flex-end" useFlexGap flexWrap="wrap" spacing={1} alignItems="center">{!ready && <Typography variant="s3" color="text.secondary" role="status">{disabledReason}</Typography>}{onClose && <Button variant="outlined" disabled={running} onClick={onClose}>Cancel</Button>}{pending.length > 0 && <Button variant="contained" color="primary" disabled={!ready || running} onClick={apply}>{label}</Button>}</Stack>
   </Stack>;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-      <Stack spacing={0.5}><Typography variant="m3" component="h2">Review all items</Typography><Typography variant="s3" color="text.secondary">{pending.length - undecided.length} ready · {excluded.length} excluded · {undecided.length} needs a decision · {held.length} held</Typography></Stack>
+      <Stack spacing={0.5}><Typography variant="m3" component="h2">Review all items</Typography><Typography variant="s3" color="text.secondary">{pending.length - undecided.length} ready · {excluded.length} blocked {excluded.length === 1 ? 'member' : 'members'} · {undecided.length} needs a decision · {held.length} held</Typography></Stack>
       <TextField id={`${formId}-status`} SelectProps={{ SelectDisplayProps: { "aria-labelledby": `${formId}-status-label` } }} select size="small" label="Item status" value={filter} onChange={(event) => setFilter(event.target.value)} sx={{ minWidth: 180 }}>
         <MenuItem value="all">All items ({rows.length})</MenuItem><MenuItem value="choice">Needs a decision ({choiceRows.length})</MenuItem><MenuItem value="held">Held ({held.length})</MenuItem><MenuItem value="excluded">Excluded ({excluded.length})</MenuItem>
       </TextField>
@@ -173,7 +174,7 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
           <TableCell><TechnicalDetails><Stack spacing={1}>
             <Typography variant="s3">{row.item.fileCount ?? "—"} files · {row.item.totalBytes ?? "—"} bytes</Typography>
             <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{[row.item.sourceOrigin, row.item.sourceProject, row.item.sourceResource, row.item.sourceRevision].filter(Boolean).join(' / ')}</Typography>
-            {row.kind === 'excluded' && <StatusBadge status="blocked" label="Excluded from import" />}
+            {row.kind === 'excluded' && <><StatusBadge status="blocked" label="Blocked member" /><Typography variant="s3">{row.note}</Typography></>}
             {row.item.destinationId && <IdentityChip value={row.item.destinationId} kind="id" label="Destination" />}
             <IdentityChip value={row.plan.fingerprint} label="Fingerprint" />
             {row.item.expectedHeadDigest && <IdentityChip value={row.item.expectedHeadDigest} label="Digest" />}

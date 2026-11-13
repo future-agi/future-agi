@@ -44,6 +44,12 @@ it('requires the blocked-member acknowledgment and rights before one decision im
   expect(create).toHaveBeenCalledWith([{ skillId: 'resource-one', version: 1 }, { skillId: 'resource-two', version: 1 }]);
 });
 
+it('shows a reason instead of a zero-item import action when every item is held', () => {
+  render(<MigrationBatchReview plans={[plan([item('mine', { hasDraft: true })])]} onAccept={vi.fn()} />);
+  expect(screen.getByText('Resolve the held items, then preview again')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Import and publish 0 items' })).not.toBeInTheDocument();
+});
+
 it('settles a lost response by replaying the exact body and operation key once', async () => {
   const accept = vi.fn().mockRejectedValueOnce(new Error('connection lost')).mockImplementation(async (input) => receipt(input.itemKey));
   render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={async (input) => ({ version: 1, resourceId: input.resourceId })} />);
@@ -196,7 +202,7 @@ it('shows a single next step rather than zero-item acknowledgments when everythi
   render(<MigrationBatchReview plans={[plan([item('mine', { hasDraft: true })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
   expect(screen.getByText('1 item needs your decision before anything can be imported.')).toBeVisible();
   expect(screen.queryByRole('checkbox', { name: /^I confirm my rights/ })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Import and publish 0 items' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Import and publish 0 items' })).not.toBeInTheDocument();
   expect(screen.getByText('Resolve the held items, then preview again')).toBeVisible();
   expect(screen.queryByRole('columnheader', { name: 'Result' })).not.toBeInTheDocument();
 });

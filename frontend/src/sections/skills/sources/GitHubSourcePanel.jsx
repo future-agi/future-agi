@@ -5,7 +5,6 @@ import { useNavigate } from 'react-router-dom';
 import { getSkillErrorCode, useSkillDraft } from 'src/api/skills';
 import { useCheckSkillSource, useGitHubPreview, useSkillSource, useStageSkillSourceUpdate } from 'src/api/skills/github';
 import ContentSkeleton from 'src/components/content-skeleton';
-import EmptyState from 'src/components/empty-state';
 import ErrorState from 'src/components/error-state';
 import Section from 'src/components/section';
 import { paths } from 'src/routes/paths';
@@ -52,7 +51,7 @@ export default function GitHubSourcePanel({ skill }) {
 
   if (state === 'loading' || source.isPending) return <ContentSkeleton variant="rows" rows={3} label="Loading GitHub source" />;
   if (state === 'empty' || getSkillErrorCode(source.error) === 'source_not_found') {
-    return <EmptyState title="No adopted GitHub source" description="A source is adopted only after its reviewed draft is published." />;
+    return <Typography variant="s3" color="text.secondary" sx={{ py: 1 }}>Not linked to GitHub</Typography>;
   }
   if (state === 'error' || source.isError) return <ErrorState title="Could not load the source" detail="Check workspace access and try again." onRetry={source.refetch} />;
   const value = source.data;

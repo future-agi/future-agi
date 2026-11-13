@@ -19,11 +19,11 @@ it('protects the configurable root and mounted nodes without changing the SKILL 
   const files = [{ path: 'AGENTS.md' }, { path: 'skills/leaf/SKILL.md', readOnly: true }, { path: 'references/policy.md' }];
   const props = { files, protectedPaths: ['AGENTS.md'], pinned: ['AGENTS.md'], readOnly: false, onSelect: vi.fn(), onDelete, onRename: vi.fn() };
   const view = show(<FileTree {...props} selectedPath="AGENTS.md" />);
-  expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Delete file', exact: true })).toBeDisabled();
   view.rerender(<ThemeProvider theme={theme}><FileTree {...props} selectedPath="skills/leaf/SKILL.md" /></ThemeProvider>);
-  expect(screen.getByRole('button', { name: 'Rename', exact: true })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Rename file', exact: true })).toBeDisabled();
   view.rerender(<ThemeProvider theme={theme}><FileTree {...props} selectedPath="references/policy.md" /></ThemeProvider>);
-  expect(screen.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Delete file', exact: true })).toBeEnabled();
   expect(onDelete).not.toHaveBeenCalled();
 });
 

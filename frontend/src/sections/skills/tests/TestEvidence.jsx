@@ -65,7 +65,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
   return (
     <Section
       title={<Typography component="span" variant="m3">Test evidence</Typography>}
-      description="Model tests are advisory. Matching files do not mean this version is approved."
+      description={runs.length ? "Tests help you review this version; they do not approve it for you." : undefined}
     >
       <Stack spacing={1.5}>
         {error && <Alert severity="error">{error}</Alert>}

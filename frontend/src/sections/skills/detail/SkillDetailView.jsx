@@ -140,15 +140,17 @@ function DetailContent({ skill, preview }) {
           </Box>
         }
         purpose={skill.description}
-        identity={<VersionIdentityRow viewingControl={<Box sx={{ minWidth: 140 }}><VersionSelect label="Viewing" skillId={skill.id} value={resolveViewedVersion(skill, params.get("version")).value} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>} viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
+        identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
+            <Box sx={{ minWidth: 140 }}><VersionSelect label="Viewing" skillId={skill.id} value={resolveViewedVersion(skill, params.get("version")).value} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>
             <Button variant="outlined" onClick={() => changeTab("use")}>
               Use skill
             </Button>
             <Button
               variant={tab === "tests" ? "outlined" : "contained"}
+              color="primary"
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
@@ -319,7 +321,7 @@ export default function SkillDetailView() {
               <Button
                 component={RouterLink}
                 to={paths.dashboard.skills.root}
-                variant="contained"
+                variant="contained" color="primary"
               >
                 Back to Skills
               </Button>

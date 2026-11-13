@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Autocomplete, Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
 import ModalWrapper from 'src/components/ModalWrapper/ModalWrapper';
 import { ConfirmDialog } from 'src/components/custom-dialog';
@@ -16,7 +16,6 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pathInput, setPathInput] = useState('');
-  const suggestionsId = useId();
   const folders = [...new Set(files.flatMap((file) => file.path.split('/').slice(0, -1).map((_, index, parts) => `${parts.slice(0, index + 1).join('/')}/`)))];
   const refs = useRef(new Map());
   useEffect(() => {
@@ -118,8 +117,8 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
   return <Stack spacing={1} sx={{ minWidth: 0 }}>
     {!readOnly && <Stack direction="row" spacing={0.5} useFlexGap role="group" aria-label="File actions" sx={{ flexWrap: 'nowrap', '& > span': { display: 'inline-flex', flexShrink: 0 } }}>
       <Tooltip title={files.length >= LIMITS.MAX_FILES ? 'File limit reached.' : 'Add file'}><span><IconButton size="small" color="inherit" aria-label="Add file" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}><Iconify icon="solar:file-add-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={cannotChangeSelected ? protectedReason : 'Rename'}><span><IconButton size="small" color="inherit" aria-label="Rename" disabled={!selectedFile || !onRename || cannotChangeSelected} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={cannotChangeSelected ? protectedReason : 'Delete'}><span><IconButton size="small" color="inherit" aria-label="Delete" disabled={!selectedFile || !onDelete || cannotChangeSelected} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Rename file'}><span><IconButton size="small" color="inherit" aria-label="Rename file" disabled={!selectedFile || !onRename || cannotChangeSelected} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Delete file'}><span><IconButton size="small" color="inherit" aria-label="Delete file" disabled={!selectedFile || !onDelete || cannotChangeSelected} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
     </Stack>}
     {!rows.length && <Typography variant="s3" color="text.secondary">No files yet.</Typography>}
     <Box role="tree" aria-label="Skill files">
@@ -136,8 +135,11 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     </Box>
     <ModalWrapper open={['create', 'rename'].includes(dialog)} onClose={() => setDialog(null)}
       title={dialog === 'rename' ? 'Rename file' : 'Add file'} actionBtnTitle={dialog === 'rename' ? 'Rename' : 'Create file'} isValid={!pathError} onSubmit={submitPath}>
-      <TextField autoFocus size="small" label="File path" inputProps={dialog === "create" ? { list: suggestionsId } : {}} value={pathInput} onChange={(event) => setPathInput(event.target.value)} error={Boolean(pathInput && pathError)} helperText={pathInput && pathError ? pathError : 'Folders are created from file paths. For example, references/policy.md.'} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitPath(); } }} />
-      <datalist id={suggestionsId}>{folders.map((folder) => <option key={folder} value={folder} />)}</datalist>
+      <Autocomplete freeSolo forcePopupIcon={dialog === 'create' && folders.length > 0} options={dialog === 'create' ? folders : []}
+        popupIcon={<Iconify icon="solar:alt-arrow-down-linear" />} inputValue={pathInput}
+        onInputChange={(_, value) => setPathInput(value)}
+        renderInput={(params) => <TextField {...params} autoFocus size="small" label="File path"
+          error={Boolean(pathInput && pathError)} helperText={pathInput && pathError ? pathError : 'Folders are created from file paths. For example, references/policy.md.'} />} />
     </ModalWrapper>
     <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} title="Delete file?" content={`Remove ${selectedPath || 'this file'} from this draft? Published versions will not change.`}
       action={<Button variant="contained" color="error" disabled={!selectedFile || cannotChangeSelected} onClick={() => { if (selectedFile && !cannotChangeSelected) onDelete?.(selectedPath); setDialog(null); }}>Delete file</Button>} />

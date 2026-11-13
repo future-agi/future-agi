@@ -8,7 +8,7 @@ import ErrorState from "src/components/error-state";
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
-import { fDateTime } from "src/utils/format-time";
+import { fDateTime, relativeTime } from "src/utils/format-time";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import useLabelHistoryPage from "./useLabelHistoryPage";
 
@@ -47,10 +47,10 @@ function HistoryEvents({ skillId, label }) {
         ) : empty ? (
           <EmptyState
             variant="no-results"
-            title="No label changes yet"
+            title={labelFilter ? `No changes to ${labelFilter}.` : "No label changes yet"}
             sx={{ flex: '0 0 auto', height: 'auto', justifyContent: 'flex-start', py: 3 }}
-            description="A change you just made can take a moment to appear."
-            action={<Button variant="outlined" onClick={history.refetch}>Refresh</Button>}
+            description={labelFilter ? "Try another label or show all label changes." : "A change you just made can take a moment to appear."}
+            action={labelFilter ? <Button variant="outlined" onClick={() => { setLabelFilter(""); setPage(1); }}>Show all labels</Button> : <Button variant="outlined" onClick={history.refetch}>Refresh</Button>}
           />
         ) : (
           <Stack component="ol" spacing={0} sx={{ m: 0, p: 0, listStyle: "none" }}>
@@ -74,7 +74,7 @@ function HistoryEvents({ skillId, label }) {
                   <Typography variant="s3" color="text.secondary">
                     {event.actor?.name || "Unknown actor"}
                     {event.actor?.kind === "api_key" ? " (API key)" : ""} ·{" "}
-                    {fDateTime(event.createdAt)}
+                    <Box component="span" title={fDateTime(event.createdAt)}>{relativeTime(event.createdAt)}</Box>
                   </Typography>
                   {event.note && (
                     <Typography

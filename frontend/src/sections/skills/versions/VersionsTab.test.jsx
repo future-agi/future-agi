@@ -74,6 +74,7 @@ describe("VersionsTab", () => {
     checkRow(3);
     expect(screen.getByRole("button", { name: "Select two versions" })).toBeDisabled();
     checkRow(1);
+    expect(screen.getByText("2 versions selected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Compare v/ }));
     expect(mocks.push).toHaveBeenCalledWith(
       "/dashboard/skills/skill-1/compare?from=1&to=3",

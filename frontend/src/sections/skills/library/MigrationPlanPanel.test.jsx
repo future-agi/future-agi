@@ -90,7 +90,7 @@ it('blocks replacement when a personal draft exists even if exact comparisons lo
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, items: [{ ...item, hasDraft: true }] }} onAccept={vi.fn()} />);
   consent();
   expect(screen.getByRole('button', { name: 'Import reviewed item as draft' })).toBeDisabled();
-  expect(screen.getByText(/You have a draft here/)).toBeVisible();
+  expect(screen.getByText(/Preserve your draft before replacing it/)).toBeVisible();
 });
 
 it('starts without a decision and hides full plan identity behind Details', () => {
@@ -98,7 +98,7 @@ it('starts without a decision and hides full plan identity behind Details', () =
   const accept = vi.fn();
   render(<MigrationPlanPanel scopeKey="scope" plan={plan} onKeep={keep} onAccept={accept} />);
   expect(screen.queryByText(digest)).not.toBeInTheDocument();
-  expect(screen.getByText(/Expires in/)).toBeVisible();
+  expect(screen.getByText(/This review expires in/)).toBeVisible();
   choose('Review item', 'policy');
   fireEvent.click(screen.getByRole('checkbox', { name: /reviewed source rights/ }));
   fireEvent.click(screen.getByRole('checkbox', { name: /Apply this exact decision/ }));

@@ -97,7 +97,7 @@ export default function SkillsLibraryView() {
   return (
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
-        actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
+        actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
       {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
       {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>

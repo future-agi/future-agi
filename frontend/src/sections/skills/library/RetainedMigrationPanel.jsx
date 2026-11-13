@@ -91,9 +91,9 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
     {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
-    <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Retained source format" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
+    {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Retained source format" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
       <MenuItem value="langfuse">Versioned Langfuse exchange JSON</MenuItem><MenuItem value="folder">Private folder or ZIP</MenuItem>
-    </TextField>
+    </TextField>}
     </Stack>
     <Box hidden={plans.length > 0 && !sourceSetupOpen}><Stack spacing={1.5}>
     <Typography variant="s1">Run the local compatibility inventory first. This review does not issue runtime credentials, change the source, move production labels or certify native delivery.</Typography>
@@ -110,7 +110,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { setKind('folder'); selectFiles(event.target.files); event.target.value = ''; }} />
     <Typography variant="s3">{files.length} source files selected</Typography>
     {kind === 'folder' && <TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => setIdentities(event.target.value)} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." />}
-    <Button variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview retained migration</Button>
+    <Button color="primary" variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview retained migration</Button>
     </Stack></Box>
     {error && <Alert severity="error">{error}</Alert>}
     {reload.isPending && <ContentSkeleton variant="rows" rows={3} label="Reloading the retained migration review" />}

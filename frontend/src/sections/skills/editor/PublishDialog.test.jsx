@@ -103,7 +103,7 @@ describe("publish review", () => {
     const onClose = vi.fn();
     const first = { ...draft, baseVersion: 1 };
     const { rerender } = renderDialog({ draft: first, onClose });
-    await screen.findByText(/has no changes\./);
+    await screen.findByText("No file changes since v1");
     await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
     rerender(<PublishDialog open={false} onClose={onClose} skill={skill} draft={first} />);
 

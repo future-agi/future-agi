@@ -43,6 +43,16 @@ describe("LabelHistoryDrawer", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("distinguishes a filtered empty result and restores all label changes", async () => {
+    axios.get.mockImplementation((_url, { params }) => Promise.resolve(response(params.label === 'staging' ? [] : events)));
+    show({ label: 'staging' });
+    expect(await screen.findByText('No changes to staging.')).toBeInTheDocument();
+    expect(screen.queryByText('No label changes yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all labels' }));
+    expect(await screen.findByText('production: v1 → v2')).toBeInTheDocument();
+    expect(axios.get.mock.lastCall[1].params.label).toBeUndefined();
+  });
+
   it("does not fetch history while closed", () => {
     show({ open: false });
     expect(axios.get).not.toHaveBeenCalled();
