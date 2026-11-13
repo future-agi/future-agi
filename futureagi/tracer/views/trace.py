@@ -194,6 +194,7 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 from tracer.services.observability_providers import ObservabilityService
+from tracer.services.trace_source_navigation import classify_trace_source
 from tracer.services.users_list_manager import USER_EXPORT_PAGE_SIZE, UsersListManager
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
@@ -3991,6 +3992,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             200: TraceVoiceCallDetailResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
+            409: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
         },
@@ -4105,6 +4107,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         self, request, trace_id, detail, eval_configs, *, analytics=None
     ):
         """Return heavy voice-call detail fields from ClickHouse."""
+        # Eval navigation must prove its evaluated span in the exact snapshot
+        # rendered below, on every load/retry. An earlier readiness read cannot
+        # authorize a changed tree, and this payload omits some root ancestry.
+        query = getattr(request, "validated_query_data", {})
+        expected_span_id = query.get("expected_span_id")
+        if expected_span_id is not None:
+            source = classify_trace_source(
+                detail,
+                project_id=str(query["project_id"]),
+                trace_id=str(trace_id),
+                span_id=expected_span_id,
+            )
+            if source.status != "ready" or source.kind != "voice_call":
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "The evaluated source changed. Revalidate before opening it.",
+                    code="source_reference_changed",
+                )
         # The drawer's root carries the curated trace tags the trace list
         # shows, so a save from the drawer keeps them.
         attach_legacy_trace_tags(
@@ -7592,6 +7612,14 @@ class GetUserCodeExampleView(APIView):
             if project_type != "observe":
                 return self._gm.bad_request("Project type must be 'observe'.")
 
+        # JSON's ASCII mode splits non-BMP characters into surrogate pairs,
+        # which Python literals do not recombine. Escape Unicode using Python's
+        # codec after JSON has safely quoted the ordinary string characters.
+        project_name_literal = (
+            json.dumps(project_name, ensure_ascii=False)
+            .encode("ascii", "backslashreplace")
+            .decode("ascii")
+        )
         code_example = f"""import openai
 from fi_instrumentation import FITracer, register, using_attributes
 from fi_instrumentation.fi_types import ProjectType
@@ -7599,7 +7627,7 @@ from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
-    project_name="{project_name}",
+    project_name={project_name_literal},
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

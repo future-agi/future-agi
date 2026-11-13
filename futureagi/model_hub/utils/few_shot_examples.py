@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from django.db.models import Case, IntegerField, Value, When
+from django.db.models import Case, IntegerField, Q, Value, When
 
 from agentic_eval.core.utils.functions import is_uuid
 
@@ -14,6 +14,7 @@ def expand_static_few_shot_examples(
     few_shot_examples: list[dict] | None,
     organization=None,
     max_examples: int = STATIC_FEW_SHOT_EXAMPLE_LIMIT,
+    workspace_id=None,
 ) -> list[dict]:
     """
     Resolve eval config few-shot entries into the literal examples expected by
@@ -46,6 +47,7 @@ def expand_static_few_shot_examples(
     return literal_examples + _examples_from_datasets(
         dataset_ids,
         organization=organization,
+        workspace_id=workspace_id,
         max_examples=remaining,
     )
 
@@ -54,7 +56,9 @@ def _examples_from_datasets(
     dataset_ids: Iterable[str],
     organization=None,
     max_examples: int = STATIC_FEW_SHOT_EXAMPLE_LIMIT,
+    workspace_id=None,
 ) -> list[dict]:
+    from accounts.models.workspace import Workspace
     from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
     ordered_ids = list(dict.fromkeys(str(dataset_id) for dataset_id in dataset_ids))
@@ -62,10 +66,23 @@ def _examples_from_datasets(
         return []
 
     dataset_filter = {"id__in": ordered_ids, "deleted": False}
-    if organization is not None:
-        dataset_filter["organization"] = organization
+    if organization is None:
+        return []
+    dataset_filter["organization"] = organization
+    workspace_scope = Q(workspace_id=workspace_id)
+    if (
+        workspace_id is None
+        or Workspace.no_workspace_objects.filter(
+            id=workspace_id, organization=organization, is_default=True
+        ).exists()
+    ):
+        workspace_scope = Q(workspace__isnull=True) | Q(
+            workspace__is_default=True, workspace__organization=organization
+        )
 
-    datasets = Dataset.objects.filter(**dataset_filter).only("id")
+    datasets = Dataset.no_workspace_objects.filter(
+        workspace_scope, **dataset_filter
+    ).only("id")
     datasets_by_id = {str(dataset.id): dataset for dataset in datasets}
     valid_dataset_ids = [
         dataset_id for dataset_id in ordered_ids if dataset_id in datasets_by_id
@@ -73,7 +90,7 @@ def _examples_from_datasets(
     if not valid_dataset_ids:
         return []
 
-    columns = Column.objects.filter(
+    columns = Column.no_workspace_objects.filter(
         dataset_id__in=valid_dataset_ids,
         deleted=False,
     ).only("id", "dataset_id", "name")
@@ -114,7 +131,7 @@ def _examples_from_datasets(
         output_field=IntegerField(),
     )
     rows = list(
-        Row.objects.filter(
+        Row.no_workspace_objects.filter(
             dataset_id__in=required_columns_by_dataset_id.keys(),
             deleted=False,
         )
@@ -125,7 +142,8 @@ def _examples_from_datasets(
     if not rows:
         return []
 
-    cells = Cell.objects.filter(
+    cells = Cell.no_workspace_objects.filter(
+        dataset_id__in=valid_dataset_ids,
         row_id__in=[str(row.id) for row in rows],
         column_id__in=selected_column_ids,
         deleted=False,
@@ -133,9 +151,7 @@ def _examples_from_datasets(
     values_by_row_and_column_id: dict[str, dict[str, str]] = {}
     for cell in cells:
         row_values = values_by_row_and_column_id.setdefault(str(cell.row_id), {})
-        row_values[str(cell.column_id)] = (
-            "" if cell.value is None else str(cell.value)
-        )
+        row_values[str(cell.column_id)] = "" if cell.value is None else str(cell.value)
 
     examples: list[dict] = []
     for row in rows:

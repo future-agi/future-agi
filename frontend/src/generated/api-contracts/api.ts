@@ -861,6 +861,7 @@ import type {
   ModelHubFeedbackListParams,
   ModelHubGetEvalConfigListParams,
   ModelHubGetEvalLogsDetailsListParams,
+  ModelHubGetEvalLogsListParams,
   ModelHubGetEvalMetricsListParams,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
@@ -44182,15 +44183,34 @@ export type modelHubGetEvalLogsListResponse =
   | modelHubGetEvalLogsListResponseSuccess
   | modelHubGetEvalLogsListResponseError;
 
-export const getModelHubGetEvalLogsListUrl = () => {
-  return `/model-hub/get-eval-logs`;
+export const getModelHubGetEvalLogsListUrl = (
+  params: ModelHubGetEvalLogsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/get-eval-logs?${stringifiedParams}`
+    : `/model-hub/get-eval-logs`;
 };
 
 export const modelHubGetEvalLogsList = async (
+  params: ModelHubGetEvalLogsListParams,
   options?: RequestInit,
 ): Promise<modelHubGetEvalLogsListResponse> => {
   return apiMutator<modelHubGetEvalLogsListResponse>(
-    getModelHubGetEvalLogsListUrl(),
+    getModelHubGetEvalLogsListUrl(params),
     {
       ...options,
       method: "GET",
@@ -86531,6 +86551,11 @@ export type tracerTraceVoiceCallDetailResponse404 = {
   status: 404;
 };
 
+export type tracerTraceVoiceCallDetailResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
 export type tracerTraceVoiceCallDetailResponse500 = {
   data: ApiErrorResponseApi;
   status: 500;
@@ -86543,7 +86568,7 @@ export type tracerTraceVoiceCallDetailResponse503 = {
 
 export type tracerTraceVoiceCallDetailResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type tracerTraceVoiceCallDetailResponseSuccess =
@@ -86553,6 +86578,7 @@ export type tracerTraceVoiceCallDetailResponseSuccess =
 export type tracerTraceVoiceCallDetailResponseError = (
   | tracerTraceVoiceCallDetailResponse400
   | tracerTraceVoiceCallDetailResponse404
+  | tracerTraceVoiceCallDetailResponse409
   | tracerTraceVoiceCallDetailResponse500
   | tracerTraceVoiceCallDetailResponse503
   | tracerTraceVoiceCallDetailResponseDefault
