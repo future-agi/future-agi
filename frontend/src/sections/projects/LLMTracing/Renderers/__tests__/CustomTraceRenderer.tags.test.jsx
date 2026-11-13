@@ -42,6 +42,25 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
           save
         </button>
       )}
+      {/* The real popover stays mounted when closed, so a save sent before
+          the user closed it is still acknowledged afterwards. */}
+      <button
+        type="button"
+        data-testid="popover-late-ack"
+        onClick={() =>
+          onSuccess?.(
+            {
+              tags: [{ name: "sdk" }, { name: "late" }],
+              manual_tags: [{ name: "late" }],
+              source_tag_names: ["sdk"],
+              tag_revision: 4,
+            },
+            { entity, type: spanId ? "span" : "trace" },
+          )
+        }
+      >
+        late ack
+      </button>
     </div>
   ),
 }));
@@ -174,5 +193,63 @@ describe("CustomTraceRenderer — tags column", () => {
     });
     expect(refreshCells).toHaveBeenCalledTimes(1);
     expect(refreshServerSide).not.toHaveBeenCalled();
+  });
+
+  it("applies a save acknowledged after the editor was closed", async () => {
+    // Escape while a save is in flight closes the popover first. Without this
+    // the row keeps its old tags, so the next edit starts from them and its
+    // replacement write drops the tag that was just saved.
+    const user = userEvent.setup();
+    const data = {
+      trace_id: "trace-1",
+      span_id: "root-1",
+      project_id: "project-1",
+      tags: [{ name: "sdk" }],
+      manual_tags: [],
+      source_tag_names: ["sdk"],
+      tag_revision: 3,
+      tag_target: {
+        project_id: "project-1",
+        trace_id: "trace-1",
+        span_id: "root-1",
+        start_hour: "2026-11-08T10:00:00+00:00",
+        observation_type: "span",
+        service_name: "svc",
+      },
+    };
+    const refreshCells = vi.fn();
+    const refreshServerSide = vi.fn();
+    const forEachNode = (visit) => visit({ data });
+    const { container } = renderTagsColumn({
+      data,
+      value: data.tags,
+      api: { refreshServerSide, refreshCells, forEachNode },
+    });
+    await user.click(container.firstChild);
+    await user.click(screen.getByTestId("popover-close"));
+    expect(refreshCells).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("popover-late-ack"));
+
+    expect(data).toMatchObject({
+      tags: [{ name: "sdk" }, { name: "late" }],
+      manual_tags: [{ name: "late" }],
+      tag_revision: 4,
+    });
+    expect(refreshCells).toHaveBeenCalledTimes(1);
+    expect(refreshServerSide).not.toHaveBeenCalled();
+  });
+
+  it("keeps a save acknowledged while the editor is open for its close", async () => {
+    const user = userEvent.setup();
+    const refreshCells = vi.fn();
+    const forEachNode = vi.fn();
+    const { container } = renderTagsColumn({
+      api: { refreshServerSide: vi.fn(), refreshCells, forEachNode },
+    });
+    await user.click(container.firstChild);
+    await user.click(screen.getByTestId("popover-late-ack"));
+    // Not applied mid-edit: a grid update would remount the open editor.
+    expect(forEachNode).not.toHaveBeenCalled();
   });
 });

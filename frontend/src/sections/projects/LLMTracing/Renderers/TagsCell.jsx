@@ -19,6 +19,8 @@ const TagsCell = ({
   const [anchorEl, setAnchorEl] = useState(null);
   // The latest acknowledged save while the popover is open.
   const lastSaveRef = useRef(null);
+  // Whether the popover is open, read when a save is acknowledged.
+  const openRef = useRef(false);
   const tags = Array.isArray(value) ? value : [];
 
   // Resolve which single entity this cell tags from the grid context (trace
@@ -40,6 +42,7 @@ const TagsCell = ({
 
   const handleClick = (event) => {
     event.stopPropagation();
+    openRef.current = true;
     setAnchorEl(event.currentTarget);
   };
 
@@ -47,11 +50,13 @@ const TagsCell = ({
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       event.stopPropagation();
+      openRef.current = true;
       setAnchorEl(event.currentTarget);
     }
   };
 
   const handleClose = () => {
+    openRef.current = false;
     setAnchorEl(null);
     // This grid is AG-Grid server-side: refreshing rebuilds the row and would
     // unmount this cell. The popover stays open across multiple adds, so we
@@ -124,7 +129,15 @@ const TagsCell = ({
           spanId={targetSpanId}
           currentTags={value}
           onSuccess={(result, saved) => {
-            lastSaveRef.current = { result, ...saved };
+            const save = { result, ...saved };
+            if (openRef.current) {
+              lastSaveRef.current = save;
+              return;
+            }
+            // The user closed the popover before this save was acknowledged.
+            // Apply it now, or the row keeps its old tags and the next edit
+            // would start from them and drop this save.
+            onTagsUpdated?.(save);
           }}
         />
       )}
