@@ -831,9 +831,11 @@ bump could compare between the pinned and the new backend digest.
 - **Which callout run counts.** The run's head branch must be
   `release-please--branches--main` in `future-agi/future-agi`, and the run
   must list this PR, with base `main`, among its pull requests. Runs from a
-  fork or another branch at the same commit are ignored. A run does not say
-  which PR started it. GitHub lists every open PR from a branch on each of its
-  runs (seen on PRs #549 and #550: each run of their branch lists both). So a
+  fork or another branch at the same commit are ignored. No field of a run
+  names the PR that started it: `display_title` is that PR's title, which its
+  author sets and need not be unique (#549 and #550 share one). GitHub lists
+  every open PR from a branch on each of its runs (seen on PRs #549 and #550:
+  each run of their branch lists both). So a
   run from any PR whose head is the release branch counts, not only runs of
   the release PR itself. The callout workflow (from dev, 10 Nov) runs for PRs
   into `dev` and `main`. Its `self-test` job runs on every PR. Its `check` job
