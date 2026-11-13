@@ -1460,6 +1460,28 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file

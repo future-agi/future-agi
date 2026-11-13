@@ -15,6 +15,7 @@ from agentcc.contracts.gateway_admin import (
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_settings import normalize_saved_guardrail_settings
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -207,7 +208,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
-    guardrails_data = copy.deepcopy(guardrails_data)
+    guardrails_data = normalize_saved_guardrail_settings(copy.deepcopy(guardrails_data))
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
 
@@ -269,8 +270,11 @@ def _transform_guardrails(guardrails_data, org_id=None):
             _inject_fi_credentials(mapped, org_id)
         return {**guardrails_data, "checks": mapped}
 
-    # Convert rules array → checks map
-    if not isinstance(rules, list) or not rules:
+    # A populated rules array takes precedence over an empty checks placeholder.
+    # Even an empty rules array must be projected to the gateway's checks map.
+    if not isinstance(rules, list):
+        if raw_checks == []:
+            guardrails_data["checks"] = {}
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
