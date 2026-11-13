@@ -23,11 +23,12 @@ it("opens the retained removal event after the last current label disappears", a
   const view = () => <QueryClientProvider client={client}><VersionsTab skill={skill} /></QueryClientProvider>;
   useSkillLabels.mockReturnValue({ data: [{ name: "production", version: 1 }] });
   const rendered = renderWithRouter(view());
-  expect(screen.getByRole("button", { name: "History for production" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Actions for production" })).toBeInTheDocument();
   useSkillLabels.mockReturnValue({ data: [] });
   axios.get.mockResolvedValue({ data: { result: { results: [{ label: "production", from_version: 1, to_version: null, actor: { id: "reviewer", name: "Avery", kind: "user" }, note: "Removed after review", created_at: "2026-11-03T12:00:00Z" }], count: 1, page: 1, page_size: 25, total_pages: 1 } } });
   rendered.rerender(view());
-  fireEvent.click(screen.getByRole("button", { name: "Label history" }));
+  fireEvent.click(screen.getByRole("button", { name: "Label settings" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "History", exact: true }));
   const drawer = within(screen.getByRole("dialog", { name: "Label history" }));
   expect(await drawer.findByText("production: v1 → Removed")).toBeInTheDocument();
   expect(drawer.getByText("Removed after review")).toBeInTheDocument();

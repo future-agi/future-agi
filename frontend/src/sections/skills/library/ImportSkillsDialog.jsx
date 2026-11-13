@@ -101,7 +101,7 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
       subTitle={tab === "migration" ? migrationConsequence : tab === "github" ? "Review the source, then import as an unpublished draft." : "Review files and checks before publishing versions to your workspace."}
       isLoading={busy} isValid={Boolean(result) || (preview ? canImport : files.length > 0)}
       dialogActionSx={tab === "migration" ? { display: "none" } : {}} onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
-      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Retained migration" disabled={busy} /></CustomTabs>
+      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Review sources" disabled={busy} /></CustomTabs>
       {tab === 'migration' ? <RetainedMigrationPanel footerTarget={migrationFooter} onConsequenceChange={setMigrationConsequence} onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
         const id = receipt.consumed?.skillId ?? receipt.skill?.id;
         if (id) { onClose(); navigate(`${paths.dashboard.skills.edit(id)}?tab=tests`); }

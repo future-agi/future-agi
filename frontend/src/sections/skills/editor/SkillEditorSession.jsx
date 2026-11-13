@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import { Alert, Box, Button, IconButton, Stack, Tab, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Tab, TextField, Tooltip, Typography } from "@mui/material";
 
 import { useDiscardSkillDraft } from "src/api/skills";
 import { useSkillTestingOptions } from "src/api/skills/testing";
 import { paths } from "src/routes/paths";
-import PageHeader from "src/components/page-header";
+import ObjectHeader from "../components/ObjectHeader";
+import useDraftChecks from "./useDraftChecks";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
-import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import FileTree from "src/sections/skills/components/FileTree";
@@ -30,6 +30,7 @@ import SkillDocumentEditor from "./SkillDocumentEditor";
 import useDraftSession from "./useDraftSession";
 import useUnsavedNavigation from "./useUnsavedNavigation";
 
+const savingState = (session) => session.dirty || session.status === 'saving';
 const contextReadOnly = (path) => /^(skills|\.futureagi)(\/|$)/i.test(path);
 const contextReserved = (path) => contextReadOnly(path) || /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i.test(path);
 
@@ -62,6 +63,8 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   // explicit flush binds the checkpoint to the current saved recovery digest.
   const migrationRecovery = !isContext && params.get('preserve') === 'migration';
   const session = useDraftSession(skill.id, initialDraft, migrationRecovery || preparing || discardOpen || Boolean(publishDraft), resourceApi);
+  const validation = useDraftChecks(session.files, skill.name, 600, !isContext);
+  const publishPending = !isContext && (savingState(session) || !validation.current);
   const latestSession = useRef(session);
   const deletionCheckpoint = useRef(null);
   latestSession.current = session;
@@ -171,16 +174,17 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
     onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
 
   return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
-    <PageHeader title={<Box component="span" sx={{ fontFamily: 'monospace' }}>{skill.name}</Box>}
-      description={isContext ? `Content origin ${session.baseVersion == null ? 'unpublished' : `v${session.baseVersion}`} · draft r${session.revision} · ${session.resolvedLock?.links?.length || 0} locked skills` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
-      back={<IconButton aria-label={isContext ? 'Back to context' : 'Back to skill'} onClick={() => navigate(detailPath)}><Iconify icon="solar:arrow-left-linear" /></IconButton>}
+    <ObjectHeader title={skill.name}
+      crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
+      purpose={isContext ? `Content origin ${session.baseVersion == null ? 'unpublished' : `v${session.baseVersion}`} · draft r${session.revision} · ${session.resolvedLock?.links?.length || 0} locked skills` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
         <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
         {session.status === 'error' && <Button size="small" disabled={Boolean(session.mutationError)} onClick={() => session.save()}>Retry</Button>}
         {session.status === 'conflict' && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
-        {!isContext && <Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button>}
+        {!isContext && <Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : !options.data?.assistEnabled ? 'AI assistance is not enabled for this workspace.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip>}
         <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
-        <Button variant="contained" disabled={locked || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
+        {publishPending && <Typography variant="s3" color="text.secondary">{savingState(session) ? 'Save and checks pending' : validation.error ? 'Retry checks to publish' : 'Checking…'}</Typography>}
+        <Button variant="contained" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
       </Box>} sx={{ flexWrap: 'wrap', rowGap: 1.5, flexShrink: 0 }} />
     {operationError && <Alert severity="error">{operationError}</Alert>}
     {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
@@ -211,7 +215,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
         <Box sx={{ pt: 1.5 }} hidden={panel !== 'checks'}>{isContext ? <Stack spacing={1}>
           <Typography variant="s3">Checks cover the saved complete context, including accepted dependencies.</Typography>
           {session.dirty ? <Alert severity="info">For earlier content. Save and review the complete context again.</Alert> : session.checks ? <ChecksList checks={session.checks} onSelect={(check) => openFile(check.path, check.line)} dense /> : <Alert severity="info">Compiled checks are unavailable. Review is required before publication.</Alert>}
-        </Stack> : <DraftChecksPanel files={session.files} name={skill.name} onSelect={(check) => openFile(check.path, check.line)} />}</Box>
+        </Stack> : <DraftChecksPanel validation={validation} files={session.files} onSelect={(check) => openFile(check.path, check.line)} />}</Box>
         <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}>{isContext ? contextControls.renderTests?.({ session, onSave: session.flush, onOpenFile: openFile }) : <EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={options.data?.assistEnabled ? (selection) => openAssist('description', selection) : undefined} />}</Box>
       </Box>
     </Box>

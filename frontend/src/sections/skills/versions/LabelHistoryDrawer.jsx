@@ -39,13 +39,16 @@ function HistoryEvents({ skillId, label }) {
           />
         ) : error ? (
           <ErrorState
-            title="Could not load label history"
+            title="Couldn't load label history."
+            detail="Your label changes are still saved. Try loading the history again."
+            sx={{ flex: '0 0 auto', height: 'auto', justifyContent: 'flex-start', py: 3 }}
             onRetry={history.refetch}
           />
         ) : empty ? (
           <EmptyState
             variant="no-results"
             title="No label changes yet"
+            sx={{ flex: '0 0 auto', height: 'auto', justifyContent: 'flex-start', py: 3 }}
             description="A change you just made can take a moment to appear."
             action={<Button variant="outlined" onClick={history.refetch}>Refresh</Button>}
           />

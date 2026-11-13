@@ -1,6 +1,9 @@
 import { useEffect, useId, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { formatDistanceToNow } from "date-fns";
+import TechnicalDetails from "../components/TechnicalDetails";
+import IdentityChip from "../components/IdentityChip";
 import CompatibilityInventory from "./CompatibilityInventory";
 import { AuthoringError, FileChanges, useAuthoringOperation, useExpired } from "../editor/HotfixHeadReview";
 
@@ -12,9 +15,9 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
   const formId = useId();
   // Name selects by their label alone, not their current option. Chromium's
   // accessible-name computation includes MUI's self-reference otherwise.
-  const selectProps = (name) => ({ id: `${formId}-${name}`, SelectProps: { SelectDisplayProps: { "aria-labelledby": `${formId}-${name}-label` } } });
+  const selectProps = (name) => ({ id: `${formId}-${name}`, SelectProps: { displayEmpty: true, SelectDisplayProps: { "aria-labelledby": `${formId}-${name}-label` } } });
   const [selected, setSelected] = useState("");
-  const [decision, setDecision] = useState("keep");
+  const [decision, setDecision] = useState("");
   const [mode, setMode] = useState("snapshot");
   const [rights, setRights] = useState(false);
   const [reviewed, setReviewed] = useState(false);
@@ -41,40 +44,44 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
   // Keep is a separate service operation. Never send it through the replacement
   // mapper, which intentionally has no decision field and could drop that intent.
   const commitDecision = decision === "keep" ? onKeep : onAccept;
-  const blocked = !item || item.blocked || (hasExclusions && !subsetAcknowledged) || (expired && !operation.canRetry(input)) || Boolean(receipts[selected]) || (decision !== "keep" && item.hasDraft) || (decision === "replace" && !Array.isArray(item.sourceHubChanges) && (!Array.isArray(item.sourceChanges) || !Array.isArray(item.hubChanges))) || decision === "manual";
+  const blocked = !decision || !item || item.blocked || (hasExclusions && !subsetAcknowledged) || (expired && !operation.canRetry(input)) || Boolean(receipts[selected]) || (decision !== "keep" && item.hasDraft) || (decision === "replace" && !Array.isArray(item.sourceHubChanges) && (!Array.isArray(item.sourceChanges) || !Array.isArray(item.hubChanges))) || decision === "manual";
   const accept = async () => {
     if (blocked || !reviewed || (needsRights && !rights)) return;
     const result = await operation.run(commitDecision, input);
     if (result) { setReceipts((previous) => ({ ...previous, [item.key]: result })); onAccepted?.(result); }
   };
-  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="m3" component="h2">Review retained migration plan</Typography>
-    <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Plan {plan.id} · {plan.fingerprint} · expires {plan.expiresAt}</Typography>
+  return <Stack spacing={1.5} sx={{ minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
+    <Typography variant="m3" component="h2">Review one item</Typography>
+    <Typography variant="s1">Per-item decision{item ? ` for ${item.name || item.root}` : ''} only; the reviewed set is decided separately.</Typography>
+    <Tooltip title={new Date(plan.expiresAt).toLocaleString()}><Typography variant="s3" color="text.secondary" tabIndex={0}>{expired ? 'Expired' : `Expires in ${formatDistanceToNow(new Date(plan.expiresAt))}`}</Typography></Tooltip>
+    <TechnicalDetails><Stack spacing={0.5}><IdentityChip value={plan.id} kind="id" label="Plan" /><IdentityChip value={plan.fingerprint} label="Fingerprint" /></Stack></TechnicalDetails>
     {expired && <Alert severity="warning">This plan expired. Preview the source again; no current bytes will be substituted.</Alert>}
     <AuthoringError error={operation.error} />
     {operation.uncertain && <Alert severity="warning">The response was lost. Keep this review open and retry the exact decision; do not start a new import.</Alert>}
     {hasExclusions && <FormControlLabel control={<Checkbox checked={subsetAcknowledged} disabled={locked} onChange={(event) => setSubsetAcknowledged(event.target.checked)} />} label="I explicitly exclude the blocked members listed below. This is a supported-subset trial, not a complete migration." />}
     <CompatibilityInventory items={plan.items} selectedKeys={selected ? [selected] : []} readOnly rejected={plan.rejected} skipped={plan.skipped} closure={plan.closure} />
-    <TextField {...selectProps("item")} select size="small" label="Review item" value={selected} disabled={locked} onChange={(event) => { setSelected(event.target.value); setRights(false); setReviewed(false); setDecision("keep"); setTagsMode("preserve"); setTags(""); }}>
+    <TextField {...selectProps("item")} select size="small" label="Review item" value={selected} disabled={locked} onChange={(event) => { setSelected(event.target.value); setRights(false); setReviewed(false); setDecision(""); setTagsMode("preserve"); setTags(""); }}>
       <MenuItem value="">Choose an item</MenuItem>
       {plan.items.map((entry) => <MenuItem key={entry.key} value={entry.key}>{entry.name || entry.root}</MenuItem>)}
     </TextField>
     {item && <>
       <Typography variant="s1" sx={{ overflowWrap: "anywhere" }}>Source {item.sourceOrigin} / {item.sourceProject} / {item.sourceResource} / {item.sourceRevision}</Typography>
-      <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Destination {item.destinationId || "new identity"} · reviewed head {item.expectedHeadVersion == null ? "unpublished" : `v${item.expectedHeadVersion}`} · {item.expectedHeadDigest || "no digest"}</Typography>
+      <Typography variant="s1">Destination: {item.destinationId ? `${item.name || item.root} ${item.expectedHeadVersion == null ? "(unpublished)" : `v${item.expectedHeadVersion}`}` : "New skill"}</Typography>
       {Array.isArray(item.sourceHubChanges) && <FileChanges files={item.sourceHubChanges} beforeTitle="New source" afterTitle="Current Hub" />}
       {item.basisPayloadAvailable === false ? <Alert severity="info">No historical source text is available. Review exact Source/Hub differences; no historical text or semantic merge is inferred.</Alert> : <>
         <FileChanges files={item.sourceChanges} beforeTitle="Accepted source basis" afterTitle="New source" />
         <FileChanges files={item.hubChanges} beforeTitle="Accepted source basis" afterTitle="Current Hub" />
       </>}
-      {item.diverged && <Alert severity="warning">Source and Hub both changed. Replacement is not a semantic merge; review both differences.</Alert>}
-      {item.hasDraft && <Alert severity="warning" action={<Button onClick={() => onPreserveDraft?.(item)} disabled={!onPreserveDraft || locked}>Preserve draft</Button>}>Your existing draft blocks replacement. Preserve and explicitly suspend it, then preview again.</Alert>}
+      {(item.diverged || item.hasDraft) && <Alert severity="warning" action={item.hasDraft ? <Button onClick={() => onPreserveDraft?.(item)} disabled={!onPreserveDraft || locked}>Preserve draft</Button> : undefined}>
+        {item.hasDraft ? 'You have a draft here. Save a recovery copy and pause that draft before replacing it, then preview again. ' : 'The source and this skill both changed. '}
+        Keep leaves this skill unchanged. Replace uses the source files instead; it does not combine both versions.
+      </Alert>}
       <TextField {...selectProps("decision")} select size="small" label="Source update decision" value={decision} disabled={locked} onChange={(event) => { setDecision(event.target.value); setReviewed(false); }}>
-        <MenuItem value="keep">Keep Hub content</MenuItem><MenuItem value="replace">Replace with reviewed source</MenuItem><MenuItem value="manual">Reconcile manually in the editor</MenuItem>
+        <MenuItem value="">Choose…</MenuItem><MenuItem value="keep">Keep Hub content</MenuItem><MenuItem value="replace">Replace with reviewed source</MenuItem><MenuItem value="manual">Reconcile manually in the editor</MenuItem>
       </TextField>
       {decision === "manual" && <Alert severity="info">Export or preserve both alternatives and edit the destination draft. This panel will not merge or overwrite them.</Alert>}
-      <TextField {...selectProps("semantics")} select size="small" label="File semantics" value={mode} disabled={locked || decision !== "replace"} onChange={(event) => { setMode(event.target.value); setReviewed(false); }}>
-        <MenuItem value="snapshot">Complete snapshot — omitted files are removed</MenuItem><MenuItem value="patch" disabled={plan.snapshotOnly}>Patch — omitted files are preserved</MenuItem>
+      <TextField {...selectProps("semantics")} select size="small" label="Files to import" value={mode} disabled={locked || decision !== "replace"} onChange={(event) => { setMode(event.target.value); setReviewed(false); }}>
+        <MenuItem value="snapshot">All source files — omitted files are removed</MenuItem><MenuItem value="patch" disabled={plan.snapshotOnly}>Changed files only — omitted files are preserved</MenuItem>
       </TextField>
       <TextField {...selectProps("tags")} select size="small" label="Destination tags" value={tagsMode} disabled={locked || decision !== "replace"} onChange={(event) => { setTagsMode(event.target.value); setReviewed(false); }}>
         <MenuItem value="preserve">Preserve existing tags</MenuItem><MenuItem value="replace">Replace tags explicitly</MenuItem><MenuItem value="clear">Clear every tag</MenuItem>

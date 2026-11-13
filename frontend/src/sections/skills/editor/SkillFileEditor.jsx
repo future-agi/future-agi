@@ -66,7 +66,7 @@ export default function SkillFileEditor({ file, onChange, target, readOnly = fal
       language={languageForPath(file.path)}
       height="100%"
       sx={{ flex: 1, minHeight: 0, '& > .MuiBox-root': { flex: 1, minHeight: 0 } }}
-      options={{ readOnly, domReadOnly: readOnly, automaticLayout: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
+      options={{ renderLineHighlight: "none", readOnly, domReadOnly: readOnly, automaticLayout: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
     />
   );
 }

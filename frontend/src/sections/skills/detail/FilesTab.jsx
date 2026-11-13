@@ -20,7 +20,6 @@ import { SegmentedTabs } from "src/components/tabs/tabs";
 import FileTree from "../components/FileTree";
 import SkillMarkdownPreview from "../components/SkillMarkdownPreview";
 import ChecksList from "../components/ChecksList";
-import VersionSelect from "../components/VersionSelect";
 import { languageForPath } from "../utils/paths";
 import { formatBytes, formatTokens } from "../utils/format";
 import { resolveViewedVersion } from "./detail-state";
@@ -145,28 +144,6 @@ export default function FilesTab({ skill, previewEmpty = false }) {
 
   return (
     <Stack spacing={3}>
-      <Stack
-        direction="row"
-        gap={1.5}
-        flexWrap="wrap"
-        alignItems="center"
-      >
-        <Box
-          sx={{
-            width: "max-content",
-            maxWidth: "100%",
-            "& .MuiFormControl-root": { width: "auto", maxWidth: "100%" },
-          }}
-        >
-          <VersionSelect
-            skillId={skill.id}
-            value={viewed.value}
-            onChange={(value) =>
-              updateParams({ version: value, path: "SKILL.md" })
-            }
-          />
-        </Box>
-      </Stack>
       {viewed.error ? (
         <ErrorState title="Version not found" detail={viewed.error} />
       ) : versionQuery.isPending ? (
@@ -198,10 +175,7 @@ export default function FilesTab({ skill, previewEmpty = false }) {
             <Box
               sx={{
                 minWidth: 0,
-                border: 1,
-                borderColor: "divider",
-                borderRadius: 1,
-                p: 1,
+                alignSelf: "start",
               }}
             >
               <FileTree
@@ -238,7 +212,7 @@ export default function FilesTab({ skill, previewEmpty = false }) {
             </Box>
           </Box>
           <Section
-            title={`Checks for v${version.number}`}
+            title={!version.checks?.summary ? 'Checks: not reported' : version.checks.summary.errors ? `Checks: ${version.checks.summary.errors} ${version.checks.summary.errors === 1 ? 'error' : 'errors'}` : version.checks.summary.warnings ? `Checks: ${version.checks.summary.warnings} ${version.checks.summary.warnings === 1 ? 'warning' : 'warnings'}` : 'Checks: no issues'}
             actions={
               <Button
                 size="small"

@@ -74,7 +74,7 @@ describe("LabelHistoryDrawer", () => {
     expect(screen.getByRole("button", { name: "Older changes" })).toBeDisabled();
     await waitFor(() => expect(rejectOlder).toBeTypeOf("function"));
     rejectOlder(new Error("Offline"));
-    await screen.findByText("Could not load label history");
+    await screen.findByText("Couldn't load label history.");
     axios.get.mockImplementation((_url, { params }) => Promise.resolve(response(events, params.page, 26)));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText("Retired");
@@ -91,7 +91,7 @@ describe("LabelHistoryDrawer", () => {
 
   it.each(["loading", "error", "empty"])("shows the %s preview", (state) => {
     show({}, `/?state=${state}`);
-    const text = { loading: "Loading label history", error: "Could not load label history", empty: "No label changes yet" };
+    const text = { loading: "Loading label history", error: "Couldn't load label history.", empty: "No label changes yet" };
     expect(state === "loading" ? screen.getByRole("progressbar", { name: text[state] }) : screen.getByText(text[state])).toBeInTheDocument();
   });
 });

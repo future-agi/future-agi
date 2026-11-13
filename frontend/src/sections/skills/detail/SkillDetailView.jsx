@@ -35,6 +35,8 @@ import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import ObjectHeader from "../components/ObjectHeader";
+import VersionSelect from "../components/VersionSelect";
+import { ClosableDialog } from "src/components/custom-dialog";
 import VersionIdentityRow from "../components/VersionIdentityRow";
 import OperationFeedback from "../components/OperationFeedback";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -66,6 +68,7 @@ function DetailContent({ skill, preview }) {
   const [params, setParams] = useSearchParams();
   const archive = useArchiveSkill();
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [archiveRevision, setArchiveRevision] = useState(null);
   const [downloading, setDownloading] = useState(false);
@@ -137,7 +140,7 @@ function DetailContent({ skill, preview }) {
           </Box>
         }
         purpose={skill.description}
-        identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
+        identity={<VersionIdentityRow viewingControl={<Box sx={{ minWidth: 140 }}><VersionSelect label="Viewing" skillId={skill.id} value={resolveViewedVersion(skill, params.get("version")).value} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>} viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
@@ -202,7 +205,7 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <Stack spacing={3}><FilesTab skill={skill} /><J1MigrationExport resourceId={skill.id} number={downloadNumber} /><GitHubSourcePanel skill={skill} /></Stack>
+            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}
@@ -216,6 +219,7 @@ function DetailContent({ skill, preview }) {
         open={Boolean(menuAnchor)}
         onClose={() => setMenuAnchor(null)}
       >
+        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with source mapping</MenuItem>
         <MenuItem disabled={!downloadNumber || downloading} onClick={download}>
           <ListItemIcon>
             <Iconify icon="solar:download-linear" width={16} />
@@ -259,6 +263,7 @@ function DetailContent({ skill, preview }) {
           Archive
         </MenuItem>
       </Menu>
+      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with source mapping"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => {

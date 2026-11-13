@@ -133,13 +133,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Files tab", () => {
-  it("keeps the version selector content-sized without duplicating the object identity", () => {
+  it("leaves version switching in the object header", () => {
     show("?version=1");
-    const selector = screen.getByRole("combobox", { name: "Version" });
-    expect(selector.parentElement).toHaveStyle({ width: "max-content" });
-    expect(selector.parentElement.parentElement).toHaveStyle({ flexDirection: "row" });
-    expect(selector).toHaveValue("1");
-    expect(screen.queryByText("Viewing immutable version v1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Version" })).not.toBeInTheDocument();
+    expect(useSkillVersion).toHaveBeenCalledWith("skill-a", 1);
   });
   it("opens the pinned version and file from the URL", () => {
     show("?version=1&path=references%2Fpolicy.md&tab=files");
@@ -165,15 +162,6 @@ describe("Files tab", () => {
       "skill-a",
       1,
       "references/policy.md",
-    );
-  });
-  it("resets the path when switching versions", () => {
-    show("?version=1&path=references%2Fpolicy.md&tab=files");
-    fireEvent.change(screen.getByLabelText("Version"), {
-      target: { value: "2" },
-    });
-    expect(screen.getByLabelText("URL")).toHaveTextContent(
-      "version=2&path=SKILL.md&tab=files",
     );
   });
   it("renders raw Markdown and non-Markdown with a read-only code editor", () => {
@@ -214,7 +202,7 @@ describe("Files tab", () => {
   });
   it("shows checks for the viewed version and opens their file", () => {
     show("?version=1");
-    expect(screen.getByText("Checks for v1")).toBeInTheDocument();
+    expect(screen.getByText("Checks: not reported")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show checks" }));
     expect(screen.getByRole("button", { name: "Hide checks" })).toHaveAttribute(
       "aria-expanded",

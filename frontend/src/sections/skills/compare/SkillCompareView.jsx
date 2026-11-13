@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
-  IconButton,
   List,
   ListItemButton,
   Stack,
@@ -16,8 +15,8 @@ import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
-import Iconify from "src/components/iconify";
-import PageHeader from "src/components/page-header";
+import ObjectHeader from "../components/ObjectHeader";
+import TechnicalDetails from "../components/TechnicalDetails";
 import Section from "src/components/section";
 import FileStatusBadge from "src/sections/skills/components/FileStatusBadge";
 import TextDiff from "src/sections/skills/components/TextDiff";
@@ -119,24 +118,11 @@ export default function SkillCompareView() {
 
   return (
     <Stack spacing={2} sx={{ p: 3, minWidth: 0, flex: 1 }}>
-      <PageHeader
+      <ObjectHeader
+        crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.data?.name || "Skill", to: paths.dashboard.skills.detail(skillId) }, { label: "Compare" }]}
         title="Compare versions"
+        purpose="Review file changes before choosing a version."
         actions={<Button variant="contained" onClick={() => router.push(returnTo)}>{returnLabel}</Button>}
-        description={
-          skill.data?.name || "Review changes across every file in a skill."
-        }
-        back={
-          <IconButton
-            aria-label="Back to skill versions"
-            onClick={() =>
-              router.push(
-                returnTo,
-              )
-            }
-          >
-            <Iconify icon="solar:alt-arrow-left-linear" />
-          </IconButton>
-        }
       />
       {skill.data && (
         <Stack
@@ -150,10 +136,7 @@ export default function SkillCompareView() {
             aria-label="Compare from"
             sx={{ flex: 1, minWidth: 0 }}
           >
-            <Typography variant="s3" color="text.secondary">
-              From
-            </Typography>
-            <VersionSelect
+            <VersionSelect label="From"
               skillId={skillId}
               value={from ?? ""}
               onChange={(value) => setRef("from", value)}
@@ -166,10 +149,7 @@ export default function SkillCompareView() {
             aria-label="Compare to"
             sx={{ flex: 1, minWidth: 0 }}
           >
-            <Typography variant="s3" color="text.secondary">
-              To
-            </Typography>
-            <VersionSelect
+            <VersionSelect label="To"
               skillId={skillId}
               value={to ?? ""}
               onChange={(value) => setRef("to", value)}
@@ -205,11 +185,12 @@ export default function SkillCompareView() {
         />
       ) : (
         <Stack spacing={2}>
+          <Typography variant="s1">{files.every((file) => file.status === 'unchanged') ? `No files changed between ${refTitle(resolvedFrom)} and ${refTitle(resolvedTo)}.` : `${files.filter((file) => file.status !== 'unchanged').length} ${files.filter((file) => file.status !== 'unchanged').length === 1 ? 'file changed' : 'files changed'} between ${refTitle(resolvedFrom)} and ${refTitle(resolvedTo)}: ${files.filter((file) => file.status !== 'unchanged').map((file) => file.path).join(', ')}`}</Typography>
           <CompareSummary summary={compare.data.summary} />
-          {selected && <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.5}>
+          {selected && <TechnicalDetails><Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.5}>
             {selected.fromSha256 && <IdentityChip value={selected.fromSha256} label={`${refTitle(resolvedFrom)} file digest`} />}
             {selected.toSha256 && <IdentityChip value={selected.toSha256} label={`${refTitle(resolvedTo)} file digest`} />}
-          </Stack>}
+          </Stack></TechnicalDetails>}
           <Stack
             direction={{ xs: "column", md: "row" }}
             spacing={2}

@@ -22,6 +22,7 @@ vi.mock("src/api/skills", () => ({
   downloadVersionZip: vi.fn(),
   getSkillErrorCode: (error) => error?.code,
 }));
+vi.mock("../components/VersionSelect", () => ({ default: ({ value, onChange, label }) => <select aria-label={label} value={value} onChange={(event) => onChange(Number(event.target.value))}><option value="1">v1</option><option value="2">v2</option><option value="label:production">Production</option><option value="label:latest">Latest</option></select> }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock('src/api/skills/j1-migration-export', () => ({ useMigrationExport: () => ({ mutateAsync: vi.fn() }) }));
 vi.mock("src/config-global", () => ({ HOST_API: "https://api.example.test" }));
@@ -127,7 +128,7 @@ describe("Skill detail route", () => {
     );
     show('?version=2');
     expect(screen.getByRole('link', { name: 'Edit latest v4' })).toBeInTheDocument();
-    expect(screen.getByText(/Viewing/)).toHaveTextContent('Viewing v2');
+    expect(screen.getByRole('combobox', { name: 'Viewing' })).toHaveValue('2');
     expect(screen.getByText('Production v2')).toBeVisible();
     expect(screen.getByText('Latest v4')).toBeVisible();
     expect(screen.getByText("Editing starts from latest v4, not the v2 you're viewing.")).toBeVisible();
@@ -321,3 +322,10 @@ it('mounts Tests without losing immutable result deep links or competing primary
 
 vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));
 vi.mock("src/api/skills/context-follower-update", () => ({ useFollowerUpdates: () => ({ prepare: vi.fn(), apply: vi.fn() }) }));
+
+it("switches the viewed version in the identity row and resets the file path", () => {
+  useSkill.mockReturnValue(success(skill));
+  show("?version=1&path=references%2Fpolicy.md&tab=files");
+  fireEvent.change(screen.getByLabelText("Viewing"), { target: { value: "2" } });
+  expect(screen.getByLabelText("URL")).toHaveTextContent("version=2&path=SKILL.md&tab=files");
+});

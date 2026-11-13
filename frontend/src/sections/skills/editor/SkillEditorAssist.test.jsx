@@ -1,3 +1,4 @@
+vi.mock('./useDraftChecks', () => ({ default: () => ({ current: true, pending: false, checks: { summary: { errors: 0, warnings: 0 }, items: [] } }) }));
 import { webcrypto } from 'node:crypto';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';

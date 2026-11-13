@@ -128,7 +128,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
         tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
         aria-selected={row.path === selectedPath} aria-expanded={row.type === 'folder' ? !collapsed.has(row.path) : undefined}
         onFocus={() => setFocused(row.path)} onKeyDown={(event) => onKeyDown(event, row, index)} onClick={() => activate(row)}
-        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 40, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 32, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
         {row.type === 'folder' && <Iconify icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}
         <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>
         {row.status && <FileStatusBadge status={row.status} />}

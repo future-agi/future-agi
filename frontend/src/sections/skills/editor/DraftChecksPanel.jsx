@@ -6,10 +6,10 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import ChecksList from "src/sections/skills/components/ChecksList";
-import useDraftChecks from "./useDraftChecks";
 
-export default function DraftChecksPanel({ files, name, onSelect }) {
-  const { checks, previous, pending, error, retry } = useDraftChecks(files, name);
+
+export default function DraftChecksPanel({ files, onSelect, validation }) {
+  const { checks, previous, pending, error, retry } = validation;
   const findings = checks ?? previous;
   const warnings = findings?.summary?.warnings || 0;
   const content = files.find((file) => file.path === "SKILL.md")?.content ?? "";
@@ -30,7 +30,7 @@ export default function DraftChecksPanel({ files, name, onSelect }) {
       <Section title="SKILL.md token budget">
         <Stack spacing={0.5} sx={{ mb: 1 }}>
           <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
-            {tokens.toLocaleString()} ≈ tokens of 5,000
+            ≈{tokens.toLocaleString()} of 5,000 tokens
           </Typography>
           <Typography variant="s3" color="text.secondary">
             {overBudget ? "Over the recommended budget. Move supporting detail into other files." : "Estimated from character count. Supporting files load separately."}
@@ -50,6 +50,6 @@ export default function DraftChecksPanel({ files, name, onSelect }) {
 
 DraftChecksPanel.propTypes = {
   files: PropTypes.arrayOf(PropTypes.shape({ path: PropTypes.string, content: PropTypes.string })).isRequired,
-  name: PropTypes.string.isRequired,
+  validation: PropTypes.object.isRequired,
   onSelect: PropTypes.func.isRequired,
 };

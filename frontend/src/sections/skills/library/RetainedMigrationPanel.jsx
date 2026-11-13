@@ -87,7 +87,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   };
   const openDraft = (resourceId) => { onClose(); navigate(paths.dashboard.skills.edit(resourceId)); };
   const setOperationBusy = useCallback((value) => { setLocked(value); onBusyChange(value); }, [onBusyChange]);
-  return <Stack spacing={1.5} sx={{ minWidth: 0, overflowY: 'auto' }}>
+  return <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', pb: 2, flexShrink: 1 }}>
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
     {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
@@ -122,7 +122,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
       onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`, { state: { reopenMigration: { planIds: plans.map((entry) => entry.id) } } }); }}
       onBusyChange={setOperationBusy}
       onCreateContext={(links) => { onClose(); navigate(paths.dashboard.skills.contexts, { state: { proposedLinks: links } }); }} />}
-    {plan && <TechnicalDetails title="Decide one item at a time" defaultOpen><MigrationPlanPanel scopeKey={identity} plan={plan}
+    {plan && <TechnicalDetails title="Decide one item at a time" keepMounted><MigrationPlanPanel scopeKey={identity} plan={plan}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
       onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`); }} onBusyChange={setOperationBusy}

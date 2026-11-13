@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import { Alert, Box, Button, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
 
 import { getSkillErrorCode, useSkill, usePublishSkillDraft, useSaveSkillDraft, useSkillCompare, useSkillDraft } from "src/api/skills";
 import { useSkillTestingOptions } from "src/api/skills/testing";
@@ -19,6 +19,11 @@ import FileStatusBadge from "src/sections/skills/components/FileStatusBadge";
 import TextDiff from "src/sections/skills/components/TextDiff";
 import useDraftChecks from "./useDraftChecks";
 import DraftConflictDialog from "./DraftConflictDialog";
+
+function ReviewSection({ title, ...props }) {
+  return <Section {...props} title={<Typography component="span" variant="m3">{title}</Typography>} />;
+}
+ReviewSection.propTypes = { title: PropTypes.string.isRequired };
 
 function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const [draft, setDraft] = useState(initialDraft);
@@ -175,7 +180,8 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       open
       onClose={onClose}
       title="Publish skill"
-      subTitle="Review the files, checks and optional release-label changes."
+      subTitle={comparisonReady ? sameAsLatest ? `Nothing changed since v${release.latestVersion}. ${consequence}` : consequence.replace(`${versionText}.`, `${versionText} from ${files.filter((file) => file.status !== 'unchanged').length} changed ${files.filter((file) => file.status !== 'unchanged').length === 1 ? 'file' : 'files'}.`) : 'Checking the changes in this draft…'}
+      actionBtnProps={{ color: 'inherit' }}
       actionBtnTitle={stale ? "Publish anyway" : publishTitle}
       onSubmit={submit}
       isValid={canPublish}
@@ -183,10 +189,11 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       modalWidth="960px"
       paperSx={{ maxWidth: "100%" }}
     >
-      <Stack spacing={3} sx={{ overflowY: "auto", minWidth: 0 }}>
+      <Stack spacing={2} sx={{ overflowY: "auto", minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
-        <Section title={draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
+        <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
+        <ReviewSection title={draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
           {draft.baseVersion !== null && !comparison.isError && (comparison.isPending || !comparisonVerified || liveComparison.isFetching) && <ContentSkeleton variant="panel" label="Verifying reviewed file changes" />}
           {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
           {comparisonMismatch && <Alert severity="warning" action={<Button color="inherit" onClick={() => setConflict(true)}>Review changed draft</Button>}>The server draft changed after this review opened. Reload or overwrite it before reviewing the diff.</Alert>}
@@ -205,22 +212,21 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
                   <TextDiff fromText={selected.fromText ?? ""} toText={selected.toText ?? ""} fromTitle={draft.baseVersion === null ? "New file" : `v${draft.baseVersion}`} toTitle="Your draft" />
                 </Box>
               )}
-              {selected?.status === "unchanged" && <Typography variant="s3" color="text.secondary">This file has no changes.</Typography>}
+              {selected?.status === "unchanged" && <Typography variant="s3" color="text.secondary">{selected.path} has no changes.</Typography>}
             </Stack>
           )}
-        </Section>
+        </ReviewSection>
         <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
-        <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
-        <Box><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></Box>
+        <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>
         {summaryOpen && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
-        <Section title="Checks">
+        <ReviewSection title="Checks">
           {live.pending && <ContentSkeleton variant="rows" rows={2} label="Checking draft before publishing" />}
           {live.error && <ErrorState title="Couldn't run checks" onRetry={live.retry} />}
           {checks && <ChecksList checks={checks} />}
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
           {checks?.summary.warnings > 0 && <FormControlLabel label="I reviewed the warnings and want to publish this version." control={<Checkbox checked={acknowledged} onChange={(_, value) => setAcknowledged(value)} />} />}
-        </Section>
-        <Section title="Release labels (optional)" description="Agents using a selected label will fetch this version on their next request. Pinned versions do not change.">
+        </ReviewSection>
+        <ReviewSection title="Release labels (optional)" description="Agents using a selected label will fetch this version on their next request. Pinned versions do not change.">
           <Stack>
             {["staging", "production"].map((label) => (
               <FormControlLabel key={label} label={label} control={(
@@ -230,7 +236,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           </Stack>
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
           {labels.map((name) => <Typography key={name} variant="s3">Move {name} from {release.labels?.find((item) => item.name === name)?.version ? `v${release.labels.find((item) => item.name === name).version}` : 'unassigned'} to the published version.</Typography>)}
-        </Section>
+        </ReviewSection>
       </Stack>
       <Typography variant="s1" role="status" sx={{ flexShrink: 0 }}>{consequence}</Typography>
     </ModalWrapper>

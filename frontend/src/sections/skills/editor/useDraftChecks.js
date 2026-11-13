@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 
 import { useRunSkillChecks } from "src/api/skills";
 
-export default function useDraftChecks(files, name, delay = 600) {
+export default function useDraftChecks(files, name, delay = 600, enabled = true) {
   const { mutateAsync } = useRunSkillChecks();
   const [result, setResult] = useState(null);
   const [previous, setPrevious] = useState(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let active = true;
     const timer = setTimeout(() => {
       mutateAsync({ files, name }).then(
@@ -22,7 +23,7 @@ export default function useDraftChecks(files, name, delay = 600) {
       );
     }, delay);
     return () => { active = false; clearTimeout(timer); };
-  }, [files, name, delay, attempt, mutateAsync]);
+  }, [files, name, delay, attempt, mutateAsync, enabled]);
 
   const settled = result?.files === files && result?.name === name && result?.attempt === attempt;
   return {

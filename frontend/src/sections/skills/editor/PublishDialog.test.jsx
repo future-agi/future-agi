@@ -94,7 +94,7 @@ describe("publish review", () => {
     expect(api.compare).toHaveBeenCalledWith("skill-id", 1, "draft");
     expect(await screen.findByTestId("diff")).toHaveTextContent("Old policy → New policy");
     fireEvent.click(screen.getByText("SKILL.md"));
-    expect(screen.getByText("This file has no changes.")).toBeInTheDocument();
+    expect(screen.getByText(/has no changes\./)).toBeInTheDocument();
   });
 
   it("does not review or publish a cached comparison while the saved revision's refresh is pending", async () => {
@@ -103,7 +103,7 @@ describe("publish review", () => {
     const onClose = vi.fn();
     const first = { ...draft, baseVersion: 1 };
     const { rerender } = renderDialog({ draft: first, onClose });
-    await screen.findByText("This file has no changes.");
+    await screen.findByText(/has no changes\./);
     await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
     rerender(<PublishDialog open={false} onClose={onClose} skill={skill} draft={first} />);
 
@@ -116,7 +116,7 @@ describe("publish review", () => {
     expect(api.checks).toHaveBeenCalledTimes(2);
     const publish = screen.getByRole("button", { name: "Publish", exact: true });
     expect(publish).toBeDisabled();
-    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has no changes\./)).not.toBeInTheDocument();
     expect(screen.queryByTestId("diff")).not.toBeInTheDocument();
     fireEvent.click(publish);
     expect(api.publish).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe("publish review", () => {
     api.refreshCompare.mockResolvedValueOnce({ data: cached, isError: true });
     renderDialog({ draft: { ...draft, baseVersion: 1 } });
     await screen.findByText("Couldn't load file changes");
-    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has no changes\./)).not.toBeInTheDocument();
     const button = screen.getByRole("button", { name: "Publish", exact: true });
     expect(button).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
