@@ -223,7 +223,7 @@ def _put_previous_back(journal: EvalRecalculation) -> bool:
 
 
 def _previous_is_live(previous_id) -> bool:
-    return _rows().filter(pk=previous_id, deleted=False).exists()
+    return bool(_rows().filter(pk=previous_id, deleted=False).exists())
 
 
 # What ``abandon_recalculation`` did with the previous result.
