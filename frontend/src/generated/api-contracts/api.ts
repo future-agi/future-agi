@@ -596,9 +596,6 @@ import type {
   GroupingOutboxAckApi,
   GroupingOutboxRequestApi,
   GroupingOutboxResponseApi,
-  GuestFailureInputApi,
-  GuestHealthInputApi,
-  GuestObservationInputApi,
   HarnessAcceptedResponseApi,
   HarnessAgentCredentialsResponseApi,
   HarnessAgentVersionCreateApi,
@@ -1371,6 +1368,9 @@ import type {
   SkillsContextDraftStartApi,
   SkillsContextEmptyInputApi,
   SkillsContextExecuteApi,
+  SkillsContextGuestFailureInputApi,
+  SkillsContextGuestHealthInputApi,
+  SkillsContextGuestObservationInputApi,
   SkillsContextHeadAcknowledgmentApi,
   SkillsContextInspectionInputApi,
   SkillsContextIntakeDecisionApi,
@@ -65143,7 +65143,7 @@ export const modelHubSkillsIntakeReviewCreate = async (
 };
 
 export type modelHubSkillsNativeAttemptsFailureCreateResponse201 = {
-  data: GuestFailureInputApi;
+  data: SkillsContextGuestFailureInputApi;
   status: 201;
 };
 
@@ -65173,7 +65173,7 @@ export const getModelHubSkillsNativeAttemptsFailureCreateUrl = (
 
 export const modelHubSkillsNativeAttemptsFailureCreate = async (
   attemptId: string,
-  guestFailureInputApi: GuestFailureInputApi,
+  skillsContextGuestFailureInputApi: SkillsContextGuestFailureInputApi,
   options?: RequestInit,
 ): Promise<modelHubSkillsNativeAttemptsFailureCreateResponse> => {
   return apiMutator<modelHubSkillsNativeAttemptsFailureCreateResponse>(
@@ -65182,13 +65182,13 @@ export const modelHubSkillsNativeAttemptsFailureCreate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(guestFailureInputApi),
+      body: JSON.stringify(skillsContextGuestFailureInputApi),
     },
   );
 };
 
 export type modelHubSkillsNativeAttemptsHealthCreateResponse201 = {
-  data: GuestHealthInputApi;
+  data: SkillsContextGuestHealthInputApi;
   status: 201;
 };
 
@@ -65218,7 +65218,7 @@ export const getModelHubSkillsNativeAttemptsHealthCreateUrl = (
 
 export const modelHubSkillsNativeAttemptsHealthCreate = async (
   attemptId: string,
-  guestHealthInputApi: GuestHealthInputApi,
+  skillsContextGuestHealthInputApi: SkillsContextGuestHealthInputApi,
   options?: RequestInit,
 ): Promise<modelHubSkillsNativeAttemptsHealthCreateResponse> => {
   return apiMutator<modelHubSkillsNativeAttemptsHealthCreateResponse>(
@@ -65227,13 +65227,13 @@ export const modelHubSkillsNativeAttemptsHealthCreate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(guestHealthInputApi),
+      body: JSON.stringify(skillsContextGuestHealthInputApi),
     },
   );
 };
 
 export type modelHubSkillsNativeAttemptsObservationsCreateResponse201 = {
-  data: GuestObservationInputApi;
+  data: SkillsContextGuestObservationInputApi;
   status: 201;
 };
 
@@ -65263,7 +65263,7 @@ export const getModelHubSkillsNativeAttemptsObservationsCreateUrl = (
 
 export const modelHubSkillsNativeAttemptsObservationsCreate = async (
   attemptId: string,
-  guestObservationInputApi: GuestObservationInputApi,
+  skillsContextGuestObservationInputApi: SkillsContextGuestObservationInputApi,
   options?: RequestInit,
 ): Promise<modelHubSkillsNativeAttemptsObservationsCreateResponse> => {
   return apiMutator<modelHubSkillsNativeAttemptsObservationsCreateResponse>(
@@ -65272,7 +65272,7 @@ export const modelHubSkillsNativeAttemptsObservationsCreate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(guestObservationInputApi),
+      body: JSON.stringify(skillsContextGuestObservationInputApi),
     },
   );
 };

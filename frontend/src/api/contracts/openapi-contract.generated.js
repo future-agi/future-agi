@@ -31110,12 +31110,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GuestFailureInput",
+          $ref: "#/definitions/SkillsContextGuestFailureInput",
         },
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/GuestFailureInput",
+            $ref: "#/definitions/SkillsContextGuestFailureInput",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -31129,12 +31129,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GuestHealthInput",
+          $ref: "#/definitions/SkillsContextGuestHealthInput",
         },
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/GuestHealthInput",
+            $ref: "#/definitions/SkillsContextGuestHealthInput",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -31148,12 +31148,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GuestObservationInput",
+          $ref: "#/definitions/SkillsContextGuestObservationInput",
         },
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/GuestObservationInput",
+            $ref: "#/definitions/SkillsContextGuestObservationInput",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -75460,156 +75460,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    GuestFailureInput: {
-      type: "object",
-      properties: {
-        reason: {
-          title: "Reason",
-          type: "string",
-          "x-nullable": true,
-        },
-      },
-    },
-    GuestHealthInput: {
-      required: [
-        "protocol",
-        "adapter_module",
-        "configuration_digest",
-        "execution_fingerprint",
-        "code_digest",
-        "image_digest",
-        "packages",
-        "checkpoint_digest",
-        "read_only_source",
-        "read_only_context",
-        "separate_writable_state",
-        "controlled_paid_egress",
-      ],
-      type: "object",
-      properties: {
-        protocol: {
-          title: "Protocol",
-          type: "string",
-          minLength: 1,
-        },
-        adapter_module: {
-          title: "Adapter module",
-          type: "string",
-          minLength: 1,
-        },
-        configuration_digest: {
-          title: "Configuration digest",
-          type: "string",
-          minLength: 1,
-        },
-        execution_fingerprint: {
-          title: "Execution fingerprint",
-          type: "string",
-          minLength: 1,
-        },
-        code_digest: {
-          title: "Code digest",
-          type: "string",
-          minLength: 1,
-        },
-        image_digest: {
-          title: "Image digest",
-          type: "string",
-          minLength: 1,
-        },
-        packages: {
-          title: "Packages",
-          type: "object",
-        },
-        checkpoint_digest: {
-          title: "Checkpoint digest",
-          type: "string",
-          minLength: 1,
-        },
-        read_only_source: {
-          title: "Read only source",
-          type: "boolean",
-        },
-        read_only_context: {
-          title: "Read only context",
-          type: "boolean",
-        },
-        separate_writable_state: {
-          title: "Separate writable state",
-          type: "boolean",
-        },
-        controlled_paid_egress: {
-          title: "Controlled paid egress",
-          type: "boolean",
-        },
-      },
-    },
-    GuestObservationInput: {
-      required: [
-        "schema",
-        "protocol",
-        "execution_fingerprint",
-        "case_id",
-        "variant",
-        "repeat_index",
-        "application",
-        "business",
-        "observation_digest",
-      ],
-      type: "object",
-      properties: {
-        schema: {
-          title: "Schema",
-          type: "integer",
-        },
-        protocol: {
-          title: "Protocol",
-          type: "string",
-          minLength: 1,
-        },
-        execution_fingerprint: {
-          title: "Execution fingerprint",
-          type: "string",
-          minLength: 1,
-        },
-        case_id: {
-          title: "Case id",
-          type: "string",
-          minLength: 1,
-        },
-        variant: {
-          title: "Variant",
-          type: "string",
-          minLength: 1,
-        },
-        repeat_index: {
-          title: "Repeat index",
-          type: "integer",
-          minimum: 0,
-        },
-        application: {
-          title: "Application",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-        },
-        business: {
-          title: "Business",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-        },
-        observation_digest: {
-          title: "Observation digest",
-          type: "string",
-          minLength: 1,
-        },
-      },
-    },
     HarnessAcceptedResponse: {
       required: ["accepted", "duplicate"],
       type: "object",
@@ -95255,6 +95105,156 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Expected fingerprint",
           type: "string",
           pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+      },
+    },
+    SkillsContextGuestFailureInput: {
+      type: "object",
+      properties: {
+        reason: {
+          title: "Reason",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    SkillsContextGuestHealthInput: {
+      required: [
+        "protocol",
+        "adapter_module",
+        "configuration_digest",
+        "execution_fingerprint",
+        "code_digest",
+        "image_digest",
+        "packages",
+        "checkpoint_digest",
+        "read_only_source",
+        "read_only_context",
+        "separate_writable_state",
+        "controlled_paid_egress",
+      ],
+      type: "object",
+      properties: {
+        protocol: {
+          title: "Protocol",
+          type: "string",
+          minLength: 1,
+        },
+        adapter_module: {
+          title: "Adapter module",
+          type: "string",
+          minLength: 1,
+        },
+        configuration_digest: {
+          title: "Configuration digest",
+          type: "string",
+          minLength: 1,
+        },
+        execution_fingerprint: {
+          title: "Execution fingerprint",
+          type: "string",
+          minLength: 1,
+        },
+        code_digest: {
+          title: "Code digest",
+          type: "string",
+          minLength: 1,
+        },
+        image_digest: {
+          title: "Image digest",
+          type: "string",
+          minLength: 1,
+        },
+        packages: {
+          title: "Packages",
+          type: "object",
+        },
+        checkpoint_digest: {
+          title: "Checkpoint digest",
+          type: "string",
+          minLength: 1,
+        },
+        read_only_source: {
+          title: "Read only source",
+          type: "boolean",
+        },
+        read_only_context: {
+          title: "Read only context",
+          type: "boolean",
+        },
+        separate_writable_state: {
+          title: "Separate writable state",
+          type: "boolean",
+        },
+        controlled_paid_egress: {
+          title: "Controlled paid egress",
+          type: "boolean",
+        },
+      },
+    },
+    SkillsContextGuestObservationInput: {
+      required: [
+        "schema",
+        "protocol",
+        "execution_fingerprint",
+        "case_id",
+        "variant",
+        "repeat_index",
+        "application",
+        "business",
+        "observation_digest",
+      ],
+      type: "object",
+      properties: {
+        schema: {
+          title: "Schema",
+          type: "integer",
+        },
+        protocol: {
+          title: "Protocol",
+          type: "string",
+          minLength: 1,
+        },
+        execution_fingerprint: {
+          title: "Execution fingerprint",
+          type: "string",
+          minLength: 1,
+        },
+        case_id: {
+          title: "Case id",
+          type: "string",
+          minLength: 1,
+        },
+        variant: {
+          title: "Variant",
+          type: "string",
+          minLength: 1,
+        },
+        repeat_index: {
+          title: "Repeat index",
+          type: "integer",
+          minimum: 0,
+        },
+        application: {
+          title: "Application",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        business: {
+          title: "Business",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        observation_digest: {
+          title: "Observation digest",
+          type: "string",
           minLength: 1,
         },
       },

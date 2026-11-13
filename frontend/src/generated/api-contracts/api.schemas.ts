@@ -20739,13 +20739,15 @@ export interface SkillsMigrationReviewResponseApi {
   result: SkillsContextMigrationReviewApi;
 }
 
-export interface GuestFailureInputApi {
+export interface SkillsContextGuestFailureInputApi {
   reason?: string | null;
 }
 
-export type GuestHealthInputApiPackages = { [key: string]: unknown };
+export type SkillsContextGuestHealthInputApiPackages = {
+  [key: string]: unknown;
+};
 
-export interface GuestHealthInputApi {
+export interface SkillsContextGuestHealthInputApi {
   /** @minLength 1 */
   protocol: string;
   /** @minLength 1 */
@@ -20758,7 +20760,7 @@ export interface GuestHealthInputApi {
   code_digest: string;
   /** @minLength 1 */
   image_digest: string;
-  packages: GuestHealthInputApiPackages;
+  packages: SkillsContextGuestHealthInputApiPackages;
   /** @minLength 1 */
   checkpoint_digest: string;
   read_only_source: boolean;
@@ -20767,13 +20769,15 @@ export interface GuestHealthInputApi {
   controlled_paid_egress: boolean;
 }
 
-export type GuestObservationInputApiApplication = {
+export type SkillsContextGuestObservationInputApiApplication = {
   [key: string]: string | null;
 };
 
-export type GuestObservationInputApiBusiness = { [key: string]: string | null };
+export type SkillsContextGuestObservationInputApiBusiness = {
+  [key: string]: string | null;
+};
 
-export interface GuestObservationInputApi {
+export interface SkillsContextGuestObservationInputApi {
   schema: number;
   /** @minLength 1 */
   protocol: string;
@@ -20785,8 +20789,8 @@ export interface GuestObservationInputApi {
   variant: string;
   /** @minimum 0 */
   repeat_index: number;
-  application: GuestObservationInputApiApplication;
-  business: GuestObservationInputApiBusiness;
+  application: SkillsContextGuestObservationInputApiApplication;
+  business: SkillsContextGuestObservationInputApiBusiness;
   /** @minLength 1 */
   observation_digest: string;
 }

@@ -57690,7 +57690,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GuestFailureInput"
+                            "$ref": "#/definitions/SkillsContextGuestFailureInput"
                         }
                     }
                 ],
@@ -57698,7 +57698,7 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GuestFailureInput"
+                            "$ref": "#/definitions/SkillsContextGuestFailureInput"
                         }
                     },
                     "default": {
@@ -57732,7 +57732,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GuestHealthInput"
+                            "$ref": "#/definitions/SkillsContextGuestHealthInput"
                         }
                     }
                 ],
@@ -57740,7 +57740,7 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GuestHealthInput"
+                            "$ref": "#/definitions/SkillsContextGuestHealthInput"
                         }
                     },
                     "default": {
@@ -57774,7 +57774,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GuestObservationInput"
+                            "$ref": "#/definitions/SkillsContextGuestObservationInput"
                         }
                     }
                 ],
@@ -57782,7 +57782,7 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GuestObservationInput"
+                            "$ref": "#/definitions/SkillsContextGuestObservationInput"
                         }
                     },
                     "default": {
@@ -163559,7 +163559,7 @@
                 }
             }
         },
-        "GuestFailureInput": {
+        "SkillsContextGuestFailureInput": {
             "type": "object",
             "properties": {
                 "reason": {
@@ -163569,7 +163569,7 @@
                 }
             }
         },
-        "GuestHealthInput": {
+        "SkillsContextGuestHealthInput": {
             "required": [
                 "protocol",
                 "adapter_module",
@@ -163643,7 +163643,7 @@
                 }
             }
         },
-        "GuestObservationInput": {
+        "SkillsContextGuestObservationInput": {
             "required": [
                 "schema",
                 "protocol",
