@@ -1,0 +1,193 @@
+"""Reconcile PG editor tags against real PG and an isolated CH25 sidecar DB."""
+
+import json
+from io import StringIO
+from types import SimpleNamespace
+from uuid import uuid4
+
+import clickhouse_connect
+import pytest
+from django.core.management import call_command
+from django.db import connection
+
+from tracer.services.clickhouse.v2 import get_v2_config
+from tracer.services.entity_tag_reads import attach_legacy_trace_tags
+from tracer.tests.test_entity_tag_assignment_postgres import assignment_schema  # noqa: F401
+from tracer.tests.test_entity_tag_target import PROJECT
+from tracer.tests.test_entity_tag_targets_ch25 import OTHER_PROJECT
+
+ORG = "55555555-5555-5555-5555-555555555555"
+OTHER_ORG = "66666666-6666-6666-6666-666666666666"
+
+
+@pytest.fixture
+def stores(request, django_db_blocker, monkeypatch):
+    # The assignment migration fixture gives us a disposable PG schema with
+    # projects, without installing the production telemetry schema.
+    request.getfixturevalue("assignment_schema")
+    with django_db_blocker.unblock(), connection.cursor() as cursor:
+        cursor.execute("ALTER TABLE tracer_project ADD COLUMN organization_id uuid")
+        cursor.execute(
+            "UPDATE tracer_project SET organization_id = CASE WHEN id = %s "
+            "THEN %s::uuid ELSE %s::uuid END",
+            [PROJECT, ORG, OTHER_ORG],
+        )
+        cursor.execute("""CREATE TABLE tracer_trace (
+            id uuid PRIMARY KEY, project_id uuid NOT NULL, project_version_id uuid,
+            name varchar(2000), session_id uuid, external_id varchar(255),
+            tags jsonb, metadata jsonb, input jsonb, output jsonb, error jsonb,
+            error_analysis_status varchar(20), created_at timestamptz,
+            updated_at timestamptz, deleted boolean, deleted_at timestamptz
+        )""")
+
+    cfg = get_v2_config()
+    admin = clickhouse_connect.get_client(
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
+    )
+    database = "test_tag_reconcile_" + uuid4().hex
+    admin.command(f"CREATE DATABASE {database}")
+    ch = clickhouse_connect.get_client(
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
+        database=database,
+    )
+    ch.command("""CREATE TABLE traces (
+        id UUID, project_id UUID, project_version_id Nullable(UUID),
+        name Nullable(String), session_id Nullable(UUID), external_id Nullable(String),
+        tags String, metadata String, input String, output String, error String,
+        error_analysis_status String, created_at DateTime64(6, 'UTC'),
+        updated_at DateTime64(6, 'UTC'), is_deleted UInt8, _version UInt64
+    ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+    ORDER BY (project_id, id)""")
+    monkeypatch.setattr(
+        "tracer.management.commands.reconcile_legacy_trace_tags.get_v2_config",
+        lambda: {**cfg, "database": database},
+    )
+
+    def seed(project, pg_tags, ch_tags=None, *, ch_version=1):
+        trace = str(uuid4())
+        with django_db_blocker.unblock(), connection.cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO tracer_trace
+                (id, project_id, tags, created_at, updated_at, deleted,
+                 error_analysis_status)
+                VALUES (%s, %s, %s::jsonb, now(), now(), false, 'pending')""",
+                [trace, project, json.dumps(pg_tags)],
+            )
+        if ch_tags is not None:
+            ch.insert(
+                "traces",
+                [[trace, project, json.dumps(ch_tags), ch_version]],
+                column_names=["id", "project_id", "tags", "_version"],
+            )
+        return trace
+
+    def latest(trace):
+        rows = ch.query(
+            "SELECT tags FROM traces FINAL WHERE id = %(id)s", {"id": trace}
+        ).result_rows
+        return json.loads(rows[0][0]) if rows else None
+
+    def version(trace):
+        return ch.query(
+            "SELECT max(_version) FROM traces WHERE id = %(id)s", {"id": trace}
+        ).result_rows[0][0]
+
+    def legacy_tags(trace):
+        row = {"project_id": PROJECT, "trace_id": trace, "parent_span_id": ""}
+
+        def execute(sql, params, **kwargs):
+            return SimpleNamespace(
+                data=list(ch.query(sql, parameters=params).named_results())
+            )
+
+        attach_legacy_trace_tags(execute, [row])
+        return json.loads(row["trace_tags"])
+
+    try:
+        yield seed, latest, version, legacy_tags
+    finally:
+        ch.close()
+        admin.command(f"DROP DATABASE {database}")
+        admin.close()
+        with django_db_blocker.unblock(), connection.cursor() as cursor:
+            cursor.execute("DROP TABLE tracer_trace")
+            cursor.execute("ALTER TABLE tracer_project DROP COLUMN organization_id")
+
+
+def test_dry_run_reconcile_and_second_run_do_not_duplicate(stores):
+    seed, latest, version, legacy_tags = stores
+    stale = seed(PROJECT, [{"name": "old", "color": "#123456"}], ["stale"])
+    equal = seed(PROJECT, ["equal"], ["equal"])
+    missing = seed(PROJECT, ["missing"])
+    cleared = seed(PROJECT, [], ["old"])
+    other = seed(OTHER_PROJECT, ["other"], ["stale"])
+    before = {
+        trace: version(trace) for trace in (stale, equal, missing, cleared, other)
+    }
+    output = StringIO()
+    call_command(
+        "reconcile_legacy_trace_tags",
+        "--project-id",
+        PROJECT,
+        "--batch-size",
+        "2",
+        "--dry-run",
+        stdout=output,
+    )
+    assert "would mirror 3 trace(s)" in output.getvalue()
+    assert {trace: version(trace) for trace in before} == before
+    assert latest(stale) == ["stale"] and latest(missing) is None
+    assert legacy_tags(stale) == ["stale"]
+
+    output = StringIO()
+    call_command(
+        "reconcile_legacy_trace_tags",
+        "--project-id",
+        PROJECT,
+        "--batch-size",
+        "2",
+        stdout=output,
+    )
+    assert "mirrored 3 trace(s)" in output.getvalue()
+    assert latest(cleared) == []
+    assert latest(stale) == [{"name": "old", "color": "#123456"}]
+    assert legacy_tags(stale) == [{"name": "old", "color": "#123456"}]
+    assert latest(missing) == ["missing"]
+    assert latest(equal) == ["equal"] and latest(other) == ["stale"]
+    assert version(equal) == before[equal] and version(other) == before[other]
+    assert version(stale) > before[stale] and version(cleared) > before[cleared]
+    after = {trace: version(trace) for trace in before}
+
+    output = StringIO()
+    call_command("reconcile_legacy_trace_tags", "--project-id", PROJECT, stdout=output)
+    assert "mirrored 0 trace(s)" in output.getvalue()
+    assert {trace: version(trace) for trace in before} == after
+
+
+def test_organization_scope_and_newest_ch_tags_replaced(stores):
+    seed, latest, version, _ = stores
+    trace = seed(PROJECT, ["pg"], ["ch-only"], ch_version=2**63)
+    outside = seed(OTHER_PROJECT, ["outside"], ["ch-only"])
+    original = (version(trace), version(outside))
+    call_command(
+        "reconcile_legacy_trace_tags", "--organization-id", OTHER_ORG, stdout=StringIO()
+    )
+    assert latest(trace) == ["ch-only"]
+    assert latest(outside) == ["outside"]
+    assert version(trace) == original[0] and version(outside) > original[1]
+    call_command(
+        "reconcile_legacy_trace_tags",
+        "--organization-id",
+        ORG,
+        "--project-id",
+        PROJECT,
+        stdout=StringIO(),
+    )
+    assert latest(trace) == ["pg"]
+    assert version(trace) > original[0]
