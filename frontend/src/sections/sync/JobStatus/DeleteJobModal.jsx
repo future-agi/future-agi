@@ -39,7 +39,13 @@ const DeleteJobModal = ({ open, onClose, connectionId }) => {
   });
 
   return (
-    <Dialog open={open} fullWidth maxWidth="xs" onClose={onClose}>
+    <Dialog
+      open={open}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      onClose={onClose}
+    >
       <DialogTitle
         sx={{
           display: "flex",
@@ -52,7 +58,7 @@ const DeleteJobModal = ({ open, onClose, connectionId }) => {
           Delete Job?
         </Box>
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent>Do you want to delete this Job?</DialogContent>

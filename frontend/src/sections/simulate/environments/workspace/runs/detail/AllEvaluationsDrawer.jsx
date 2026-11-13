@@ -22,6 +22,7 @@ import {
 import {
   runAnalyticsKey,
   callDetailKeyPrefix,
+  compareRunsKeyPrefix,
   runResultsKey,
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
@@ -132,6 +133,7 @@ export default function AllEvaluationsDrawer({
           queryClient.invalidateQueries({
             queryKey: runAnalyticsKey(executionId),
           });
+          queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
           // Call rows are built from the live catalog, and a drawer keeps
           // its detail for minutes: reopened, it must not list the removed eval.
           queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
@@ -151,7 +153,7 @@ export default function AllEvaluationsDrawer({
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ p: 3, pb: 1 }}>
           <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold", pr: 4 }}
+            sx={{ typography: "m2", fontWeight: 500, pr: 4 }}
           >
             All Evaluations
           </Typography>
@@ -178,7 +180,7 @@ export default function AllEvaluationsDrawer({
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               onClick={() => onAddEvaluations?.()}
             >
-              Add Evaluations
+              Add evaluations
             </Button>
           </Stack>
         </Box>

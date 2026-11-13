@@ -33,7 +33,7 @@ export const EVALS_COPY = {
   addedTitleUnknown: "Added evaluations",
   addedError: "Couldn’t load this environment's evaluations. Try again.",
   addedSubtitle:
-    "Every task is scored against these. Add more from Suggested or the library any time.",
+    "Every task is scored against these. Add more from the library any time.",
   lockedTitle: "Add scenarios first",
   lockedBody:
     "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks.",
