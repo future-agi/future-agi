@@ -324,3 +324,48 @@ def test_runs_continue_while_the_sign_in_cannot_be_checked(settings):
         ),
     ):
         asyncio.run(run())
+
+
+def test_runs_stop_at_once_when_the_window_check_finds_the_sign_in_refused(
+    settings,
+):
+    from unittest.mock import AsyncMock
+
+    from django.db import OperationalError
+
+    from accounts.saml_credential import SamlCredentialInvalid
+    from sockets.saml_guard import SamlSocketGuard
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.3
+    consumer = saml_falcon_consumer()
+    sent = AsyncMock()
+
+    async def run():
+        assert await consumer._ensure_live(inbound=True)
+        agent_run = consumer._start_agent_run(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        # A check that cannot complete leaves the socket pending; the window
+        # timer checks again with no frame in flight, and finds a refusal.
+        assert not await consumer._guard.ensure_live(inbound=True)
+        with patch(
+            "channels.generic.websocket.AsyncJsonWebsocketConsumer.send_json", sent
+        ):
+            for _ in range(100):
+                if agent_run.done():
+                    break
+                await asyncio.sleep(0.02)
+            assert agent_run.cancelled()
+        consumer.close.assert_awaited_once_with(code=4001)
+        sent.assert_not_awaited()
+
+    with patch.object(
+        SamlSocketGuard,
+        "_validate",
+        new_callable=AsyncMock,
+        side_effect=[
+            None,
+            OperationalError("synthetic database outage"),
+            SamlCredentialInvalid("token_inactive"),
+        ],
+    ):
+        asyncio.run(run())

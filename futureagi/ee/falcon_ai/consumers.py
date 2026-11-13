@@ -373,6 +373,12 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             await self._stop_all_agent_runs()
         return False
 
+    async def _on_saml_revoked(self):
+        """The guard refused the sign-in, possibly from its window timer with
+        no frame in flight: stop every run now, as ``_ensure_live`` does."""
+
+        await self._stop_all_agent_runs()
+
     async def membership_changed(self, event):
         """Revalidate now; one of this user's memberships has changed."""
 

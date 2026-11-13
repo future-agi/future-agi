@@ -181,7 +181,10 @@ class SamlSocketGuard:
 
     async def _window_check(self) -> None:
         try:
-            await self.ensure_live(inbound=True)
+            if await self.ensure_live(inbound=True):
+                # No client frame or push may follow the recovery, so let the
+                # consumer answer what it kept while the check was pending.
+                await self._notify_consumer("_on_saml_check_recovered")
         except Exception as exc:  # noqa: BLE001 - the socket may be gone
             security_logger.warning(
                 "saml_socket_window_check_failed",
@@ -209,3 +212,22 @@ class SamlSocketGuard:
             transport="websocket",
         )
         await self.consumer.close(code=4001)
+        # Whichever path found the refusal (a frame, a push or the window
+        # timer), the consumer stops its work for this sign-in now.
+        await self._notify_consumer("_on_saml_revoked")
+
+    async def _notify_consumer(self, hook_name: str) -> None:
+        """Await the consumer's optional hook; a failing hook is logged."""
+
+        hook = getattr(self.consumer, hook_name, None)
+        if hook is None:
+            return
+        try:
+            await hook()
+        except Exception as exc:  # noqa: BLE001 - the guard's state is already final
+            security_logger.warning(
+                "saml_socket_hook_failed",
+                hook=hook_name,
+                error_type=type(exc).__name__,
+                transport="websocket",
+            )

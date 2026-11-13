@@ -299,11 +299,16 @@ def test_subscriptions_kept_during_a_pending_check_are_bounded():
             answered = frames(await outputs(socket, settle=0.5))
         finally:
             await socket.disconnect()
-        # The newest subscriptions are kept, in order; the last one wins.
-        assert [frame.get("uuid") for frame in answered[:-1]] == targets[
-            -MAX_PENDING_SUBSCRIPTION_FRAMES:
+        # Each subscribe replaces the socket's one subscription, so only the
+        # last one is answered; it is the one the client still wants.
+        assert answered == [
+            {
+                "type": "subscription_confirmed",
+                "uuid": targets[-1],
+                "current_subscription": f"uuid_org_{org.pk}_{targets[-1]}",
+            },
+            {"type": "pong"},
         ]
-        assert answered[-1] == {"type": "pong"}
 
     with membership:
         asyncio.run(run())
@@ -498,3 +503,91 @@ def test_window_check_is_not_run_after_recovery_or_disconnect(settings):
     with credential.patch():
         asyncio.run(run(stop=False))
         asyncio.run(run(stop=True))
+
+
+def test_kept_frames_never_lose_a_still_wanted_subscription():
+    import json
+
+    from sockets.consumer import MAX_PENDING_SUBSCRIPTION_FRAMES, DataConsumer
+
+    consumer = DataConsumer()
+    consumer.scope = {}
+    consumer.room_group_name = "org_synthetic"
+    wanted = str(uuid4())
+    others = [str(uuid4()) for _ in range(MAX_PENDING_SUBSCRIPTION_FRAMES + 4)]
+
+    def keep(frame):
+        consumer._keep_subscription_frame(json.dumps(frame))
+
+    keep({"type": "subscribe", "uuid": wanted})
+    for other in others:
+        keep({"type": "unsubscribe", "uuid": other})
+        keep({"type": "unsubscribe", "uuid": other})  # repeated: kept once
+    kept = consumer._pending_subscription_frames
+    assert len(kept) == MAX_PENDING_SUBSCRIPTION_FRAMES
+    assert kept[0] == {"type": "subscribe", "uuid": wanted}
+    assert consumer._unanswered_subscription_frames == len(others) - (
+        MAX_PENDING_SUBSCRIPTION_FRAMES - 1
+    )
+
+    # An unsubscribe of the wanted target is never the one dropped.
+    keep({"type": "unsubscribe", "uuid": wanted})
+    assert {"type": "unsubscribe", "uuid": wanted} in kept
+    assert kept[0] == {"type": "subscribe", "uuid": wanted}
+
+    # A later subscribe makes everything kept before it irrelevant.
+    latest = str(uuid4())
+    keep({"type": "subscribe", "uuid": latest})
+    assert kept == [{"type": "subscribe", "uuid": latest}]
+    assert consumer._unanswered_subscription_frames == 0
+
+
+def test_window_check_recovery_answers_kept_subscriptions(settings):
+    """pending -> the window timer's check succeeds -> a targeted chunk with no
+    client frame in between is delivered."""
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.6
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    credential = Credential()
+    target = str(uuid4())
+
+    async def run():
+        socket = await open_direct_socket(member, org, saml=True)
+        try:
+            credential.failure = OperationalError("synthetic database outage")
+            checks = credential.checks
+            await socket.send_json_to({"type": "subscribe", "uuid": target})
+            for _ in range(100):
+                if credential.checks > checks:
+                    break
+                await asyncio.sleep(0.02)
+            assert await socket.receive_nothing(timeout=0.1)
+
+            credential.failure = None
+            checks = credential.checks
+            # Only the window timer checks again; nothing is sent meanwhile.
+            for _ in range(100):
+                if credential.checks > checks:
+                    break
+                await asyncio.sleep(0.02)
+            assert credential.checks > checks
+            await asyncio.sleep(0.2)
+
+            chunk = {"uuid": target, "chunk": "synthetic", "marker": uuid4().hex}
+            await send_to_target(org, target, chunk)
+            events = await outputs(socket, settle=0.5)
+            assert closed(events) == []
+            assert frames(events) == [
+                {
+                    "type": "subscription_confirmed",
+                    "uuid": target,
+                    "current_subscription": f"uuid_org_{org.pk}_{target}",
+                },
+                chunk,
+            ]
+        finally:
+            await socket.disconnect()
+
+    with credential.patch():
+        asyncio.run(run())

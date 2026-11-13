@@ -1,6 +1,6 @@
+import asyncio
 import json
 import time
-from collections import deque
 
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -13,7 +13,9 @@ from sockets.targets import normalize_socket_target
 logger = structlog.get_logger(__name__)
 
 # Subscription frames that arrive while a credential or membership check is
-# pending are kept, in order, and answered once a check succeeds.
+# pending are kept, in order, and answered once a check succeeds. They are
+# coalesced to what can still change the socket's one subscription (see
+# DataConsumer._keep_subscription_frame), and at most this many are kept.
 SUBSCRIPTION_FRAME_TYPES = frozenset({"subscribe", "unsubscribe"})
 MAX_PENDING_SUBSCRIPTION_FRAMES = 16
 
@@ -27,9 +29,12 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         self.user_group_name = None
         self._guard = SamlSocketGuard(self)
         self._membership = MembershipSocketGuard(self)
-        self._pending_subscription_frames = deque(
-            maxlen=MAX_PENDING_SUBSCRIPTION_FRAMES
-        )
+        self._pending_subscription_frames: list[dict] = []
+        # Unsubscribe frames left unanswered because the queue was full.
+        self._unanswered_subscription_frames = 0
+        # Kept frames are answered from receive(), send_data() and the SAML
+        # window check; one at a time, so they are answered in order.
+        self._answer_lock = asyncio.Lock()
 
     async def connect(self):
         self.user = self.scope["user"]
@@ -91,8 +96,14 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
     def _keep_subscription_frame(self, text_data) -> None:
         """Keep a subscription frame that arrived while a check was pending.
 
-        A later subscription replaces an earlier one, so when the queue is
-        full the oldest frame is dropped.
+        A socket has one subscription, and a subscribe replaces it, so a
+        subscribe makes every frame kept before it irrelevant and replaces
+        them. Repeated frames for one target keep only the latest. What is
+        kept is therefore the latest subscribe plus unsubscribes of distinct
+        targets. If those exceed the bound, the oldest unsubscribe of a target
+        the socket would not be subscribed to is dropped (its only answer
+        would be "Not subscribed"), and the client is told how many went
+        unanswered.
         """
 
         if not text_data:
@@ -107,15 +118,71 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if not isinstance(content, dict):
             return
         frame_type = content.get("type")
-        if isinstance(frame_type, str) and frame_type in SUBSCRIPTION_FRAME_TYPES:
-            self._pending_subscription_frames.append(content)
+        if not (isinstance(frame_type, str) and frame_type in SUBSCRIPTION_FRAME_TYPES):
+            return
+        target = content.get("uuid")
+        kept = self._pending_subscription_frames
+        if frame_type == "subscribe" and target:
+            kept.clear()
+            self._unanswered_subscription_frames = 0
+        else:
+            kept[:] = [
+                frame
+                for frame in kept
+                if (frame.get("type"), frame.get("uuid")) != (frame_type, target)
+            ]
+        kept.append(content)
+        if len(kept) > MAX_PENDING_SUBSCRIPTION_FRAMES:
+            self._drop_unneeded_unsubscribe()
+
+    def _drop_unneeded_unsubscribe(self) -> None:
+        kept = self._pending_subscription_frames
+        subscribe = next(
+            (frame for frame in kept if frame.get("type") == "subscribe"), None
+        )
+        if subscribe is not None and subscribe.get("uuid"):
+            wanted = self._uuid_group_name(subscribe["uuid"])
+        else:
+            wanted = self.current_subscription
+        for index, frame in enumerate(kept):
+            if frame.get("type") != "unsubscribe" or not frame.get("uuid"):
+                continue
+            if self._uuid_group_name(frame["uuid"]) == wanted:
+                continue
+            del kept[index]
+            self._unanswered_subscription_frames += 1
+            return
 
     async def _answer_pending_subscription_frames(self) -> None:
         """Answer kept subscription frames; call only after a check succeeded."""
 
-        while self._pending_subscription_frames:
-            content = self._pending_subscription_frames.popleft()
-            await self.receive_json(content)
+        async with self._answer_lock:
+            while self._pending_subscription_frames:
+                content = self._pending_subscription_frames.pop(0)
+                await self.receive_json(content)
+            unanswered = self._unanswered_subscription_frames
+            if unanswered:
+                self._unanswered_subscription_frames = 0
+                await self.send_json(
+                    {
+                        "type": "info",
+                        "message": (
+                            f"{unanswered} unsubscribe requests for targets this "
+                            "socket was not subscribed to were not answered"
+                        ),
+                    }
+                )
+
+    async def _on_saml_check_recovered(self) -> None:
+        """The SAML window check succeeded with no frame to carry the replay:
+        answer the kept subscription frames now, so a stream sent to a target
+        subscribed while pending is delivered."""
+
+        if self._socket_closed() or not self._pending_subscription_frames:
+            return
+        if not await self._membership.ensure_member():
+            return
+        await self._answer_pending_subscription_frames()
 
     async def receive_json(self, content):
         """
