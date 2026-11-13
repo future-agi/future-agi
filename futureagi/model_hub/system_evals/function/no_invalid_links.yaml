@@ -1,6 +1,6 @@
 eval_id: 42
 name: no_invalid_links
-description: Checks that all detected URLs are reachable on operator-approved public hosts
+description: Checks that all detected URLs are reachable on operator-approved public hosts. Links with a scheme other than http or https, and scheme-relative //host links (which are not resolved as https), count as invalid and are never requested; only http(s) links count toward the 20-link limit.
 eval_tags:
 - Output Validation
 visible_ui: true

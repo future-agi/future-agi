@@ -1,6 +1,6 @@
 eval_id: 39
 name: contains_valid_link
-description: Checks for a reachable URL on an operator-approved public host
+description: Checks for a reachable URL on an operator-approved public host. Only http and https links are checked; links with another scheme and scheme-relative //host links (which are not resolved as https) never count as valid, and only http(s) links count toward the 20-link limit.
 eval_tags:
 - Output Validation
 visible_ui: true
