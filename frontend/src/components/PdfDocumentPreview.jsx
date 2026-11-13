@@ -24,6 +24,24 @@ const documentOptions = safePdfDocumentOptions({
 const keepLinkAnnotations = ({ annotations }) =>
   annotations.filter((annotation) => annotation.subtype === "Link");
 
+// The PDF y coordinate a link destination puts at the top of the view, or
+// null for the top of the page. Horizontal position and zoom are not used:
+// the preview always shows the full page width.
+const destinationTop = (dest) => {
+  const [, mode, ...args] = Array.isArray(dest) ? dest : [];
+  switch (mode?.name) {
+    case "XYZ":
+      return args[1];
+    case "FitH":
+    case "FitBH":
+      return args[0];
+    case "FitR":
+      return args[3];
+    default:
+      return null;
+  }
+};
+
 export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
   const container = useRef(null);
   const [width, setWidth] = useState(600);
@@ -32,6 +50,42 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
   // page count from a ref rather than from state.
   const pageCount = useRef(0);
   const [pageNumber, setPageNumber] = useState(1);
+  // The same applies to the link target and the painted page it scrolls to.
+  const pendingLink = useRef(null);
+  const paintedPage = useRef(null);
+  const pageElement = useRef(null);
+
+  // Scroll the preview so the pending link's destination is at the top.
+  const scrollToPendingLink = () => {
+    const link = pendingLink.current;
+    const page = paintedPage.current;
+    const scroller = container.current;
+    const element = pageElement.current;
+    if (!link || !page || !scroller || !element) return;
+    if (page.pageNumber !== link.pageNumber) return;
+    pendingLink.current = null;
+    const top = destinationTop(link.dest);
+    if (typeof top !== "number" || !Number.isFinite(top)) {
+      // Whole-page destinations show the page buttons and the top of the page.
+      scroller.scrollTop = 0;
+      return;
+    }
+    const pageTop =
+      element.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    const scale = page.width / page.originalWidth;
+    const [, offset] = page
+      .getViewport({ scale })
+      .convertToViewportPoint(0, top);
+    scroller.scrollTop = pageTop + Math.max(0, offset);
+  };
+
+  const showPage = (next) => {
+    pendingLink.current = null;
+    paintedPage.current = null;
+    setPageNumber(next);
+  };
 
   useEffect(() => {
     const element = container.current;
@@ -51,16 +105,20 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
         onLoadSuccess={({ numPages }) => {
           pageCount.current = numPages;
           setPages(numPages);
-          setPageNumber(1);
+          showPage(1);
           onLoad();
         }}
         onLoadError={onError}
         // Only the current page is rendered, so internal links (tables of
-        // contents, cross references) move the preview to their page.
-        onItemClick={({ pageNumber: target }) => {
-          if (target >= 1 && target <= pageCount.current) {
-            setPageNumber(target);
+        // contents, cross references) move the preview to their page and
+        // then scroll to the destination's position once it is painted.
+        onItemClick={({ dest, pageNumber: target }) => {
+          if (!(target >= 1 && target <= pageCount.current)) return;
+          if (paintedPage.current?.pageNumber !== target) {
+            showPage(target);
           }
+          pendingLink.current = { pageNumber: target, dest };
+          scrollToPendingLink();
         }}
         externalLinkTarget="_blank"
         externalLinkRel="noopener noreferrer nofollow"
@@ -77,7 +135,7 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
             >
               <Button
                 disabled={pageNumber <= 1}
-                onClick={() => setPageNumber((n) => n - 1)}
+                onClick={() => showPage((n) => n - 1)}
               >
                 Previous page
               </Button>
@@ -86,17 +144,22 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
               </Typography>
               <Button
                 disabled={pageNumber >= pages}
-                onClick={() => setPageNumber((n) => n + 1)}
+                onClick={() => showPage((n) => n + 1)}
               >
                 Next page
               </Button>
             </Stack>
             <Page
               pageNumber={pageNumber}
+              inputRef={pageElement}
               width={width}
               renderTextLayer
               renderAnnotationLayer
               filterAnnotations={keepLinkAnnotations}
+              onRenderSuccess={(page) => {
+                paintedPage.current = page;
+                scrollToPendingLink();
+              }}
               onRenderError={onError}
               loading={<Typography role="status">Rendering page…</Typography>}
             />

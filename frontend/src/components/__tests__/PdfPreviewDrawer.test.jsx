@@ -27,9 +27,12 @@ vi.mock("react-pdf", async () => {
   };
   const Page = (props) => {
     page.props = props;
-    return <div>Rendered page {props.pageNumber}</div>;
+    return <div ref={props.inputRef}>Rendered page {props.pageNumber}</div>;
   };
-  Page.propTypes = { pageNumber: PropTypes.number };
+  Page.propTypes = {
+    pageNumber: PropTypes.number,
+    inputRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  };
   return { pdfjs: { GlobalWorkerOptions: worker }, Document, Page };
 });
 vi.mock("src/utils/CommonStores/pdfPreviewStore", () => ({
@@ -145,6 +148,130 @@ describe("PDF preview rendering", () => {
     expect(page.props.pageNumber).toBe(3);
     act(() => viewer.onItemClick({ dest: [], pageIndex: 0, pageNumber: 1 }));
     expect(screen.getByText("Page 1 of 3")).toBeVisible();
+  });
+
+  describe("internal links to a position on a page", () => {
+    // A 612x792 pt page drawn 1.5x wide, 48px below the top of the scrolled
+    // preview (under the page buttons). PDF y coordinates run up from the
+    // bottom of the page, so a point y pt up sits (792 - y) * 1.5 px down.
+    const PAGE_OFFSET = 48;
+    const SCALE = 1.5;
+    const pageRef = { num: 6, gen: 0 };
+    const renderedPage = (pageNumber) => ({
+      pageNumber,
+      width: 612 * SCALE,
+      originalWidth: 612,
+      getViewport: ({ scale }) => ({
+        convertToViewportPoint: (x, y) => [x * scale, (792 - y) * scale],
+      }),
+    });
+    const below = (y) => PAGE_OFFSET + (792 - y) * SCALE;
+
+    const openDocument = (numPages) => {
+      render(<PdfPreviewDrawer />);
+      act(() => viewer.props.onLoadSuccess({ numPages }));
+      const scroller = screen.getByTestId("pdf-rendered").parentElement;
+      // jsdom has no layout: give the preview a scroll position and place
+      // the page element below the page buttons.
+      let scrollTop = 0;
+      Object.defineProperty(scroller, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value) => {
+          scrollTop = value;
+        },
+      });
+      scroller.getBoundingClientRect = () => ({ top: 100 });
+      const paint = (pageNumber) => {
+        const element = screen.getByText(`Rendered page ${pageNumber}`);
+        element.getBoundingClientRect = () => ({
+          top: 100 + PAGE_OFFSET - scrollTop,
+        });
+        act(() => page.props.onRenderSuccess?.(renderedPage(pageNumber)));
+      };
+      paint(1);
+      return { scroller, paint };
+    };
+
+    it("scrolls to an /XYZ destination on the current page", () => {
+      const { scroller } = openDocument(2);
+      act(() =>
+        viewer.onItemClick({
+          dest: [pageRef, { name: "XYZ" }, 72, 300, null],
+          pageIndex: 0,
+          pageNumber: 1,
+        }),
+      );
+      expect(page.props.pageNumber).toBe(1);
+      expect(scroller.scrollTop).toBe(below(300));
+    });
+
+    it("opens an /XYZ destination on another page at its position", () => {
+      const { scroller, paint } = openDocument(2);
+      scroller.scrollTop = 40;
+      act(() =>
+        viewer.onItemClick({
+          dest: [pageRef, { name: "XYZ" }, 0, 500, 0],
+          pageIndex: 1,
+          pageNumber: 2,
+        }),
+      );
+      expect(screen.getByText("Page 2 of 2")).toBeVisible();
+      paint(2);
+      expect(scroller.scrollTop).toBe(below(500));
+      // Repainting the same page (for example on resize) keeps the reader's place.
+      scroller.scrollTop = 25;
+      paint(2);
+      expect(scroller.scrollTop).toBe(25);
+    });
+
+    it("uses the top of /FitH, /FitBH and /FitR destinations", () => {
+      const { scroller } = openDocument(1);
+      for (const [dest, top] of [
+        [[pageRef, { name: "FitH" }, 600], 600],
+        [[pageRef, { name: "FitBH" }, 450], 450],
+        [[pageRef, { name: "FitR" }, 72, 100, 300, 250], 250],
+      ]) {
+        act(() => viewer.onItemClick({ dest, pageIndex: 0, pageNumber: 1 }));
+        expect(scroller.scrollTop).toBe(below(top));
+      }
+    });
+
+    it("shows the page buttons and the top of the page for whole-page destinations", () => {
+      const { scroller, paint } = openDocument(3);
+      for (const [dest, pageNumber] of [
+        [[pageRef, { name: "Fit" }], 2],
+        [[pageRef, { name: "FitV" }, 72], 3],
+        [[pageRef, { name: "XYZ" }, null, null, null], 1],
+        [[pageRef, { name: "FitH" }, null], 2],
+      ]) {
+        scroller.scrollTop = 500;
+        act(() =>
+          viewer.onItemClick({ dest, pageIndex: pageNumber - 1, pageNumber }),
+        );
+        paint(pageNumber);
+        expect(page.props.pageNumber).toBe(pageNumber);
+        expect(scroller.scrollTop).toBe(0);
+        expect(screen.getByText(`Page ${pageNumber} of 3`)).toBeVisible();
+      }
+    });
+
+    it("does not scroll when the page buttons change page", () => {
+      const { scroller, paint } = openDocument(2);
+      act(() =>
+        viewer.onItemClick({
+          dest: [pageRef, { name: "XYZ" }, 0, 500, null],
+          pageIndex: 1,
+          pageNumber: 2,
+        }),
+      );
+      // The reader moves on before the linked page has painted.
+      fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+      scroller.scrollTop = 30;
+      paint(1);
+      expect(page.props.pageNumber).toBe(1);
+      expect(scroller.scrollTop).toBe(30);
+    });
   });
 
   it("keeps link annotations and opens external links in a new tab", () => {
