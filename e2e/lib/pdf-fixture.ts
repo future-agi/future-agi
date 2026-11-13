@@ -17,23 +17,33 @@ const JPX_SWATCH = Buffer.from(
   + 'SEhQSEhQ/2QAJQABQ3JlYXRlZCBieSBPcGVuSlBFRyB2ZXJzaW9uIDIuNS4w/5AACgAAAAAAKAAB/5PfgAgHw+cECD/PtAgEF4CAgICAgICA'
   + 'gICAgP/Z', 'base64');
 
+/** Labels drawn over page 1's link annotations. */
+export const PDF_LINK_LABELS = { internal: 'Go to page 2', external: 'Example site' } as const;
+/** URI of page 1's external link; the preview opens it in a new tab and the flow never follows it. */
+export const PDF_EXTERNAL_LINK = 'https://example.com/';
+
 /** Synthetic PDF bytes for the real document-upload input; no remote fixture. */
 export function pdfFixture(marker: string, unreadable = false): Buffer {
   if (!/^[a-zA-Z0-9-]+$/.test(marker)) throw new Error('PDF marker must be alphanumeric');
   if (unreadable) return Buffer.from('%PDF-1.4\nunreadable synthetic document\n');
   const text = (page: number) => `BT /F1 20 Tf 72 700 Td (PDF ${page} ${marker}) Tj ET\n`;
-  // Page 1 also paints the JPEG 2000 swatch into a 200x100 pt box below the text.
-  const page1 = `${text(1)}q 200 0 0 100 72 500 cm /Im1 Do Q\n`;
+  // Page 1 also paints the JPEG 2000 swatch into a 200x100 pt box below the text,
+  // and labels the two link annotations listed after the image.
+  const page1 = `${text(1)}BT /F1 14 Tf 72 660 Td (${PDF_LINK_LABELS.internal}) Tj ET\n`
+    + `BT /F1 14 Tf 72 630 Td (${PDF_LINK_LABELS.external}) Tj ET\nq 200 0 0 100 72 500 cm /Im1 Do Q\n`;
   // Built as latin1 so the binary image stream keeps its exact bytes and xref offsets.
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 8 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 8 0 R >> >> /Contents 5 0 R /Annots [9 0 R 10 0 R] >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     `<< /Length ${page1.length} >>\nstream\n${page1}endstream`,
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>',
     `<< /Length ${text(2).length} >>\nstream\n${text(2)}endstream`,
     `<< /Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /JPXDecode /Length ${JPX_SWATCH.length} >>\nstream\n${JPX_SWATCH.toString('latin1')}\nendstream`,
+    // An internal link to page 2, as a table-of-contents entry is.
+    '<< /Type /Annot /Subtype /Link /Rect [72 655 300 680] /Border [0 0 0] /Dest [6 0 R /Fit] >>',
+    `<< /Type /Annot /Subtype /Link /Rect [72 625 300 650] /Border [0 0 0] /A << /S /URI /URI (${PDF_EXTERNAL_LINK}) >> >>`,
   ];
   let content = '%PDF-1.4\n';
   const offsets = [0];

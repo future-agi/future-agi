@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
-import { JPX_SWATCH_RGB, uploadPdfFixture } from '../../lib/pdf-fixture';
+import { JPX_SWATCH_RGB, PDF_EXTERNAL_LINK, uploadPdfFixture } from '../../lib/pdf-fixture';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
@@ -22,12 +22,14 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
       userGoal: `Read a stored PDF from a ${entry} cell without a CDN dependency and recognize an unreadable document`,
       steps: ['create a document dataset and upload a synthetic PDF through the product input',
         `open the ${entry} document preview with external runtime requests denied`,
-        'read both pages and the JPEG 2000 image, navigate back, close and reopen, then download the PDF',
+        'read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2,'
+          + ' close and reopen, then download the PDF',
         'upload an unreadable PDF and verify the error state with no rendered page'],
       backendChecks: ['the stored dataset and document cell belong to the actor scope',
         'the storage URL and browser download return exactly the uploaded PDF bytes',
         'the document cell opens the correct PDF through a same-origin worker without a CDN request',
-        'the JPEG 2000 image is decoded with same-origin decoder files and painted on the page'],
+        'the JPEG 2000 image is decoded with same-origin decoder files and painted on the page',
+        'the in-document link moves the preview to its page and the external link opens in a new tab'],
     }),
   }, async ({ page, context, actor, probe }, testInfo) => {
     // 2 * (ASYNC_JOB 60s + 8 UI_READY 60s) + 120s setup headroom.
@@ -147,6 +149,15 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
           expect(blocked.filter(url => /pdf\.worker|pdfjs-dist|unpkg\.com/.test(url))).toEqual([]);
           await preview.getByRole('button', { name: 'Next page', exact: true }).click();
           await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
+          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          // Page 1's link annotations: the external one opens a new tab and is not followed here.
+          const external = preview.locator(`.annotationLayer a[href="${PDF_EXTERNAL_LINK}"]`);
+          await expect(external).toHaveAttribute('target', '_blank', { timeout: UI_READY });
+          expect((await external.getAttribute('rel'))?.split(' ')).toEqual(expect.arrayContaining(['noopener', 'noreferrer']));
+          await preview.locator('.annotationLayer a[href="#"]').click();
+          await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          await expect(preview.getByText('Page 2 of 2', { exact: true })).toBeVisible();
           await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
           await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
           await preview.getByRole('button', { name: 'Close', exact: true }).click();

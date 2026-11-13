@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { pdfFixture, uploadPdfFixture } from '../lib/pdf-fixture';
+import { PDF_EXTERNAL_LINK, pdfFixture, uploadPdfFixture } from '../lib/pdf-fixture';
 
 for (const unreadable of [false, true]) {
   test(`PDF fixture uploads exact synthetic bytes (unreadable=${unreadable})`, async ({ page }) => {
@@ -19,9 +19,13 @@ for (const unreadable of [false, true]) {
       const xref = Number(source.match(/startxref\n(\d+)/)![1]);
       expect(source.slice(xref, xref + 4)).toBe('xref');
       const offsets = [...source.slice(xref).matchAll(/^(\d{10}) 00000 n $/gm)].map(match => Number(match[1]));
-      expect(offsets).toHaveLength(8);
+      expect(offsets).toHaveLength(10);
       offsets.forEach((offset, index) => expect(source.slice(offset)).toMatch(new RegExp(`^${index + 1} 0 obj\n`)));
       expect(source.match(/\/Type \/Page /g)).toHaveLength(2);
+      // Page 1 lists an internal link to page 2 (object 6) and one URI link.
+      expect(source).toContain('/Annots [9 0 R 10 0 R]');
+      expect(source).toMatch(/9 0 obj\n<< \/Type \/Annot \/Subtype \/Link [^\n]*\/Dest \[6 0 R \/Fit\] >>/);
+      expect(source).toContain(`10 0 obj\n<< /Type /Annot /Subtype /Link /Rect [72 625 300 650] /Border [0 0 0] /A << /S /URI /URI (${PDF_EXTERNAL_LINK}) >> >>`);
       const image = source.match(/\/Filter \/JPXDecode \/Length (\d+) >>\nstream\n/)!;
       const stream = bytes.subarray(image.index! + image[0].length, image.index! + image[0].length + Number(image[1]));
       // JP2 signature box, then the end-of-codestream marker.
