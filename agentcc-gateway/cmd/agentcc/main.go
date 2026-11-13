@@ -138,11 +138,12 @@ func main() {
 	keyStore := auth.NewKeyStore(cfg.Auth)
 	var plugins []pipeline.Plugin
 
-	// Create IP ACL plugin (priority 50: runs before auth).
-	var ipaclPlugin *ipaclplugin.Plugin
+	// Create IP ACL plugin (priority 10: runs before auth). It is always
+	// registered: an org's own ip_acl applies whether or not the global list
+	// is enabled, and the plugin checks the global list only when it is.
+	ipaclPlugin := ipaclplugin.New(cfg.IPACL, tenantStore)
+	plugins = append(plugins, ipaclPlugin)
 	if cfg.IPACL.Enabled {
-		ipaclPlugin = ipaclplugin.New(cfg.IPACL, tenantStore)
-		plugins = append(plugins, ipaclPlugin)
 		slog.Info("ip acl enabled", "allow_rules", ipaclPlugin.AllowCount(), "deny_rules", ipaclPlugin.DenyCount())
 	}
 
