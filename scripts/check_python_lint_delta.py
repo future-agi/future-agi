@@ -326,7 +326,12 @@ def ruff_unformatted(ruff: str, tree: Path, paths: list[str]) -> set[str]:
         "--output-format",
         "json",
     ]
-    proc = run(cmd + ["--", *rel], tree / BACKEND_DIR, ok_codes=(0, 1))
+    try:
+        proc = run(cmd + ["--", *rel], tree / BACKEND_DIR, ok_codes=(0, 1))
+    except GateError as exc:
+        raise GateError(
+            f"ruff format check of {', '.join(paths)} failed: {exc}"
+        ) from exc
     root = (tree / BACKEND_DIR).resolve()
     return {
         f"{BACKEND_DIR}/{Path(f['filename']).resolve().relative_to(root).as_posix()}"
@@ -334,15 +339,17 @@ def ruff_unformatted(ruff: str, tree: Path, paths: list[str]) -> set[str]:
     }
 
 
-def ruff_discovered(ruff: str, tree: Path) -> set[str]:
-    """Repo-relative paths of the backend files Ruff's configuration includes in one tree.
+def ruff_discovered(ruff: str, tree: Path, paths: list[str]) -> set[str]:
+    """Repo-relative changed paths Ruff's configuration includes in one tree.
 
-    Ruff's own file discovery applies the configured exclusions, as --force-exclude
-    does for a path passed by name, without reading any file. It still lists an
-    included file it cannot read, such as a broken symlink. Ignore files are not
-    applied: the lint and format passes name their paths, and Ruff does not
-    filter named paths by .gitignore.
+    Passing the files directly limits configuration loading to their ancestors.
+    --force-exclude applies configured exclusions even to explicitly named files.
+    Ignore files are not applied: the lint and format passes name their paths,
+    and Ruff does not filter named paths by .gitignore.
     """
+    rel = [str(PurePosixPath(p).relative_to(BACKEND_DIR)) for p in paths]
+    if not rel:
+        return set()
     proc = run(
         [
             ruff,
@@ -352,7 +359,7 @@ def ruff_discovered(ruff: str, tree: Path) -> set[str]:
             "--no-respect-gitignore",
             "--show-files",
             "--",
-            ".",
+            *rel,
         ],
         tree / BACKEND_DIR,
     )
@@ -379,7 +386,7 @@ def formatting_only_files(
     lint settings (per-file ignores, excludes, the test and migration rules), so
     identical bytes do not make its findings comparable by count. A file that
     Ruff's configuration excludes in either tree is skipped before anything is
-    read; an included file that cannot be read fails closed.
+    read; the format pass fails closed for an included unreadable file.
 
     Stdin keeps the baseline worktree untouched. Byte I/O deliberately preserves
     line endings: text-mode newline normalization would weaken the equality test.
@@ -392,7 +399,9 @@ def formatting_only_files(
     )
     if not candidates:
         return set()
-    included = ruff_discovered(ruff, base_tree) & ruff_discovered(ruff, head_tree)
+    included = ruff_discovered(ruff, base_tree, candidates) & ruff_discovered(
+        ruff, head_tree, candidates
+    )
     result = set()
     for path in candidates:
         if path not in included:
@@ -443,6 +452,8 @@ def new_violations(
     then from touched lines (see line_ranks), then from the rest. Only files proven
     to be exact formatter output may omit source text from the key. Their baseline
     findings still come from the original bytes, not the formatted baseline.
+    Equal per-rule totals do not identify individual findings when formatting
+    moves a suppression between lines.
     """
     to_head = {old: new for new, old in renames.items() if old}
 

@@ -816,10 +816,58 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
             ),
             set(),
         )
-        with self.assertRaisesRegex(gate.GateError, re.escape(included)):
+        # --show-files can omit a broken named link; the regular format pass
+        # still reports an included unreadable file instead of accepting it.
+        self.assertEqual(
             gate.formatting_only_files(
                 RUFF, self.repo, self.repo, {included: included}, set()
-            )
+            ),
+            set(),
+        )
+        with self.assertRaisesRegex(gate.GateError, re.escape(included)):
+            gate.ruff_unformatted(RUFF, self.repo, [included])
+
+    def test_unrelated_config_does_not_stop_changed_file_checks(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/a.py"
+        self.write(path, "x=1\n")
+        for config_path, config_text in (
+            ("futureagi/other/ruff.toml", "line-length = true\n"),
+            (
+                "futureagi/other/pyproject.toml",
+                "[tool.ruff.lint]\nunknown-setting = true\n",
+            ),
+        ):
+            with self.subTest(config=config_path):
+                self.write(config_path, config_text)
+                base = self.commit()
+                for change, text in (
+                    ("formatting", "x = 1\n"),
+                    ("ordinary", "x=2\n"),
+                ):
+                    with self.subTest(change=change):
+                        self.write(path, text)
+                        self.commit()
+                        code, found, proc = self.gate(base)
+                        self.assertEqual(
+                            (code, found), (0, []), proc.stdout + proc.stderr
+                        )
+                        self.git("reset", "--hard", base)
+                (self.repo / config_path).unlink()
+                self.commit()
+
+    def test_config_for_a_changed_file_still_fails_closed(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/ruff.toml", "line-length = true\n")
+        path = "futureagi/app/a.py"
+        self.write(path, "x = 1\n")
+        base = self.commit()
+        self.write(path, "x = 2\n")
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (2, []), proc.stdout + proc.stderr)
+        self.assertIn("app/ruff.toml", proc.stdout)
 
     def test_an_included_unreadable_file_fails_closed(self):
         self.write("futureagi/pyproject.toml", CONFIG)
