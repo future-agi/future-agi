@@ -23,6 +23,10 @@ services:
     environment:
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      # Literal values: a value exported in the caller's shell would otherwise
+      # replace the env file's loopback telemetry address.
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       # Shared by the API and embedded SQL worker; bin/e2e up provisions it.
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
