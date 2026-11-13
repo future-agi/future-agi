@@ -67,16 +67,9 @@ repos:
   #       files: '\.(html)$'
   #       types_or: [html]
 
-  # Type checking with Future AGI's baseline strategy
-  - repo: local
-    hooks:
-      - id: mypy
-        name: mypy type checking (Future AGI baseline)
-        entry: bash -c 'make mypy || true'  # Don't fail pre-commit, just warn
-        language: system
-        types: [python]
-        pass_filenames: false
-        verbose: true
+  # No mypy hook: a whole-repo run takes minutes, too slow for every commit.
+  # CI's "Python types (advisory)" workflow checks it against
+  # mypy-baseline.txt; `make mypy` shows the same result before pushing.
 
 # Configuration for specific tools
 default_language_version:
