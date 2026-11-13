@@ -119,12 +119,10 @@ class Evaluation(BaseModel):
             try:
                 data = self.value
 
-                if isinstance(data, float) or isinstance(data, int):
+                if isinstance(data, bool) or data in [["Passed"], ["Failed"]]:
+                    self.output_bool = data == ["Passed"] or data is True
+                elif isinstance(data, float) or isinstance(data, int):
                     self.output_float = float(data)
-                elif isinstance(data, bool) or data in [["Passed"], ["Failed"]]:
-                    self.output_bool = (
-                        True if data == "Passed" or data is True else False
-                    )
                 elif isinstance(data, list):
                     self.output_str_list = data
                 elif isinstance(data, str) and data in ["Passed", "Failed"]:
