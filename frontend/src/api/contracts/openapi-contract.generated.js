@@ -2832,7 +2832,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           workspace_id: {
@@ -16767,7 +16767,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           page_size: {
@@ -20734,7 +20734,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           filters: {
@@ -30659,7 +30659,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -31275,7 +31275,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["agent_definition", "prompt"],
+              enum: ["", "agent_definition", "prompt"],
               default: "",
             },
           },
@@ -33004,7 +33004,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: {},
+              default: "{}",
             },
           },
           ordering: {
@@ -33056,6 +33056,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "goal",
                 "sub_goal",
                 "accent",
@@ -33868,7 +33869,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           agent_definition_id: {
@@ -33905,6 +33906,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "system_metric",
                 "eval_metric",
                 "annotation_metric",
@@ -33918,7 +33920,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["metric", "dimension"],
+              enum: ["", "metric", "dimension"],
               default: "",
             },
           },
@@ -33927,6 +33929,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "traces",
                 "spans",
                 "sessions",
@@ -41119,14 +41122,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
           exclude_annotators: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "[]",
             },
           },
         },
@@ -42384,7 +42387,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
           filters: {
@@ -43628,14 +43631,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: [],
             },
           },
           attribute_keys: {
             required: false,
             schema: {
               type: "string",
-              default: [],
+              default: "",
             },
           },
         },
@@ -59682,6 +59684,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Category",
           type: "string",
           enum: [
+            "",
             "system_metric",
             "eval_metric",
             "annotation_metric",
@@ -59693,13 +59696,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         role: {
           title: "Role",
           type: "string",
-          enum: ["metric", "dimension"],
+          enum: ["", "metric", "dimension"],
           default: "",
         },
         source: {
           title: "Source",
           type: "string",
           enum: [
+            "",
             "traces",
             "spans",
             "sessions",
@@ -82846,11 +82850,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-      additionalProperties: {
-        description:
-          "Provider-specific credential fields accepted at top level.",
-        type: "object",
-      },
+      description:
+        "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
+      additionalProperties: true,
     },
     SDKConfigureEvaluationsResponse: {
       required: ["status", "result"],
@@ -88385,7 +88387,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         trace_ids: {
           title: "Trace ids",
           type: "string",
-          default: [],
+          default: "",
         },
         filters: {
           title: "Filters",
@@ -91909,14 +91911,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
           type: "string",
-          default: [],
         },
         attribute_keys: {
           title: "Attribute keys",
           description:
             "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
           type: "string",
-          default: [],
+          default: "",
         },
       },
     },
@@ -113874,9 +113875,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 1,
         },
       },
-      additionalProperties: {
-        type: "object",
-      },
+      description:
+        "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
+      additionalProperties: true,
     },
     SDKStandaloneEvalResultItem: {
       required: ["evaluations"],

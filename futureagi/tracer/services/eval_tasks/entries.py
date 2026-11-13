@@ -165,8 +165,11 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     epoch = _engine_entry_epoch.get()
     if epoch is not None:
         fence["updated_at"] = epoch
-    EvalLogger.objects.filter(**fence).update(**fields)
-    return EvalLogger.objects.filter(id=entry_id).first()
+    if not EvalLogger.objects.filter(**fence).update(**fields):
+        # A deleted/reclaimed entry did not accept this result. Do not hand a
+        # newer claim to callers that may start follow-up work such as localization.
+        return None
+    return EvalLogger.objects.filter(**fence).first()
 
 
 def serialize_trace_witnesses(
