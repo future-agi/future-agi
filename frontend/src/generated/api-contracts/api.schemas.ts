@@ -27046,6 +27046,7 @@ export type DashboardMetricsCatalogQueryApiCategory =
   (typeof DashboardMetricsCatalogQueryApiCategory)[keyof typeof DashboardMetricsCatalogQueryApiCategory];
 
 export const DashboardMetricsCatalogQueryApiCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -27057,6 +27058,7 @@ export type DashboardMetricsCatalogQueryApiRole =
   (typeof DashboardMetricsCatalogQueryApiRole)[keyof typeof DashboardMetricsCatalogQueryApiRole];
 
 export const DashboardMetricsCatalogQueryApiRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -27065,6 +27067,7 @@ export type DashboardMetricsCatalogQueryApiSource =
   (typeof DashboardMetricsCatalogQueryApiSource)[keyof typeof DashboardMetricsCatalogQueryApiSource];
 
 export const DashboardMetricsCatalogQueryApiSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",
@@ -39603,6 +39606,7 @@ export type SimulateApiRunTestsListSimulationType =
   (typeof SimulateApiRunTestsListSimulationType)[keyof typeof SimulateApiRunTestsListSimulationType];
 
 export const SimulateApiRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39681,6 +39685,7 @@ export type SimulateRunTestsListSimulationType =
   (typeof SimulateRunTestsListSimulationType)[keyof typeof SimulateRunTestsListSimulationType];
 
 export const SimulateRunTestsListSimulationType = {
+  "": "",
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
@@ -39833,6 +39838,7 @@ export type SimulateV3TestExecutionCallsGroupBy =
   (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
 
 export const SimulateV3TestExecutionCallsGroupBy = {
+  "": "",
   goal: "goal",
   sub_goal: "sub_goal",
   accent: "accent",
@@ -40043,6 +40049,7 @@ export type TracerDashboardMetricsCategory =
   (typeof TracerDashboardMetricsCategory)[keyof typeof TracerDashboardMetricsCategory];
 
 export const TracerDashboardMetricsCategory = {
+  "": "",
   system_metric: "system_metric",
   eval_metric: "eval_metric",
   annotation_metric: "annotation_metric",
@@ -40054,6 +40061,7 @@ export type TracerDashboardMetricsRole =
   (typeof TracerDashboardMetricsRole)[keyof typeof TracerDashboardMetricsRole];
 
 export const TracerDashboardMetricsRole = {
+  "": "",
   metric: "metric",
   dimension: "dimension",
 } as const;
@@ -40062,6 +40070,7 @@ export type TracerDashboardMetricsSource =
   (typeof TracerDashboardMetricsSource)[keyof typeof TracerDashboardMetricsSource];
 
 export const TracerDashboardMetricsSource = {
+  "": "",
   traces: "traces",
   spans: "spans",
   sessions: "sessions",
