@@ -41,13 +41,14 @@ export function listRunTestExecutions(
 
 // Maps one raw execution row to the workspace run shape. The camelCase field
 // mapping mirrors the product's TestRunsGrid over the same `results[]`:
-// `success_rate` is a 0–100 percentage; `total_chats` (chat/prompt) falls back
-// to `calls_attempted` (voice). `passed`/`failed` are derived from the success
-// rate since the payload carries no per-outcome counts, and there is no run
-// name field, so `label` is assigned by `mapExecutions` from the server count
-// and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
-// click routes into the
-// reused product execution detail.
+// `total_chats` (chat/prompt) falls back to `calls_attempted` (voice). A harness
+// run carries the run detail's graded outcomes: `outcome_failed` includes
+// errored calls, `outcome_skipped` is inconclusive, and `pass_rate` is the
+// server's 0–100 rate over the `measured` (passed + failed) calls. Without them
+// `passed`/`failed` fall back to the call counts. There is no run name field,
+// so `label` is assigned by `mapExecutions` from the server count and order
+// (kept out of this pure mapper). `executionId` mirrors `id` so a row click
+// routes into the reused product execution detail.
 export function executionToRun(raw) {
   const total =
     raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
@@ -58,8 +59,11 @@ export function executionToRun(raw) {
     : raw?.completed_calls ?? Math.round((total * rate) / 100);
   const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
   const failed = hasOutcomes
-    ? (raw.outcome_failed ?? 0) + skipped
+    ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
+  const pending = hasOutcomes
+    ? Math.max(total - passed - failed - skipped, 0)
+    : raw?.pending_calls ?? Math.max(total - passed - failed, 0);
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -67,7 +71,12 @@ export function executionToRun(raw) {
   } else if (raw.status === "Cancelled") {
     // A stopped run is terminal but not a failure.
     status = "cancelled";
-  } else if (raw.status === "Completed" && failed === 0) {
+  } else if (
+    raw.status === "Completed" &&
+    failed === 0 &&
+    skipped === 0 &&
+    pending === 0
+  ) {
     status = "passed";
   } else {
     status = "failed";
@@ -90,11 +99,11 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    pending: hasOutcomes
-      ? Math.max(total - passed - failed, 0)
-      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    pending,
     skipped,
     hasOutcomes,
+    passRate: raw?.pass_rate ?? null,
+    measured: raw?.measured ?? null,
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],
     trials: raw?.trials ?? 1,

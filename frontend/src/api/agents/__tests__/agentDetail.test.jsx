@@ -6,7 +6,6 @@ import axios from "src/utils/axios";
 import {
   mapAgentDetail,
   mapVersionDetail,
-  passRateOf,
   toRun,
   toVersion,
   useAgentDetail,
@@ -74,20 +73,6 @@ beforeEach(() => {
   listHarnessEnvironments.mockReset();
 });
 
-describe("passRateOf", () => {
-  it("is passed over everything measured, as a whole percent", () => {
-    expect(passRateOf({ passed: 3, failed: 7, skipped: 0 })).toBe(30);
-    expect(passRateOf({ passed: 2, failed: 0, skipped: 1 })).toBe(67);
-  });
-
-  it("is null when nothing was measured or outcomes are null", () => {
-    expect(passRateOf({ passed: 0, failed: 0, skipped: 0 })).toBeNull();
-    expect(
-      passRateOf({ passed: null, failed: null, skipped: null }),
-    ).toBeNull();
-  });
-});
-
 describe("toRun", () => {
   it("maps an environment run", () => {
     expect(toRun(ENVIRONMENT_RUN)).toEqual({
@@ -106,8 +91,18 @@ describe("toRun", () => {
       failed: 7,
       skipped: 0,
       passRate: 30,
+      measured: 10,
       startedAt: "2026-10-14T11:58:53.368130+00:00",
       completedAt: "2026-10-14T12:27:36.569945+00:00",
+    });
+  });
+
+  it("rounds the server's graded pass rate for display", () => {
+    expect(
+      toRun({ ...ENVIRONMENT_RUN, pass_rate: 66.67, measured: 3 }),
+    ).toMatchObject({
+      passRate: 67,
+      measured: 3,
     });
   });
 

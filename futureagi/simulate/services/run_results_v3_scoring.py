@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import reprlib
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -138,13 +139,23 @@ class LiveEvals(dict[str, LiveEval]):
                 warn_invalid_eval_threshold(live.config, live.spec)
 
 
+def _live_evals(run_test_ids: list[Any]) -> Iterator[LiveEval]:
+    for config in SimulateEvalConfig.objects.filter(
+        run_test_id__in=run_test_ids, deleted=False
+    ).select_related("eval_template"):
+        yield LiveEval(config, resolve_eval_scoring_spec(config))
+
+
 def live_eval_specs(run_test_id: Any) -> LiveEvals:
-    return LiveEvals(
-        (str(config.id), LiveEval(config, resolve_eval_scoring_spec(config)))
-        for config in SimulateEvalConfig.objects.filter(
-            run_test_id=run_test_id, deleted=False
-        ).select_related("eval_template")
-    )
+    return LiveEvals((str(live.config.id), live) for live in _live_evals([run_test_id]))
+
+
+def live_eval_specs_by_run_test(run_test_ids: Iterable[Any]) -> dict[Any, LiveEvals]:
+    """Each run test's live eval configs, read in one query."""
+    specs = {run_test_id: LiveEvals() for run_test_id in run_test_ids}
+    for live in _live_evals(list(specs)):
+        specs[live.config.run_test_id][str(live.config.id)] = live
+    return specs
 
 
 def _number(value: Any) -> float | None:

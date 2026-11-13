@@ -17107,6 +17107,8 @@ export interface HarnessRunSummaryApi {
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
+  pass_rate: number;
+  measured: number;
   started_at: string;
   completed_at: string;
 }
@@ -23999,6 +24001,8 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
+  readonly pass_rate?: number;
+  readonly measured?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
