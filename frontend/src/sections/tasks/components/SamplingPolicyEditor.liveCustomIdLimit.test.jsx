@@ -11,8 +11,9 @@ vi.mock("src/utils/axios", () => ({
   endpoints: { project: { samplingPreview: () => "/sample-preview/" } },
 }));
 // The attribute picker loads project attributes; its own tests cover that.
-vi.mock("./sampling_field_picker", () => ({
-  default: () => <div>Custom ID attribute picker</div>,
+vi.mock("./sampling_field_picker", async (importOriginal) => ({
+  ...(await importOriginal()),
+  SamplingFieldPicker: () => <div>Custom ID attribute picker</div>,
 }));
 
 function Harness({ policy }) {
