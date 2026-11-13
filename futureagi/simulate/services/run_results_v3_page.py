@@ -142,8 +142,9 @@ def _cache_key(
             default=str,
         ).encode()
     ).hexdigest()
-    # v2 names the shape of a cached row; an entry written in another shape must miss.
-    return f"simulate:v3:calls:v2:{execution.id}:{version.timestamp()}:{fingerprint}"
+    # v3 names the shape and the outcome rules of a cached row (a worker's own check no longer fails the call);
+    # an entry written under other rules must miss.
+    return f"simulate:v3:calls:v3:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(

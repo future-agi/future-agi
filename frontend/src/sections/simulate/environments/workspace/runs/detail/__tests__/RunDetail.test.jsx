@@ -1452,6 +1452,20 @@ describe("RunDetail", () => {
     expect(onNext).toHaveBeenCalledTimes(1);
   });
 
+  it("gives the drawer the table's live row for the open call, not the row it opened with", async () => {
+    const user = userEvent.setup();
+    callListNavigation.mockReturnValue({
+      hasPrev: false,
+      hasNext: false,
+      openRow: { id: "c1", simulationCallType: "voice", status: "live-status" },
+      onPrev: vi.fn(),
+      onNext: vi.fn(),
+    });
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText(/live-status/)).toBeInTheDocument();
+  });
+
   it("opens the stepped-to call and has the table follow to its page", async () => {
     const user = userEvent.setup();
     renderDetail();

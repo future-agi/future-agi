@@ -318,7 +318,13 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     conversation the agent itself broke fails every goal it left undecided. A not
     applicable or inconclusive sub-goal is neither held nor broken, so it is left out.
     """
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping)
+        and not str(one.get("subject") or "").startswith("worker:")
+    ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))
         for one in checks

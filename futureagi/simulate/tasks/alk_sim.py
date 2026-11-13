@@ -39,6 +39,36 @@ _CSAT_RULE_PROMPT = (
 _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 
+@temporal_activity(time_limit=120, max_retries=2, queue="tasks_s")
+def record_call_workers(call_execution_id: str, second_read: bool = False) -> None:
+    """Keep which worker did what in one call; read once more later when a declared worker was not seen yet or the
+    read was not whole."""
+    from datetime import timedelta
+
+    from simulate.services.harness_workers import SECOND_READ
+    from simulate.services.harness_workers import record_call_workers as record
+
+    timeline = record(call_execution_id)
+    # Read again when a declared worker was not seen yet, when this read was not whole (spans still arriving, the
+    # span read failed or hit its bound), or when no span had arrived at all, so a record built from the sandbox's rows
+    # alone still meets the spans that come later: the later read then replaces what an incomplete tree got wrong.
+    if (
+        timeline
+        and not second_read
+        and (
+            any(not one["observed"] for one in timeline["workers"])
+            or not timeline.get("tree_complete", True)
+            or timeline.get("collection") in ("partial", "unavailable")
+            or not timeline.get("spans_received", True)
+        )
+    ):
+        record_call_workers.apply_async(
+            args=(call_execution_id,),
+            kwargs={"second_read": True},
+            start_delay=timedelta(seconds=SECOND_READ),
+        )
+
+
 @temporal_activity(
     time_limit=600,
     max_retries=CSAT_MAX_RETRIES,

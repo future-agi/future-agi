@@ -31,6 +31,7 @@ from simulate.services.harness_scenarios import (
     pinned_scenarios,
 )
 from simulate.services.hosted_harness_ingestion import (
+    SCENARIO_FAILURE_CODES,
     STARTED_BY_KEY,
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,
@@ -215,7 +216,12 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
+        # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+        if not (
+            isinstance(data, dict)
+            and str(data.get("subject") or "").startswith("worker:")
+        )
+        and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
@@ -618,27 +624,34 @@ _ACTOR_MISSING_WHY = {
     "no_world_door": "could not act: this agent's tools run where no actor can act",
     "no_private_token": "could not act in the world",
 }
-_ACTOR_MISSING_PREFIX = "inconclusive: scenario problem, not the agent's: "
+_SCENARIO_FAILURE_PREFIX = "inconclusive: scenario problem, not the agent's: "
 # A call the run was stopped before it finished, counted with the errors.
 _STOPPED = "Stopped before it finished: the run was cancelled"
 
 
-def _actor_missing_reason(receipt: Mapping[str, Any]) -> str | None:
-    """Why a call its scenario's actor never reached is inconclusive, in the reader's words; None for any other
-    failure, whose message is not written for the reader."""
+def _scenario_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """Why a call held as the scenario's problem (an actor that never reached the agent, worker limits the sealed
+    world could not enforce) is inconclusive, in the reader's words; None for any other failure, whose message is
+    not written for the reader."""
     failure = receipt.get("failure")
-    if not isinstance(failure, Mapping) or failure.get("code") != "actor_missing":
+    if (
+        not isinstance(failure, Mapping)
+        or failure.get("code") not in SCENARIO_FAILURE_CODES
+    ):
         return None
     message = str(failure.get("message") or "")
-    detail = message.removeprefix(_ACTOR_MISSING_PREFIX)
-    detail = re.sub(
-        r"\((\w+)(?::\s*([^)]*))?\)",
-        lambda found: "({}{})".format(
-            _ACTOR_MISSING_WHY.get(found.group(1), found.group(1).replace("_", " ")),
-            f": {found.group(2)}" if found.group(2) else "",
-        ),
-        detail,
-    )
+    detail = message.removeprefix(_SCENARIO_FAILURE_PREFIX)
+    if failure.get("code") == "actor_missing":
+        detail = re.sub(
+            r"\((\w+)(?::\s*([^)]*))?\)",
+            lambda found: "({}{})".format(
+                _ACTOR_MISSING_WHY.get(
+                    found.group(1), found.group(1).replace("_", " ")
+                ),
+                f": {found.group(2)}" if found.group(2) else "",
+            ),
+            detail,
+        )
     return (
         f"Inconclusive, a problem of the scenario, not the agent: {detail}"
         if detail
@@ -759,6 +772,8 @@ def build_call_rows(
             if isinstance(item, dict) and isinstance(item.get("evidence"), list):
                 # What it was decided from: world_state, tool_calls, transcript, recording.
                 entry["evidence"] = [str(one) for one in item["evidence"]]
+            if isinstance(item, dict) and item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
             sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")
@@ -828,7 +843,7 @@ def build_call_rows(
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
                 "outcome_reason": receipt.get("reason")
-                or _actor_missing_reason(receipt)
+                or _scenario_failure_reason(receipt)
                 or (
                     _STOPPED
                     if call.status == CallExecution.CallStatus.CANCELLED

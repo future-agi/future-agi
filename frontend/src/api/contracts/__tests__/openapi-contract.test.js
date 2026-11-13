@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertContractedResponse,
   findOpenApiEndpoint,
   shouldEnforceApiResponseContracts,
   validateContractedRequestConfig,
@@ -583,6 +584,107 @@ describe("OpenAPI runtime contract", () => {
       "response contract validation failed",
     );
     expect(result.error.message).toContain("result");
+  });
+
+  it("skips an empty 204 on an endpoint that only declares a 200, in strict mode too", () => {
+    vi.stubEnv("VITE_API_CONTRACT_STRICT_RESPONSES", "true");
+    const config = {
+      url: "/simulate/v3/call-executions/call-1/workers/",
+      method: "get",
+    };
+    const empty = { config, status: 204, data: "" };
+    expect(assertContractedResponse(empty)).toBe(empty);
+    // A 204 that does carry a body is still checked, as is an empty 200.
+    expect(
+      validateContractedResponse({ config, status: 204, data: { workers: 1 } })
+        .ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({ config, status: 200, data: "" }).ok,
+    ).toBe(false);
+  });
+
+  it("accepts a call's worker record with text payloads and the parts it did not see", () => {
+    const call = {
+      seq: 2,
+      type: "tool_call",
+      worker_id: "r/lookup",
+      tool: "get_order",
+      status: "error",
+      input: "order 1042",
+      output: "store unavailable",
+      at: "2026-10-31T11:59:57",
+      attribution: "reported",
+    };
+    const handOff = {
+      seq: 1,
+      type: "delegated",
+      worker_id: "r/lookup",
+      task: "find order 1042",
+      at: "2026-10-31T11:59:56",
+      attribution: "reported",
+    };
+    const record = {
+      workers: [],
+      events: [handOff, call],
+      coordinator: null,
+      collected_at: "2026-10-31T12:00:00Z",
+      steps: [
+        {
+          kind: "handoff",
+          key: 1,
+          parent: null,
+          depth: 1,
+          worker_id: "r/lookup",
+          handoff: handOff,
+          returned: null,
+          turn: 1,
+          order: 1,
+          relationship: "observed",
+        },
+        {
+          kind: "handoff",
+          key: 3,
+          parent: null,
+          depth: 1,
+          worker_id: "r/lookup",
+          handoff: null,
+          returned: null,
+          turn: null,
+          order: 1,
+          relationship: "unknown",
+        },
+        {
+          kind: "tool_call",
+          key: 2,
+          parent: 1,
+          depth: 1,
+          worker_id: "r/lookup",
+          call,
+          turn: 1,
+          order: 2,
+          relationship: "observed",
+        },
+      ],
+      turns: [
+        { turn: 1, request: null, response: null },
+        { turn: null, request: null, response: null },
+      ],
+      depth: 1,
+      parallel: 0,
+      overlap_unknown: false,
+      worker_depths: {},
+    };
+    const result = validateContractedResponse({
+      config: {
+        url: "/simulate/v3/call-executions/call-1/workers/",
+        method: "get",
+      },
+      status: 200,
+      data: record,
+    });
+    expect(result.error?.message).toBeUndefined();
+    expect(result.ok).toBe(true);
   });
 
   it("validates default error responses instead of falling back to success schemas", () => {

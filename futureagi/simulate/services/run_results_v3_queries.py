@@ -728,6 +728,8 @@ class _NativeHarnessVerdict(Func):
             f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
             "WHERE jsonb_typeof(check_result.value) = 'object' "
             "AND check_result.value->>'source' = 'harness' "
+            # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+            "AND left(COALESCE(check_result.value->>'subject', ''), 7) <> 'worker:' "
             f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
         )
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]

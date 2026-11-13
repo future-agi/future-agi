@@ -83,6 +83,10 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     evidence = serializers.ListField(
         child=serializers.CharField(max_length=64), max_length=16, required=False
     )
+    # Whose result this is: the task, or one of the agent's workers; reported beside the task verdict.
+    subject = serializers.RegexField(
+        r"^(task|worker:.*\S.*)$", required=False, max_length=255
+    )
 
 
 class HarnessMetricEvaluationSerializer(serializers.Serializer):

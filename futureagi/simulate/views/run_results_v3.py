@@ -13,7 +13,7 @@ from typing import Any, get_args
 
 import structlog
 from django.db.models import QuerySet
-from django.http import StreamingHttpResponse
+from django.http import Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
@@ -32,6 +32,8 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_worker_steps import worker_steps
+from simulate.services.harness_workers import WORKERS_KEY
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -334,6 +336,8 @@ class SubGoalResultSerializer(serializers.Serializer):
         required=False,
         help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
     )
+    # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
+    subject = serializers.CharField(required=False)
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -655,8 +659,15 @@ class CallCallActorSerializer(serializers.Serializer):
     )
 
 
+class TrialRefusedActionSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    code = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
 class TrialStateChangeSerializer(serializers.Serializer):
-    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
+    """What one participant (the agent, an actor, or a `worker:<id>`) attempted in the trial and what the world
+    made of it."""
 
     who = serializers.CharField()
     name = serializers.CharField()
@@ -670,6 +681,8 @@ class TrialStateChangeSerializer(serializers.Serializer):
         required=False,
         help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",
     )
+    # What the world refused, with its code and why; a worker's attempt outside its permissions is one.
+    refused_actions = TrialRefusedActionSerializer(many=True, required=False)
 
 
 class ActorDecisionSerializer(serializers.Serializer):
@@ -769,6 +782,142 @@ class TrialStateSerializer(serializers.Serializer):
         required=False,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )
+
+
+class CallWorkerSerializer(serializers.Serializer):
+    worker_id = serializers.CharField()
+    id = serializers.CharField()
+    name = serializers.CharField()
+    # Declared names are not proof: true only when the worker's own spans or tool calls arrived.
+    observed = serializers.BooleanField()
+    undeclared = serializers.BooleanField()
+    instance_ids = serializers.ListField(child=serializers.CharField())
+    # The model the worker's own model calls used, and the tokens they spent, when the app sent traces.
+    model = serializers.CharField(required=False)
+    tokens = serializers.IntegerField(required=False)
+    # How it ended; absent on a timeline read before end states were recorded.
+    state = serializers.ChoiceField(
+        choices=[
+            "completed",
+            "failed",
+            "no_return",
+            "deadline_passed",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+        ],
+        required=False,
+    )
+
+
+class CallWorkerEventSerializer(serializers.Serializer):
+    seq = serializers.IntegerField()
+    type = serializers.ChoiceField(
+        choices=("delegated", "transferred", "tool_call", "returned")
+    )
+    worker_id = serializers.CharField(allow_null=True)
+    by = serializers.CharField(allow_null=True, required=False)
+    delegation_id = serializers.CharField(required=False)
+    task = serializers.CharField(allow_null=True, required=False)
+    result = serializers.CharField(allow_null=True, required=False)
+    tool = serializers.CharField(required=False)
+    status = serializers.ChoiceField(choices=("ok", "error"), required=False)
+    # The span and trace this step was read from, for opening it in Traces; absent for the sandbox's own record.
+    span_id = serializers.CharField(required=False)
+    trace_id = serializers.CharField(required=False)
+    # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
+    input = JsonValueField(allow_null=True, required=False)
+    output = JsonValueField(allow_null=True, required=False)
+    # True when the record's size limit was reached before this step, so that part was not kept.
+    input_omitted = serializers.BooleanField(required=False)
+    output_omitted = serializers.BooleanField(required=False)
+    # Why the world refused this call (`not_permitted`, `deadline_passed`), as its action log coded it.
+    refusal_code = serializers.CharField(required=False)
+    # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
+    relationship = serializers.ChoiceField(
+        choices=("observed", "unknown"), required=False
+    )
+    at = serializers.CharField(allow_null=True)
+    attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
+
+
+# Its own definition, because drf-yasg emits one per serializer and `CallWorkerEvent` is also the never-null event.
+class CallWorkerEventOrNullSerializer(CallWorkerEventSerializer):
+    """A hand-off or its return, null when the record did not see it."""
+
+    class Meta:
+        ref_name = "CallWorkerEventOrNull"
+        swagger_schema_fields = {"x-nullable": True}
+
+
+class CallWorkerCoordinatorSerializer(serializers.Serializer):
+    name = serializers.CharField()
+
+
+class CallWorkerTurnSerializer(serializers.Serializer):
+    text = serializers.CharField(allow_null=True)
+    at = serializers.CharField(allow_null=True)
+
+
+class CallWorkerStepSerializer(serializers.Serializer):
+    """A row of the tab in reading order; `parent` is the `key` of the hand-off it sits under, null at the top."""
+
+    kind = serializers.ChoiceField(choices=("handoff", "tool_call"))
+    key = serializers.IntegerField()
+    parent = serializers.IntegerField(allow_null=True)
+    depth = serializers.IntegerField()
+    worker_id = serializers.CharField(allow_null=True)
+    # Hand-off rows: the hand-off and its return (null when not seen), its span, and whether a sibling overlapped it.
+    transfer = serializers.BooleanField(required=False)
+    handoff = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
+    returned = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
+    started_at = serializers.CharField(allow_null=True, required=False)
+    ended_at = serializers.CharField(allow_null=True, required=False)
+    parallel = serializers.BooleanField(required=False)
+    # Tool-call rows: the call itself.
+    call = CallWorkerEventSerializer(required=False)
+    # The call's turn this row happened in: turn n starts at the caller's nth message, 0 is before they spoke; null
+    # when the record does not say (no time, or after the last message the record kept).
+    turn = serializers.IntegerField(allow_null=True)
+    # Position within its turn, from 1, in reading order.
+    order = serializers.IntegerField()
+    # `unknown` when the record does not say which hand-off this step belongs to: it stays at the top, never guessed.
+    relationship = serializers.ChoiceField(choices=("observed", "unknown"))
+
+
+class CallWorkerRoundSerializer(serializers.Serializer):
+    """One turn that had steps: the caller's message that opened it and the agent's reply after its last step; turn
+    null holds the steps whose turn the record does not say."""
+
+    turn = serializers.IntegerField(allow_null=True)
+    request = CallWorkerTurnSerializer(allow_null=True)
+    response = CallWorkerTurnSerializer(allow_null=True)
+
+
+class CallWorkersResponseSerializer(serializers.Serializer):
+    workers = CallWorkerSerializer(many=True)
+    events = CallWorkerEventSerializer(many=True)
+    # Steps past the record's limit, left out after the ones shown.
+    events_omitted = serializers.IntegerField(required=False)
+    # Each is null when it was not seen: the timeline shows it as Unknown.
+    coordinator = CallWorkerCoordinatorSerializer(allow_null=True, required=False)
+    started_at = serializers.CharField(allow_null=True, required=False)
+    spans_received = serializers.BooleanField(required=False)
+    collected_at = serializers.CharField()
+    # `no_evidence`: the app declares workers but this read found nothing for the call; each worker reads not observed.
+    # `partial`: the call had more spans than one read keeps; `unavailable`: its spans could not be read.
+    collection = serializers.ChoiceField(
+        choices=("complete", "partial", "unavailable", "no_evidence"), required=False
+    )
+    steps = CallWorkerStepSerializer(many=True)
+    turns = CallWorkerRoundSerializer(many=True)
+    # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
+    depth = serializers.IntegerField()
+    parallel = serializers.IntegerField()
+    overlap_unknown = serializers.BooleanField()
+    # The level each worker was first handed work at.
+    worker_depths = serializers.DictField(child=serializers.IntegerField())
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
@@ -1131,22 +1280,62 @@ class CallExecutionV3DetailView(APIView):
         operation_id="simulate_v3_call_execution_detail",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        call = get_object_or_404(
+        call = _call_for_request(
+            request,
+            call_execution_id,
             CallExecution.objects.select_related(
                 "scenario",
                 "test_execution__run_test",
                 "test_execution__agent_definition",
                 "test_execution__simulator_agent",
             ).prefetch_related("transcripts", "chat_messages", "snapshots"),
-            run_test_workspace_filter(request, "test_execution__run_test"),
-            id=call_execution_id,
-            test_execution__run_test__organization=organization,
-            test_execution__run_test__deleted=False,
         )
         return Response(build_call_execution_detail(call, request=request))
+
+
+def _call_for_request(request, call_execution_id, calls=None) -> CallExecution:
+    """One call the requester's organization and workspace may read, or 404."""
+    organization = getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
+    if organization is None:
+        raise Http404
+    return get_object_or_404(
+        (
+            calls
+            if calls is not None
+            else CallExecution.objects.select_related("test_execution__run_test")
+        ),
+        run_test_workspace_filter(request, "test_execution__run_test"),
+        id=call_execution_id,
+        test_execution__run_test__organization=organization,
+        test_execution__run_test__deleted=False,
+    )
+
+
+class CallExecutionV3WorkersView(APIView):
+    """Which of a multi-agent app's workers did what in this trial, read from the spans the app exported."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        responses={
+            200: CallWorkersResponseSerializer,
+            204: "No hand-off to other agents was seen in this call, or its record is still arriving",
+        },
+        operation_id="simulate_v3_call_execution_workers",
+    )
+    def get(self, request, call_execution_id, *args, **kwargs):
+        call = _call_for_request(request, call_execution_id)
+        timeline = (call.call_metadata or {}).get(WORKERS_KEY)
+        if not timeline:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        steps = worker_steps(
+            timeline.get("events", []),
+            timeline.get("messages", []),
+            turns_cut=bool(timeline.get("messages_omitted")),
+        )
+        return Response(CallWorkersResponseSerializer({**timeline, **steps}).data)
 
 
 class RunAnalyticsV3View(APIView):

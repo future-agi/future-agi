@@ -93,6 +93,14 @@ def test_list_by_trace_ids_heavy_by_default():
     assert "attributes_extra" in client.sql  # fat column read in full
 
 
+def test_list_by_trace_ids_limits_rows_only_when_asked():
+    client = _RecordingClient()
+    _reader_with(client).list_by_trace_ids(["t1"])
+    assert "LIMIT" not in client.sql
+    _reader_with(client).list_by_trace_ids(["t1"], limit=5001)
+    assert client.sql.endswith("ORDER BY trace_id, start_time, id LIMIT 5001")
+
+
 def test_list_by_trace_ids_lean_stubs_fat_columns():
     client = _RecordingClient()
     _reader_with(client).list_by_trace_ids(["t1"], include_heavy=False)

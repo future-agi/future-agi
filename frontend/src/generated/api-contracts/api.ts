@@ -269,6 +269,7 @@ import type {
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
+  CallWorkersResponseApi,
   CancelTestExecutionResponseApi,
   CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
@@ -70060,6 +70061,58 @@ export const simulateV3CallExecutionDetail = async (
 ): Promise<simulateV3CallExecutionDetailResponse> => {
   return apiMutator<simulateV3CallExecutionDetailResponse>(
     getSimulateV3CallExecutionDetailUrl(callExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3CallExecutionWorkersResponse200 = {
+  data: CallWorkersResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionWorkersResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateV3CallExecutionWorkersResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 204>;
+};
+
+export type simulateV3CallExecutionWorkersResponseSuccess = (
+  | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse204
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateV3CallExecutionWorkersResponseError =
+  simulateV3CallExecutionWorkersResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3CallExecutionWorkersResponse =
+  | simulateV3CallExecutionWorkersResponseSuccess
+  | simulateV3CallExecutionWorkersResponseError;
+
+export const getSimulateV3CallExecutionWorkersUrl = (
+  callExecutionId: string,
+) => {
+  return `/simulate/v3/call-executions/${callExecutionId}/workers/`;
+};
+
+/**
+ * Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.
+ */
+export const simulateV3CallExecutionWorkers = async (
+  callExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionWorkersResponse> => {
+  return apiMutator<simulateV3CallExecutionWorkersResponse>(
+    getSimulateV3CallExecutionWorkersUrl(callExecutionId),
     {
       ...options,
       method: "GET",

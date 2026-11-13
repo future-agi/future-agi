@@ -2950,13 +2950,20 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
-    calls.filter(
+    still_open = calls.filter(
         status__in=(
             CallExecution.CallStatus.PENDING,
             CallExecution.CallStatus.REGISTERED,
             CallExecution.CallStatus.ONGOING,
         )
-    ).update(
+    )
+    # Only a call that was under way has workers' evidence to keep; one that never started has none to read.
+    ended = list(
+        still_open.filter(status=CallExecution.CallStatus.ONGOING).values_list(
+            "id", flat=True
+        )
+    )
+    still_open.update(
         status=(
             CallExecution.CallStatus.CANCELLED
             if job.state == HostedHarnessJob.State.CANCELED
@@ -2965,6 +2972,13 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
         completed_at=now,
         **({"ended_reason": message} if message else {}),
     )
+    from simulate.services.hosted_harness_ingestion import _dispatch_worker_read
+
+    # A call cut short keeps what its workers did before the end.
+    for call_id in ended:
+        transaction.on_commit(
+            lambda call_id=call_id: _dispatch_worker_read(call_id), robust=True
+        )
     execution_status = {
         HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
         HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,

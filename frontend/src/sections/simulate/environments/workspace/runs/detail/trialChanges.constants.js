@@ -20,6 +20,10 @@ export const TRIAL_CHANGES_COPY = {
     `Committed but answered with a timeout: ${actions.join(", ")}`,
   // Doing nothing can be the right result, so it is said, never left blank.
   noChange: "No change: it committed nothing",
+  // A worker the world told apart from the rest of the agent.
+  worker: (name) => `Worker · ${name}`,
+  refusedHeading: "Refused attempts",
+  refused: (one) => [one.action, one.reason].filter(Boolean).join(": "),
   decisionsHeading: "What the actors chose",
   plays: {
     mocked: "As scheduled",
