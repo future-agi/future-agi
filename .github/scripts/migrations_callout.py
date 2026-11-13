@@ -70,7 +70,9 @@ def pr_merge_preview(pr: dict) -> tuple[str, str]:
     """
     merge = os.environ.get("GITHUB_SHA", "")
     if not FULL_SHA.fullmatch(merge):
-        raise ValueError("GITHUB_SHA is not a full commit id; no PR merge preview to check.")
+        raise ValueError(
+            "GITHUB_SHA is not a full commit id; no PR merge preview to check."
+        )
     # Peeling fails for a missing object and changes the id of anything that
     # is not a commit, such as a tag object.
     if git("rev-parse", "--verify", f"{merge}^{{commit}}") != merge:

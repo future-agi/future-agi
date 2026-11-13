@@ -854,9 +854,10 @@ bump could compare between the pinned and the new backend digest.
   merge's first parent (main's tip when GitHub built the preview), so both
   ends come from one snapshot. It does not read the payload's
   `merge_commit_sha`. GitHub computes the preview after it creates the PR, so
-  an `opened` payload often carries null, and a re-run reuses the payload.
-  Migration-free release PRs #3636 and #3594 each had one callout run, from
-  `opened`, and no later one. The checkout logs of release PR runs (#3636,
+  an `opened` payload often carries null (GitHub's recorded example payloads
+  and third-party reports; not observed in this repository), and a re-run
+  reuses the payload. Migration-free release PRs #3636 and #3594 each had
+  one callout run, from `opened`, and no later one. The checkout logs of release PR runs (#3636,
   #3720, and the force-push runs on #3629 and #3585) all show the run's head
   commit as the preview's second parent.
 - The callout script change ships in the same PR as `release-autopilot.yml`.
@@ -865,6 +866,11 @@ bump could compare between the pinned and the new backend digest.
   arrive together unless one is reverted or picked alone. On the first
   release PR after that promotion, confirm that the callout run from the
   `opened` event ran its `check` job and passed, with no edit to the PR.
+  Then confirm that the autopilot's run summary no longer gives "the
+  migrations-callout workflow has not passed on this head". The gate's two
+  reads, a run's `pull_requests` and its jobs, have not yet run with the
+  workflow token. If either comes back empty, the release waits with a green
+  run and nothing is posted on the PR.
 - First merge with both variables unset. Verify labels, App permissions, the
   approver App live check, environment protections, default-branch/main
   availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit

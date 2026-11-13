@@ -1570,8 +1570,10 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(reason, "the migrations-callout workflow has not passed on this head")
         # Its run alone, with nothing older, is no pass either.
         self.assertFalse(self.gates([self.dev_pr_run()], jobs=skipped)[0])
-        # It does not block a release PR whose own check passed.
+        # It does not block a release PR whose own check passed, even when its
+        # self-test failed: a completed run with check skipped is passed over.
         self.assertTrue(self.gates([self.callout_run(), self.dev_pr_run()], jobs=skipped)[0])
+        self.assertTrue(self.gates([self.callout_run(), self.dev_pr_run(conclusion="failure")], jobs=skipped)[0])
         # Until the dev run completes, it is not passed over: the gate waits.
         running = {6: self.callout_jobs("completed", "skipped")}
         self.assertFalse(self.gates([self.callout_run(), self.dev_pr_run(status="in_progress", conclusion=None)],

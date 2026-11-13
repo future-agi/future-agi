@@ -83,8 +83,11 @@ class MigrationsCalloutTests(unittest.TestCase):
         """
         base, head = base or self.base_sha, head or self.head_sha
         tree = self.git("merge-tree", "--write-tree", base, head)
-        parents = [arg for parent in (base, head, *more_parents) for arg in ("-p", parent)]
-        return self.git("commit-tree", tree, *parents, "-m", f"Merge {head} into {base}")
+        parents = [
+            arg for parent in (base, head, *more_parents) for arg in ("-p", parent)
+        ]
+        message = f"Merge {head} into {base}"
+        return self.git("commit-tree", tree, *parents, "-m", message)
 
     def pr(self, notes, header="Release bot", footer=FOOTER):
         # An `opened` payload: GitHub has not computed the merge preview yet.
@@ -266,16 +269,22 @@ class MigrationsCalloutTests(unittest.TestCase):
         # A stale payload preview with no migrations cannot hide the run's own.
         self.prepare()
         event = self.pr(self.notes())
-        event["pull_request"]["merge_commit_sha"] = self.git("rev-list", "--max-parents=0", "HEAD")
+        root = self.git("rev-list", "--max-parents=0", "HEAD")
+        event["pull_request"]["merge_commit_sha"] = root
         self.check("pull_request", event, success=False, count=6)
 
-    def test_missing_or_malformed_github_sha_fails_closed(self):
+    def test_missing_merge_preview_fails_closed(self):
+        # The run's merge preview is GITHUB_SHA. A null payload preview passes
+        # with it, and nothing passes without it.
         self.prepare()
         event = self.pr(self.notes(callout=True))
+        self.check("pull_request", event, success=True, count=6)
         merge = self.merge_preview()
         for value in (None, "", "HEAD", merge[:12], merge.upper(), f"{merge}\n"):
             with self.subTest(value=value):
-                output = self.check("pull_request", event, success=False, github_sha=value)
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
                 self.assertIn("GITHUB_SHA", output)
                 self.assertNotIn("Added migrations", output)
         # A tag object that points at the merge is not the merge commit itself.
@@ -289,7 +298,9 @@ class MigrationsCalloutTests(unittest.TestCase):
         # The PR head itself, and the base tip, each have one parent.
         for value in (self.head_sha, self.base_sha):
             with self.subTest(value=value):
-                output = self.check("pull_request", event, success=False, github_sha=value)
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
                 self.assertIn("not a merge of this PR's head", output)
         self.git("commit", "--allow-empty", "-qm", "Third parent")
         octopus = self.merge_preview(None, None, self.git("rev-parse", "HEAD"))
@@ -306,7 +317,9 @@ class MigrationsCalloutTests(unittest.TestCase):
         reversed_parents = self.merge_preview(self.head_sha, self.base_sha)
         for value in (earlier, reversed_parents):
             with self.subTest(value=value):
-                output = self.check("pull_request", event, success=False, github_sha=value)
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
                 self.assertIn("not a merge of this PR's head", output)
 
     def test_crlf_body_and_single_delimiter_follow_release_please(self):
