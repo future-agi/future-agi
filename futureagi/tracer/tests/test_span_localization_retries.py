@@ -401,6 +401,39 @@ def test_borrowed_config_outside_tenant_scope_is_rejected(
         assert old.input_data == {"output": "obsolete answer"}
 
 
+def test_project_workspace_of_another_organization_is_refused(
+    scenario_factory, workspace
+):
+    entry, span, config, _ = scenario_factory()
+    other_tenant = Organization.objects.create(name="Other tenant")
+    foreign_workspace = Workspace.objects.create(
+        name="Other tenant workspace",
+        organization=other_tenant,
+        is_active=True,
+        is_default=False,
+        created_by=workspace.created_by,
+    )
+    # The span and config still agree on one organization, so only the
+    # target workspace's organization differs.
+    Project.no_workspace_objects.filter(pk=span.project.pk).update(
+        workspace=foreign_workspace
+    )
+    span.project.refresh_from_db()
+    assert span.project.organization_id == config.project.organization_id
+    clear_workspace_context()
+    with capture_logs() as records:
+        _trigger(entry, span, config)
+    assert not ErrorLocalizerTask.no_workspace_objects.filter(
+        source_id=entry.id
+    ).exists()
+    _assert_no_trigger_errors(records)
+    assert not _events(records, CONTEXT_MISMATCH)
+    (refusal,) = _events(records, WORKSPACE_MISMATCH)
+    assert refusal["log_level"] == "warning"
+    assert refusal["eval_logger_id"] == str(entry.id)
+    assert refusal["reason"] == "target_workspace_organization"
+
+
 @pytest.mark.parametrize(
     "mismatch", ["span-project", "missing-task", "deleted-task", "no-task"]
 )

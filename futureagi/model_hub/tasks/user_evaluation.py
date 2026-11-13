@@ -998,8 +998,11 @@ def _resolve_span_localization_workspace(
     project = observation_span.project
     config = eval_logger.custom_eval_config
     config_project = config.project
-    # Task targets need not belong to the config's author project. Legacy
-    # entries without a task still use the config project as their owner.
+    # The owning task's project is the target. Task create and update accept
+    # only configs from the task's own project, but an existing task may still
+    # reference a config from another project; that pairing is localized only
+    # within the same organization and workspace (checked below). Legacy
+    # entries without a task use the config project as their owner.
     target_project_id = config.project_id
     if eval_logger.eval_task_id:
         target_project_id = (
@@ -1052,8 +1055,8 @@ def _resolve_span_localization_workspace(
         )
         return None
     if not config_workspace_matches:
-        # Task creation only accepts configs from the task's own project, so a
-        # config authored in another workspace is not a supported pairing.
+        # A config whose project lies in another workspace is refused; one in
+        # another organization was refused by the span-context check above.
         logger.warning(
             "error_localizer_workspace_mismatch",
             eval_logger_id=str(eval_logger.id),
