@@ -24,22 +24,43 @@ const documentOptions = safePdfDocumentOptions({
 const keepLinkAnnotations = ({ annotations }) =>
   annotations.filter((annotation) => annotation.subtype === "Link");
 
-// The PDF y coordinate a link destination puts at the top of the view, or
-// null for the top of the page. Horizontal position and zoom are not used:
-// the preview always shows the full page width.
-const destinationTop = (dest) => {
+// The page area a link destination points to, as PDF x and y ranges where a
+// null range leaves that coordinate unchanged; null for the whole page.
+// Zoom is not used: the preview always shows the full page width.
+const destinationArea = (dest) => {
   const [, mode, ...args] = Array.isArray(dest) ? dest : [];
+  const at = (value) => (Number.isFinite(value) ? value : null);
+  const range = (low, high) =>
+    at(low) === null || at(high) === null ? null : [low, high];
   switch (mode?.name) {
     case "XYZ":
-      return args[1];
+      return { x: range(args[0], args[0]), y: range(args[1], args[1]) };
     case "FitH":
     case "FitBH":
-      return args[0];
+      return { x: null, y: range(args[0], args[0]) };
+    case "FitV":
+    case "FitBV":
+      return { x: range(args[0], args[0]), y: null };
     case "FitR":
-      return args[3];
+      return { x: range(args[0], args[2]), y: range(args[1], args[3]) };
     default:
       return null;
   }
+};
+
+// The area's distance below the top of the page in the view, or null when it
+// has no vertical position there (rotated pages run the view along PDF x).
+const areaTopInView = (viewport, area) => {
+  const [left, bottom, right, top] = viewport.viewBox;
+  const xs = area.x ?? [left, right];
+  const ys = area.y ?? [bottom, top];
+  const viewYs = xs.flatMap((x) =>
+    ys.map((y) => viewport.convertToViewportPoint(x, y)[1]),
+  );
+  const [first, last] = [Math.min(...viewYs), Math.max(...viewYs)];
+  // Spanning the full page height leaves the vertical position unchanged.
+  if (first <= 0.5 && last >= viewport.height - 0.5) return null;
+  return Math.max(0, first);
 };
 
 export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
@@ -64,21 +85,21 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
     if (!link || !page || !scroller || !element) return;
     if (page.pageNumber !== link.pageNumber) return;
     pendingLink.current = null;
-    const top = destinationTop(link.dest);
-    if (typeof top !== "number" || !Number.isFinite(top)) {
-      // Whole-page destinations show the page buttons and the top of the page.
-      scroller.scrollTop = 0;
+    const area = destinationArea(link.dest);
+    const scale = page.width / page.originalWidth;
+    const offset = area && areaTopInView(page.getViewport({ scale }), area);
+    if (offset === null) {
+      // Without a vertical position, a link on the same page keeps the
+      // reader's place; whole-page destinations and other pages show the page
+      // buttons and the top of the page.
+      if (!area || !link.samePage) scroller.scrollTop = 0;
       return;
     }
     const pageTop =
       element.getBoundingClientRect().top -
       scroller.getBoundingClientRect().top +
       scroller.scrollTop;
-    const scale = page.width / page.originalWidth;
-    const [, offset] = page
-      .getViewport({ scale })
-      .convertToViewportPoint(0, top);
-    scroller.scrollTop = pageTop + Math.max(0, offset);
+    scroller.scrollTop = pageTop + offset;
   };
 
   const showPage = (next) => {
@@ -114,10 +135,9 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
         // then scroll to the destination's position once it is painted.
         onItemClick={({ dest, pageNumber: target }) => {
           if (!(target >= 1 && target <= pageCount.current)) return;
-          if (paintedPage.current?.pageNumber !== target) {
-            showPage(target);
-          }
-          pendingLink.current = { pageNumber: target, dest };
+          const samePage = paintedPage.current?.pageNumber === target;
+          if (!samePage) showPage(target);
+          pendingLink.current = { pageNumber: target, dest, samePage };
           scrollToPendingLink();
         }}
         externalLinkTarget="_blank"

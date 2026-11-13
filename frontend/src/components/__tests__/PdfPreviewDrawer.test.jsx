@@ -157,14 +157,24 @@ describe("PDF preview rendering", () => {
     const PAGE_OFFSET = 48;
     const SCALE = 1.5;
     const pageRef = { num: 6, gen: 0 };
-    const renderedPage = (pageNumber) => ({
-      pageNumber,
-      width: 612 * SCALE,
-      originalWidth: 612,
-      getViewport: ({ scale }) => ({
-        convertToViewportPoint: (x, y) => [x * scale, (792 - y) * scale],
-      }),
-    });
+    // PDF.js viewports: unrotated, and turned 90 degrees clockwise (where
+    // the view runs down the page's x axis).
+    const renderedPage = (pageNumber, rotation = 0) => {
+      const [w, h] = rotation === 90 ? [792, 612] : [612, 792];
+      return {
+        pageNumber,
+        width: w * SCALE,
+        originalWidth: w,
+        getViewport: ({ scale }) => ({
+          viewBox: [0, 0, 612, 792],
+          height: h * scale,
+          convertToViewportPoint: (x, y) =>
+            rotation === 90
+              ? [y * scale, x * scale]
+              : [x * scale, (792 - y) * scale],
+        }),
+      };
+    };
     const below = (y) => PAGE_OFFSET + (792 - y) * SCALE;
 
     const openDocument = (numPages) => {
@@ -182,12 +192,14 @@ describe("PDF preview rendering", () => {
         },
       });
       scroller.getBoundingClientRect = () => ({ top: 100 });
-      const paint = (pageNumber) => {
+      const paint = (pageNumber, rotation) => {
         const element = screen.getByText(`Rendered page ${pageNumber}`);
         element.getBoundingClientRect = () => ({
           top: 100 + PAGE_OFFSET - scrollTop,
         });
-        act(() => page.props.onRenderSuccess?.(renderedPage(pageNumber)));
+        act(() =>
+          page.props.onRenderSuccess?.(renderedPage(pageNumber, rotation)),
+        );
       };
       paint(1);
       return { scroller, paint };
@@ -254,6 +266,50 @@ describe("PDF preview rendering", () => {
         expect(scroller.scrollTop).toBe(0);
         expect(screen.getByText(`Page ${pageNumber} of 3`)).toBeVisible();
       }
+    });
+
+    it("keeps the scroll position for a destination without a vertical position on the current page", () => {
+      const { scroller } = openDocument(1);
+      for (const dest of [
+        [pageRef, { name: "XYZ" }, 72, null, null],
+        [pageRef, { name: "FitH" }, null],
+        [pageRef, { name: "FitV" }, 72],
+      ]) {
+        scroller.scrollTop = 500;
+        act(() => viewer.onItemClick({ dest, pageIndex: 0, pageNumber: 1 }));
+        expect(scroller.scrollTop).toBe(500);
+      }
+    });
+
+    it("scrolls to the destination's position on a rotated page", () => {
+      const { scroller, paint } = openDocument(2);
+      act(() =>
+        viewer.onItemClick({
+          dest: [pageRef, { name: "XYZ" }, 300, 500, null],
+          pageIndex: 1,
+          pageNumber: 2,
+        }),
+      );
+      paint(2, 90);
+      // Turned 90 degrees, x runs down the view.
+      expect(scroller.scrollTop).toBe(PAGE_OFFSET + 300 * SCALE);
+      for (const [dest, top] of [
+        [[pageRef, { name: "FitV" }, 200], 200],
+        [[pageRef, { name: "FitR" }, 100, 50, 400, 250], 100],
+      ]) {
+        act(() => viewer.onItemClick({ dest, pageIndex: 1, pageNumber: 2 }));
+        expect(scroller.scrollTop).toBe(PAGE_OFFSET + top * SCALE);
+      }
+      // A top alone does not place a point vertically on this page.
+      scroller.scrollTop = 70;
+      act(() =>
+        viewer.onItemClick({
+          dest: [pageRef, { name: "FitH" }, 600],
+          pageIndex: 1,
+          pageNumber: 2,
+        }),
+      );
+      expect(scroller.scrollTop).toBe(70);
     });
 
     it("does not scroll when the page buttons change page", () => {
