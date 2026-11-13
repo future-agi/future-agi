@@ -89,6 +89,10 @@ type Handlers struct {
 	// Files API store.
 	fileStore *files.Store
 
+	// trustedProxies is ip_acl.trusted_proxies: how many X-Forwarded-For hops
+	// clientIP trusts.
+	trustedProxies int
+
 	// Video generation store.
 	videoIPACL    config.IPACLConfig
 	videoStore    video.Store
@@ -113,6 +117,27 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
+}
+
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
+	}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
+	}
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -232,6 +257,8 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -302,6 +329,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -1013,7 +1041,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1047,19 +1075,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -2285,34 +2301,13 @@ func isBlockedMetadataKey(key string) bool {
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
+// clientIP returns the client address recorded as client_ip and judged by
+// ip_acl and per-key allowed_ips. X-Forwarded-For is honoured only for the
+// configured number of trusted proxy hops (ip_acl.trusted_proxies); with the
+// default of 0 it is the TCP peer. X-Real-IP is never trusted. See
+// trustedClientIP.
+func (h *Handlers) clientIP(r *http.Request) string {
+	return trustedClientIP(r, h.trustedProxies)
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"
