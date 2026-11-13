@@ -42,11 +42,15 @@ class _StorageStreamingResponse(StreamingHttpResponse):
     Django's ASGI handler collects a synchronous iterator into a list before
     sending the body. Reading one chunk per worker-thread call keeps memory
     bounded by the chunk size instead of the file size.
+
+    Reads run on the request's thread-sensitive worker, the same one Django
+    uses for response.close(), so a close after a client disconnect waits for
+    the read in progress instead of releasing the connection during it.
     """
 
     async def __aiter__(self):
         chunks = iter(self.streaming_content)
-        read_chunk = sync_to_async(next, thread_sensitive=False)
+        read_chunk = sync_to_async(next)
         while True:
             chunk = await read_chunk(chunks, _STREAM_END)
             if chunk is _STREAM_END:

@@ -232,3 +232,87 @@ def test_asgi_response_sends_first_chunk_before_reading_whole_object(download_ca
     assert b"".join(bodies) == b"".join(chunks)
     c.stored.close.assert_called_once()
     c.stored.release_conn.assert_called_once()
+
+
+def test_asgi_disconnect_during_read_closes_storage_after_the_read(download_case):
+    """A client disconnect must not close the storage body while a read runs.
+
+    Django's ASGI handler cancels the response task on disconnect and then
+    calls response.close() on the request's thread-sensitive worker. The
+    storage read in flight at that moment has to finish first, on the same
+    worker, so the connection goes back to the pool only after the read.
+    """
+    import asyncio
+    import threading
+
+    from django.core.handlers.asgi import ASGIHandler
+
+    c = download_case
+    events = []
+    reading = threading.Event()
+    release_read = threading.Event()
+    state = {}
+
+    def stream(_amount):
+        yield b"first"
+        events.append(("read-start", threading.get_ident()))
+        reading.set()
+        state["loop"].call_soon_threadsafe(state["read_started"].set)
+        # close() releases this read straight away if it runs concurrently;
+        # otherwise the read finishes on its own after a short wait.
+        release_read.wait(timeout=2)
+        reading.clear()
+        events.append(("read-end", threading.get_ident()))
+        yield b"second"
+
+    def close():
+        events.append(("close", threading.get_ident(), reading.is_set()))
+        release_read.set()
+
+    c.stored.stream.side_effect = stream
+    c.stored.close.side_effect = close
+    response = download_knowledge_base_file(c.request, c.kb.id, c.file.id)
+    bodies = []
+
+    async def run_get_response(self, request):
+        return response
+
+    async def serve():
+        state["loop"] = asyncio.get_running_loop()
+        state["read_started"] = asyncio.Event()
+        incoming = [{"type": "http.request", "body": b"", "more_body": False}]
+
+        async def receive():
+            if incoming:
+                return incoming.pop()
+            await state["read_started"].wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and message.get("body"):
+                bodies.append(message["body"])
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/model-hub/knowledge-base/files/download/",
+            "query_string": b"",
+            "headers": [],
+        }
+        with patch.object(ASGIHandler, "run_get_response", run_get_response):
+            await ASGIHandler()(scope, receive, send)
+
+    # A fresh event loop with no outer async_to_sync, as under an ASGI server.
+    runner = threading.Thread(target=lambda: asyncio.run(serve()))
+    runner.start()
+    runner.join(timeout=30)
+    assert not runner.is_alive()
+
+    assert bodies == [b"first"]
+    assert [event[0] for event in events] == ["read-start", "read-end", "close"]
+    read_thread = events[0][1]
+    close_thread, read_in_progress = events[2][1], events[2][2]
+    assert read_in_progress is False
+    assert close_thread == read_thread
+    c.stored.close.assert_called_once()
+    c.stored.release_conn.assert_called_once()
