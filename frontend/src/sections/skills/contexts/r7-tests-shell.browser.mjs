@@ -1,3 +1,4 @@
+/* eslint-env node */
 // Cloud-only visual evidence through the real authenticated route. No component mocks,
 // custom theme, injected styles or fabricated results. Input stays on the disposable VM.
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
