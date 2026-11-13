@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -102,7 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
-from simulate.types import CallActorDelivery, CallActorFacetValue, CallActorTookPart
+from simulate.types import CallActorDelivery, CallActorFacetValue
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -307,9 +307,7 @@ def _member_sub_goals() -> Subquery:
             Value([], output_field=JSONField()),
             output_field=JSONField(),
         )
-    )[
-        :1
-    ]
+    )[:1]
     return Subquery(member, output_field=JSONField())
 
 
@@ -1020,7 +1018,7 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
-def call_actor_delivery(took_part: CallActorTookPart) -> CallActorDelivery:
+def call_actor_delivery(took_part: Mapping[str, Any]) -> CallActorDelivery:
     """How far an actor got in one call; a summary from before `drawn` counts as drawn."""
     if (took_part.get("delivered") or 0) > 0:
         return "delivered"
@@ -1319,7 +1317,7 @@ def run_call_facets(
         return cached
     facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
     facets["sub_goal"] = _sub_goal_facet(calls())
-    facets["actor"] = _call_actor_facet(calls())
+    facets["actor"] = cast(list[dict[str, Any]], _call_actor_facet(calls()))
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets

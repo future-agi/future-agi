@@ -1184,7 +1184,7 @@ class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
 
 class HarnessActorListSerializer(serializers.Serializer):
     actors = serializers.ListField(child=HarnessActorRecordField())
-    source = serializers.ChoiceField(choices=("draft", "saved"))
+    source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]  # the API field is named source
     revision = serializers.IntegerField()
     # Each actor file's record schema, from the rules of the release that sealed the environment.
     record_schemas = JsonObjectRequestField()
@@ -1210,7 +1210,9 @@ class HarnessActorViewQuerySerializer(serializers.Serializer):
 class HarnessActorSeenSerializer(serializers.Serializer):
     input = serializers.CharField()
     value = serializers.JSONField()
-    source = serializers.ChoiceField(choices=("actor", "scenario", "caller"))
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source
+        choices=("actor", "scenario", "caller")
+    )
 
 
 class HarnessActorNeverSeesSerializer(serializers.Serializer):

@@ -390,7 +390,7 @@ class FacetValueSerializer(serializers.Serializer):
 
 
 class LabelledFacetValueSerializer(FacetValueSerializer):
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label
 
 
 class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
