@@ -1,9 +1,12 @@
-// TH-7275 real-user proof (task 746, from task 685's spec). Not a product flow:
-// it lives under proof/746/ and is copied into e2e/flows/observe/ only to run,
-// against a stack built from the task head. Flows 1-4 are task 685's; flow 6
-// is new: a drawer tag save on page 2 keeps the grid on page 2, and the grid
-// tag edits that follow succeed. Every browser session signs in through the
-// real login page. Synthetic data only.
+// TH-7275 real-user proof (task 771; from task 746's and task 685's specs).
+// Not a product flow: it lives under proof/771/ and is copied into
+// e2e/flows/observe/ only to run, against a stack built from the task head.
+// Flows 1-4 are task 685's. Flow 6: a drawer tag save on page 2 keeps the grid
+// on page 2, and the grid tag edits that follow succeed, also after a
+// 2 -> 1 -> 2 round trip. Flow 7: the page-1 round trip (closing a page-2 tag
+// editor, then page 1 shows page 1's rows; a drawer save and grid edits on
+// page 1, also after 1 -> 2 -> 1). PROOF_FLOWS=paging runs flows 6-7 only.
+// Every browser session signs in through the real login page. Synthetic data.
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { request as pwRequest, test, expect, type Page, type Response } from '@playwright/test';
@@ -12,7 +15,8 @@ import { POLL, StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { provisionActor, type TestActor } from '../../lib/provisioning';
 
-const MODE = 'pr';
+const MODE = process.env.PROOF_MODE ?? 'pr';
+const CORE = (process.env.PROOF_FLOWS ?? 'all') !== 'paging';
 const CH_CONTAINER = process.env.PROOF_CH_CONTAINER ?? '';
 const TRACE_LIST = '/tracer/trace/list_traces_of_session/';
 const SPAN_TAGS = '/tracer/observation-span/update-tags/';
@@ -31,6 +35,11 @@ const record = (key: string, expected: unknown, actual: unknown) => {
 
 test.describe.configure({ mode: 'serial' });
 
+// Keep the recorded checks even when a later step fails.
+test.afterEach(async ({}, testInfo) => {
+  writeFileSync(testInfo.outputPath('observed.json'), JSON.stringify(observed, null, 2));
+});
+
 test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
   test.setTimeout(900_000);
   page.setDefaultTimeout(UI);
@@ -42,7 +51,7 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     await testInfo.attach(name, { body: JSON.stringify(value, null, 2), contentType: 'application/json' });
   };
   const req = await pwRequest.newContext({ baseURL: E2E.apiUrl });
-  const a = await provisionActor(req, `p746a`);
+  const a = await provisionActor(req, `p771a${MODE}`);
   // Finish organization setup as a new user would, so sign-in lands in the app.
   await a.api.post(ORG_SETUP, { org_name: `th7275-${MODE}-org-a` });
   const probe = new StateProbe({ api: a.api, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase,
@@ -137,7 +146,7 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
   };
   const snackbarText = async () => (await page.locator('#notistack-snackbar, .notistack-MuiContent').allTextContents()).join(' | ');
 
-  {
+  if (CORE) {
     // ---- lane flow 1: grid trace tag + drawer child tag, reload -------------
     await openGrid();
     await expect(tagCell(ta.traceId).getByText(sdkA, { exact: true })).toBeVisible({ timeout: UI });
@@ -226,7 +235,7 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     // ---- lane flow 4a: another project / another org is refused -------------
     const otherProjectName = `${prefix}-other-project`;
     const tOther = await sendTrace(req, { ...cfg(a, otherProjectName), rootName: `${prefix}-other` });
-    const b = await provisionActor(req, `p746b`);
+    const b = await provisionActor(req, `p771b${MODE}`);
     const tOrg = await sendTrace(req, { ...cfg(b, `${prefix}-org-b`), rootName: `${prefix}-org-b`,
       rootAttributes: { 'tag.tags': [`${prefix}-sdk-org-b`] } });
     const [otherProject] = await probe.pg<{ id: string }>('SELECT id::text FROM tracer_project WHERE name=$1', [otherProjectName]);
@@ -265,6 +274,8 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     record('flow4.org_b_tags_unchanged', [`${prefix}-sdk-org-b`], orgBAfter.tags.map(t => t.name));
     await attach('cross-scope', { crossProject, crossOrg, otherProject, orgBProject, tOther, tOrg });
 
+  }
+  {
     // ---- flow 6: a drawer tag save on page 2 keeps the grid on page 2 ------
     const pagedName = `${prefix}-paged`;
     const pagedIds: string[] = [];
@@ -285,6 +296,51 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     await expect(traceNames.getByText(pagedLabel(0), { exact: true })).toBeVisible({ timeout: UI });
     await showTagColumns();
     const pageTwo = page.getByRole('button', { name: 'Go to page 2', exact: true });
+    const pageOne = page.getByRole('button', { name: 'Go to page 1', exact: true });
+    // What page 1 shows: its newest row, and none of page 2's rows.
+    const PAGE_ONE = { page_1_current: 'page', first_row_visible: true, page_2_rows_visible: [] as string[] };
+    const pageOneState = async () => {
+      await expect(traceNames.getByText(pagedLabel(0), { exact: true })).toBeVisible({ timeout: 15_000 }).catch(() => {});
+      const names = await traceNames.allTextContents();
+      return { page_1_current: await pageOne.getAttribute('aria-current'),
+        first_row_visible: names.includes(pagedLabel(0)),
+        page_2_rows_visible: names.filter(n => [25, 26, 27].map(pagedLabel).includes(n)).sort() };
+    };
+    const goToPageOne = async (shotName: string) => {
+      await pageOne.click();
+      const state = await pageOneState();
+      await shot(shotName);
+      return state;
+    };
+    const drawerRootTagSave = async (id: string, name: string, tag: string) => {
+      await row(id).locator('[col-id="trace_name"]').click();
+      const root = drawer().getByRole('region', { name: 'Trace Tree', exact: true }).getByText(name, { exact: true });
+      const inline = drawer().getByRole('button', { name: 'tag', exact: true });
+      await root.click();
+      if (!(await inline.isVisible().catch(() => false))) {
+        await page.waitForTimeout(1000);
+        if (!(await inline.isVisible().catch(() => false))) await root.click();
+      }
+      await inline.click();
+      const saved = page.waitForResponse(r => new URL(r.url()).pathname === SPAN_TAGS &&
+        r.request().method() === 'POST', { timeout: UI });
+      await drawer().getByPlaceholder('tag name', { exact: true }).fill(tag);
+      await drawer().getByPlaceholder('tag name', { exact: true }).press('Enter');
+      const response = await saved;
+      const body = await response.json().catch(() => null);
+      await expect(drawer().getByText(tag, { exact: true })).toBeVisible({ timeout: UI });
+      return { status: response.status(), revision: body?.result?.tag_revision, body };
+    };
+    const gridTagSave = async (id: string, tag: string) => {
+      await editTagsButton(id).click();
+      const saved = page.waitForResponse(r => new URL(r.url()).pathname === `/tracer/trace/${id}/tags/` &&
+        r.request().method() === 'PATCH', { timeout: UI });
+      await page.getByPlaceholder('Add tag...', { exact: true }).fill(tag);
+      await page.getByPlaceholder('Add tag...', { exact: true }).press('Enter');
+      const response = await saved;
+      return { status: response.status(), sentRevision: JSON.parse(response.request().postData() ?? '{}').expected_tag_revision,
+        body: await response.json().catch(() => null) };
+    };
     await expect(pageTwo).toBeEnabled({ timeout: UI });
     await pageTwo.click();
     await expect(pageTwo).toHaveAttribute('aria-current', 'page', { timeout: UI });
@@ -342,8 +398,7 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     await shot('64-grid-cell-after-grid-edit');
 
     // Leave page 2 and come back: the cell remounts from the grid's page cache.
-    await page.getByRole('button', { name: 'Go to page 1', exact: true }).click();
-    await expect(traceNames.getByText(pagedLabel(0), { exact: true })).toBeVisible({ timeout: UI });
+    record('flow6.page_1_after_page_2_edits', PAGE_ONE, await goToPageOne('64b-page-1-after-page-2-edits'));
     await pageTwo.click();
     await expect.poll(async () => (await traceNames.allTextContents()).length, { timeout: UI }).toBe(3);
     await editTagsButton(targetId).click();
@@ -366,8 +421,66 @@ test(`TH-7275 real-user proof (${MODE})`, async ({ page }, testInfo) => {
     await attach('paged', { pagedProject: paged.id, targetId, targetName, pageTwoNames,
       drawer: drawerBody, grid: gridBody, againStatus: againResponse.status() });
 
+    // ---- flow 7: page-1 round trip ------------------------------------------
+    // 7a: open and close a page-2 tag editor without saving, then go to page 1:
+    // the grid shows page 1's rows, not page 2's under a highlighted "1".
+    await page.goto(`/dashboard/observe/${paged.id}/llm-tracing?selectedTab=trace`, { waitUntil: 'domcontentloaded' });
+    await expect(traceNames.getByText(pagedLabel(0), { exact: true })).toBeVisible({ timeout: UI });
+    await showTagColumns();
+    await pageTwo.click();
+    await expect.poll(async () => (await traceNames.allTextContents()).length, { timeout: UI }).toBe(3);
+    const closeOnlyId = pagedIds[26];
+    await editTagsButton(closeOnlyId).click();
+    await expect(page.getByPlaceholder('Add tag...', { exact: true })).toBeVisible({ timeout: UI });
+    await page.keyboard.press('Escape');
+    await expect(page.getByPlaceholder('Add tag...', { exact: true })).toBeHidden({ timeout: UI });
+    record('flow7.page_1_after_closing_a_page_2_editor', PAGE_ONE, await goToPageOne('70-page-1-after-page-2-editor-closed'));
+    await pageTwo.click();
+    await expect(pageTwo).toHaveAttribute('aria-current', 'page', { timeout: UI });
+    await expect.poll(async () => (await traceNames.allTextContents()).length, { timeout: UI }).toBe(3);
+    record('flow7.page_2_rows_again', pageTwoNames, (await traceNames.allTextContents()).sort());
+
+    // 7b: a drawer save on page 1 keeps page 1; the next grid edit, and one more
+    // after a 1 -> 2 -> 1 round trip, are accepted with the latest revision.
+    const p1Index = 1, p1Id = pagedIds[p1Index], p1Name = pagedLabel(p1Index);
+    record('flow7.page_1_after_round_trip_from_page_2', PAGE_ONE, await goToPageOne('71-page-1-before-drawer-save'));
+    const p1DrawerTag = `${prefix}-drawer-p1`, p1GridTag = `${prefix}-grid-p1`, p1AgainTag = `${prefix}-grid-p1-again`;
+    const p1Drawer = await drawerRootTagSave(p1Id, p1Name, p1DrawerTag);
+    record('flow7.drawer_root_tag_save_status', 200, p1Drawer.status);
+    record('flow7.drawer_save_revision', 1, p1Drawer.revision);
+    await shot('72-drawer-tag-on-page-1');
+    await page.keyboard.press('Escape');
+    await expect(drawer()).toHaveCount(0, { timeout: UI });
+    record('flow7.grid_still_on_page_1', 'page', await pageOne.getAttribute('aria-current'));
+    record('flow7.page_1_rows_after_drawer_save', PAGE_ONE, await pageOneState());
+    await expect(tagCell(p1Id).getByText(p1DrawerTag, { exact: true })).toBeVisible({ timeout: UI });
+    record('flow7.grid_cell_shows_drawer_tag_without_reload', true,
+      await tagCell(p1Id).getByText(p1DrawerTag, { exact: true }).isVisible());
+    const p1Grid = await gridTagSave(p1Id, p1GridTag);
+    record('flow7.next_grid_edit_status', 200, p1Grid.status);
+    record('flow7.next_grid_edit_sent_revision', 1, p1Grid.sentRevision);
+    await shot('73-grid-edit-on-page-1');
+    await page.keyboard.press('Escape');
+    await expect(tagCell(p1Id).getByText(p1GridTag, { exact: true })).toBeVisible({ timeout: UI });
+    await pageTwo.click();
+    await expect.poll(async () => (await traceNames.allTextContents()).length, { timeout: 20_000 }).toBe(3).catch(() => {});
+    record('flow7.page_2_rows_after_page_1_edit', pageTwoNames, (await traceNames.allTextContents()).sort());
+    await shot('73b-page-2-after-page-1-edit');
+    record('flow7.page_1_after_edit_and_round_trip', PAGE_ONE, await goToPageOne('74-page-1-after-round-trip'));
+    const p1Again = await gridTagSave(p1Id, p1AgainTag);
+    record('flow7.grid_edit_after_round_trip_status', 200, p1Again.status);
+    record('flow7.grid_edit_after_round_trip_sent_revision', 2, p1Again.sentRevision);
+    await page.keyboard.press('Escape');
+    await shot('75-grid-edit-after-round-trip');
+    const p1Rows = await a.api.post<{ result: { table: Row[] } }>(TRACE_LIST,
+      { project_id: paged.id, page_number: 0, page_size: 50, filters: '[]' });
+    const p1Row = p1Rows.result.table.find(r => r.trace_id === p1Id);
+    record('flow7.server_manual_tags', [p1DrawerTag, p1GridTag, p1AgainTag].sort(),
+      (p1Row?.manual_tags ?? []).map(t => t.name).sort());
+    record('flow7.server_tag_revision', 3, p1Row?.tag_revision);
+
     // ---- lane flow 4b: ClickHouse unavailable -> clear UI error -------------
-    if (CH_CONTAINER) {
+    if (CORE && CH_CONTAINER) {
       await openGrid();
       await editTagsButton(ta.traceId).click();
       execFileSync('docker', ['stop', CH_CONTAINER], { stdio: 'ignore' });
