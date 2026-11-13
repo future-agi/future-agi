@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -149,11 +150,41 @@ func TestAdaptiveGatewayLearnsFromHTTP(t *testing.T) {
 	if srv.registry.Router().Strategy() != "adaptive" {
 		t.Fatal("gateway silently substituted a different strategy")
 	}
-	for _, id := range []string{"fast", "slow"} {
-		health := srv.handlers.healthMonitor.GetHealth(id)
-		if health.RequestCount == 0 || health.LatencyEWMAMs == 0 {
-			t.Fatalf("provider %s has no live health/latency observations", id)
-		}
+	if health := srv.handlers.healthMonitor.GetHealth("fast"); health.RequestCount == 0 || health.LatencyEWMAMs == 0 {
+		t.Fatal("healthy provider has no live health/latency observations")
+	}
+	// Failed calls count as errors but add no latency: failing fast is not speed.
+	if health := srv.handlers.healthMonitor.GetHealth("slow"); health.ErrorCount == 0 || health.LatencyEWMAMs != 0 {
+		t.Fatalf("failing provider: errors=%d latency=%dms, want errors and no latency", health.ErrorCount, health.LatencyEWMAMs)
+	}
+}
+
+// The failing upstream is the faster one: it answers 503 at once, while the
+// healthy one takes 20ms. Round-robin would give each half of the traffic.
+func TestAdaptiveFastFailingTargetGetsLessThanRoundRobin(t *testing.T) {
+	var failingCalls, healthyCalls atomic.Int64
+	failingFast := adaptiveUpstream(t, true, 0, &failingCalls)
+	healthySlow := adaptiveUpstream(t, false, 20*time.Millisecond, &healthyCalls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"fast": {BaseURL: failingFast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+		"slow": {BaseURL: healthySlow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = adaptiveRoutingConfig()
+	_, gateway := adaptiveServer(t, cfg)
+	for i := 0; i < 20; i++ {
+		adaptiveRequest(t, gateway, "adaptive-sample")
+	}
+	time.Sleep(20 * time.Millisecond)
+	failingBefore, healthyBefore := failingCalls.Load(), healthyCalls.Load()
+	const requests = 200
+	for i := 0; i < requests; i++ {
+		adaptiveRequest(t, gateway, "adaptive-sample")
+	}
+	failing, healthy := failingCalls.Load()-failingBefore, healthyCalls.Load()-healthyBefore
+	t.Logf("fast-failing=%d slow-healthy=%d of %d", failing, healthy, requests)
+	if failing+healthy != requests || failing >= requests/4 {
+		t.Fatalf("fast-failing target got %d of %d requests; round-robin gives it %d", failing, requests, requests/2)
 	}
 }
 
@@ -233,5 +264,32 @@ func TestAdaptiveReloadSharesLiveCircuitBreaker(t *testing.T) {
 	}
 	if got := srv.handlers.healthMonitor.GetHealth("slow").CircuitState; got != "n/a" {
 		t.Fatalf("disabled breaker retained stale state: %s", got)
+	}
+}
+
+// Streams feed routing latency with time to first chunk, as least-latency used
+// before per-attempt sampling, not with how long the whole answer took.
+func TestAdaptiveStreamLatencyIsTimeToFirstChunk(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"synthetic\",\"model\":\"adaptive-sample\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"synthetic \"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(150 * time.Millisecond) // a long answer, not a slow provider
+		io.WriteString(w, "data: {\"id\":\"synthetic\",\"model\":\"adaptive-sample\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"response\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(upstream.Close)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"fast": {BaseURL: upstream.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = adaptiveRoutingConfig()
+	cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "fast"}}}
+	srv, gateway := adaptiveServer(t, cfg)
+	if status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "", true); status != http.StatusOK || !strings.Contains(body, "response") {
+		t.Fatalf("stream failed: status=%d", status)
+	}
+	health := srv.handlers.healthMonitor.GetHealth("fast")
+	if health.RequestCount != 1 || health.LatencyEWMAMs >= 100 {
+		t.Fatalf("stream latency sample=%dms requests=%d, want time to first chunk (well under 150ms)", health.LatencyEWMAMs, health.RequestCount)
 	}
 }

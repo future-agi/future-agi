@@ -147,6 +147,26 @@ func (a *AdaptiveStrategy) GetPhase() string {
 	return "active"
 }
 
+// inheritFrom carries learned weights for providers that still exist, and the
+// learning progress, over from the strategy a routing reload replaces.
+func (a *AdaptiveStrategy) inheritFrom(old *AdaptiveStrategy, providerIDs map[string]bool) {
+	if a == nil || old == nil {
+		return
+	}
+	weights := old.GetWeights()
+	a.mu.Lock()
+	for pid, w := range weights {
+		if providerIDs[pid] {
+			a.weights[pid] = w
+		}
+	}
+	a.mu.Unlock()
+	a.requestCount.Add(old.requestCount.Load())
+	if old.phase.Load() == 1 {
+		a.phase.Store(1)
+	}
+}
+
 // Stop waits for the background update loop to exit. Concurrent calls are safe.
 func (a *AdaptiveStrategy) Stop() {
 	a.stopOnce.Do(func() { close(a.stopCh) })
@@ -201,12 +221,14 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 		// Clamp to [0, 1].
 		normalizedLatency = math.Max(0, math.Min(1, normalizedLatency))
 
-		successRate := h.SuccessRate
+		successRate := h.RecentSuccessRate
 		if h.RequestCount == 0 {
 			successRate = 1.0 // No data = assume good.
 		}
 
-		raw := a.signalLatency*normalizedLatency + a.signalError*successRate
+		// Speed only counts for calls that succeed: a target that fails every
+		// call scores zero however fast it fails, and stays at min_weight.
+		raw := successRate * (a.signalLatency*normalizedLatency + a.signalError)
 		rawScores[h.ProviderID] = raw
 		totalRaw += raw
 	}

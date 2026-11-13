@@ -494,6 +494,7 @@ func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*rout
 
 	r.mu.Lock()
 	oldRouter := r.router
+	newRouter.InheritAdaptiveState(oldRouter, providerIDs)
 	r.router = newRouter
 	r.mu.Unlock()
 	if oldRouter != nil {

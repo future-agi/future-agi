@@ -419,6 +419,8 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		finalizeStream(ctx.Err() != nil)
 		return
 	}
+	// Routing latency is time to first chunk, not the whole stream's length.
+	firstChunkLatency := time.Since(upstreamStart)
 	sseWriter.WriteHeaders()
 	if !relay(*first) {
 		return
@@ -437,7 +439,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), nil)
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, nil)
 				if wantsStreamMetadata(rc) {
 					// Finalise first: the last chunk carries the cost.
 					finalizeStream(false)

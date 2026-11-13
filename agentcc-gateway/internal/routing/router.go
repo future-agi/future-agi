@@ -231,6 +231,24 @@ func (r *Router) GetHealthMonitor() *HealthMonitor {
 	return r.healthMonitor
 }
 
+// InheritAdaptiveState keeps what adaptive routing learned across a reload:
+// weights for providers in providerIDs and the learning phase. It does nothing
+// unless both routers use the adaptive strategy.
+func (r *Router) InheritAdaptiveState(old *Router, providerIDs map[string]bool) {
+	if r == nil || old == nil {
+		return
+	}
+	next, ok := r.defaultStrategy.(*AdaptiveStrategy)
+	if !ok {
+		return
+	}
+	prev, ok := old.defaultStrategy.(*AdaptiveStrategy)
+	if !ok {
+		return
+	}
+	next.inheritFrom(prev, providerIDs)
+}
+
 // Close stops strategy-owned background workers. It is safe to call repeatedly.
 func (r *Router) Close() {
 	if r == nil {

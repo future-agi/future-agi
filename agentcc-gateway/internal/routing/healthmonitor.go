@@ -18,7 +18,14 @@ type ProviderHealth struct {
 	LastError       string     `json:"last_error,omitempty"`
 	LastErrorTime   *time.Time `json:"last_error_time,omitempty"`
 	LastSuccessTime *time.Time `json:"last_success_time,omitempty"`
+	// RecentSuccessRate is an EWMA of request outcomes, so old results fade.
+	// Adaptive routing scores on it; the health endpoints keep SuccessRate.
+	RecentSuccessRate float64 `json:"-"`
 }
+
+// successRateAlpha weights each new outcome in RecentSuccessRate, so roughly
+// the last 20 calls dominate and a provider recovers once it succeeds again.
+const successRateAlpha = 0.1
 
 // providerStats tracks per-provider request statistics.
 type providerStats struct {
@@ -28,6 +35,22 @@ type providerStats struct {
 	lastError     string
 	lastErrorTime time.Time
 	lastSuccessAt time.Time
+	recentSuccess float64 // EWMA of outcomes (1 success, 0 error); guarded by mu
+	hasOutcome    bool    // guarded by mu
+}
+
+// recordOutcomeLocked folds one outcome into the EWMA. s.mu must be held.
+func (s *providerStats) recordOutcomeLocked(success bool) {
+	sample := 0.0
+	if success {
+		sample = 1
+	}
+	if !s.hasOutcome {
+		s.recentSuccess = sample
+		s.hasOutcome = true
+		return
+	}
+	s.recentSuccess = successRateAlpha*sample + (1-successRateAlpha)*s.recentSuccess
 }
 
 // HealthMonitor tracks per-provider health metrics.
@@ -96,6 +119,7 @@ func (hm *HealthMonitor) RecordSuccess(providerID string) {
 	now := time.Now()
 	s.mu.Lock()
 	s.lastSuccessAt = now
+	s.recordOutcomeLocked(true)
 	s.mu.Unlock()
 }
 
@@ -115,6 +139,7 @@ func (hm *HealthMonitor) RecordError(providerID string, err error) {
 	s.mu.Lock()
 	s.lastError = errMsg
 	s.lastErrorTime = now
+	s.recordOutcomeLocked(false)
 	s.mu.Unlock()
 }
 
@@ -143,6 +168,7 @@ func (hm *HealthMonitor) GetHealth(providerID string) ProviderHealth {
 		}
 
 		s.mu.Lock()
+		h.RecentSuccessRate = s.recentSuccess
 		if s.lastError != "" {
 			h.LastError = s.lastError
 			t := s.lastErrorTime
