@@ -1256,3 +1256,108 @@ func TestSpanAttributeIsNotTheResourceMark(t *testing.T) {
 		t.Errorf("sessions = %+v, want exactly one with id %s", ss, wantSess)
 	}
 }
+
+// buildLiveKitQuickStart is the LiveKit README Quick Start shape: tracing is set
+// up inside the entrypoint, so the untyped `agent_session` is the parentless
+// root and an `llm_request` is its child.
+func buildLiveKitQuickStart(withJobID bool) ptrace.Traces {
+	traces := buildLiveKitJob("agent_session", withJobID)
+	child := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1)
+	child.SetName("llm_request")
+	return traces
+}
+
+// buildLiveKitJob is a LiveKit worker trace: the untyped `job_entrypoint` root
+// and its `agent_session` child, as the traceAI LiveKit exporter sends them.
+func buildLiveKitJob(rootName string, withJobID bool) ptrace.Traces {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("service.name", "voice-agent")
+	rs.Resource().Attributes().PutStr("fi.project_id", "11111111-1111-4111-8111-111111111111")
+	rs.Resource().Attributes().PutStr("fi.org_id", "22222222-2222-4222-8222-222222222222")
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	tid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	root := spans.AppendEmpty()
+	root.SetTraceID(tid)
+	root.SetSpanID([8]byte{1, 1, 1, 1, 1, 1, 1, 1})
+	root.SetName(rootName)
+	root.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+	root.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000060, 0)))
+	root.Attributes().PutStr("gen_ai.span.kind", "UNKNOWN")
+	if withJobID {
+		root.Attributes().PutStr("lk.job_id", "AJ_synthetic")
+	}
+	child := spans.AppendEmpty()
+	child.SetTraceID(tid)
+	child.SetSpanID([8]byte{2, 2, 2, 2, 2, 2, 2, 2})
+	child.SetParentSpanID([8]byte{1, 1, 1, 1, 1, 1, 1, 1})
+	child.SetName("agent_session")
+	child.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000001, 0)))
+	child.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000059, 0)))
+	child.Attributes().PutStr("gen_ai.span.kind", "UNKNOWN")
+	child.Attributes().PutStr("lk.job_id", "AJ_synthetic")
+	return traces
+}
+
+// TestLiveKitJobRootIsAVoiceCallOnlyWithAttachments pins the Voice root mapping
+// for LiveKit calls: only an untyped true root named job_entrypoint or
+// agent_session with lk.job_id, and only with attachments enabled (default
+// off = unchanged). An agent_session under job_entrypoint keeps its type.
+func TestLiveKitJobRootIsAVoiceCallOnlyWithAttachments(t *testing.T) {
+	previous := attachmentsEnabled
+	t.Cleanup(func() { attachmentsEnabled = previous })
+	types := func(traces ptrace.Traces) []string {
+		rows, err := Convert(traces)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, row["observation_type"].(string))
+		}
+		return out
+	}
+	cases := []struct {
+		name    string
+		enabled bool
+		root    string
+		jobID   bool
+		want    []string
+	}{
+		{"enabled job root", true, "job_entrypoint", true, []string{"conversation", "unknown"}},
+		{"disabled is a no-op", false, "job_entrypoint", true, []string{"unknown", "unknown"}},
+		{"other root name", true, "job_shutdown", true, []string{"unknown", "unknown"}},
+		{"no lk.job_id", true, "job_entrypoint", false, []string{"unknown", "unknown"}},
+	}
+	for _, c := range cases {
+		attachmentsEnabled = c.enabled
+		if got := types(buildLiveKitJob(c.root, c.jobID)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: observation types %v want %v", c.name, got, c.want)
+		}
+	}
+	// README Quick Start: no job_entrypoint, the parentless agent_session is
+	// the call root; its children and a disabled flag are unchanged.
+	quickStart := []struct {
+		name    string
+		enabled bool
+		jobID   bool
+		want    []string
+	}{
+		{"quick start root", true, true, []string{"conversation", "unknown"}},
+		{"quick start disabled", false, true, []string{"unknown", "unknown"}},
+		{"quick start no lk.job_id", true, false, []string{"unknown", "unknown"}},
+	}
+	for _, c := range quickStart {
+		attachmentsEnabled = c.enabled
+		if got := types(buildLiveKitQuickStart(c.jobID)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: observation types %v want %v", c.name, got, c.want)
+		}
+	}
+	// A typed root keeps its type: the mapping only fills an untyped root.
+	attachmentsEnabled = true
+	typed := buildLiveKitJob("job_entrypoint", true)
+	typed.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes().PutStr("gen_ai.span.kind", "AGENT")
+	if got := types(typed); got[0] != "agent" {
+		t.Errorf("typed root: observation type %q want agent", got[0])
+	}
+}

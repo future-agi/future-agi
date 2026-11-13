@@ -11,6 +11,10 @@ Pattern:
 """
 
 # Config (no temporalio)
+from tfc.temporal.schedules.attachment_lifecycle import (
+    ATTACHMENT_LIFECYCLE_SCHEDULES,
+)
+from tfc.temporal.schedules.attachments import ATTACHMENT_SCHEDULES
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.demo_seeding import DEMO_SEEDING_SCHEDULES
@@ -27,6 +31,7 @@ from tfc.temporal.schedules.outbox_cdc import OUTBOX_CDC_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.saml import SAML_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+from tfc.temporal.schedules.sql_workbench import SQL_WORKBENCH_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 
 # All schedules to be registered
@@ -44,6 +49,10 @@ ALL_SCHEDULES = [
     # Empty unless FI_CDC_MODE=outbox (the standalone install).
     *OUTBOX_CDC_SCHEDULES,
     *SAML_SCHEDULES,
+    *SQL_WORKBENCH_SCHEDULES,
+    # Empty unless FI_ATTACHMENTS_ENABLED=true.
+    *ATTACHMENT_SCHEDULES,
+    *ATTACHMENT_LIFECYCLE_SCHEDULES,
 ]
 
 # Manager functions
@@ -87,6 +96,7 @@ __all__ = [
     "DEPLOYMENT_TELEMETRY_SCHEDULES",
     "ALL_SCHEDULES",
     "SAML_SCHEDULES",
+    "SQL_WORKBENCH_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",
     "a_create_schedule",

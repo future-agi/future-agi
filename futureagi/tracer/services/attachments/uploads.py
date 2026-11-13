@@ -23,7 +23,7 @@ import hashlib
 import tempfile
 import time
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -37,6 +37,7 @@ from tracer.models.attachment import (
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
+    CaptureSession,
     UploadReservation,
 )
 from tracer.services.attachments.bootstrap import (
@@ -50,6 +51,7 @@ from tracer.services.attachments.bootstrap import (
     session_policy,
 )
 from tracer.services.attachments.contract import (
+    PLACEMENT_FIELDS,
     SEGMENT_MIME_TYPES,
     SERVER_MODALITIES,
     AttachmentError,
@@ -72,33 +74,77 @@ LIVE_STATES = (
     AttachmentState.READY,
 )
 # Finite operational safety bounds, not edition limits. No ambient plan checks.
+# (active transfers, reserved bytes, validation jobs, initializations/minute)
+# for the deployment, one organization and one project.
 BUDGETS = (
     (128, 8 * 1024**3, 8192, 960),
     (32, 2 * 1024**3, 2048, 240),
     (16, 1024**3, 1024, 120),
 )
+# The deployment-wide budget is GLOBAL_SHARDS rows, not one. Every admission
+# used to lock the single 'global' row, which serialised all tenants (99.5 % of
+# lock waits in the load test). An upload is charged to the one shard its
+# server-allocated id names, and each shard holds 1/GLOBAL_SHARDS of the
+# deployment caps. The organization and project rows are unchanged and stay
+# exact: they are the authoritative per-scope limits, while the shards only
+# bound the deployment as a whole.
+GLOBAL_SHARDS = 16
 
 
-def _budget_keys(scope):
-    return ("global", f"org:{scope.organization_id}", f"project:{scope.project_id}")
+def global_shard(upload_id):
+    """The global budget shard an upload is charged to and released from."""
+    return UUID(str(upload_id)).int % GLOBAL_SHARDS
 
 
-def _lock_budgets(scope):
-    rows = []
-    for key in _budget_keys(scope):
-        AttachmentBudget.objects.get_or_create(
-            key=key, defaults={"window_started_at": timezone.now()}
-        )
-        rows.append(AttachmentBudget.objects.select_for_update().get(pk=key))
-    return rows
+def _budget_keys(scope, shard):
+    return (
+        f"global:{shard}",
+        f"org:{scope.organization_id}",
+        f"project:{scope.project_id}",
+    )
+
+
+def _limits():
+    """``BUDGETS`` with the deployment caps split per shard, read at call time."""
+    deployment, *scoped = BUDGETS
+    return (tuple(-(-cap // GLOBAL_SHARDS) for cap in deployment), *scoped)
+
+
+def _lock_budget(key):
+    AttachmentBudget.objects.get_or_create(
+        key=key, defaults={"window_started_at": timezone.now()}
+    )
+    return AttachmentBudget.objects.select_for_update().get(pk=key)
+
+
+def _lock_budgets(scope, shard):
+    """Lock one global shard, then the organization, then the project row.
+
+    An admission or a single settle holds one shard, always first. Operations
+    that may settle uploads of any shard use ``lock_all_budgets`` instead, so
+    the order stays global (ascending), organization, project, scope.
+    """
+    return [_lock_budget(key) for key in _budget_keys(scope, shard)]
+
+
+def lock_all_budgets(scope):
+    """Every global shard in ascending order, then the organization and project.
+
+    For deletion, expiry and tombstone batches: they settle uploads charged to
+    any shard while holding the scope lock, so they take all shards first and
+    can never wait on a shard an admission holds while it waits on the scope.
+    """
+    return [_lock_budget(f"global:{shard}") for shard in range(GLOBAL_SHARDS)] + [
+        _lock_budget(key) for key in _budget_keys(scope, 0)[1:]
+    ]
 
 
 @transaction.atomic
-def _count_attempt(scope):
-    rows = _lock_budgets(scope)
+def _count_attempt(scope, shard):
+    rows = _lock_budgets(scope, shard)
     allowed = True
     now = timezone.now()
-    for row, limits in zip(rows, BUDGETS, strict=False):
+    for row, limits in zip(rows, _limits(), strict=True):
         if now - row.window_started_at >= timedelta(minutes=1):
             row.window_started_at, row.initialization_attempts = now, 0
         row.initialization_attempts += 1
@@ -135,6 +181,21 @@ def _check_generation(scope, body):
         raise AttachmentError("expired", 409)
 
 
+def _locked_session(session):
+    """The capture session re-read under a lock its revocation must wait for.
+
+    ``find_session`` reads the session before the transaction, so checking that
+    object let a revocation committed in between still admit an upload (the
+    load test measured about one late occurrence per in-flight writer). FOR NO
+    KEY UPDATE conflicts with the revoking UPDATE, but not with the FK KEY SHARE
+    checks of concurrent inserts. Initializes on one scope are already
+    serialised by the scope row lock, so it adds no wait between them.
+    """
+    return CaptureSession.objects.select_for_update(no_key=True).get(
+        pk=session.pk, scope_id=session.scope_id
+    )
+
+
 def _renew(upload, session):
     """BR-1: same job, same reservation, fresh capability and later expiry.
 
@@ -159,6 +220,11 @@ def _renew(upload, session):
         raise AttachmentError("expired", 409)
     expires_at = min(_capability_expiry(session), upload.expires_at)
     return upload, capability(session, upload, expires_at=expires_at), expires_at
+
+
+def placement(body):
+    """The placement fields present in ``body``; absent ones stay NULL."""
+    return {name: body[name] for name in PLACEMENT_FIELDS if body.get(name) is not None}
 
 
 def initialize(writer, *, scope_id, body, key):
@@ -201,14 +267,20 @@ def initialize(writer, *, scope_id, body, key):
             locked = AttachmentUpload.objects.select_for_update().get(
                 pk=existing.pk, scope=scope
             )
+            session = _locked_session(session)
             check_session(session)
             return _renew(locked, session)
-    if not _count_attempt(scope):
+    # Allocated before admission: the id picks the global budget shard, and
+    # settle() releases the same shard from it.
+    upload_id = uuid4()
+    shard = global_shard(upload_id)
+    if not _count_attempt(scope, shard):
         raise AttachmentError("throttled", 429)
     with transaction.atomic():
         # One ordering for all budget-mutating operations, then scope/upload.
-        budgets = _lock_budgets(scope)
+        budgets = _lock_budgets(scope, shard)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
+        session = _locked_session(session)
         check_session(session)
         _check_generation(scope, body)
         existing = AttachmentUpload.objects.filter(
@@ -218,7 +290,7 @@ def initialize(writer, *, scope_id, body, key):
             if existing.request_fingerprint != digest:
                 raise AttachmentError("idempotency_conflict", 409)
             return _renew(existing, session)
-        for row, limits in zip(budgets, BUDGETS, strict=False):
+        for row, limits in zip(budgets, _limits(), strict=True):
             if (
                 row.active_transfers >= limits[0]
                 or row.reserved_bytes + expected_bytes > limits[1]
@@ -275,9 +347,11 @@ def initialize(writer, *, scope_id, body, key):
                     purpose=body.get("purpose", ""),
                     recording=recording,
                     expires_at=occurrence_expiry,
+                    **placement(body),
                 )
                 upload = AttachmentUpload.objects.create(
                     **common,
+                    id=upload_id,
                     capture_session=session,
                     attachment=attachment,
                     occurrence=occurrence,
@@ -309,6 +383,7 @@ def initialize(writer, *, scope_id, body, key):
         AttachmentOutbox.objects.create(
             scope=scope,
             upload=upload,
+            attachment=attachment,
             event="admitted",
             generation=scope.deletion_generation,
             available_at=timezone.now(),
@@ -516,7 +591,10 @@ def complete(token, *, scope_id, upload_id, body=None):
         upload=upload,
         event="validate",
         generation=scope.deletion_generation,
-        defaults={"available_at": timezone.now()},
+        defaults={
+            "available_at": timezone.now(),
+            "attachment_id": upload.attachment_id,
+        },
     )
     return upload
 
@@ -532,7 +610,7 @@ def settle(upload_id, *, scope_id, outcome):
     }:
         raise ValueError("terminal outcome required")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    rows = _lock_budgets(scope)
+    rows = _lock_budgets(scope, global_shard(upload_id))
     upload = AttachmentUpload.objects.select_for_update().get(pk=upload_id, scope=scope)
     reservation = UploadReservation.objects.select_for_update().get(
         upload=upload, scope=scope
@@ -563,7 +641,10 @@ def settle(upload_id, *, scope_id, outcome):
         upload=upload,
         event="settled",
         generation=upload.deletion_generation,
-        defaults={"available_at": timezone.now()},
+        defaults={
+            "available_at": timezone.now(),
+            "attachment_id": upload.attachment_id,
+        },
     )
     if outcome != AttachmentState.READY:
         AttachmentOutbox.objects.get_or_create(
@@ -572,7 +653,8 @@ def settle(upload_id, *, scope_id, outcome):
             event="erase",
             generation=upload.deletion_generation,
             defaults={
-                "available_at": timezone.now() + timedelta(seconds=TRANSFER_SECONDS)
+                "available_at": timezone.now() + timedelta(seconds=TRANSFER_SECONDS),
+                "attachment_id": upload.attachment_id,
             },
         )
     return True

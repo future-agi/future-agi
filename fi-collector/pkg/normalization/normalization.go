@@ -67,6 +67,7 @@ func NonAdditive(attrs pcommon.Map) bool { return String(attrs, "fi.usage.contri
 // Normalize preserves native trace/span/parent IDs and original operation and
 // conversation attributes. It is idempotent, including across adapter passes.
 func Normalize(attrs pcommon.Map, profile *Profile, names ...string) {
+	NormalizeAttachmentRefs(attrs)
 	op := String(attrs, "gen_ai.operation.name")
 	if profile != nil {
 		attrs.PutStr("fi.normalization.profile", profile.ID)

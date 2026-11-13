@@ -94,6 +94,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.attachments.control_plane import ControlPlaneReader
 from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -1202,6 +1203,10 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.attachments.retention import tombstone_deleted_traces
+
+    # Tombstone the traces' attachment occurrences; the erase drain removes bytes.
+    tombstone_deleted_traces(traces)
     from tracer.services.analysis_retention import retire_analysis_sources
 
     for project_id in sorted({trace.project_id for trace in traces}):
@@ -1982,6 +1987,10 @@ def _build_annotation_map_from_scores_pg(
 
 
 class TraceView(BaseModelViewSetMixin, ModelViewSet):
+    # Re-authorizes every attachment for the viewer's live application session.
+    # With FI_ATTACHMENTS_ENABLED off it does no I/O and changes no response.
+    attachment_reader = ControlPlaneReader()
+
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = TraceSerializer
@@ -2156,7 +2165,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 test_execution_id=query.get("test_execution_id"),
                 call_execution_id=query.get("call_execution_id"),
             )
-            return self._gm.success_response(handler.fetch())
+            result = handler.fetch()
+            from tracer.services.attachments.view_enrichment import enrich_trace_detail
+
+            enrich_trace_detail(
+                request=request,
+                result=result,
+                reader=self.attachment_reader,
+            )
+            return self._gm.success_response(result)
         except Trace.DoesNotExist:
             return self._gm.bad_request(
                 f"error retrieving trace {get_error_message('ERROR_GETTING_TRACE')}"
@@ -4414,6 +4431,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
+        from tracer.services.attachments.view_enrichment import enrich_voice_detail
+
+        enrich_voice_detail(
+            request=request, result=result, reader=self.attachment_reader
+        )
         return self._gm.success_response(result)
 
     def _get_trace_id_by_index_observe_clickhouse(
@@ -6637,6 +6659,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     entry["annotation_outputs"] = annotation_outputs
 
             results.append(entry)
+
+        if not include_export_fields:
+            # Evaluation/export reuse is not attachment authorization.
+            from tracer.services.attachments.view_enrichment import enrich_voice_page
+
+            enrich_voice_page(
+                request=request,
+                project_id=project_id,
+                entries=results,
+                reader=self.attachment_reader,
+            )
 
         # Return DRF-style paginated response
         import math

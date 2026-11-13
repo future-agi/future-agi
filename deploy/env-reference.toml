@@ -1214,6 +1214,95 @@ values for these settings at startup. Deploy the backend and frontend together.
     text = "Where the sidebar's Help entry points."
 
   [[part.section]]
+  heading = "SQL workbench"
+  body = '''
+Pass execution credentials to the backend and dedicated `sql_workbench` worker.
+Compose uses the shared `.env` through `env_file`. Helm uses `secrets.extra` or
+its existing Secret references; never store credentials in chart values committed
+to source control. Estimator credentials are optional and consumed only by the API.
+`EXACT_AGGREGATION_TASK_QUEUE` routes workflow/control and retention work;
+interactive scans always run on the separate bounded `sql_workbench` queue.
+'''
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Application-only read-only ClickHouse principal. Backend and SQL worker; required to run queries; cannot be the normal admin account."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Secret for the dedicated execution principal. Backend and SQL worker; at least 24 characters when provisioning; never supply the admin password."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_SECURE"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Native TLS for backend and SQL worker, with certificate verification enabled. Set true for a TLS listener."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional, separate estimator principal on the backend only. Missing credentials disable estimates, never queries."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional estimator secret on the backend only. At least 24 characters when provisioning; never reuse the execution account."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_DERIVED_METRICS_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Enable only after the derived metrics schema and read-only grants are installed."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_RESULT_CACHE_SECONDS"]
+    default = "60"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Integer 0 to 3600; 0 disables same-actor exact-scope result reuse."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H"]
+    default = "1500"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on one actor's rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_QUERIES_24H"]
+    default = "30000"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on organization-wide rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H"]
+    default = "134217728"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer byte budget for one actor, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H"]
+    default = "536870912"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer organization byte budget, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATES_PER_MINUTE"]
+    default = "30"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer per-actor advisory-estimate rate ceiling."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_AUDIT_RETENTION_DAYS"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Retention worker. Unset preserves audit metadata indefinitely; a positive integer opts into deletion of expired terminal records older than this many days. Result bodies always expire after 24 hours."
+
+  [[part.section]]
   heading = "Optional host update reporting"
   body = '''
 Disabled by default; neither installer adds a mount or recreates an existing
@@ -1710,6 +1799,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "`stderr` sends the application's logs to stderr, for a one-off `manage.py` command whose output you redirect (`sqlmigrate`, `dumpdata`); `./bin/dev manage` sets it. Leave it unset for the services: some log collectors (GKE, for one) mark every stderr line as an error."
 
     [[part.section.row]]
+    keys = ["FI_ATTACHMENTS_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Trace attachments (audio, images, files): the upload, binding and playback routes, their schedules, and fi-collector's mapping of an untyped LiveKit call root to a Voice conversation. Set it where the app reads it; fi-collector follows it (Distributed reads the same `.env`, Helm copies the backend's value). Off, nothing of it runs."
+    audience = "internal"
+
+    [[part.section.row]]
     keys = ["ALLOWED_HOSTS"]
     default = "`*`"
     setups = ["S", "D", "H"]
@@ -2125,6 +2221,25 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     default = "unset"
     setups = ["S", "D", "H"]
     text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
+
+  [[part.section]]
+  heading = "Collector provenance and obsolete settings"
+  body = '''
+Set these in the collector container's environment (a Compose override or
+`fiCollector.extraEnv` in Helm), not just in the installer's `.env`.
+'''
+
+    [[part.section.row]]
+    keys = ["FI_MAX_PENDING_ROWS"]
+    default = "unset (obsolete; setting it prevents startup)"
+    setups = ["S", "D", "H"]
+    text = "Obsolete benchmark-branch row setting. Any value is rejected at startup; remove it and use FI_INGEST_BUDGET_MIB and the current byte-budget settings. Row counts cannot size the leased decode/row memory pool."
+
+    [[part.section.row]]
+    keys = ["FI_BUILD_REVISION"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional build identifier exposed as `/healthz.build.configured_revision` for benchmark provenance, especially for image builds without `.git`. It is operator-supplied metadata, not a verified source hash; record the image digest and available VCS fields too. Does not change ingestion behavior."
 
   [[part.section]]
   heading = "Development overlays (`./bin/dev`)"

@@ -62,6 +62,9 @@ logger = structlog.get_logger(__name__)
 TAG = "Attachments"
 NO_STORE = "private, no-store"
 READ_BYTES = wire.MAX_JSON_BYTES
+# A 204 has no body. Declaring it as an empty string keeps generated clients on
+# the 204 entry instead of falling back to the default error schema.
+NO_CONTENT = openapi.Schema(type=openapi.TYPE_STRING, max_length=0, x_nullable=True)
 IDEMPOTENCY_HEADER = openapi.Parameter(
     "Idempotency-Key",
     openapi.IN_HEADER,
@@ -515,7 +518,7 @@ class AttachmentOccurrenceView(AttachmentView):
         operation_id="deleteAttachmentOccurrence",
         tags=[TAG],
         manual_parameters=PARENT_QUERY,
-        responses={204: openapi.Response("Deleted"), **ERRORS},
+        responses={204: openapi.Response("Deleted", NO_CONTENT), **ERRORS},
     )
     def delete(self, request, project_id, occurrence_id):
         self.enabled()
@@ -553,7 +556,7 @@ class AttachmentManifestView(AttachmentView):
         manual_parameters=[IDEMPOTENCY_HEADER],
         request_serializer=AttachmentRecordingManifestSerializer,
         strict_request_validation=False,
-        responses={204: openapi.Response("Accepted"), **ERRORS},
+        responses={204: openapi.Response("Accepted", NO_CONTENT), **ERRORS},
     )
     def put(self, request, project_id, recording_id):
         self.enabled()
@@ -595,7 +598,7 @@ class AttachmentMediaSessionView(AttachmentView):
         tags=[TAG],
         request_serializer=AttachmentEmptyRequestSerializer,
         strict_request_validation=False,
-        responses={204: openapi.Response("Media cookie set"), **ERRORS},
+        responses={204: openapi.Response("Media cookie set", NO_CONTENT), **ERRORS},
     )
     def post(self, request):
         self.enabled()

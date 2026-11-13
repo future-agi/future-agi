@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from django.db import transaction
@@ -16,6 +17,7 @@ from django.utils import timezone
 from tracer.models.attachment import (
     Attachment,
     AttachmentBlob,
+    AttachmentOutbox,
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
@@ -30,11 +32,17 @@ from tracer.services.attachments.probe import REJECTED_EXIT
 from tracer.services.attachments.storage import ObjectIdentity
 from tracer.services.attachments.uploads import settle
 
-
 VALIDATED_MIME_TYPES = frozenset(
     mime for types in SERVER_MODALITIES.values() for mime in types
 )
 SANDBOX_NPROC = 16
+# A validate job that keeps finding the sandbox unavailable settles FAILED after
+# this many claimed attempts, which releases its reservation and budget slots.
+MAX_VALIDATION_ATTEMPTS = 5
+# Longer than the sandbox timeout, so a live worker keeps its claim.
+VALIDATION_LEASE_SECONDS = 60
+VALIDATION_BACKOFF_SECONDS = 30
+VALIDATION_MAX_BACKOFF_SECONDS = 600
 
 
 def sandbox_probe(path):
@@ -231,3 +239,82 @@ def validate(upload_id, *, scope_id, storage):
         if isinstance(exc, AttachmentError):
             raise
         raise AttachmentError("validation_failed", 503) from None
+
+
+def _claim(event_id):
+    """Count the attempt when it starts, not when it ends.
+
+    A worker that dies inside a job (OOM kill, a host restart) never reports
+    back, but its attempt still counts, so a poison upload cannot be retried
+    forever. The lease keeps other workers off the row while this one runs.
+    """
+    now = timezone.now()
+    with transaction.atomic():
+        event = (
+            AttachmentOutbox.objects.select_for_update()
+            .filter(pk=event_id, event="validate")
+            .first()
+        )
+        if event is None or event.processed_at or event.available_at > now:
+            return None, False
+        exhausted = event.attempts >= MAX_VALIDATION_ATTEMPTS
+        if not exhausted:
+            event.attempts += 1
+            event.available_at = now + timedelta(seconds=VALIDATION_LEASE_SECONDS)
+            event.save(update_fields=["attempts", "available_at"])
+        return event, exhausted
+
+
+def _finish(event):
+    AttachmentOutbox.objects.filter(pk=event.pk, processed_at__isnull=True).update(
+        processed_at=timezone.now()
+    )
+
+
+def consume_validation(event_id, *, storage):
+    """Run one outbox ``validate`` job. True once the job is finished.
+
+    Accepted, rejected and fenced bytes are settled by ``validate`` itself. Only
+    ``validation_unavailable`` (the sandbox failed, not the bytes) is retried,
+    with backoff, up to ``MAX_VALIDATION_ATTEMPTS`` claimed attempts. Then the
+    upload settles FAILED: the reservation and budget slots are released and the
+    quarantined bytes are queued for erasure. Settling never overrides READY.
+    """
+    event, exhausted = _claim(event_id)
+    if event is None:
+        return False
+    if not exhausted:
+        try:
+            validate(event.upload_id, scope_id=event.scope_id, storage=storage)
+        except AttachmentError as exc:
+            if exc.code != "validation_unavailable":
+                _finish(event)
+                return True
+            if event.attempts < MAX_VALIDATION_ATTEMPTS:
+                delay = min(
+                    VALIDATION_BACKOFF_SECONDS * 2 ** (event.attempts - 1),
+                    VALIDATION_MAX_BACKOFF_SECONDS,
+                )
+                AttachmentOutbox.objects.filter(pk=event.pk).update(
+                    available_at=timezone.now() + timedelta(seconds=delay)
+                )
+                return False
+            exhausted = True
+    if exhausted:
+        settle(event.upload_id, scope_id=event.scope_id, outcome=AttachmentState.FAILED)
+    _finish(event)
+    return True
+
+
+def drain_validations(*, storage, limit=32):
+    """Consume up to ``limit`` due validate jobs, oldest first. Returns how many finished."""
+    due = (
+        AttachmentOutbox.objects.filter(
+            event="validate",
+            processed_at__isnull=True,
+            available_at__lte=timezone.now(),
+        )
+        .order_by("available_at", "id")
+        .values_list("pk", flat=True)[:limit]
+    )
+    return sum(consume_validation(pk, storage=storage) for pk in list(due))

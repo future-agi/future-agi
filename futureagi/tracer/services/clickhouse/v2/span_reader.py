@@ -229,6 +229,14 @@ _LEAN_SELECT_SQL = ", ".join(
 # FINAL, so the predicate is redundant and only arms the resurrection bug.
 _FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
 
+
+def _utc_text(value: datetime) -> str:
+    """UTC text with microseconds for ``toDateTime64(..., 6, 'UTC')``."""
+    if value.tzinfo is None:
+        raise ValueError("naive datetime")
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 # A read "as of" a cutoff keeps a row only when its latest version was written by
 # then: a row rewritten later has no eligible version. Both predicates must run
 # after the FINAL merge, or an earlier version comes back. So nothing may move to
@@ -1447,6 +1455,8 @@ class CHSpanReader:
         org_id: str | None = None,
         dedup_via_limit_by: bool = False,
         columns: list[str] | None = None,
+        trace_ids: list[str] | None = None,
+        start_window: tuple[datetime, datetime] | None = None,
     ) -> list[CHSpan] | list[dict]:
         """Equivalent to ObservationSpan.objects.filter(id__in=span_ids).
 
@@ -1464,6 +1474,15 @@ class CHSpanReader:
         WHERE/ORDER BY columns are read by CH regardless, so a caller never has
         to request a column just to filter or sort on it. ``include_heavy``
         still stubs the three fat columns.
+
+        ``trace_ids`` narrows the read to those traces (a batch keyed by
+        project + trace). ``start_window`` (two aware datetimes) bounds it to
+        the parts whose hour bucket overlaps the window. It filters on the
+        sorting-key expression ``toStartOfHour(start_time)`` and the partition
+        key ``toDate(start_time)``, never on raw ``start_time``: every version
+        of a row that FINAL collapses shares both, so the filter can only drop
+        whole rows, never an inner version (which would resurrect an older
+        one). A span outside the window reads as absent.
         """
         if not span_ids:
             return []
@@ -1484,6 +1503,20 @@ class CHSpanReader:
         if org_id:
             where.append("org_id = %(oid)s")
             params["oid"] = str(org_id)
+        if trace_ids is not None:
+            where.append("trace_id IN %(tids)s")
+            params["tids"] = tuple(str(trace_id) for trace_id in trace_ids)
+        if start_window is not None:
+            low, high = start_window
+            where.append(
+                "toDate(start_time) BETWEEN toDate(toDateTime64(%(start_lo)s, 6, 'UTC'))"
+                " AND toDate(toDateTime64(%(start_hi)s, 6, 'UTC'))"
+                " AND toStartOfHour(start_time)"
+                " BETWEEN toStartOfHour(toDateTime64(%(start_lo)s, 6, 'UTC'))"
+                " AND toStartOfHour(toDateTime64(%(start_hi)s, 6, 'UTC'))"
+            )
+            params["start_lo"] = _utc_text(low)
+            params["start_hi"] = _utc_text(high)
         if dedup_via_limit_by:
             sql = _dedup_sql(
                 " AND ".join(where),

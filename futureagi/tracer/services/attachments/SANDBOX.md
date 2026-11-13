@@ -1,18 +1,25 @@
-# Attachment media sandbox
+# Attachment media sandboxes
 
-Every byte of attachment media that the server parses, segments, splits or
-summarises is handled by `media_worker.py`, started by `sandbox.py` as a
-separate process: `python -I -S -B media_worker.py <op> <in-fd> <out-fd> <limit>`.
+Untrusted attachment media is parsed only in a separate, isolated process.
+There are two runtimes, one per path, and neither has an in-process fallback.
 
-## Why not bubblewrap
+| Path | Runtime | Code | Needs |
+|---|---|---|---|
+| Upload validation (`validate` outbox drain, `tasks_s`) | bubblewrap: no network, no credentials, no app tree, read-only host | `validation.py` (`sandbox_probe`) running `probe.py` | `bwrap` in the image and unprivileged user namespaces on the host (`DEPLOY.md`) |
+| Recording imports and derivatives (`tasks_xl`) | stdlib-only child with its own rlimits, `no_new_privs` and a seccomp-bpf allowlist | `sandbox.py` starting `media_worker.py` | `prctl(PR_SET_SECCOMP)`, which Docker's default profile and Kubernetes `RuntimeDefault` allow |
 
-The first runner used `bwrap --unshare-all`. Creating a network namespace
-needs privileges that GCP VMs (Ubuntu 24.04 AppArmor user-namespace
-restrictions) and default Docker / Kubernetes `RuntimeDefault` containers do
-not grant, so it failed with `RTM_NEWADDR EPERM`. It failed closed, but no
-media could be validated in the self-host or worker images.
+The rest of this file describes the second runtime. It exists because
+bubblewrap's network namespace needs privileges that GCP VMs (Ubuntu 24.04
+AppArmor user-namespace restrictions) and default Docker / Kubernetes
+`RuntimeDefault` containers do not grant (`RTM_NEWADDR EPERM`). The recording
+worker cannot assume them, so it isolates itself instead. Upload validation
+still uses bubblewrap: on a host that refuses it, uploads fail closed
+(`validation_unavailable`, then `failed`) rather than run unconfined.
 
-## What the worker does instead
+The recording worker is started by `sandbox.py` as
+`python -I -S -B media_worker.py <op> <in-fd> <out-fd> <limit>`.
+
+## What the recording worker does
 
 Before it reads the first untrusted byte, the worker:
 

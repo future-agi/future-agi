@@ -453,6 +453,20 @@ services:
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_XL_MAX_WORKFLOWS:-20}
 
+  worker-sql-workbench:
+    <<: *queue-worker
+    profiles: []
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: sql_workbench
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 2
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: 2
+
   worker-exact-aggregation:
     <<: *queue-worker
     # Unlike the other per-queue workers this admission boundary is always on;
@@ -879,6 +893,9 @@ services:
       FI_AUTH_REDIS_ADDR: redis:6379
       # Billing usage events: only Future AGI Cloud drains usage:events.
       USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+      # Attachments: the same switch the backend reads from .env, so LiveKit
+      # calls map to Voice exactly when the backend serves their recordings.
+      FI_ATTACHMENTS_ENABLED: ${FI_ATTACHMENTS_ENABLED:-false}
       FI_GRPC_ADDR: ":4317"
       # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
       # `FI_HTTP_ADDR=disable` turns the listener off if you front the

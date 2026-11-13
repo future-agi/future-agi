@@ -8,6 +8,7 @@ before any status or metadata is sent, and open streams re-authorize before and
 after every bounded read. Bytes are charged to the viewer's egress budget first.
 """
 
+import contextlib
 import re
 import time
 from urllib.parse import urlsplit
@@ -173,7 +174,7 @@ class RevocableBody:
             return chunk
         except StopIteration:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - storage stream boundary; ends the stream
             # No raw storage errors, signed URLs or source details in WSGI logs.
             self.close()
             raise StopIteration from None
@@ -182,10 +183,9 @@ class RevocableBody:
         self.closed = True
         if self.body is not None:
             body, self.body = self.body, None
-            try:
+            # A close exception must not leak storage credentials.
+            with contextlib.suppress(Exception):
                 body.close()
-            except Exception:
-                pass  # A close exception must not leak storage credentials.
 
 
 def media_response(request, *, occurrence_id, grant_token, authority, storage, origin):

@@ -6,6 +6,7 @@ The deployment owns bucket provisioning; the application never creates a bucket
 or changes policy, ACL, CORS, lifecycle or public-access settings.
 """
 
+import contextlib
 import hashlib
 import json
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ class PrivateMediaStorage:
                 (self.serving, self.serving_bucket),
             ):
                 self._verify_bucket(client, bucket)
-        except Exception:
+        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
             # Storage exceptions may contain endpoint/key/signature details.
             raise AttachmentError("storage_unverified", 503) from None
 
@@ -203,12 +204,11 @@ class PrivateMediaStorage:
             ):
                 raise ValueError
             return body
-        except Exception:
+        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
             if body is not None:
-                try:
+                # Best effort: the read already fails closed below.
+                with contextlib.suppress(Exception):
                     body.close()
-                except Exception:
-                    pass
             raise AttachmentError("media_unavailable", 503) from None
 
     def erase_upload(self, upload_id):
@@ -248,7 +248,7 @@ class PrivateMediaStorage:
                             client.abort_multipart_upload(
                                 Bucket=bucket, Key=key, UploadId=item["UploadId"]
                             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
             raise AttachmentError("cleanup_unavailable", 503) from None
 
     def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):

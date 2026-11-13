@@ -38,6 +38,20 @@ def span_id(value):
     return value
 
 
+# F01 Reference placement, persisted on AttachmentOccurrence and immutable there
+# (0133 identity loop). ``role`` and ``channel`` are Reference fields that
+# UploadRequest does not carry, so an upload never sets them.
+PLACEMENT_FIELDS = (
+    "message_index",
+    "part_index",
+    "role",
+    "channel",
+    "conversation_id",
+    "turn_id",
+    "tool_call_id",
+)
+
+
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()

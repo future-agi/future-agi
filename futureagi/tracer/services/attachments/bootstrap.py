@@ -236,7 +236,7 @@ def resolve_scope(writer, *, project_name, project_type):
                     str(creator),
                     workspace_id=str(writer.workspace_id),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - project resolution boundary; fails closed as 404
                 raise AttachmentError("scope_unresolved", 404) from None
             if project is None or project.deleted:
                 raise AttachmentError("scope_unresolved", 404)
@@ -286,13 +286,18 @@ def bootstrap(writer, body):
         }
     )
     with transaction.atomic():
-        scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
+        # FOR NO KEY UPDATE, not FOR UPDATE: it still serialises with policy and
+        # deletion-generation changes (plain UPDATEs) and with initialize's
+        # scope lock, but not with the FK KEY SHARE checks every attachment
+        # insert takes on the scope and session rows. FOR UPDATE made renewals
+        # and concurrent inserts queue behind each other.
+        scope = AttachmentScope.objects.select_for_update(no_key=True).get(pk=scope.id)
         check_writer(writer, scope)
         _live_scope(scope)
         now = timezone.now()
         expires_at = now + timedelta(seconds=SESSION_SECONDS)
         session = (
-            CaptureSession.objects.select_for_update()
+            CaptureSession.objects.select_for_update(no_key=True)
             .filter(scope=scope, client_id=client_id)
             .first()
         )
