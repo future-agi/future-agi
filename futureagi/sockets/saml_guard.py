@@ -46,6 +46,9 @@ class SamlSocketGuard:
         # receives no traffic still closes.
         self._window_timer: asyncio.TimerHandle | None = None
         self._window_task: asyncio.Task | None = None
+        # The window check that succeeded and is now letting the consumer
+        # answer what it kept; a disconnect cancels it.
+        self._recovery_task: asyncio.Task | None = None
 
     @property
     def pending(self) -> bool:
@@ -53,11 +56,22 @@ class SamlSocketGuard:
 
         return self._unavailable_since is not None
 
+    @property
+    def generation(self) -> int:
+        """Advanced by ``expire``; a check started before then is stale."""
+
+        return self._generation
+
     def stop(self) -> None:
-        """Cancel the scheduled window check; the socket has disconnected."""
+        """Cancel the scheduled window check and a running recovery; the
+        socket has disconnected."""
 
         self.closed = True
         self._cancel_window_check()
+        task = self._recovery_task
+        self._recovery_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
     def expire(self) -> None:
         """Make the next push revalidate instead of reusing a recent result."""
@@ -184,7 +198,14 @@ class SamlSocketGuard:
             if await self.ensure_live(inbound=True):
                 # No client frame or push may follow the recovery, so let the
                 # consumer answer what it kept while the check was pending.
-                await self._notify_consumer("_on_saml_check_recovered")
+                # The success above already released this task as the window
+                # check, so keep it where stop() can cancel it.
+                self._recovery_task = asyncio.current_task()
+                try:
+                    await self._notify_consumer("_on_saml_check_recovered")
+                finally:
+                    if self._recovery_task is asyncio.current_task():
+                        self._recovery_task = None
         except Exception as exc:  # noqa: BLE001 - the socket may be gone
             security_logger.warning(
                 "saml_socket_window_check_failed",

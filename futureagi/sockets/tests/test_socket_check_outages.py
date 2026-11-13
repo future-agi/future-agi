@@ -591,3 +591,330 @@ def test_window_check_recovery_answers_kept_subscriptions(settings):
 
     with credential.patch():
         asyncio.run(run())
+
+
+def _letter_case_spellings(target, count):
+    """Return ``count`` spellings of ``target`` that differ only in case."""
+
+    letters = [index for index, char in enumerate(target) if char.isalpha()]
+    assert 2 ** len(letters) >= count
+    spellings = []
+    for mask in range(count):
+        chars = list(target)
+        for bit, index in enumerate(letters):
+            if mask >> bit & 1:
+                chars[index] = chars[index].upper()
+        spellings.append("".join(chars))
+    return spellings
+
+
+def _queue_consumer():
+    from sockets.consumer import DataConsumer
+
+    consumer = DataConsumer()
+    consumer.scope = {}
+    consumer.room_group_name = "org_synthetic"
+    return consumer
+
+
+def _keep(consumer, frame):
+    import json
+
+    from sockets.consumer import MAX_PENDING_SUBSCRIPTION_FRAMES
+
+    consumer._keep_subscription_frame(json.dumps(frame))
+    assert len(consumer._pending_subscription_frames) <= MAX_PENDING_SUBSCRIPTION_FRAMES
+
+
+@pytest.mark.parametrize(
+    "kept_target", ["subscribed-while-pending", "already-subscribed"]
+)
+def test_unsubscribes_of_the_kept_target_in_any_letter_case_count_once(kept_target):
+    consumer = _queue_consumer()
+    wanted = "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    if kept_target == "subscribed-while-pending":
+        _keep(consumer, {"type": "subscribe", "uuid": wanted})
+    else:
+        consumer.current_subscription = consumer._uuid_group_name(wanted)
+    spellings = _letter_case_spellings(wanted, 40)
+    for spelling in spellings:
+        _keep(consumer, {"type": "unsubscribe", "uuid": spelling})
+
+    last = {"type": "unsubscribe", "uuid": spellings[-1]}
+    if kept_target == "subscribed-while-pending":
+        expected = [{"type": "subscribe", "uuid": wanted}, last]
+    else:
+        expected = [last]
+    assert consumer._pending_subscription_frames == expected
+    assert consumer._unanswered_subscription_frames == 0
+
+
+def test_unsubscribes_of_many_distinct_targets_stay_bounded():
+    from sockets.consumer import MAX_PENDING_SUBSCRIPTION_FRAMES
+
+    consumer = _queue_consumer()
+    wanted = str(uuid4())
+    others = [str(uuid4()).upper() for _ in range(40)]
+    _keep(consumer, {"type": "subscribe", "uuid": wanted})
+    for other in others:
+        _keep(consumer, {"type": "unsubscribe", "uuid": other})
+    _keep(consumer, {"type": "unsubscribe", "uuid": wanted.upper()})
+
+    kept = consumer._pending_subscription_frames
+    assert len(kept) == MAX_PENDING_SUBSCRIPTION_FRAMES
+    assert kept[0] == {"type": "subscribe", "uuid": wanted}
+    assert kept[-1] == {"type": "unsubscribe", "uuid": wanted.upper()}
+    # The newest unsubscribes of other targets are kept, the oldest dropped.
+    assert kept[1:-1] == [
+        {"type": "unsubscribe", "uuid": other}
+        for other in others[-(MAX_PENDING_SUBSCRIPTION_FRAMES - 2) :]
+    ]
+    assert consumer._unanswered_subscription_frames == len(others) - (
+        MAX_PENDING_SUBSCRIPTION_FRAMES - 2
+    )
+
+
+def _subscription_after(consumer, frames, subscribed):
+    """The socket's subscription after answering ``frames`` in order."""
+
+    for frame in frames:
+        target = frame.get("uuid")
+        if not target:
+            continue
+        group = consumer._uuid_group_name(target)
+        if frame["type"] == "subscribe":
+            subscribed = group
+        elif group == subscribed:
+            subscribed = None
+    return subscribed
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_kept_frames_stay_bounded_and_keep_the_wanted_subscription(seed):
+    import random
+
+    rng = random.Random(seed)
+    consumer = _queue_consumer()
+    targets = [str(uuid4()) for _ in range(rng.randint(1, 30))]
+    targets += ["legacy-target", "Legacy-Target"]
+    subscribed = consumer._uuid_group_name(rng.choice(targets))
+    consumer.current_subscription = subscribed
+    received = []
+    for _ in range(rng.randint(1, 400)):
+        roll = rng.random()
+        target = rng.choice(targets)
+        if not target.lower().startswith("legacy"):
+            # The same target, spelled in a random letter case.
+            target = "".join(
+                char.upper() if rng.random() < 0.5 else char for char in target
+            )
+        if roll < 0.05:
+            frame = {"type": rng.choice(["subscribe", "unsubscribe"])}
+        elif roll < 0.15:
+            frame = {"type": "subscribe", "uuid": target}
+        else:
+            frame = {"type": "unsubscribe", "uuid": target}
+        received.append(frame)
+        _keep(consumer, frame)  # asserts the bound after every frame
+        assert _subscription_after(
+            consumer, consumer._pending_subscription_frames, subscribed
+        ) == _subscription_after(consumer, received, subscribed)
+
+
+def test_unsubscribe_of_a_subscribe_being_answered_is_never_dropped():
+    from sockets.consumer import MAX_PENDING_SUBSCRIPTION_FRAMES
+
+    consumer = _queue_consumer()
+    previous, answering = str(uuid4()), str(uuid4())
+    consumer.current_subscription = consumer._uuid_group_name(previous)
+    # Taken off the queue and still being answered: the socket has not
+    # switched its subscription yet.
+    consumer._answering_frame = {"type": "subscribe", "uuid": answering}
+    _keep(consumer, {"type": "unsubscribe", "uuid": answering})
+    for _ in range(MAX_PENDING_SUBSCRIPTION_FRAMES):
+        _keep(consumer, {"type": "unsubscribe", "uuid": str(uuid4())})
+
+    assert consumer._pending_subscription_frames[0] == {
+        "type": "unsubscribe",
+        "uuid": answering,
+    }
+    assert consumer._unanswered_subscription_frames == 1
+
+
+class _BlockedGroupAdd:
+    """Holds ``group_add`` for one group open until ``release``."""
+
+    def __init__(self, group):
+        self.group = group
+        self.entered = None
+        self.released = None
+
+    def patch(self):
+        from tfc.channel_layers import ThreadSafeInMemoryChannelLayer
+
+        blocker = self
+        group_add = ThreadSafeInMemoryChannelLayer.group_add
+
+        async def blocked_group_add(layer, group, channel):
+            await group_add(layer, group, channel)
+            if group == blocker.group:
+                blocker.entered.set()
+                await blocker.released.wait()
+
+        return patch.object(
+            ThreadSafeInMemoryChannelLayer, "group_add", blocked_group_add
+        )
+
+    def start(self):
+        self.entered = asyncio.Event()
+        self.released = asyncio.Event()
+
+
+async def _until(condition, what):
+    for _ in range(200):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_window_recovery_stops_answering_when_a_new_check_is_pending(settings):
+    """A forced membership check fails while the window check's recovery is
+    answering kept frames: frames kept after it are answered only once a
+    check succeeds again."""
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.6
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    credential = Credential()
+    database, membership = membership_outage()
+    first, second = str(uuid4()), str(uuid4())
+    blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
+
+    async def run():
+        blocked.start()
+        socket = await open_direct_socket(member, org, saml=True)
+        try:
+            credential.failure = OperationalError("synthetic database outage")
+            checks = credential.checks
+            await socket.send_json_to({"type": "subscribe", "uuid": first})
+            await _until(lambda: credential.checks > checks, "a failed check")
+            credential.failure = None
+            # The window check succeeds and answers the kept subscribe; its
+            # group_add is held open.
+            await asyncio.wait_for(blocked.entered.wait(), timeout=5)
+
+            database["available"] = False
+            await notify_membership_changed(member, org)
+            await until_failed_checks(database, 1)
+            await socket.send_json_to({"type": "subscribe", "uuid": second})
+            await until_failed_checks(database, 2)
+            blocked.released.set()
+
+            events = await outputs(socket, settle=0.5)
+            assert closed(events) == []
+            # Only the frame kept before the new check is answered.
+            assert frames(events) == [
+                {
+                    "type": "subscription_confirmed",
+                    "uuid": first,
+                    "current_subscription": f"uuid_org_{org.pk}_{first}",
+                }
+            ]
+
+            database["available"] = True
+            await socket.send_json_to({"type": "ping"})
+            assert frames(await outputs(socket, settle=0.5)) == [
+                {
+                    "type": "subscription_confirmed",
+                    "uuid": second,
+                    "current_subscription": f"uuid_org_{org.pk}_{second}",
+                },
+                {"type": "pong"},
+            ]
+        finally:
+            blocked.released.set()
+            await socket.disconnect()
+
+    with credential.patch(), membership, blocked.patch():
+        asyncio.run(run())
+
+
+def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(settings):
+    """After answering stopped for a forced check, its success answers the
+    rest without waiting for another client frame.
+
+    Code that never stops answering also passes; this guards the stop added
+    above against leaving frames unanswered after the check succeeds."""
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.6
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    credential = Credential()
+    first, second = str(uuid4()), str(uuid4())
+    blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
+
+    async def run():
+        blocked.start()
+        socket = await open_direct_socket(member, org, saml=True)
+        try:
+            credential.failure = OperationalError("synthetic database outage")
+            checks = credential.checks
+            await socket.send_json_to({"type": "subscribe", "uuid": first})
+            await socket.send_json_to({"type": "unsubscribe", "uuid": second})
+            await _until(lambda: credential.checks > checks + 1, "failed checks")
+            credential.failure = None
+            await asyncio.wait_for(blocked.entered.wait(), timeout=5)
+
+            # The membership check this notification forces succeeds.
+            await notify_membership_changed(member, org)
+            await asyncio.sleep(0.2)
+            blocked.released.set()
+
+            events = await outputs(socket, settle=0.5)
+            assert closed(events) == []
+            assert frames(events) == [
+                {
+                    "type": "subscription_confirmed",
+                    "uuid": first,
+                    "current_subscription": f"uuid_org_{org.pk}_{first}",
+                },
+                {"type": "info", "message": f"Not subscribed to {second}"},
+            ]
+        finally:
+            blocked.released.set()
+            await socket.disconnect()
+
+    with credential.patch(), blocked.patch():
+        asyncio.run(run())
+
+
+def test_window_recovery_joins_no_group_after_disconnect(settings):
+    from channels.layers import get_channel_layer
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 0.6
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    credential = Credential()
+    target = str(uuid4())
+    group = f"uuid_org_{org.pk}_{target}"
+    blocked = _BlockedGroupAdd(group)
+
+    async def run():
+        blocked.start()
+        socket = await open_direct_socket(member, org, saml=True)
+        credential.failure = OperationalError("synthetic database outage")
+        checks = credential.checks
+        await socket.send_json_to({"type": "subscribe", "uuid": target})
+        await _until(lambda: credential.checks > checks, "a failed check")
+        credential.failure = None
+        # The window check's recovery is inside group_add when the client
+        # goes away.
+        await asyncio.wait_for(blocked.entered.wait(), timeout=5)
+        await socket.disconnect()
+        blocked.released.set()
+        await asyncio.sleep(0.3)
+        assert not get_channel_layer().groups.get(group)
+
+    with credential.patch(), blocked.patch():
+        asyncio.run(run())

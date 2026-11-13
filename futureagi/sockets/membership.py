@@ -98,6 +98,12 @@ class MembershipSocketGuard:
     def revalidation_pending(self) -> bool:
         return self._revalidation_pending
 
+    @property
+    def generation(self) -> int:
+        """Advanced by every forced check."""
+
+        return self._generation
+
     def mark_validated(self, at: float | None = None) -> None:
         self._last_validated_at = time.monotonic() if at is None else at
 
