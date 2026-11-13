@@ -11,6 +11,7 @@ and the launcher ships credentials as sandbox secrets instead.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 from urllib.parse import quote
 
@@ -30,6 +31,10 @@ _TRACEAI_BASE_URL_VARIABLE = "FI_BASE_URL"
 _MEASURE_VARIABLE = "FI_SIMULATION_INSTRUMENT"
 _MEASURE_VALUE = "traceai"
 _MEASURED_TRACES_ENDPOINT_VARIABLE = "FI_SIMULATION_TRACES_ENDPOINT"
+# The hosts the agent's model calls go to that the sandbox would not know as model APIs: the
+# platform's model gateway and any model base URL the agent declares. A request to one outside
+# a measured SDK call is a model call the sandbox did not measure, so its call reads partial.
+_MODEL_HOSTS_VARIABLE = "FI_SIMULATION_MODEL_HOSTS"
 # The launcher refuses any longer value, and a refused dictionary loses the mark.
 _MAX_VALUE_LENGTH = 2048
 
@@ -52,6 +57,7 @@ def customer_code_environment(
     collector_url: str | None = None,
     export: Literal["our_keys"] | None = None,
     instrumentation: str | None = None,
+    model_hosts: Iterable[str] = (),
 ) -> dict[str, str]:
     """Return the variables to set in the customer's process for this run.
 
@@ -82,6 +88,11 @@ def customer_code_environment(
                 _MEASURE_VARIABLE: _MEASURE_VALUE,
                 _MEASURED_TRACES_ENDPOINT_VARIABLE: traces_endpoint,
             }
+            hosts = sorted(
+                {host.strip().lower() for host in model_hosts if host.strip()}
+            )
+            if hosts:
+                export_entries[_MODEL_HOSTS_VARIABLE] = ",".join(hosts)
         else:
             export_entries = {
                 _EXPORT_VARIABLE: export,

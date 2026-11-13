@@ -4164,18 +4164,28 @@ def test_export_environment_and_keys_for_a_bound_source_agent_with_observability
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "tag, declared",
+    "tag, declared, model_hosts",
     [
-        ("untraced", None),
+        ("untraced", None, "gateway.example.test"),
         # The agent's own exporter keeps its own endpoint: ours is under a name it never reads.
         (
             "untraced-own",
             {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"},
+            "gateway.example.test",
+        ),
+        # A model base URL the agent declares is a model host too; a tool's URL is not.
+        (
+            "untraced-llm",
+            {
+                "LLM_BASE_URL": "https://LLM.example/v1",
+                "CRM_BASE_URL": "https://crm.example",
+            },
+            "gateway.example.test,llm.example",
         ),
     ],
 )
 def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_read(
-    tag, declared, organization, workspace, user, settings, monkeypatch
+    tag, declared, model_hosts, organization, workspace, user, settings, monkeypatch
 ):
     world = _ExportWorld(
         organization,
@@ -4195,10 +4205,14 @@ def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_rea
         "FI_SIMULATION_EXPORT",
         "FI_SIMULATION_INSTRUMENT",
         "FI_SIMULATION_TRACES_ENDPOINT",
+        "FI_SIMULATION_MODEL_HOSTS",
     }
     assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
     assert mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
     assert mark["FI_SIMULATION_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    # Every hosted model call goes to the platform's gateway: a request there outside a
+    # measured SDK call reads partial in the sandbox, never as a lower cost.
+    assert mark["FI_SIMULATION_MODEL_HOSTS"] == model_hosts
     # Into the hidden project, under the agent's ingest key, as a traced agent's spans are.
     assert f"project_name={quote(world.hidden.name, safe='')}" in _mark_text(mark)
     assert {alias: world.secrets.get(alias) for alias in _INGEST_PAIR} == _INGEST_PAIR

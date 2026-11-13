@@ -1472,8 +1472,35 @@ def _mark_is_acceptable(mark: Any) -> bool:
     return True
 
 
+# A model base URL the agent declares under a provider's or an LLM name. Its host is where the
+# agent's model calls go, so the sandbox counts a request there outside a measured SDK call as a
+# model call it did not measure. Other URLs (a database, a tool's API) are not model hosts.
+_MODEL_BASE_URL_ALIAS = re.compile(
+    r"(?:[A-Z0-9]+_)*(?:OPENAI|AZURE_OPENAI|ANTHROPIC|LLM|MODEL|GEMINI|GOOGLE_GENAI|MISTRAL"
+    r"|GROQ|COHERE|DEEPSEEK|OPENROUTER|LITELLM|TOGETHER|FIREWORKS|XAI|PERPLEXITY)"
+    r"_(?:API_)?(?:BASE_URL|BASE|ENDPOINT|URL|HOST)"
+)
+
+
+def _model_hosts(
+    secrets_map: Mapping[str, Any], simulator_env: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
+    the platform's model gateway, and the host of any model base URL the agent declares."""
+    hosts = {_hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))}
+    hosts.update(
+        _hostname_from_url(value)
+        for alias, value in secrets_map.items()
+        if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
+    )
+    return tuple(sorted(host for host in hosts if host))
+
+
 def _simulation_mark(
-    job: Any, plan: _ExportPlan | None = None
+    job: Any,
+    plan: _ExportPlan | None = None,
+    *,
+    model_hosts: Iterable[str] = (),
 ) -> tuple[dict[str, str], bool]:
     """The environment dictionary for this run, and whether it may be used.
 
@@ -1495,6 +1522,7 @@ def _simulation_mark(
             collector_url=plan.collector_url,
             export=plan.export,
             instrumentation=plan.instrumentation,
+            model_hosts=model_hosts,
         )
     except Exception:  # noqa: BLE001 - the mark never fails a launch
         structlog_logger.warning(
@@ -2566,7 +2594,9 @@ class HostedHarnessGateway:
             allowed_domains=allowed_domains,
             max_egress_domains=self.client.max_egress_domains,
         )
-        simulation_mark, mark_accepted = _simulation_mark(job, export_plan)
+        simulation_mark, mark_accepted = _simulation_mark(
+            job, export_plan, model_hosts=_model_hosts(secrets_map, simulator_env)
+        )
         if not mark_accepted:
             # A guest must never get our key without the dictionary that says what to do
             # with it.
