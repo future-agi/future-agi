@@ -12,7 +12,6 @@ from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from tfc.constants.levels import Level
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 from tracer.serializers.entity_tags import (
@@ -295,15 +294,17 @@ def test_trace_rejects_child_and_url_mismatch(write_dependencies):
 @pytest.fixture
 def auth_dependencies(monkeypatch):
     membership = Mock(return_value=SimpleNamespace(organization_id="org"))
-    level = Mock(return_value=Level.WORKSPACE_MEMBER)
+    can_write = Mock(return_value=True)
     projects = Mock()
     projects.using.return_value = projects
     projects.only.return_value = projects
     projects.get.return_value = SimpleNamespace(id=PROJECT)
     monkeypatch.setattr(assignments, "get_org_membership", membership)
-    monkeypatch.setattr(assignments, "get_effective_workspace_level", level)
+    monkeypatch.setattr(assignments, "_can_write_to_workspace", can_write)
     monkeypatch.setattr(assignments.Project, "no_workspace_objects", projects)
-    return SimpleNamespace(membership=membership, level=level, projects=projects)
+    return SimpleNamespace(
+        membership=membership, can_write=can_write, projects=projects
+    )
 
 
 @pytest.mark.parametrize(
@@ -328,13 +329,13 @@ def test_unauthorized_scope_cannot_reach_clickhouse(
     elif failure == "foreign_org_membership":
         deps.membership.return_value.organization_id = "other"
     elif failure == "viewer":
-        deps.level.return_value = Level.WORKSPACE_VIEWER
+        deps.can_write.return_value = False
     elif failure == "missing_workspace":
         request.workspace = None
     elif failure == "foreign_workspace":
         request.workspace.organization_id = "other"
     elif failure == "no_workspace_access":
-        deps.level.return_value = None
+        deps.can_write.return_value = False
     else:
         deps.projects.get.side_effect = assignments.Project.DoesNotExist
     backend = Mock()

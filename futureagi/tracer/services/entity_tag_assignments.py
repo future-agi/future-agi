@@ -10,8 +10,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.request import Request
 
-from tfc.constants.levels import Level
-from tfc.permissions.utils import get_effective_workspace_level, get_org_membership
+from tfc.permissions.utils import get_org_membership
 from tfc.routers import force_primary
 from tracer.models.entity_tag_assignment import EntityTagAssignment
 from tracer.models.project import Project
@@ -53,6 +52,10 @@ def _postgres_budget(deadline: ReadDeadline):
     )
 
 
+def _can_write_to_workspace(user, workspace) -> bool:
+    return bool(user.can_write_to_workspace(workspace))
+
+
 def _authorize_project(request: Request, project_id: object) -> Project:
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None
@@ -70,8 +73,11 @@ def _authorize_project(request: Request, project_id: object) -> Project:
     membership = get_org_membership(request.user)
     if membership is None or str(membership.organization_id) != str(organization.id):
         raise TagAssignmentError("tag_write_forbidden")
-    level = get_effective_workspace_level(request.user, workspace.id)
-    if level is None or level < Level.WORKSPACE_MEMBER:
+    # The request authentication's own workspace write rule: an org Admin
+    # writes everywhere, anyone else by their role in this workspace. Never
+    # max(org, workspace) level, which lets an org Member who is a workspace
+    # Viewer through.
+    if not _can_write_to_workspace(request.user, workspace):
         raise TagAssignmentError("tag_write_forbidden")
 
     scope = Q(workspace_id=workspace.id)
