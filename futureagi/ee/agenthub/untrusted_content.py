@@ -3,8 +3,8 @@
 Traces, tool results and eval explanations are written by the customer's
 application, its tools and its end users. A model that reads them is reading
 data, and the prompt has to make that boundary visible: recorded text goes
-inside a delimited block, and the block's own markers are made impossible to
-forge from inside it.
+inside a delimited block, and text inside the block cannot produce the
+block's own markers.
 
 The markers use the mathematical white square brackets ⟦ ⟧. Recorded text that
 contains either character has it replaced with an ASCII pair, so the only
