@@ -1040,8 +1040,13 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             storage=storage,
             token=token,
         ).state
-    except Exception:
-        # Never persist exception text (it may contain a URL or a path).
+    except Exception as error:  # noqa: BLE001 - job boundary; fails closed, retried up to MAX_ATTEMPTS
+        # Never persist or log exception text (it may contain a URL or a path).
+        logger.warning(
+            "attachment_import_attempt_failed",
+            job_id=str(job.pk),
+            error=type(error).__name__,
+        )
         job.refresh_from_db()
         if job.state in TERMINAL_RECORDING_STATES:
             # Failed after publication (the release, the envelope destroy):

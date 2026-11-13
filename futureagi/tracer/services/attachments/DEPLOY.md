@@ -128,7 +128,7 @@ pod or Compose service is needed. Two Temporal schedules
 
 | Schedule | Interval | Work per tick |
 |---|---|---|
-| `run-attachment-recording-jobs` | 30 s | up to 2 import jobs, then up to 20 segments' derivatives (live, enabled segments only, oldest first) |
+| `run-attachment-recording-jobs` | 30 s | up to 2 import jobs, then up to 20 segments' derivatives (live, enabled segments only, oldest first; a segment whose attempt failed goes to the back) |
 | `sweep-attachment-recordings` | 300 s | delete expired source envelopes; expire jobs past their deadline, erase their staged parts, release their reservations; release any finished job whose reservation is still held |
 
 Jobs are durable database rows. A lost tick or a worker restart only delays

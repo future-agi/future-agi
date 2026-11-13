@@ -15,6 +15,7 @@ import os
 import uuid
 from datetime import timedelta
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.conf import settings
 from django.db import transaction
@@ -62,7 +63,9 @@ def open_bytes(key_id, nonce, ciphertext, aad):
     _, keys = _keys()
     try:
         return AESGCM(keys[key_id]).decrypt(bytes(nonce), bytes(ciphertext), aad)
-    except Exception:
+    except (InvalidTag, KeyError, ValueError, TypeError):
+        # Wrong or rotated-out key id, malformed nonce or key, or a forged or
+        # corrupted ciphertext: all indistinguishable to the caller.
         raise AttachmentError("source_unavailable", 403) from None
 
 

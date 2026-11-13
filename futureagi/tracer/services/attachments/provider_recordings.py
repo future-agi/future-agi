@@ -256,7 +256,7 @@ def verify_livekit_webhook(body, authorization):
         return connection, event
     except AttachmentError:
         raise AttachmentError("not_found", 404) from None
-    except Exception:
+    except Exception:  # noqa: BLE001 - webhook verification boundary; fails closed as 404
         raise AttachmentError("not_found", 404) from None
 
 

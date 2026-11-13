@@ -167,7 +167,7 @@ def confine(output_limit):
             raise Unavailable
     except Unavailable:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - kernel/ctypes boundary in the -I -S child; fails closed as unavailable
         raise Unavailable from None
 
 
@@ -433,13 +433,13 @@ def main(argv):
         if operation is _deny_socket:
             import socket  # noqa: F401, PLC0415 - load the module before the filter
         confine(output_limit)
-    except Exception:
+    except Exception:  # noqa: BLE001 - child entry point (no logging); fails closed as unavailable
         return 3
     try:
         result = operation(fd_in, fd_out if fd_out >= 0 else None, argv[5:])
     except (Rejected, ValueError, struct.error, OverflowError):
         return 2
-    except Exception:
+    except Exception:  # noqa: BLE001 - untrusted-media parser boundary; any failure rejects the input
         return 2
     sys.stdout.write(json.dumps(result, separators=(",", ":")))
     sys.stdout.flush()
