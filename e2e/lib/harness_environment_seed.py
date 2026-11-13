@@ -118,7 +118,8 @@ def _documents(refunds, lookups, suffix):
 
 
 def _authoring(documents, *, certified, production_only):
-    contract = {"agent": "support", "tools": list(TOOLS)}
+    # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
+    contract = {"agent": "support", "tools": [{"name": tool} for tool in TOOLS]}
     if production_only:
         contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
         contract["dependencies"] = [
