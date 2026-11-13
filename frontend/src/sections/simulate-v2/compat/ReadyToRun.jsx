@@ -239,6 +239,9 @@ export default function ReadyToRun({
     setFixed((f) => [...f, ...jobs.map((j) => ({ id: j.id, label: j.label }))]);
   };
 
+  /* Everything ready means the pair was checked, even where a platform
+     check keeps no date. */
+  const checked = !!val || (!blockers.length && !unchecked.length);
   const checkButton = onCheck && (
     <Button
       size="small"
@@ -247,7 +250,7 @@ export default function ReadyToRun({
       onClick={onCheck}
       sx={{ py: 0, flexShrink: 0 }}
     >
-      {checking ? "Checking…" : val ? "Re-check" : "Run the check"}
+      {checking ? "Checking…" : checked ? "Re-check" : "Run the check"}
     </Button>
   );
 
