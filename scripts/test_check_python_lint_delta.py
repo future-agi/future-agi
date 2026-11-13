@@ -399,7 +399,7 @@ class WorkflowTests(unittest.TestCase):
             'git show "${trusted_ref}:.github/workflows/python-lint.yml"', ruff
         )
         self.assertIn(
-            'python3 -I "$gate" --base "$base" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
+            'python3 -I "$gate" --base "$base" --config-ref "$trusted_ref" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
             ruff,
         )
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
@@ -554,9 +554,12 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def gate(self, base):
+    def gate(self, base, config_ref=None):
+        args = [sys.executable, "-I", str(SCRIPT), "--base", base]
+        if config_ref is not None:
+            args.extend(["--config-ref", config_ref])
         proc = subprocess.run(
-            [sys.executable, "-I", str(SCRIPT), "--base", base],
+            args,
             cwd=self.repo,
             check=False,
             capture_output=True,
@@ -861,23 +864,78 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
         self.assertIn(path, proc.stdout)
         self.assertNotIn("Traceback", proc.stderr)
 
-    def test_committed_config_comparison_covers_root_and_nested_paths(self):
+    def test_committed_configs_only_include_backend_ancestors(self):
         self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/.ruff.toml", "line-length = 88\n")
         self.write("ruff.toml", "line-length = 88\n")
         self.write("other/pyproject.toml", "[tool.ruff]\nline-length = 88\n")
         self.write("other/deep/.ruff.toml", "line-length = 88\n")
-        base = self.commit()
-        self.write("ruff.toml", "line-length = 99\n")
-        self.write("other/pyproject.toml", "[tool.ruff]\nline-length = 99\n")
-        self.write("other/deep/.ruff.toml", "line-length = 99\n")
-        self.write("futureagi/pyproject.toml", CONFIG + '[project]\nname = "notes"\n')
-        self.commit()
-        before = gate.committed_configs(self.repo, base)
-        after = gate.committed_configs(self.repo, "HEAD")
+        ref = self.commit()
         self.assertEqual(
-            gate.changed_lint_configs(before, after),
-            {"ruff.toml", "other/pyproject.toml", "other/deep/.ruff.toml"},
+            gate.committed_configs(self.repo, ref),
+            {
+                "ruff.toml": b"line-length = 88\n",
+                "futureagi/pyproject.toml": CONFIG.encode(),
+                "futureagi/app/.ruff.toml": b"line-length = 88\n",
+            },
         )
+
+    def test_outside_config_entries_do_not_affect_later_backend_changes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        original = self.commit()
+        for kind in ("extend", "symlink", "non_utf8", "non_table", "gitlink"):
+            with self.subTest(kind=kind):
+                self.git("reset", "--hard", original)
+                self.git("clean", "-fdx")
+                if kind == "extend":
+                    self.write(
+                        "sdk/pyproject.toml", '[tool.ruff]\nextend = "elsewhere.toml"\n'
+                    )
+                elif kind == "symlink":
+                    (self.repo / "docs").mkdir(exist_ok=True)
+                    (self.repo / "docs/ruff.toml").symlink_to(
+                        "../futureagi/pyproject.toml"
+                    )
+                elif kind == "non_utf8":
+                    folder = os.fsencode(self.repo) + b"/docs"
+                    os.makedirs(folder, exist_ok=True)
+                    with open(folder + b"/caf\xe9.txt", "wb") as fh:
+                        fh.write(b"x\n")
+                elif kind == "non_table":
+                    self.write("frontend/tool/pyproject.toml", 'tool = "x"\n')
+                else:
+                    self.write("docs/placeholder", "x\n")
+                    self.git("add", "-A")
+                    self.git(
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        "160000," + self.git("rev-parse", "HEAD") + ",docs/ruff.toml",
+                    )
+                before = self.commit()
+                self.write("futureagi/app/ok.py", "VALUE = 1\n")
+                self.commit()
+                code, found, proc = self.gate(before)
+                self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+                self.git("reset", "--hard", before)
+                self.write("futureagi/app/new.py", 'print("new")\n')
+                self.commit()
+                code, found, proc = self.gate(before)
+                self.assertEqual(
+                    (code, found),
+                    (1, [("futureagi/app/new.py", 1, "T201")]),
+                    proc.stdout + proc.stderr,
+                )
+
+    def test_non_utf8_config_name_in_scope_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        folder = os.fsencode(self.repo) + b"/futureagi/\xffdir"
+        os.mkdir(folder)
+        with open(folder + b"/ruff.toml", "wb") as fh:
+            fh.write(b"line-length = 88\n")
+        self.commit()
+        self.assert_gate_stopped(base, "UTF-8")
 
     def test_config_snapshot_uses_committed_bytes_not_checkout_contents(self):
         self.write("futureagi/pyproject.toml", CONFIG)
@@ -1009,6 +1067,93 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
         self.write("futureagi/app/new.py", 'print("new")\n')
         self.commit()
         self.assert_gate_stopped(base, "futureagi/app/ruff.toml")
+
+    def test_unparsed_trusted_configs_stop_before_lint(self):
+        cases = (
+            (
+                "ruff.toml",
+                'extend = "lintcfg/shared.toml"\nlint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+            ),
+            ("ruff.toml", '﻿extend = "lintcfg/shared.toml"\n'),
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nextend = "lintcfg/shared.toml"\nlint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+            ),
+            ("ruff.toml", 'extend = "lintcfg/shared.toml"\n'),
+        )
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        original = self.commit()
+        for name, content in cases:
+            with self.subTest(name=name, content=content):
+                self.git("reset", "--hard", original)
+                self.git("clean", "-fdx")
+                self.write("futureagi/model_hub/" + name, content)
+                target = "futureagi/model_hub/lintcfg/shared.toml"
+                self.write(target, 'extend = "../../pyproject.toml"\n')
+                base = self.commit()
+                self.write(
+                    target,
+                    'extend = "../../pyproject.toml"\n[lint]\nignore = ["TID251"]\n',
+                )
+                self.write(
+                    "futureagi/model_hub/new.py",
+                    "from library import old_api\n\nold_api()\n",
+                )
+                self.commit()
+                self.assert_gate_stopped(base, "futureagi/model_hub/" + name)
+
+    def test_tip_settings_judge_stale_branch_and_preserve_old_findings(self):
+        path = "futureagi/app/new.py"
+        self.write("futureagi/pyproject.toml", CONFIG)
+        old = self.commit()
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        tip = self.commit()
+        self.git("checkout", "-q", "-b", "stale", old)
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(old, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "TID251")]), proc.stdout + proc.stderr
+        )
+        self.git("checkout", "-q", "-B", "control", old)
+        self.write(path, 'print("new")\n')
+        self.commit()
+        code, found, proc = self.gate(old, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+        )
+        self.git("checkout", "-q", "-B", "old_finding", old)
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        before = self.commit()
+        self.write(path, "from library import old_api\n\nold_api()\n\nVALUE = 1\n")
+        self.commit()
+        code, found, proc = self.gate(before, tip)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_tip_settings_in_merged_side_branch_judge_new_import(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        root = self.commit()
+        self.git("checkout", "-q", "-b", "side", root)
+        weak = self.commit_with_file("futureagi/app/side.py", "VALUE = 1\n")
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.write("futureagi/app/main.py", "VALUE = 1\n")
+        self.commit()
+        self.git("merge", "-q", "--no-ff", "-m", "merge side", "side")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "stale", weak)
+        path = "futureagi/app/new.py"
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(weak, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "TID251")]), proc.stdout + proc.stderr
+        )
+
+    def commit_with_file(self, path, content):
+        self.write(path, content)
+        return self.commit()
 
     def test_symlinked_python_file_outside_backend_reports_gate_error(self):
         self.write("futureagi/pyproject.toml", CONFIG)

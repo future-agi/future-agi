@@ -12,23 +12,24 @@ previously hidden violation.
 
 Three passes run on the changed files under futureagi/:
 
-- the base commit's Ruff configuration (root and nested configs);
+- the trusted base-branch tip's Ruff configuration (root and nested configs);
 - the banned-pattern rules that configuration does not select yet, on app code
   only (tests and migrations are left out, as in the standard);
 - `ruff format --check`, which fails only for a file that was formatted at the
   base, or is new, and is not formatted at the head.
 
-A config-only change has no changed Python files to compare; review that change
-separately. Changing formatter settings and reformatting in one PR will still
-be judged against the base formatter: land the settings first, then reformat.
-A Ruff config using `extend` stops the check until its referenced settings can
-be compared as committed files. Config-only edits have no Python findings;
-review them separately. [project] target-version inference remains outside the
-Ruff-table comparison.
+Only config-named entries in futureagi/ or at the repository root are read:
+these are the paths Ruff can discover for backend files. Both comparison trees
+use the committed configuration from the trusted tip, including [project]
+metadata. A config-only change has no changed Python files to compare. Changing
+formatter settings and reformatting in one PR is judged against the trusted
+tip's formatter. An in-scope config using `extend`, or one at the trusted tip
+that cannot be parsed as TOML, stops the check rather than following settings
+outside the committed overlay.
 
 Usage, from the repo root:
 
-    python3 -I scripts/check_python_lint_delta.py --base <commit>
+    python3 -I scripts/check_python_lint_delta.py --base <commit> --config-ref <trusted-tip>
 
 Exit codes: 0 nothing new, 1 new violations (printed as GitHub annotations),
 2 the check itself could not run.
@@ -208,10 +209,10 @@ REGULAR_MODES = frozenset({"100644", "100755"})
 
 
 def committed_configs(repo: Path, ref: str) -> dict[str, bytes | None]:
-    """Collect config paths and bytes from committed tree objects, not checkout files.
+    """Collect backend and root config entries from Git objects, not checkout files.
 
-    None marks a non-regular entry. Its contents are not followed or parsed;
-    a head entry of this kind must stop the check before Ruff reads the tree.
+    None marks a non-regular entry. Other directories cannot provide Ruff
+    settings to files in futureagi/, so their entries are not inspected.
     """
     listing = subprocess.run(
         ["git", "ls-tree", "-r", "-z", "--full-tree", ref],
@@ -230,12 +231,13 @@ def committed_configs(repo: Path, ref: str) -> dict[str, bytes | None]:
             continue
         metadata, raw_path = entry.split(b"\t", 1)
         mode, kind, oid = metadata.decode("ascii").split(" ")
-        try:
-            path = raw_path.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise GateError("committed path is not UTF-8") from exc
-        if PurePosixPath(path).name not in CONFIG_NAMES:
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if PurePosixPath(path).name not in CONFIG_NAMES or not (
+            path.startswith(f"{BACKEND_DIR}/") or "/" not in path
+        ):
             continue
+        if any("\udc80" <= char <= "\udcff" for char in path):
+            raise GateError("committed config path is not UTF-8")
         if mode not in REGULAR_MODES or kind != "blob":
             configs[path] = None
             continue
@@ -258,7 +260,8 @@ def ruff_section(path: str, data: bytes | None) -> object:
     try:
         tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-        # Invalid TOML cannot prove settings unchanged; keep its raw bytes.
+        # The caller rejects unparseable trusted settings; head settings are
+        # removed before linting, so they need no interpretation here.
         return data
     if not isinstance(tool, dict):
         raise GateError(f"{path}: tool must be a table")
@@ -268,43 +271,33 @@ def ruff_section(path: str, data: bytes | None) -> object:
     return ruff
 
 
-def reject_extended_configs(configs: dict[str, bytes | None]) -> None:
-    """Do not judge files whose settings can depend on another config path."""
+def reject_extended_configs(
+    configs: dict[str, bytes | None], *, trusted: bool = False
+) -> None:
+    """Stop on extend; require trusted config bytes to be parseable as TOML."""
     for path, content in configs.items():
         if content is None:
             continue
         name = PurePosixPath(path).name
         if name == "pyproject.toml":
             section = ruff_section(path, content)
+            if isinstance(section, bytes):
+                if trusted:
+                    raise GateError(f"{path}: trusted config is not parseable TOML")
+                continue
         else:
             try:
                 section = tomllib.loads(content.decode("utf-8"))
-            except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-                continue  # Ruff reports invalid base settings when relevant.
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                if trusted:
+                    raise GateError(
+                        f"{path}: trusted config is not parseable TOML"
+                    ) from exc
+                continue  # Head settings are replaced before linting.
         if isinstance(section, dict) and "extend" in section:
             raise GateError(
                 f"{path}: Ruff config uses extend; cannot compare referenced settings"
             )
-
-
-def changed_lint_configs(
-    base_configs: dict[str, bytes | None], head_configs: dict[str, bytes | None]
-) -> set[str]:
-    """Compare committed settings throughout the repository, including entry modes."""
-    result = set()
-    for path in base_configs.keys() | head_configs.keys():
-        before, after = base_configs.get(path), head_configs.get(path)
-        name = PurePosixPath(path).name
-        if (
-            (path in head_configs and after is None)
-            or (name != "pyproject.toml" and before != after)
-            or (
-                name == "pyproject.toml"
-                and ruff_section(path, before) != ruff_section(path, after)
-            )
-        ):
-            result.add(path)
-    return result
 
 
 def trusted_head_tree(
@@ -312,11 +305,11 @@ def trusted_head_tree(
     base_configs: dict[str, bytes | None],
     head_configs: dict[str, bytes | None],
 ) -> None:
-    """Replace head settings with committed base settings without removing head source.
+    """Replace checkout settings with committed trusted settings, retaining source.
 
     Both worktrees are full commits: Ruff uses sibling packages and __init__.py
     files to resolve imports. A global --config would flatten nested settings
-    and per-file path rules, so overlay the base's complete config layout instead.
+    and per-file path rules, so overlay the trusted tip's config layout instead.
     """
     root = head_tree.resolve()
 
@@ -686,19 +679,21 @@ def annotation(v: Violation) -> str:
     return f"::{level} file={escape_property(v.path)},line={v.line},col={v.column},title={title}::{escape_data(text)}"
 
 
-def check(repo: Path, base: str, ruff: str) -> list[Violation]:
-    """Run all three passes and return the violations the change adds."""
+def check(
+    repo: Path, base: str, ruff: str, config_ref: str | None = None
+) -> list[Violation]:
+    """Run all three passes with trusted-tip settings in both comparison trees."""
     files = changed_files(repo, base)
-    base_configs = committed_configs(repo, base)
+    base_configs = committed_configs(repo, config_ref or base)
+    merge_base_configs = committed_configs(repo, base)
     head_configs = committed_configs(repo, "HEAD")
     for path, content in head_configs.items():
         if content is None:
             raise GateError(f"{path}: head config is not a regular file")
-    reject_extended_configs(base_configs)
+    reject_extended_configs(base_configs, trusted=True)
     reject_extended_configs(head_configs)
-    _changed_configs = changed_lint_configs(base_configs, head_configs)
-    # Overlay every committed config, including unchanged ones: checkout filters
-    # and nested Ruff discovery must not read settings from the head checkout.
+    # Overlay every committed in-scope config, including unchanged ones:
+    # checkout filters must not substitute different settings in either tree.
     if not files:
         return []
     head_paths = sorted(files)
@@ -715,8 +710,8 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
         )
         head_tree = repo
         try:
-            # Always lint a committed checkout with committed base configs. Even
-            # unchanged blobs can be materialized differently by checkout rules.
+            # Lint committed source in both trees with the same trusted configs.
+            # Checkout rules can materialize even unchanged blobs differently.
             full_head = Path(tmp) / "head"
             run(
                 [
@@ -732,6 +727,7 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             )
             head_tree = full_head
             trusted_head_tree(head_tree, base_configs, head_configs)
+            trusted_head_tree(base_tree, base_configs, merge_base_configs)
             head = dedupe(
                 ruff_check(ruff, head_tree, head_paths, None)
                 + ruff_check(ruff, head_tree, app_head, BANNED_RULES)
@@ -774,6 +770,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--base", required=True, help="the merge-base commit to compare with"
     )
+    parser.add_argument(
+        "--config-ref",
+        help="trusted base-branch tip supplying Ruff settings (defaults to --base)",
+    )
     parser.add_argument("--ruff", default="ruff", help="the ruff executable")
     parser.add_argument(
         "--expect-ruff-version",
@@ -794,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"formatting-aware comparison requires ruff {RUFF_VERSION}; "
                 f"found {version}, requested {args.expect_ruff_version!r}"
             )
-        found = check(repo, args.base, args.ruff)
+        found = check(repo, args.base, args.ruff, args.config_ref)
     except (GateError, OSError, json.JSONDecodeError) as exc:
         print(f"::error title=Python lint gate::{escape_data(str(exc))}")
         return 2

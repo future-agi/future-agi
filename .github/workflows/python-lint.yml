@@ -131,7 +131,7 @@ jobs:
           venv="$RUNNER_TEMP/python-lint-base-venv"
           python3 -I -m venv "$venv"
           "$venv/bin/python" -I -m pip install --quiet "ruff==${RUFF_VERSION}"
-          python3 -I "$gate" --base "$base" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
+          python3 -I "$gate" --base "$base" --config-ref "$trusted_ref" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
 
   python-lint-pass:
     name: Python Lint Pass
