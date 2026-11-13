@@ -140,5 +140,5 @@ it.each([['versions', 'Label request'], ['consumers', 'Consumer rows'], ['unknow
   const detail = { scopeKey, query: { scopeKey, data: { context: { id: 'c', name: 'parent', latestVersion: 2, labels: [] } } }, versionQuery: { scopeKey, data: { version, descriptor: { description: 'Purpose', links: [] }, files: [{ path: 'AGENTS.md', origin: { kind: 'owned' } }] } }, fileQuery: { scopeKey, data: { path: 'AGENTS.md', versionId: version.id, text: '# Root' } }, versions: [version] };
   mount(<ContextDetailView {...detail} initialTab={tab} sections={{ versions: <p>Label request</p>, consumers: <p>Consumer rows</p> }} />);
   if (body) expect(screen.getByText(body)).toBeVisible();
-  else expect(screen.getByLabelText('AGENTS.md read-only source')).toBeVisible();
+  else expect(screen.getByRole('heading', { name: 'Root', exact: true })).toBeVisible();
 });

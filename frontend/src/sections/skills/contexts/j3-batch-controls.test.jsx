@@ -28,7 +28,8 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   expect(screen.getByRole('checkbox', { name: 'Select b v1 for update' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Select c v1 for update' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  expect(await screen.findAllByText('skills/policy/ · Version changes · v7 → v8')).toHaveLength(2);
+  expect(await screen.findAllByText('policy · Version changes')).toHaveLength(2);
+  expect(screen.getAllByText('v8', { exact: true })).toHaveLength(2);
   expect(state.prepare).toHaveBeenCalledWith([{ contextId: 'a', name: 'a', version: 1 }, { contextId: 'b', name: 'b', version: 1 }]);
 });
 
@@ -60,10 +61,12 @@ it('shows a different-origin draft as an exception and never selects an unavaila
   expect(screen.getByRole('button', { name: 'Preview again for 1 context that did not update' })).toBeVisible();
 });
 
-it('shows active references and every historical reference in one view, with no scope to switch', () => {
+it('keeps superseded references available in a disclosure without duplicating the live table', () => {
   mount();
   expect(screen.queryByRole('combobox', { name: /Reference scope/ })).not.toBeInTheDocument();
   expect(within(screen.getByRole('table', { name: 'Published context dependents' })).getByText('a · v1')).toBeVisible();
+  expect(screen.queryByRole('table', { name: 'Historical context references' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Show superseded releases' }));
   const history = screen.getByRole('table', { name: 'Historical context references' });
   expect(within(history).getByText('retired · v0')).toBeVisible();
   expect(within(history).queryByRole('checkbox')).not.toBeInTheDocument();
@@ -119,4 +122,24 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
   fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
   await waitFor(() => expect(preview).toHaveBeenCalledOnce());
   expect(preview.mock.calls[0][0].links).toEqual([{ skillId: 'one', selector: { version: 7 } }, { skillId: 'two', selector: { label: 'production' } }, { skillId: 'three', selector: { label: 'production' } }]);
+});
+
+it('clears a prepared selection silently when no context remains and never restores acceptance', async () => {
+  state.prepare.mockResolvedValue([plan('a')]);
+  const targets = [{ contextId: 'a', name: 'a', version: 1 }];
+  const view = render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
+  view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={[]} /></MemoryRouter>);
+  expect(screen.getByText('Select at least one context to prepare updates.')).toBeVisible();
+  expect(screen.queryByText('Selection changed — prepare again.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Prepare draft updates', exact: true })).toBeDisabled();
+  view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} /></MemoryRouter>);
+  expect(screen.queryByRole('button', { name: /Apply selected updates/ })).not.toBeInTheDocument();
+  expect(state.apply).not.toHaveBeenCalled();
+});
+it('does not repeat historical rows that are identical to active references', () => {
+  state.history = state.dependents;
+  mount();
+  expect(screen.queryByRole('button', { name: 'Show superseded releases' })).not.toBeInTheDocument();
 });

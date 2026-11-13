@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Link, Stack, Tab, TextField, Typography } from '@mui/material';
 import Section from 'src/components/section';
-import StatusBadge from 'src/components/status-badge';
+import { SegmentedTabs } from 'src/components/tabs/tabs';
 import { ReviewState } from '../review/ReleaseReviewBody';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
@@ -25,13 +25,13 @@ export function buildContextPlan({ snapshot, origin, organizationId, workspaceId
     `export FI_CONTEXT_ORIGIN=${quote(url.origin)}`,
     `export FI_CONTEXT_ORGANIZATION_ID=${quote(organizationId)}`,
     `export FI_CONTEXT_WORKSPACE_ID=${quote(workspaceId)}`,
-    ': "${FI_CONTEXT_CREDENTIAL:?Set your isolated consume credential securely; do not paste it into this command}"',
+    '# requires FI_CONTEXT_CREDENTIAL',
     `python -m fi.context plan --name ${quote(snapshot.name)} --version ${snapshot.version} --client ${quote(profile.id)} --project ${quote(project)}${preview ? ' --allow-preview' : ''} --out ${quote('context-plan.json')}`,
     `python -m fi.context inspect --plan ${quote('context-plan.json')} --diff`,
   ].join('\n');
 }
 
-function UseContent({ snapshot, origin, originError, organizationId, workspaceId, qualification, workspaceName, onViewFiles, onOpenLinks }) {
+function UseContent({ snapshot, origin, originError, organizationId, workspaceId, qualification, workspaceName, onViewFiles, onOpenLinks, runtimeAccess }) {
   const [profileId, setProfileId] = useState('codex');
   const [project, setProject] = useState('.');
   const [copied, setCopied] = useState(null);
@@ -46,28 +46,31 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
     try { command = buildContextPlan({ snapshot, origin, organizationId, workspaceId, profile: profile || { id: profileId }, packageVersion: qualification?.packageVersion, project, preview }); }
     catch (error) { problem = error.message; }
   }
+  const environment = command.split('\n').filter((line) => /^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
+  const visibleCommand = command.split('\n').filter((line) => !/^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
   return <Stack spacing={3} sx={{ minWidth: 0 }}>
     <Section title={`Install ${snapshot.name} v${snapshot.version}`}>
-      <Stack spacing={1.5}>
-        <Typography variant="s1">Create a plan, inspect the files it will change, then apply it to your project. Production and existing contexts stay unchanged.</Typography>
-        {preview && <StatusBadge status="unavailable" label="Preview: host profile not yet verified" />}
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-          <TextField select size="small" label="Project profile" value={profileId} onChange={(event) => { setProfileId(event.target.value); setCopyError(''); }} sx={{ minWidth: 160 }}>
-            <MenuItem value="codex">Codex</MenuItem><MenuItem value="claude-code">Claude Code</MenuItem>
-          </TextField>
-          <TextField size="small" label="Project directory" value={project} onChange={(event) => { setProject(event.target.value); setCopyError(''); }} sx={{ flex: 1 }} helperText="Project scope only. Existing local instructions are never silently replaced." />
+      <Stack spacing={2} sx={{ minWidth: 0 }}>
+        <Typography variant="s3" color="text.secondary">{preview ? 'Preview installer' : 'Installer'} — writes AGENTS.md and {profileId === 'codex' ? '.agents/skills/' : '.claude/skills/'} only after you review the plan.</Typography>
+        <Stack spacing={1}>
+          <Typography variant="m3" component="h3">1. Choose your client</Typography>
+          <SegmentedTabs value={profileId} onChange={(_, value) => { setProfileId(value); setCopyError(''); }} aria-label="Choose your client"><Tab value="codex" label="Codex" /><Tab value="claude-code" label="Claude Code" /></SegmentedTabs>
+          <TextField size="small" label="Project directory" value={project} onChange={(event) => { setProject(event.target.value); setCopyError(''); }} helperText="Existing local instructions are never silently replaced." />
         </Stack>
-        <Typography variant="s3" color="text.secondary">Instructions: project AGENTS.md · Skills: {profileId === 'codex' ? '.agents/skills/' : '.claude/skills/'}</Typography>
-        {profileId === 'claude-code' && <Typography variant="s3" color="text.secondary">Existing CLAUDE.md or local instructions may affect AGENTS.md discovery. Settings, imports and permissions are not changed.</Typography>}
-        <Typography variant="s1">Use a scoped consume credential for this version. Create one in Runtime access below, or choose an existing credential that grants this version, then set FI_CONTEXT_CREDENTIAL securely in your terminal.</Typography>
-        {preview && <Typography variant="s3" color="text.secondary">Requires an environment with the Context SDK CLI installed (python -m fi.context). The plan explicitly opts in to the preview host profile; no released package or delivery verification is claimed.</Typography>}
+        <Stack spacing={1}>
+          <Typography variant="m3" component="h3">2. Set a credential</Typography>
+          <Typography variant="s3" color="text.secondary">Create a consume credential in <Link href="#context-runtime-access" color="inherit">Runtime access</Link>, or use an existing one for this version. Set FI_CONTEXT_CREDENTIAL securely in your terminal; never paste it into the command.</Typography>
+          <Box id="context-runtime-access" sx={{ minWidth: 0 }}>{runtimeAccess}</Box>
+        </Stack>
+        <Typography variant="m3" component="h3">3. Plan and inspect</Typography>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
-          <Box component="pre" tabIndex={0} aria-label="Context install plan command" sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{command}</Box>
+          <Box component="pre" tabIndex={0} aria-label="Context install plan command" sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre', overflowX: 'auto', maxWidth: 1 }}>{visibleCommand}</Box>
+          <TechnicalDetails title="Environment variables"><Typography variant="s3" color="text.secondary">Included when you copy the plan command.</Typography><Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box></TechnicalDetails>
           <Button variant="contained" sx={{ alignSelf: 'flex-start' }} disabled={copyBusy} onClick={async () => {
             setCopyBusy(true); setCopyError(''); setCopied(null);
             try { if (!navigator.clipboard?.writeText) throw new Error('Unavailable'); await navigator.clipboard.writeText(command); setCopied(command); }
-            catch { setCopyError('Could not copy. Select and copy the full command manually.'); }
+            catch { setCopyError('Could not copy. Expand Environment variables, copy those exports first, then copy the plan command.'); }
             finally { setCopyBusy(false); }
           }}>Copy plan command</Button>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
@@ -78,13 +81,15 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
           </TechnicalDetails>
         </>}
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {onViewFiles && <Button onClick={onViewFiles}>View published files</Button>}
-          {onOpenLinks && <Button onClick={onOpenLinks}>Open linked skills</Button>}
+          {onViewFiles && <Button variant="outlined" onClick={onViewFiles}>View published files</Button>}
+          {onOpenLinks && <Button variant="outlined" onClick={onOpenLinks}>Open linked skills</Button>}
         </Stack>
       </Stack>
     </Section>
     <TechnicalDetails title="Installation requirements">
       <Stack spacing={1}>
+        {preview && <Typography variant="s3" color="text.secondary">Requires an environment with the Context SDK CLI installed (python -m fi.context). This plan opts in to a preview host profile. No released package or verified model delivery is claimed.</Typography>}
+        {profileId === 'claude-code' && <Typography variant="s3" color="text.secondary">Existing CLAUDE.md or local instructions may affect AGENTS.md discovery. Settings, imports and permissions are not changed.</Typography>}
         {workspaceName && <Typography variant="s1">Workspace: {workspaceName}</Typography>}
         <IdentityChip value={workspaceId} kind="id" label="Workspace" />
         <IdentityChip value={organizationId} kind="id" label="Organization" />
@@ -95,7 +100,7 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
     </TechnicalDetails>
   </Stack>;
 }
-UseContent.propTypes = { snapshot: PropTypes.object.isRequired, origin: PropTypes.string, originError: PropTypes.string, organizationId: PropTypes.string.isRequired, workspaceId: PropTypes.string.isRequired, qualification: PropTypes.object, workspaceName: PropTypes.string, onViewFiles: PropTypes.func, onOpenLinks: PropTypes.func };
+UseContent.propTypes = { snapshot: PropTypes.object.isRequired, origin: PropTypes.string, originError: PropTypes.string, organizationId: PropTypes.string.isRequired, workspaceId: PropTypes.string.isRequired, qualification: PropTypes.object, workspaceName: PropTypes.string, onViewFiles: PropTypes.func, onOpenLinks: PropTypes.func, runtimeAccess: PropTypes.node };
 export default function ContextUsePanel({ scopeKey, state = 'unavailable', snapshot, onRetry, ...props }) {
   if (!scopeKey || state !== 'ready' || !snapshot) return <ReviewState state={!scopeKey ? 'forbidden' : state} onRetry={onRetry} />;
   return <UseContent key={`${scopeKey}:${snapshot.versionId}`} {...props} snapshot={snapshot} />;

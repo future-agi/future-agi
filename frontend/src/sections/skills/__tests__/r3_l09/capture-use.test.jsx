@@ -294,12 +294,12 @@ describe("qualified exact install handoff", () => {
   });
   it('offers an explicit preview SDK path without inventing package or host qualification', () => {
     const { rerender } = render(<ContextUsePanel {...useProps} qualification={undefined} />);
-    expect(screen.getByText('Preview: host profile not yet verified')).toBeVisible();
+    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Copy plan command' })).toBeEnabled();
     expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
     expect(screen.getByLabelText('Context install plan command')).not.toHaveTextContent('pip install');
     rerender(<ContextUsePanel {...useProps} qualification={{ ...qualification, profiles: [{ ...qualification.profiles[0], state: 'preview' }] }} />);
-    expect(screen.getByText('Preview: host profile not yet verified')).toBeVisible();
+    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
     expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
   });
   it('fails closed when the public API origin is not configured', () => {

@@ -182,12 +182,15 @@ export async function createDriver({ jobId, runId, registration }) {
             const row = active.results.find((item) => item.context_id === parent.id);
             requireValue(row && row.locked_version === 7 && row.update_state === (index === 2 ? 'pinned_as_intended' : 'update_available'), 'Wrong dependent lock or selector');
           }
-          // One review covers the whole inventory, active and historical on one screen; the deliberate pin is the shown exception.
+          const historyDisclosure = page.getByRole('button', { name: 'Show superseded releases', exact: true });
+          const hasSuperseded = await historyDisclosure.isVisible();
+          if (hasSuperseded) await operator.click(historyDisclosure, 'show-superseded-context-releases');
+          // Identical active/history rows are not duplicated; superseded releases remain reviewable.
           await operator.review('inspect-dependent-inventory', [...input.parents.map((_, index) => `parent-${index}`), 'historical-references'], ['parent-2'], async () => {
             for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` }).first()).toBeVisible();
             for (const parent of followers) await expect(page.getByRole('checkbox', { name: `Select ${parent.name} v1 for update` })).toBeChecked();
             await expect(page.getByRole('checkbox', { name: `Select ${input.parents[2].name} v1 for update` })).toBeDisabled();
-            await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
+            if (hasSuperseded) await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
           });
           await snapshot('dependent-inventory', page);
           observations.dependents = { active, history: await read(`${child.id}/context-dependents/?view=history`, signal) };
@@ -197,7 +200,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // One reviewed update over the preselected followers, started from the dependents inventory the person is already viewing.
           await click(`Prepare draft updates for ${followers.length} contexts`, 'followers-preview');
           await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
-          const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByText('Compiled candidate')).toHaveCount(followers.length));
+          const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByRole('button', { name: 'Technical details', exact: true })).toHaveCount(followers.length));
           await reviewPlans('followers-dependency-review');
           await command('source-label-aba', operationsArgs('source-aba', '8'));
           ledger.fault('source-aba', 'source-production-eight-seven-eight');

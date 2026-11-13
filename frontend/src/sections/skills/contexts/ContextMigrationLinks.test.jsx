@@ -31,11 +31,11 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
   await waitFor(() => expect(apply).toHaveBeenCalledOnce());
 });
 
-it("never replaces already accepted links with proposals", () => {
+it("never replaces already accepted links with proposals", async () => {
   render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} />);
   expect(screen.queryByText(/from your migration are proposed/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-  expect(screen.getByText('kept…')).toBeVisible();
+  fireEvent.mouseOver(screen.getByText('Not yet accepted', { exact: true }));
+  expect(await screen.findByText('kept…')).toBeVisible();
 });
 
 it("tells the author which migration skills will be proposed before creating the draft", () => {

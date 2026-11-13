@@ -10,6 +10,7 @@ import {
   Stack,
   Table,
   TableBody,
+  TableContainer,
   TableCell,
   TableHead,
   TableRow,
@@ -154,7 +155,7 @@ export default function ContextPilotCredentials({
   };
   if (!canIssue)
     return (
-      <Section title="Pilot credential">
+      <Section title="Runtime access">
         <Alert severity="info">
           A workspace admin issues the isolated consume credential for a pilot
           install.
@@ -162,14 +163,14 @@ export default function ContextPilotCredentials({
       </Section>
     );
   return (
-    <Section title="Pilot credential">
+    <Section title="Runtime access">
       <Stack spacing={1.5}>
         <Typography variant="s3">
           Consume only, bound to v{snapshot.version} of this context. It cannot
           read drafts, other versions or moving labels. The secret is shown
           once and is never placed in a command.
         </Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
           <TextField
             select
             size="small"
@@ -221,7 +222,7 @@ export default function ContextPilotCredentials({
                   : " This was a replay; the secret is no longer available. Issue a new credential."}
               </Typography>
               {issued.secretAvailable && (
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                   <Button
                     size="small"
                     variant="outlined"
@@ -262,7 +263,7 @@ export default function ContextPilotCredentials({
             </Button>
           </Alert>
         ) : rows.length > 0 ? (
-          <Table size="small" aria-label="Pilot credentials for this context">
+          <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
             <TableHead>
               <TableRow>
                 <TableCell>Credential</TableCell>
@@ -282,7 +283,7 @@ export default function ContextPilotCredentials({
                 />
               ))}
             </TableBody>
-          </Table>
+          </Table></TableContainer>
         ) : (
           !list.isLoading && (
             <Typography variant="s3">

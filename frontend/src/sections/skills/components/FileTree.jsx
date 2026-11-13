@@ -11,8 +11,8 @@ import './skillIcons';
 
 const DEFAULT_PINNED = ['SKILL.md'];
 
-export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true }) {
-  const [collapsed, setCollapsed] = useState(new Set());
+export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [] }) {
+  const [collapsed, setCollapsed] = useState(() => new Set(generatedFolders));
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pathInput, setPathInput] = useState('');
@@ -118,9 +118,10 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
         tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
         aria-selected={row.path === selectedPath} aria-expanded={row.type === 'folder' ? !collapsed.has(row.path) : undefined}
         onFocus={() => setFocused(row.path)} onKeyDown={(event) => onKeyDown(event, row, index)} onClick={() => activate(row)}
-        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 40, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
-        {row.type === 'folder' && <Iconify icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}
+        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 32, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+        <Box sx={{ width: 16, flexShrink: 0, display: 'flex' }}>{row.type === 'folder' && <Iconify width={16} icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}</Box>
         <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>
+        {generatedFolders.includes(row.path) && <Typography variant="s3" color="text.secondary">Generated</Typography>}
         {row.status && <FileStatusBadge status={row.status} />}
       </ButtonBase>)}
     </Box>
@@ -134,6 +135,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
 }
 FileTree.propTypes = {
   files: PropTypes.arrayOf(PropTypes.shape({ path: PropTypes.string.isRequired, status: PropTypes.string })).isRequired,
+  generatedFolders: PropTypes.arrayOf(PropTypes.string),
   selectedPath: PropTypes.string, onSelect: PropTypes.func.isRequired, onCreate: PropTypes.func, onRename: PropTypes.func,
   onDelete: PropTypes.func, pinned: PropTypes.arrayOf(PropTypes.string), protectedPaths: PropTypes.arrayOf(PropTypes.string), isPathReadOnly: PropTypes.func, readOnly: PropTypes.bool,
 };

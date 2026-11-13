@@ -8,7 +8,7 @@ import ContextLinksPanel from './ContextLinksPanel';
 const state = vi.hoisted(() => ({ upstream: {} }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => state.upstream }));
 afterEach(cleanup);
-beforeEach(() => { state.upstream = {}; });
+beforeEach(() => { state.upstream = {}; localStorage.clear(); });
 const version = { id: 'v1', number: 1, digest: `sha256:${'a'.repeat(64)}` };
 const scopeKey = 'scope';
 const detail = { scopeKey, query: { scopeKey, data: { context: { id: 'context', name: 'support-agent', latestVersion: 1, labels: [{ name: 'production', version: 1 }] } } }, versionQuery: { scopeKey, data: { version, descriptor: { description: 'Support instructions', links: [] }, files: [{ path: 'AGENTS.md', origin: { kind: 'owned' } }] } }, fileQuery: { scopeKey, data: { path: 'AGENTS.md', versionId: version.id, text: '# Instructions' } }, versions: [version], onEditViewed: vi.fn(), sections: { tests: <p>Test controls</p>, recovery: <p>Recovery controls</p> } };
@@ -66,11 +66,43 @@ it('shows each followed label against the locked version and never calls failed 
   render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
   const table = screen.getByRole('table', { name: 'Linked skills' });
   expect(within(table).getByText('v2 available')).toBeVisible();
-  expect(within(table).getByText('Pinned intentionally')).toBeVisible();
+  expect(within(table).getByText('Pinned')).toBeVisible();
   expect(within(table).getByText("Couldn't check")).toBeVisible();
   expect(within(table).queryByText('Up to date')).not.toBeInTheDocument();
   fireEvent.click(within(table).getByRole('button', { name: 'Retry' }));
   expect(retry).toHaveBeenCalledOnce();
-  expect(within(table).getAllByRole('link', { name: 'Review update' })[0]).toHaveAttribute('href', '/dashboard/skills/follow?tab=dependents');
+  expect(within(table).getAllByRole('link', { name: 'Review update' })).toHaveLength(1);
+  expect(within(table).getByRole('link', { name: 'Review update' })).toHaveAttribute('href', '/dashboard/skills/follow?tab=dependents');
   expect(session.resolvedLock.links.every((link) => link.version === 1)).toBe(true);
+});
+
+it('defaults markdown to preview and remembers the per-viewer source choice', () => {
+  const view = render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
+  expect(screen.getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  fireEvent.click(screen.getByRole('tab', { name: 'Source', exact: true }));
+  expect(screen.getByLabelText('AGENTS.md read-only source')).toBeVisible();
+  view.unmount();
+  render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
+  expect(screen.getByRole('tab', { name: 'Source', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+it('does not expose stale release identity or editing after a failed release request', () => {
+  render(<MemoryRouter initialEntries={['/?version=1']}><ContextDetailView {...detail} versionQuery={{ ...detail.versionQuery, error: new Error('offline') }} /></MemoryRouter>);
+  expect(screen.getByText("Couldn't load v1")).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Edit viewed version' })).toBeDisabled();
+  expect(screen.queryByText(/Digest/)).not.toBeInTheDocument();
+});
+it('offers draft work rather than editing an absent release', () => {
+  render(<MemoryRouter><ContextDetailView {...detail} query={{ scopeKey, data: { context: { name: 'new-agent', latestVersion: null }, ownDraft: { revision: 1 } } }} versionQuery={{ scopeKey }} fileQuery={{ scopeKey }} onResumeDraft={vi.fn()} /></MemoryRouter>);
+  expect(screen.getByText('No releases yet')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Resume your draft' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: /Edit viewed/ })).not.toBeInTheDocument();
+});
+it('removes inaccessible library actions and filters, and offers a way back from a denied detail', () => {
+  const view = render(<ContextLibraryView {...library} state="denied" />);
+  expect(screen.queryByRole('button', { name: 'New agent context' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: /Search/ })).not.toBeInTheDocument();
+  view.unmount();
+  render(<MemoryRouter><ContextDetailView {...detail} state="denied" /></MemoryRouter>);
+  expect(screen.getByRole('link', { name: 'Back to agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
 });

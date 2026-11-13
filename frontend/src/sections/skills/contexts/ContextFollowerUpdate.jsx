@@ -40,10 +40,10 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease 
   useEffect(() => {
     if (preparedKey !== null && preparedKey !== selectionKey) {
       sequence.current += 1;
-      setItems([]); setOutcomes([]); setAccepted(false); setPreparedKey(null); setSelectionChanged(true);
+      setItems([]); setOutcomes([]); setAccepted(false); setPreparedKey(null); setSelectionChanged(targets.length > 0);
       setPhase((current) => current === 'applying' ? current : 'idle');
     }
-  }, [selectionKey, preparedKey]);
+  }, [selectionKey, preparedKey, targets.length]);
   const busy = phase === 'previewing' || phase === 'applying';
   const preview = async (list) => {
     const key = selectionKey;
@@ -67,21 +67,22 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease 
   };
   const failed = [...items.filter((item) => item.status === 'error'), ...outcomes];
   const nameOf = (target) => `${target.name} v${target.version}`;
-  return <Stack spacing={1.5} aria-label="Update follower contexts" role="group">
-    <Typography variant="m3" component="h3">Update follower contexts</Typography>
+  return <Stack spacing={1.5} sx={{ pb: 8, minWidth: 0 }} aria-label="Update follower contexts" role="group">
+    <Typography variant="m3" component="h3">Update contexts that follow production</Typography>
     <Typography variant="s1">Review the skill changes for each selected context, then accept them into drafts. Each context is published and reviewed separately.</Typography>
     <Typography variant="s3" color="text.secondary">Creates a draft for each context that doesn&apos;t have one. Production doesn&apos;t change.</Typography>
-    {selectionChanged && <Alert severity="warning">Selection changed — prepare again.</Alert>}
-    <Button sx={{ alignSelf: 'flex-start' }} variant={ready.length ? 'outlined' : 'contained'} disabled={!targets.length || busy} onClick={() => preview(targets)}>{`Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}`}</Button>
+    {!targets.length && <Typography variant="s3" color="text.secondary">Select at least one context to prepare updates.</Typography>}
+    {selectionChanged && targets.length > 0 && <Typography variant="s3" color="warning.main" role="status">Selection changed — prepare again.</Typography>}
+    <Button sx={{ alignSelf: 'flex-start' }} variant={ready.length ? 'outlined' : 'contained'} disabled={!targets.length || busy} onClick={() => preview(targets)}>{targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates'}</Button>
     {phase === 'previewing' && <Typography variant="s3" role="status">Starting drafts and resolving exact versions…</Typography>}
-    {items.map((item) => <Stack key={item.target.contextId} sx={{ borderBottom: 1, borderColor: 'divider', py: 1, minWidth: 0 }} spacing={0.5}>
-      <Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{nameOf(item.target)}</Typography>
+    {items.map((item) => <Stack key={item.target.contextId} sx={{ border: 1, borderRadius: 1, borderColor: 'divider', p: 1.5, minWidth: 0 }} spacing={0.5}>
+      <Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{item.target.name} · v{item.target.version} → new draft</Typography>
       {item.status === 'ready' ? <>
-        <Typography variant="s1">{item.plan.changes.filter((change) => change.change !== 'unchanged').length} skill changes · {item.plan.changes.filter((change) => change.change === 'unchanged').length} unchanged · production unchanged</Typography>
-        {item.plan.changes.filter((change) => change.change !== 'unchanged').map((change) => <Typography key={change.skillId} variant="s1">{change.mount} · {changeLabel(change.change)} · {change.before ? `v${change.before.version}` : 'absent'} → {change.after ? `v${change.after.version}` : 'removed'}</Typography>)}
+        <Typography variant="s1">{item.plan.changes.filter((change) => change.change !== 'unchanged').map((change) => `${change.mount?.replace(/^skills\//, '').replace(/\/$/, '')} ${change.before ? `v${change.before.version}` : 'not linked'} → ${change.after ? `v${change.after.version}` : 'removed'}`).join('; ')}. {item.plan.changes.filter((change) => change.change === 'unchanged').length} other {item.plan.changes.filter((change) => change.change === 'unchanged').length === 1 ? 'skill' : 'skills'} unchanged. {item.target.productionVersion ? `Production stays v${item.target.productionVersion}.` : 'Production unchanged.'}</Typography>
+        {item.plan.changes.filter((change) => change.change !== 'unchanged').map((change) => <Stack key={change.skillId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', py: 1 }}><Typography variant="s1">{change.mount?.replace(/^skills\//, '').replace(/\/$/, '')} · {changeLabel(change.change)}</Typography><StatusBadge status="unset" variant="badge" dot={false} label={change.before ? `v${change.before.version}` : 'Not linked'} /><Typography variant="s3">→</Typography><StatusBadge status="draft" variant="badge" dot={false} label={change.after ? `v${change.after.version}` : 'Removed'} /></Stack>)}
         {!item.plan.changes.length && <Typography variant="s1">No linked-skill changes.</Typography>}
-        <Typography variant="s3" color="text.secondary">{item.reusedDraft === true ? 'Reused draft' : item.reusedDraft === false ? 'New draft' : 'Draft origin not reported'}</Typography>
-        <TechnicalDetails title="Compiled candidate">
+        <StatusBadge status="draft" variant="badge" dot={false} sx={{ alignSelf: 'flex-start' }} label={item.reusedDraft === true ? 'Reused draft' : item.reusedDraft === false ? 'New draft' : 'Draft origin not reported'} />
+        <TechnicalDetails title="Technical details">
           <IdentityChip value={item.plan.candidateDigest} label="Candidate digest" />
           {item.plan.changes.filter((change) => change.change === 'unchanged').map((change) => <Typography key={change.skillId} variant="s3">{change.mount} · No change · v{change.after?.version ?? change.before?.version}</Typography>)}
         </TechnicalDetails>
@@ -90,6 +91,7 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease 
     </Stack>)}
     {phase === 'previewed' && failed.length > 0 && ready.length === 0 && <Typography variant="s1">No context can be updated from this preview.</Typography>}
     {(phase === 'previewed' || phase === 'applying') && ready.length > 0 && <>
+      <Typography variant="s3" color="text.secondary">Review the versions and update policies above before accepting these draft changes.</Typography>
       <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these exact resolved versions and selector policies for all ${ready.length} ${ready.length === 1 ? 'context' : 'contexts'}.`} />
       <Button sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}

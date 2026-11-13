@@ -20,7 +20,7 @@ import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import HostUpdateNotice from "src/components/host-update-status/HostUpdateNotice";
-import { Typography } from "@mui/material";
+import { Button, Typography } from "@mui/material";
 import { ShowComponent } from "../../components/show";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
@@ -44,7 +44,7 @@ export default function DashboardLayout({ children }) {
     }
   }, [pendingNavigation, router, clearPendingNavigation]);
 
-  const lgUp = useResponsive("up", "xs");
+  const lgUp = useResponsive("up", "md");
 
   const nav = useBoolean();
 
@@ -75,7 +75,8 @@ export default function DashboardLayout({ children }) {
       }
     : {
         minHeight: 1,
-        minWidth: 1200,
+        minWidth: 0,
+        width: 1,
         display: "flex",
         flexDirection: { xs: "row", lg: "row" },
         // The frame: sidebar and page edges on the canvas; <Main> is the
@@ -116,6 +117,7 @@ export default function DashboardLayout({ children }) {
         {navComponent}
         <NavGatewayPanel />
         <Main>
+          {!lgUp && <Button aria-label="Open navigation" onClick={nav.onTrue} sx={{ alignSelf: "flex-start", m: 1 }}>Menu</Button>}
           <HostUpdateNotice />
           {children}
         </Main>

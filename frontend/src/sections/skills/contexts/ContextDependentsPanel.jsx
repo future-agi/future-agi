@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
-import { Button, Checkbox, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
+import { Button, Checkbox, Link, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
 import { useContextDependents } from 'src/api/skills/context-dependents';
 import { useSkill } from 'src/api/skills';
 import { useSkillV11Scope } from 'src/api/skills/testing';
@@ -12,6 +12,8 @@ import Section from 'src/components/section';
 import StatusBadge from 'src/components/status-badge';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import { paths } from 'src/routes/paths';
+import { relativeTime } from 'src/utils/format-time';
+import TechnicalDetails from '../components/TechnicalDetails';
 import ContextFollowerUpdate from './ContextFollowerUpdate';
 
 // Domain: published references, accepted locks, selectors, pins, history.
@@ -34,7 +36,7 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
   if (!query.data || !query.data.results.length || state === 'empty') return <EmptyState title={empty.title} description={empty.description} />;
   const active = view === 'active';
   return <>
-    <Typography variant="s3" color="text.secondary">{query.data.count} references · observed {query.data.as_of}</Typography>
+    <Typography variant="s3" color="text.secondary">{query.data.count} {query.data.count === 1 ? 'reference' : 'references'} · <Tooltip title={query.data.as_of || 'Time unavailable'}><span>Checked {relativeTime(query.data.as_of)}</span></Tooltip></Typography>
     <TableContainer><Table size="small" aria-label={active ? 'Published context dependents' : 'Historical context references'}>
       <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{active && <TableCell padding="checkbox"><Typography variant="s3">Update</Typography></TableCell>}<TableCell>Context release</TableCell><TableCell>Labels</TableCell><TableCell>Policy</TableCell><TableCell>Locked skill version</TableCell><TableCell>Update state</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
       <TableBody>{query.data.results.map((row) => <TableRow hover key={`${row.context_id}:${row.context_version}`} sx={{ height: ROW_HEIGHT.default }}>
@@ -44,7 +46,7 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
         <TableCell>{row.requested.version ? `Pin v${row.requested.version}` : `Follow ${row.requested.label}`}</TableCell>
         <TableCell>v{row.locked_version}</TableCell>
         <TableCell><StatusBadge status={states[row.update_state]?.[0] || 'unknown'} label={states[row.update_state]?.[1] || 'Unknown'} /></TableCell>
-        <TableCell><Button component={RouterLink} to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Button></TableCell>
+        <TableCell><Link variant="s1" underline="hover" component={RouterLink} to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Link></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableContainer>
     {query.data.total_pages > 1 && <Pagination page={page} count={query.data.total_pages} onChange={(_, value) => onPage(value)} />}
@@ -66,15 +68,16 @@ function Dependents({ skillId, state }) {
   const selected = eligible.filter((row) => (chosen === null ? true : chosen.includes(row.context_id)));
   const toggle = (row) => setChosen((selected.some((item) => item.context_id === row.context_id) ? selected.filter((item) => item.context_id !== row.context_id) : [...selected, row]).map((item) => item.context_id));
   return <Stack spacing={1.5}>
-    <Section title="Dependent contexts" description="Published references in this workspace, not proof of delivery to a running agent." />
+    <Section title="Contexts using this skill" description="Published references in this workspace, not proof of delivery to a running agent." />
     <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => { query.refetch(); history.refetch(); }}>Refresh dependents</Button>
-    <Typography variant="s3" color="text.secondary">Following offers an update; it never changes production. Review and accept exact draft updates below, then publish each context separately. Pinned versions stay unchanged.</Typography>
+    <Typography variant="s3" color="text.secondary">Updates go into drafts. Production doesn’t change until each context is released.</Typography>
     <ReferenceTable query={query} state={state} view="active" selected={selected} onToggle={toggle} page={page} onPage={setPage}
       empty={{ title: 'No published references', description: 'No authorized context references were found in this view. Drafts and unobserved consumers are not included.' }} />
-    {eligible.length > 0 && <ContextFollowerUpdate skillId={skillId} sourceRelease={sourceRelease} targets={selected.map((row) => ({ contextId: row.context_id, name: row.name, version: row.context_version }))} />}
-    <Section title="Historical references" description="Every published release that ever referenced this skill, including superseded ones. Read-only." />
+    {eligible.length > 0 && <ContextFollowerUpdate skillId={skillId} sourceRelease={sourceRelease} targets={selected.map((row) => ({ contextId: row.context_id, name: row.name, version: row.context_version, ...(row.labels.includes('production') ? { productionVersion: row.context_version } : {}) }))} />}
+    {(history.isError || history.data?.total_pages > 1 || history.data?.results?.some((row) => !rows.some((active) => active.context_id === row.context_id && active.context_version === row.context_version))) && <TechnicalDetails title="Show superseded releases">
     <ReferenceTable query={history} state={state} view="history" page={historyPage} onPage={setHistoryPage}
       empty={{ title: 'No historical references', description: 'No retired or superseded context releases referenced this skill.' }} />
+    </TechnicalDetails>}
   </Stack>;
 }
 Dependents.propTypes = { skillId: PropTypes.string.isRequired, state: PropTypes.string };
