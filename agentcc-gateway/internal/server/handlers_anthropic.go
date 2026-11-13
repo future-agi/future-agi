@@ -284,6 +284,12 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// count_tokens skips the pipeline, but not its access checks.
+	if apiErr := h.engine.CheckAccess(ctx, rc); apiErr != nil {
+		writeAnthropicErrorFromError(w, apiErr)
+		return
+	}
+
 	// Fast path: native Anthropic provider supports count_tokens.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
 		if rc.Metadata["model_alias"] != "" || upstreamModel != model {

@@ -145,6 +145,22 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	return nil
 }
 
+// CheckAccess runs the request-side checks of the AccessGate plugins, in
+// priority order, and returns the first refusal. A handler that calls the
+// provider without Process, such as a lifecycle read, calls it first so the
+// caller is admitted or refused as Process would.
+func (e *Engine) CheckAccess(ctx context.Context, rc *models.RequestContext) *models.APIError {
+	for _, p := range e.plugins {
+		if g, ok := p.(AccessGate); !ok || !g.IsAccessGate() {
+			continue
+		}
+		if result := p.ProcessRequest(ctx, rc); result.Error != nil {
+			return result.Error
+		}
+	}
+	return nil
+}
+
 // loggedError is what the failure log records. A decision vendor's error
 // text can quote the content being judged, so decision calls log only the
 // error code and status, as the request log and span do.
