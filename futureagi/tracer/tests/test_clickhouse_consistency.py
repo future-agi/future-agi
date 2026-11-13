@@ -73,15 +73,17 @@ def sampled_tables(params):
     ]
 
 
-def fake_client(columns, *, sample=None, parts=()):
+def fake_client(columns, *, sample=None, parts=(), table_rows=None):
     """Schema-only double; ``columns["system.parts"]`` opts into the part sample.
 
     ``parts`` are the ``(table, part, rows[, modification_time])`` rows the
     system.parts read returns, already newest first as the real ORDER BY
     delivers them. Without a time, every part was written in the same second.
+    ``table_rows`` are the ``system.tables`` sizes; unlisted tables hold one row.
     """
     if sample is None:
         sample = (1, datetime.now(UTC))
+    table_rows = table_rows or {}
 
     def execute(sql, params=None):
         if sql == "SELECT 1":
@@ -95,6 +97,8 @@ def fake_client(columns, *, sample=None, parts=()):
             if "modification_time FROM" not in sql:
                 return [row[:3] for row in rows]
             return [row if len(row) == 4 else (*row, PART_WRITTEN) for row in rows]
+        if "FROM system.tables" in sql:
+            return [(table, table_rows.get(table, 1)) for table in params["tables"]]
         if "max(_peerdb_synced_at)" in sql:
             # One batched statement answers ``(table, count, max)`` per table;
             # the older per-table statements answer a single unnamed row.

@@ -16,7 +16,11 @@ from tracer.services.clickhouse.client import (
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-from tracer.services.clickhouse.health_client import HealthCheckClient, is_timeout
+from tracer.services.clickhouse.health_client import (
+    HealthCheckClient,
+    is_access_denied,
+    is_timeout,
+)
 from tracer.services.clickhouse.schema import (
     get_all_schema_ddl,
     should_drop_legacy_chain,
@@ -124,7 +128,8 @@ class ConsistencyChecker:
     # Diagnostics must not inherit the application's long-running read policy.
     # One wall bounds the whole check, so sequential statements cannot each
     # restart the endpoint's timeout. Each destination uses one connection: a
-    # handshake and at most three statements (schema, parts, lag). A statement
+    # handshake and normally three statements (schema, part inventory or table
+    # sizes, lag). A statement
     # may use part of the wall: room for several round trips on a slow network
     # plus bounded server work, while a stalled one leaves time for the next
     # destination. A server that answered the handshake and then runs out of
@@ -132,14 +137,19 @@ class ConsistencyChecker:
     QUERY_TIMEOUT_MS = 2500
     CHECK_TIMEOUT_SECONDS = 5
 
-    # The lag sample's fixed read size. ``_peerdb_synced_at`` is in no sorting or
-    # partition key, so a whole-table max() grows with the table and cannot fit
-    # a short statement cap on large mirrors. A few million rows can.
+    # The most rows the lag probe reads from one table. ``_peerdb_synced_at`` is
+    # in no sorting or partition key, so a whole-table max() grows with the
+    # table and cannot fit a short statement cap on large mirrors. A few million
+    # rows can. A readonly=1 profile accepts no per-query limits, so this bound
+    # is enforced by what the probe chooses to read, never by settings.
     LAG_SAMPLE_MAX_ROWS = 10_000_000
     LAG_SAMPLE_MAX_PARTS = 64
     # system.parts columns the sample reads. Stock ClickHouse configs require a
-    # grant for system tables; a role that cannot see all of them keeps the
-    # whole-table aggregate instead of issuing a query that would be denied.
+    # grant for system tables. A role that cannot read all of them is never
+    # sent a query that would be denied: it reads a table in full only when
+    # ``system.tables`` shows it fits the budget, and otherwise reports the
+    # table's lag as unknown (degraded) until it is granted
+    # SELECT(<PART_COLUMNS>) ON system.parts.
     PART_COLUMNS = ("database", "table", "name", "rows", "active", "modification_time")
 
     def __init__(self):
@@ -398,12 +408,14 @@ class ConsistencyChecker:
         part_metadata: set[str],
         *,
         deadline: float,
-    ) -> dict[str, list[_SampleRead]]:
+    ) -> tuple[dict[str, list[_SampleRead]], set[str]]:
         """Plan each ready CDC table's bounded lag sample from its newest parts.
 
         One ``system.parts`` statement per destination lists the newest active
-        parts. Tables absent from the result keep the whole-table aggregate:
-        their role cannot read ``system.parts``, or they have no active part.
+        parts. Also returns the destinations whose inventory was read: there a
+        ready table without a plan has no active row. A destination whose role
+        cannot read ``system.parts`` (columns hidden, or the read denied) is
+        not listed, so its tables are sized from ``system.tables`` instead.
         """
         selected: dict[str, list[_Table]] = {}
         for table in tables:
@@ -414,6 +426,7 @@ class ConsistencyChecker:
             ):
                 selected.setdefault(table.connection, []).append(table)
         plans = {}
+        listed = set()
         for role, ready in selected.items():
             try:
                 rows = self._read(
@@ -427,6 +440,10 @@ class ConsistencyChecker:
                     deadline=deadline,
                 )
             except Exception as exc:
+                if is_access_denied(exc):
+                    # SHOW COLUMNS alone lists the columns but grants no SELECT.
+                    logger.warning("CDC lag part inventory denied", connection=role)
+                    continue
                 state = "timeout" if is_timeout(exc) else "unavailable"
                 logger.warning(
                     "CDC lag check failed",
@@ -436,6 +453,7 @@ class ConsistencyChecker:
                 )
                 checks.update({table.key: state for table in ready})
                 continue
+            listed.add(role)
             parts: dict[str, list[tuple]] = {table.name: [] for table in ready}
             for table_name, *part in rows:
                 if table_name in parts:
@@ -443,7 +461,62 @@ class ConsistencyChecker:
             for table in ready:
                 if reads := self._plan(parts[table.name]):
                     plans[table.key] = reads
-        return plans
+        return plans, listed
+
+    def _within_budget(
+        self,
+        role: str,
+        probe: _Probe,
+        tables: list[_Table],
+        checks: dict[str, str],
+        *,
+        listed: bool,
+        deadline: float,
+    ) -> list[_Table]:
+        """Return the tables small enough to aggregate in full; mark the rest.
+
+        ``system.tables`` lists every table the role may see, whatever its
+        system grants, and MergeTree reports ``total_rows`` from part metadata
+        without reading data. A table above ``LAG_SAMPLE_MAX_ROWS``, or whose
+        size cannot be read, is marked ``unsampled``: its lag is unknown, which
+        degrades the check instead of scanning the whole table on every probe.
+        ``listed`` says the role read its part inventory: the sample found no
+        visible row, rather than the role lacking part metadata.
+        """
+        try:
+            rows = self._read(
+                probe,
+                "SELECT name, total_rows FROM system.tables "
+                "WHERE database = currentDatabase() AND name IN %(tables)s",
+                {"tables": tuple(table.name for table in tables)},
+                deadline=deadline,
+            )
+        except Exception as exc:
+            if not is_access_denied(exc):
+                raise
+            rows = []
+        sizes = dict(rows)
+        small = []
+        for table in tables:
+            size = sizes.get(table.name)
+            if size is not None and size <= self.LAG_SAMPLE_MAX_ROWS:
+                small.append(table)
+            else:
+                checks[table.key] = "unsampled"
+        if unsampled := [table.name for table in tables if table not in small]:
+            logger.warning(
+                "CDC lag unknown",
+                connection=role,
+                tables=unsampled,
+                max_rows=self.LAG_SAMPLE_MAX_ROWS,
+                cause="masked_sample" if listed else "no_part_metadata",
+                required_grant=(
+                    None
+                    if listed
+                    else f"SELECT({', '.join(self.PART_COLUMNS)}) ON system.parts"
+                ),
+            )
+        return small
 
     def _plan(self, parts: list[tuple]) -> list[_SampleRead]:
         """Choose one table's sample from its active parts, newest first.
@@ -530,39 +603,80 @@ class ConsistencyChecker:
         """Return ``(count, max(_peerdb_synced_at))`` per table, in one statement.
 
         Planned tables read their sample; the others the exact whole-table
-        aggregate, which is free on an empty table. A sample with no visible
-        row (its parts hold only masked rows) is retried once with the exact
-        aggregate. max() alone returns an epoch default on an empty table.
+        aggregate, which callers only request for tables known to be small.
+        max() alone returns an epoch default on an empty table.
         """
-        found: dict[str, tuple] = {}
-        pending = tables
-        while pending:
-            selects: list[str] = []
-            params: dict[str, Any] = {}
-            for index, table in enumerate(pending):
-                params[f"table{index}"] = table.name
-                reads = plans.get(table.key)
-                source = (
-                    self._sample_source(table.name, reads, index, params)
-                    if reads
-                    else table.name
-                )
-                # One timestamp type for the UNION, whatever each mirror's zone.
-                selects.append(
-                    f"SELECT %(table{index})s, count(), "
-                    f"toDateTime64(max(_peerdb_synced_at), 6, 'UTC') FROM {source}"
-                )
-            rows = self._read(
-                probe, " UNION ALL ".join(selects), params, deadline=deadline
+        selects: list[str] = []
+        params: dict[str, Any] = {}
+        for index, table in enumerate(tables):
+            params[f"table{index}"] = table.name
+            reads = plans.get(table.key)
+            source = (
+                self._sample_source(table.name, reads, index, params)
+                if reads
+                else table.name
             )
-            found.update({name: (count, synced) for name, count, synced in rows})
-            pending = [
+            # One timestamp type for the UNION, whatever each mirror's zone.
+            selects.append(
+                f"SELECT %(table{index})s, count(), "
+                f"toDateTime64(max(_peerdb_synced_at), 6, 'UTC') FROM {source}"
+            )
+        rows = self._read(probe, " UNION ALL ".join(selects), params, deadline=deadline)
+        found = {name: (count, synced) for name, count, synced in rows}
+        return {table.key: found[table.name] for table in tables if table.name in found}
+
+    def _sample_destination(
+        self,
+        role: str,
+        probe: _Probe,
+        ready: list[_Table],
+        plans: dict[str, list[_SampleRead]],
+        checks: dict[str, str],
+        *,
+        listed: bool,
+        deadline: float,
+    ) -> dict[str, tuple]:
+        """Read one destination's lag samples, never an unbounded table scan.
+
+        Planned tables read their sample. A table is aggregated in full only
+        when it is known to be small: its listed part inventory has no active
+        row, or ``system.tables`` puts it within ``LAG_SAMPLE_MAX_ROWS``. A
+        sample with no visible row (its parts hold only masked rows) is retried
+        once under the same rule. A failure marks only the tables it covered.
+        """
+        samples: dict[str, tuple] = {}
+        pending = ready
+        try:
+            if not listed:
+                pending = self._within_budget(
+                    role, probe, pending, checks, listed=False, deadline=deadline
+                )
+            if pending:
+                samples = self._latest_sync(probe, pending, plans, deadline=deadline)
+            masked = [
                 table
                 for table in pending
-                if table.key in plans and found.get(table.name, (0,))[0] == 0
+                if table.key in plans and samples.get(table.key, (0,))[0] == 0
             ]
-            plans = {}
-        return {table.key: found[table.name] for table in tables if table.name in found}
+            for table in masked:
+                samples.pop(table.key, None)
+            pending = masked
+            if pending:
+                pending = self._within_budget(
+                    role, probe, pending, checks, listed=True, deadline=deadline
+                )
+            if pending:
+                samples.update(self._latest_sync(probe, pending, {}, deadline=deadline))
+        except Exception as exc:
+            state = "timeout" if is_timeout(exc) else "unavailable"
+            logger.warning(
+                "CDC lag check failed",
+                connection=role,
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
+            checks.update({table.key: state for table in pending})
+        return samples
 
     def _lag(
         self,
@@ -574,7 +688,7 @@ class ConsistencyChecker:
         deadline: float,
     ) -> dict[str, float]:
         cdc = [table for table in tables if table.cdc]
-        plans = self._sample_plans(
+        plans, listed = self._sample_plans(
             cdc, probes, checks, part_metadata, deadline=deadline
         )
         by_role: dict[str, list[_Table]] = {}
@@ -583,19 +697,17 @@ class ConsistencyChecker:
                 by_role.setdefault(table.connection, []).append(table)
         samples: dict[str, tuple] = {}
         for role, ready in by_role.items():
-            try:
-                samples.update(
-                    self._latest_sync(probes[role], ready, plans, deadline=deadline)
+            samples.update(
+                self._sample_destination(
+                    role,
+                    probes[role],
+                    ready,
+                    plans,
+                    checks,
+                    listed=role in listed,
+                    deadline=deadline,
                 )
-            except Exception as exc:
-                state = "timeout" if is_timeout(exc) else "unavailable"
-                logger.warning(
-                    "CDC lag check failed",
-                    connection=role,
-                    error_type=type(exc).__name__,
-                    exc_info=True,
-                )
-                checks.update({table.key: state for table in ready})
+            )
         lag = {}
         for table in cdc:
             value = -1.0
@@ -648,13 +760,12 @@ class ConsistencyChecker:
         finally:
             self._close(probes)
         states = set(checks.values())
-        if (
-            not connected
-            or not tables
-            or states - {"ready", "empty", "lagging", "timeout"}
-        ):
+        # Unknown lag (slow, or a table too large to read without part
+        # metadata) is degraded; a missing or unreadable required table is not.
+        degraded = {"lagging", "timeout", "unsampled"}
+        if not connected or not tables or states - {"ready", "empty", *degraded}:
             status = "unhealthy"
-        elif states & {"lagging", "timeout"}:
+        elif states & degraded:
             status = "degraded"
         else:
             status = "healthy"

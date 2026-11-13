@@ -23,8 +23,11 @@ pinned two deterministic ways:
 
 Both server-enforced readonly=1 and client readonly=2 profiles are covered. The
 sample needs ``SELECT`` on six ``system.parts`` columns, which stock ClickHouse
-configs require a grant for (``select_from_system_db_requires_grant``); a role
-without that grant keeps the whole-table aggregate and issues no denied query.
+configs require a grant for (``select_from_system_db_requires_grant``). A
+readonly=1 profile also accepts no per-query limit, so for a role without that
+grant the probe bounds itself: it reads a mirror in full only when
+``system.tables`` shows it within the budget, and reports a larger mirror's lag
+as unknown (degraded) instead of scanning it.
 """
 
 import re
@@ -144,26 +147,37 @@ def _newest_sync_age(admin, table="tracer_trace"):
     )[0][0]
 
 
+# profile: (user suffix, server-enforced readonly=1, system.parts access).
+# Without readonly=1 the client sends readonly=2 and its per-query limits.
+PROFILES = {
+    "readonly2": ("rw", False, "select"),
+    "server_readonly1": ("ro", True, "select"),
+    "no_parts_grant": ("np", True, None),
+    "no_parts_grant_readonly2": ("np2", False, None),
+    # SHOW COLUMNS lists the system.parts columns but grants no SELECT.
+    "parts_columns_only": ("pc", True, "show_columns"),
+}
+NO_PART_METADATA = sorted(
+    profile for profile, (_, _, parts) in PROFILES.items() if parts != "select"
+)
+
+
 def _probe_users(stack, admin, database):
     """Probing users per profile; the server refuses their whole-table scans."""
-    users = {
-        "readonly2": f"{database}_rw",
-        "server_readonly1": f"{database}_ro",
-        "no_parts_grant": f"{database}_np",
-    }
-    for profile, user in users.items():
-        settings = {
-            "readonly2": f"max_rows_to_read = {SERVER_ROW_LIMIT}",
-            "server_readonly1": f"readonly = 1, max_rows_to_read = {SERVER_ROW_LIMIT}",
-            "no_parts_grant": "readonly = 1",
-        }[profile]
+    users = {}
+    for profile, (suffix, server_readonly, parts) in PROFILES.items():
+        user = users[profile] = f"{database}_{suffix}"
+        readonly = "readonly = 1, " if server_readonly else ""
         stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
         admin.execute(
-            f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS {settings}"
+            f"CREATE USER {user} IDENTIFIED WITH no_password "
+            f"SETTINGS {readonly}max_rows_to_read = {SERVER_ROW_LIMIT}"
         )
         admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
-        if profile != "no_parts_grant":
+        if parts == "select":
             admin.execute(f"GRANT SELECT({PART_COLUMNS}) ON system.parts TO {user}")
+        elif parts == "show_columns":
+            admin.execute(f"GRANT SHOW COLUMNS ON system.parts TO {user}")
     return users
 
 
@@ -318,28 +332,102 @@ def test_large_current_mirror_is_healthy_when_whole_scans_are_refused(
 
 
 @pytest.mark.integration
-def test_role_without_parts_grant_keeps_the_whole_table_aggregate(
-    configure, large_mirror, statements, small_budget
+@pytest.mark.parametrize("profile", NO_PART_METADATA)
+def test_role_without_part_metadata_never_scans_a_large_mirror(
+    configure, large_mirror, statements, small_budget, profile
 ):
-    """No system.parts grant: no denied statement, the exact aggregate instead."""
+    """No readable part metadata: bounded reads and unknown lag, not unhealthy.
+
+    The server refuses these users' whole-table scans, as a statement cap does
+    on a mirror large enough. The probe used to send that scan for every mirror
+    in one statement, so the refusal made all of them unavailable and the
+    endpoint unhealthy. Now the large mirror's lag is unknown (degraded), the
+    small mirrors keep their exact lag, and no statement is refused.
+    """
     admin, database, users = large_mirror
+    (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
+    if total <= SERVER_ROW_LIMIT:
+        pytest.fail(f"precondition: {total} rows fit the server's row limit")
     _sync_now(admin)
     checker = configure(
-        _probe_client(admin, database, users["no_parts_grant"], server_readonly=True)
+        _probe_client(
+            admin, database, users[profile], server_readonly=PROFILES[profile][1]
+        )
     )
     with capture_logs() as events:
         health = checker.get_health_status()
-    assert health.status == "healthy", (health, statements)
-    assert all(0 <= lag < 60 for lag in health.cdc_lag.values()), health
-    assert not [s for s in statements if "FROM system.parts" in s["sql"]]
-    assert not [s for s in statements if s["error"] is not None], statements
-    # One statement for every mirror, each the unfiltered whole-table aggregate.
-    (lag_read,) = _trace_lag_reads(statements)
-    assert "_part" not in lag_read["sql"], lag_read
-    for table in CDC_TABLES:
-        assert f"FROM {table}" in lag_read["sql"], lag_read
-        assert f"FROM {table} WHERE" not in lag_read["sql"], lag_read
-    assert not [e for e in events if e["event"] == "ClickHouse read query failed"]
+        result = health_tests.response()
+    detail = {"health": health, "statements": statements}
+
+    assert health.clickhouse_connected is True, detail
+    assert health.status == "degraded", detail
+    assert health.details["checks"] == {
+        "legacy.tracer_trace": "unsampled",
+        "legacy.trace_session": "ready",
+        "legacy.tracer_eval_logger": "ready",
+    }, detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    assert all(
+        0 <= health.cdc_lag[table] < 60
+        for table in ("trace_session", "tracer_eval_logger")
+    ), detail
+    assert not _trace_lag_reads(statements), detail
+    assert all(
+        entry["rows"] <= small_budget for entry in statements if entry["error"] is None
+    ), detail
+    refused = [entry for entry in statements if entry["error"] is not None]
+    if profile == "parts_columns_only":
+        # Only the part inventory is denied (once per check), never a data read.
+        assert refused, detail
+        assert all(
+            entry["error"] == 497 and "FROM system.parts" in entry["sql"]
+            for entry in refused
+        ), detail
+    else:
+        assert not refused, detail
+        assert not [s for s in statements if "FROM system.parts" in s["sql"]]
+    assert not [e for e in events if e["event"] == "CDC lag check failed"], events
+    assert result.status_code == 200
+    assert set(result.data) == {"status", "clickhouse_connected", "cdc_lag", "routing"}
+    assert result.data["status"] == "degraded", result.data
+    assert result.data["cdc_lag"]["tracer_trace"] == -1, result.data
+
+
+@pytest.mark.integration
+def test_role_without_part_metadata_still_reports_a_missing_mirror(
+    configure, statements
+):
+    """Unknown lag degrades; a mirror that does not exist is still unhealthy."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_missing_") as database,
+        _ch_test_native_client(database=database) as admin,
+        ExitStack() as stack,
+    ):
+        for table in ("tracer_trace", "tracer_eval_logger"):
+            admin.execute(_production_ddl(table))
+        _insert_part(admin, "tracer_trace", 10)
+        _insert_part(admin, "tracer_eval_logger", 10)
+        user = f"{database}_np"
+        stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
+        admin.execute(
+            f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS readonly = 1"
+        )
+        admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
+        health = configure(
+            _probe_client(admin, database, user, server_readonly=True)
+        ).get_health_status()
+    detail = {"health": health, "statements": statements}
+    assert health.status == "unhealthy", detail
+    assert health.details["checks"] == {
+        "legacy.tracer_trace": "ready",
+        "legacy.trace_session": "missing_required_table",
+        "legacy.tracer_eval_logger": "ready",
+    }, detail
+    assert health.cdc_lag["trace_session"] == -1, detail
+    assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
+    assert not [entry for entry in statements if entry["error"] is not None], detail
 
 
 @pytest.mark.integration

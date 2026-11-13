@@ -6,6 +6,7 @@ from tracer.services.clickhouse.client import ClickHouseClient
 
 # TIMEOUT_EXCEEDED, TOO_SLOW and SOCKET_TIMEOUT: the statement ran out of time.
 _TIMEOUT_ERROR_CODES = frozenset({159, 160, 209})
+_ACCESS_DENIED_ERROR_CODE = 497
 
 
 def is_timeout(exc: BaseException) -> bool:
@@ -13,6 +14,11 @@ def is_timeout(exc: BaseException) -> bool:
     return isinstance(exc, TimeoutError) or (
         getattr(exc, "code", None) in _TIMEOUT_ERROR_CODES
     )
+
+
+def is_access_denied(exc: BaseException) -> bool:
+    """Whether the server refused a read for missing privileges (ACCESS_DENIED)."""
+    return getattr(exc, "code", None) == _ACCESS_DENIED_ERROR_CODE
 
 
 class HealthCheckClient(ClickHouseClient):

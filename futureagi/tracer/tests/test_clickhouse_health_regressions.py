@@ -11,6 +11,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from structlog.testing import capture_logs
 
 from tracer.services.clickhouse.application_read_policy import application_read_context
 from tracer.tests import test_clickhouse_consistency as health_tests
@@ -621,6 +622,181 @@ def test_failed_part_inventory_is_unavailable_not_healthy(configure):
     assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
     assert set(health.details["checks"].values()) == {"unavailable"}
     assert not _lag_statements(client)
+
+
+def _deny(client, needle):
+    """Refuse reads containing ``needle`` as ClickHouse does: ACCESS_DENIED."""
+    from clickhouse_driver.errors import ServerException
+
+    read = client.execute_read.side_effect
+
+    def execute_read(sql, params=None, **kwargs):
+        if needle in sql:
+            raise ServerException("synthetic missing grant", code=497)
+        return read(sql, params, **kwargs)
+
+    client.execute_read.side_effect = execute_read
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("parts_access", ["columns_hidden", "read_denied"])
+def test_role_without_part_metadata_never_aggregates_a_large_table(
+    configure, monkeypatch, parts_access
+):
+    """A readonly=1 role cannot cap a statement, so the probe must bound itself.
+
+    Without readable ``system.parts`` the probe used to send the exact
+    whole-table aggregate for every mirror: a large one outgrew the statement
+    cap (or a server row limit) and the whole destination read unhealthy.
+    """
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    if parts_access == "read_denied":
+        # SHOW COLUMNS lists the columns; only the SELECT is refused.
+        inventory["system.parts"] = PART_COLUMNS
+    client = health_tests.fake_client(
+        inventory,
+        parts=[(table, "all_1_1_0", 1) for table in health_tests.CDC_TABLES],
+        table_rows={"tracer_trace": 1_001, "trace_session": 1_000},
+    )
+    if parts_access == "read_denied":
+        _deny(client, "FROM system.parts")
+    configure(client)
+    with capture_logs() as events:
+        result = health_tests.response()
+    health = consistency.ConsistencyChecker().get_health_status()
+
+    assert result.status_code == 200
+    assert set(result.data) == {"status", "clickhouse_connected", "cdc_lag", "routing"}
+    assert result.data["status"] == "degraded", result.data
+    assert result.data["clickhouse_connected"] is True
+    assert result.data["cdc_lag"]["tracer_trace"] == -1
+    assert all(
+        0 <= result.data["cdc_lag"][table] < 60
+        for table in ("trace_session", "tracer_eval_logger")
+    ), result.data
+    assert health.details["checks"] == {
+        "legacy.tracer_trace": "unsampled",
+        "legacy.trace_session": "ready",
+        "legacy.tracer_eval_logger": "ready",
+    }
+    # The large mirror is never read; the small ones keep the exact aggregate.
+    for statement, params in _lag_statements(client):
+        assert "tracer_trace" not in health_tests.sampled_tables(params), statement
+        assert "_part" not in statement
+    unknown = [e for e in events if e["event"] == "CDC lag unknown"]
+    assert unknown and unknown[0]["tables"] == ["tracer_trace"], events
+    assert unknown[0]["cause"] == "no_part_metadata"
+    assert "ON system.parts" in unknown[0]["required_grant"]
+    assert not [e for e in events if e["event"] == "CDC lag check failed"], events
+
+
+@pytest.mark.unit
+def test_unknown_lag_never_hides_a_missing_table(configure, monkeypatch):
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    del inventory["trace_session"]
+    client = health_tests.fake_client(inventory, table_rows={"tracer_trace": 5_000})
+    health = configure(client).get_health_status()
+    assert health.status == "unhealthy", health
+    assert health.details["checks"]["legacy.trace_session"] == "missing_required_table"
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled"
+    assert health.cdc_lag["trace_session"] == health.cdc_lag["tracer_trace"] == -1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("sizes", ["readable", "denied"])
+def test_masked_sample_of_a_large_table_is_unknown_not_a_full_scan(
+    configure, monkeypatch, sizes
+):
+    """A masked sample of a large table is unknown lag, not a whole-table scan.
+
+    The retry used to aggregate the whole table, and its failure blanked every
+    mirror of the destination.
+    """
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 100)
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        parts=[
+            ("tracer_trace", "202611_2_2_0", 1_000),
+            ("trace_session", "202611_4_4_0", 5),
+            ("tracer_eval_logger", "202611_6_6_0", 1),
+        ],
+        table_rows={"tracer_trace": 50_000},
+    )
+    read = client.execute_read.side_effect
+
+    def masked_sample(sql, params=None, **kwargs):
+        rows, columns, elapsed = read(sql, params, **kwargs)
+        if "max(_peerdb_synced_at)" in sql and "_partition_id" in sql:
+            rows = [
+                (table, 0, datetime(1970, 1, 1))
+                if table == "tracer_trace"
+                else (table, *sample)
+                for table, *sample in rows
+            ]
+        return rows, columns, elapsed
+
+    client.execute_read.side_effect = masked_sample
+    if sizes == "denied":
+        _deny(client, "FROM system.tables")
+    with capture_logs() as events:
+        health = configure(client).get_health_status()
+
+    assert health.status == "degraded", health
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled"
+    (unknown,) = [e for e in events if e["event"] == "CDC lag unknown"]
+    assert unknown["cause"] == "masked_sample" and unknown["required_grant"] is None
+    assert health.cdc_lag["tracer_trace"] == -1
+    # The other mirrors keep the lag their sample already read.
+    assert all(
+        0 <= health.cdc_lag[table] < 60
+        for table in ("trace_session", "tracer_eval_logger")
+    ), health
+    ((statement, params),) = _lag_statements(client)
+    assert health_tests.sampled_tables(params) == list(health_tests.CDC_TABLES)
+    assert "_part_offset < 10" in statement
+
+
+@pytest.mark.unit
+def test_failed_size_read_is_timeout_on_that_destination_only(configure, settings):
+    """A slow ``system.tables`` read is slow, not down, and stays local."""
+    settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
+    legacy = health_tests.fake_client(
+        dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    )
+    legacy.handshake_completed = True
+    read = legacy.execute_read.side_effect
+
+    def slow_sizes(sql, params=None, **kwargs):
+        if "FROM system.tables" in sql:
+            raise TimeoutError("synthetic socket timeout")
+        return read(sql, params, **kwargs)
+
+    legacy.execute_read.side_effect = slow_sizes
+    native = health_tests.fake_client(
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+            "system.parts": PART_COLUMNS,
+        },
+        parts=[("tracer_eval_logger", "all_1_1_0", 1)],
+    )
+    health = configure(legacy, native).get_health_status()
+    assert health.clickhouse_connected is True, health
+    assert health.status == "degraded", health
+    checks = health.details["checks"]
+    assert {checks[f"legacy.{table}"] for table in health_tests.CDC_TABLES} == {
+        "timeout"
+    }
+    assert checks["native.tracer_eval_logger"] == "ready"
+    assert not _lag_statements(legacy)
 
 
 @pytest.mark.unit
