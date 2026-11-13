@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from drf_yasg.utils import get_serializer_ref_name
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from model_hub.serializers import skills_native_runs as guest_serializers
 from model_hub.services.skills_hub.r3 import native_runs
 from model_hub.views.skills_native_runs import (
     NativeGuestFailureView,
@@ -158,3 +160,13 @@ def test_guest_failure_reason_is_stored_as_a_bounded_string_code(
         "accepted": True
     }
     assert finished == [code]
+
+
+@pytest.mark.parametrize(
+    "name", ["GuestHealthInput", "GuestObservationInput", "GuestFailureInput"]
+)
+def test_guest_request_bodies_publish_in_the_skills_schema_namespace(name):
+    # The generated contract may only add Skills-namespaced definitions; a bare
+    # serializer name would publish as an unrelated top-level schema.
+    serializer = getattr(guest_serializers, name)()
+    assert get_serializer_ref_name(serializer) == f"SkillsContext{name}"

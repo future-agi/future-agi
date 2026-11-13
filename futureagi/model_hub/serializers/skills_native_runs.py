@@ -144,10 +144,15 @@ class ShareNativeInput(ContextSerializer):
 # --- Authenticated guest channel request bodies ---
 # Shape is validated here (refused with the service's own codes); the services keep
 # the exact checks (health must equal the planned execution spec; observations must
-# carry a matching digest) and still receive the raw body.
+# carry a matching digest) and still receive the raw body. They stay plain
+# serializers (unknown guest keys are not refused here) but publish under the
+# Skills schema namespace like every other Skills definition.
 
 
 class GuestHealthInput(s.Serializer):
+    class Meta:
+        ref_name = "SkillsContextGuestHealthInput"
+
     protocol = s.CharField()
     adapter_module = s.CharField()
     configuration_digest = s.CharField()
@@ -163,6 +168,9 @@ class GuestHealthInput(s.Serializer):
 
 
 class GuestObservationInput(s.Serializer):
+    class Meta:
+        ref_name = "SkillsContextGuestObservationInput"
+
     schema = s.IntegerField()
     protocol = s.CharField()
     execution_fingerprint = s.CharField()
@@ -175,4 +183,7 @@ class GuestObservationInput(s.Serializer):
 
 
 class GuestFailureInput(s.Serializer):
+    class Meta:
+        ref_name = "SkillsContextGuestFailureInput"
+
     reason = s.CharField(required=False, allow_blank=True, allow_null=True)
