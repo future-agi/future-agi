@@ -133,11 +133,14 @@ class _PinnedConnection(http.client.HTTPSConnection):
     def __init__(self, host, port, *, address, context, timeout):
         super().__init__(host, port, timeout=timeout, context=context)
         self._address = address
+        self._pinned_context = context
 
     def connect(self):
         sock = socket.create_connection((self._address, self.port), self.timeout)
         try:
-            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+            self.sock = self._pinned_context.wrap_socket(
+                sock, server_hostname=self.host
+            )
         except Exception:
             sock.close()
             raise

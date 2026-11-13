@@ -119,7 +119,11 @@ def filter_program(machine):
         raise Unavailable
     arch, table = _SYSCALLS[machine]
     numbers = sorted(set(table.values()))
-    prefix = [(_LD_W_ABS, 0, 0, 4), None, (_LD_W_ABS, 0, 0, 0)]
+    prefix: list[tuple[int, int, int, int] | None] = [
+        (_LD_W_ABS, 0, 0, 4),
+        None,
+        (_LD_W_ABS, 0, 0, 0),
+    ]
     if machine == "x86_64":
         prefix.append(None)
     body_start = len(prefix)
@@ -128,7 +132,11 @@ def filter_program(machine):
     prefix[1] = (_JEQ_K, 0, kill - 2, arch)
     if machine == "x86_64":
         prefix[3] = (_JGE_K, kill - 4, 0, _X32_BIT)
-    program = list(prefix)
+    program: list[tuple[int, int, int, int]] = []
+    for instruction in prefix:
+        if instruction is None:  # every placeholder is filled above
+            raise Unavailable
+        program.append(instruction)
     for offset, number in enumerate(numbers):
         position = body_start + offset
         program.append((_JEQ_K, allow - position - 1, 0, number))
@@ -409,8 +417,7 @@ def _deny_open(_fd_in, _fd_out, _args):
 
 
 def _deny_exec(_fd_in, _fd_out, _args):
-    os.execv("/bin/true", ["/bin/true"])
-    return {}
+    os.execv("/bin/true", ["/bin/true"])  # never returns
 
 
 OPERATIONS = {

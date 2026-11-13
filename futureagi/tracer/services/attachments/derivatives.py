@@ -135,6 +135,7 @@ def generate(segment_id, *, scope_id, storage):
 
 def _produce(segment, representation, source_path, storage):
     recording = AttachmentRecording.objects.get(pk=segment.recording_id)
+    args: tuple[int, ...]
     if representation == "peaks":
         limit = peaks_bytes(
             frame_count=segment.frame_count,

@@ -28,7 +28,9 @@ import hmac
 import json
 import re
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
+from typing import IO, Protocol
 
 import jwt
 from django.db import IntegrityError, transaction
@@ -62,9 +64,17 @@ _RANK = {
     ProviderRecordingState.ACTIVE: 1,
     ProviderRecordingState.ENDING: 2,
 }
+
+
+class ProviderOutput(Protocol):
+    """What a provider output reader returns (``imports._fetch`` drives it)."""
+
+    def read_range(self, offset: int, length: int, sink: IO[bytes]) -> None: ...
+
+
 # Provider output readers: provider -> callable(registration, limits) returning
-# an object with ``read_range(offset, length, sink)``. Empty until qualified.
-READERS = {}
+# a ``ProviderOutput``. Empty until qualified.
+READERS: dict[str, Callable[..., ProviderOutput]] = {}
 
 
 def _aad(scope_id, connection_id):

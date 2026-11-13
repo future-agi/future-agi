@@ -333,7 +333,9 @@ def validate_manifest(value):
             seen.add(segment["occurrence_id"])
             previous = segment["start_ms"]
         separate = value["layout"] == "separate_tracks"
-        timelines = {track: [] for track in track_ids} if separate else {None: []}
+        timelines: dict[str | None, list[dict]] = (
+            {track: [] for track in track_ids} if separate else {None: []}
+        )
         for interval in value["segments"] + value["gaps"]:
             track = interval.get("track_id")
             if track not in timelines:
