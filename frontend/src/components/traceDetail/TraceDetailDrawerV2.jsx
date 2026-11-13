@@ -560,6 +560,12 @@ const TraceDetailDrawerV2 = ({
   const graph = data?.graph;
 
   // Apply span type filter + span filters to the tree
+  // A caller that pins the span it opened (an evaluation's source span)
+  // keeps that span in the tree whatever filters the user saved. The saved
+  // filters themselves stay as they are. Without a pin this is null, so a
+  // drawer that does not pin (Observe) keeps one spans identity when only the
+  // opened span changes, and the Agent Graph keeps its node positions.
+  const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
   const spans = useMemo(() => {
     if (!rawSpans?.length) return rawSpans;
 
@@ -575,11 +581,6 @@ const TraceDetailDrawerV2 = ({
     );
 
     if (!hasTypeFilter && activeFilters.length === 0) return rawSpans;
-
-    // A caller that pins the span it opened (an evaluation's source span)
-    // keeps that span in the tree whatever filters the user saved. The saved
-    // filters themselves stay as they are.
-    const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
 
     // Map filter field names to span property accessors
     function getSpanValue(span, field) {
@@ -659,13 +660,7 @@ const TraceDetailDrawerV2 = ({
     }
 
     return filterTree(rawSpans);
-  }, [
-    rawSpans,
-    spanFilters,
-    spanTypeFilter,
-    keepInitialSpanVisible,
-    initialSpanId,
-  ]);
+  }, [rawSpans, spanFilters, spanTypeFilter, pinnedSpanId]);
 
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer

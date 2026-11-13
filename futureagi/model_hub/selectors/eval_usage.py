@@ -39,8 +39,19 @@ _CONFIG_JSON_EXPR = (
     "if(isValidJSON(config) AND JSONType(config) = 'String', "
     "JSONExtractString(config), config)"
 )
-# The project an eval log recorded when it ran (empty on older logs).
-_SOURCE_PROJECT_EXPR = f"JSONExtractString({_CONFIG_JSON_EXPR}, 'project_id')"
+# The project a trace-attached eval log recorded when it ran (empty on older
+# logs and on logs without a trace). It is computed on every row version of
+# every project-scoped statement, including the narrow page-seek counts, so the
+# JSON is parsed only for a trace log whose config names a project. The parse
+# mirrors the production ``eval_trace_id`` column
+# (``JSONExtractString(JSONExtractString(config), 'trace_id')``): on
+# ClickHouse 24.3 through 25.3 the outer ``JSONExtractString`` unwraps a
+# double-encoded config and returns an object-encoded one unchanged, so both
+# encodings resolve with two parses instead of the four of _CONFIG_JSON_EXPR.
+_SOURCE_PROJECT_EXPR = (
+    "if(eval_trace_id = '' OR position(config, 'project_id') = 0, '', "
+    "JSONExtractString(JSONExtractString(config), 'project_id'))"
+)
 
 _READ_SETTINGS = {
     "max_threads": 2,

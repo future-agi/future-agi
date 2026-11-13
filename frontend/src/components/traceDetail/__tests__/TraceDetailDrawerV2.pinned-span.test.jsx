@@ -40,17 +40,24 @@ vi.mock("src/api/project/saved-views", async (importOriginal) => ({
   useDeleteSavedView: () => ({ mutate: vi.fn() }),
 }));
 
-vi.mock("src/api/project/trace-detail", () => ({
-  useGetTraceDetail: () => ({
-    isLoading: false,
-    data: {
-      trace: { id: "trace-1", tags: [] },
-      observation_spans: [
-        span("root-llm", "llm", [span("tool-1", "tool"), span("llm-2", "llm")]),
-      ],
-    },
-  }),
-}));
+vi.mock("src/api/project/trace-detail", () => {
+  // One response object, as React Query returns for unchanged data.
+  let data;
+  return {
+    useGetTraceDetail: () => ({
+      isLoading: false,
+      data: (data ??= {
+        trace: { id: "trace-1", tags: [] },
+        observation_spans: [
+          span("root-llm", "llm", [
+            span("tool-1", "tool"),
+            span("llm-2", "llm"),
+          ]),
+        ],
+      }),
+    }),
+  };
+});
 
 vi.mock("../DrawerToolbar", () => ({ default: () => null }));
 vi.mock("../DrawerHeader", () => ({ default: () => null }));
@@ -115,6 +122,29 @@ describe("TraceDetailDrawerV2 pinned initial span", () => {
     expect(JSON.parse(mocks.storage.get(SAVED_KEY)).filters).toEqual(
       JSON.parse(SAVED).filters,
     );
+  });
+
+  it("keeps one spans identity when an unpinned drawer opens another span", () => {
+    // Observe does not pin; a new spans array would reset the Agent Graph's
+    // node positions although the visible tree is the same.
+    const client = new QueryClient();
+    const drawer = (initialSpanId) => (
+      <QueryClientProvider client={client}>
+        <TraceDetailDrawerV2
+          traceId="trace-1"
+          open
+          onClose={vi.fn()}
+          projectId="project-1"
+          initialSpanId={initialSpanId}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(drawer("tool-1"));
+    const before = mocks.treeProps.mock.lastCall[0].spans;
+
+    rerender(drawer("llm-2"));
+
+    expect(mocks.treeProps.mock.lastCall[0].spans).toBe(before);
   });
 
   it("keeps Observe's behaviour when the caller does not pin the span", () => {

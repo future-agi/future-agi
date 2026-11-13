@@ -110,6 +110,11 @@ def live_trace_project_sets_sql(
     instead of losing the row. Latest state is judged per ``(trace, project)``
     so a tombstone in one project cannot hide or resurrect another project's
     copy. The caller must provide a finite trace-ID candidate query.
+
+    The candidate IDs are an ``IN`` set next to the project list, not a join:
+    ClickHouse prunes the ``(project_id, id)`` primary key with both, so the
+    scan reads the granules of the candidate traces only. A join reads every
+    trace of every requested project, which grows with the workspace.
     """
 
     if not _PARAM_NAME_RE.fullmatch(project_ids_param):
@@ -130,9 +135,10 @@ def live_trace_project_sets_sql(
                     trace_project_scan._version
                 ) AS latest_is_deleted
             FROM {_TRACE_TABLE} AS trace_project_scan
-            INNER JOIN ({candidate_trace_ids_sql}) AS bounded_trace_candidates
-              ON trace_project_scan.id = bounded_trace_candidates.trace_id
             PREWHERE trace_project_scan.project_id IN %({project_ids_param})s
+              AND trace_project_scan.id IN (
+                  SELECT trace_id FROM ({candidate_trace_ids_sql})
+              )
             GROUP BY trace_project_scan.id, trace_project_scan.project_id
         ) AS trace_project_state
         WHERE latest_is_deleted = 0

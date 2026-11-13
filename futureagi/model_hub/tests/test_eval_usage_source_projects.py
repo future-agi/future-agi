@@ -62,7 +62,9 @@ def clickhouse_usage(settings, monkeypatch):
                 source_id String,
                 status String,
                 config String,
-                eval_trace_id String,
+                -- The production column (tracer/services/clickhouse/schema.py).
+                eval_trace_id String MATERIALIZED
+                    JSONExtractString(JSONExtractString(config), 'trace_id'),
                 deleted UInt8,
                 created_at DateTime64(6, 'UTC'),
                 _peerdb_is_deleted UInt8,
@@ -92,7 +94,12 @@ def clickhouse_usage(settings, monkeypatch):
             if traces:
                 admin.execute(f"INSERT INTO {trace_table} VALUES", list(traces))
             if logs:
-                admin.execute(f"INSERT INTO {usage_table} VALUES", list(logs))
+                admin.execute(
+                    f"INSERT INTO {usage_table} (id, log_id, organization_id,"
+                    " workspace_id, source_id, status, config, deleted,"
+                    " created_at, _peerdb_is_deleted, _peerdb_version) VALUES",
+                    list(logs),
+                )
 
         try:
             yield insert
@@ -182,7 +189,6 @@ class _Ledger:
             str(self.template.id),
             "success",
             json.dumps(encoded) if double_encoded else encoded,
-            str(trace_id) if trace_id is not None else "",
             0,
             self.now - timedelta(hours=self.next_id),
             0,
@@ -351,18 +357,100 @@ def test_a_trace_tombstoned_in_its_project_is_not_listed(
 
 
 def test_past_the_project_bound_falls_back_to_projects_running_the_eval(
-    organization, workspace, template, clickhouse_usage, monkeypatch
+    organization, user, workspace, template, clickhouse_usage, monkeypatch
 ):
+    """Past MAX_SOURCE_PROJECTS the scope narrows to the readable projects
+    that run this eval now: still never an unreadable project, and a log
+    whose trace lives only in another readable project is no longer listed."""
+
     monkeypatch.setattr(eval_log_source_navigation, "MAX_SOURCE_PROJECTS", 1)
+    warnings = []
+    monkeypatch.setattr(
+        separate_evals.logger,
+        "warning",
+        lambda event, **fields: warnings.append((event, fields)),
+    )
     configured = _project(organization, workspace, "Runs this eval")
-    _project(organization, workspace, "Another readable project")
+    unconfigured = _project(organization, workspace, "Another readable project")
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=str(uuid.uuid4()),
+        organization=organization,
+        created_by=user,
+        is_default=False,
+        is_active=True,
+    )
+    walled = _project(organization, other_workspace, "Unreadable, runs this eval")
     config = _config(configured, template, "cfg")
+    walled_config = _config(walled, template, "walled cfg")
     ledger = _Ledger(organization, workspace, template)
-    trace_id = uuid.uuid4()
+    trace_id, elsewhere_trace, walled_trace = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     log, row = ledger.row(trace_id=trace_id, config_id=config.id)
-    clickhouse_usage(traces=[(trace_id, configured.id, 0, 1)], logs=[row])
+    _, elsewhere_row = ledger.row(trace_id=elsewhere_trace, config_id=config.id)
+    _, walled_row = ledger.row(trace_id=walled_trace, config_id=walled_config.id)
+    clickhouse_usage(
+        traces=[
+            (trace_id, configured.id, 0, 1),
+            (elsewhere_trace, unconfigured.id, 0, 1),
+            (walled_trace, walled.id, 0, 1),
+        ],
+        logs=[row, elsewhere_row, walled_row],
+    )
 
     assert _listed(_usage(template, organization, workspace)) == {str(log)}
+    assert [event for event, _ in warnings] == [
+        "eval_usage.source_project_scope_too_large"
+    ]
+    assert warnings[0][1]["template_id"] == str(template.id)
+
+
+@pytest.mark.parametrize("double_encoded", [False, True], ids=["object", "string"])
+def test_both_config_encodings_are_listed_by_their_trace_source(
+    organization, user, workspace, template, clickhouse_usage, double_encoded
+):
+    """Configs are stored as a JSON object or as a JSON string holding it.
+
+    ``eval_trace_id`` is the production MATERIALIZED column, so each encoding
+    takes the same trace-attached path: listed while a readable project holds
+    the trace, hidden when that project was deleted or is in a workspace the
+    caller cannot read, for older and for stamped logs alike.
+    """
+
+    readable = _project(organization, workspace, "Readable")
+    deleted = _project(organization, workspace, "Deleted later")
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=str(uuid.uuid4()),
+        organization=organization,
+        created_by=user,
+        is_default=False,
+        is_active=True,
+    )
+    walled = _project(organization, other_workspace, "Other workspace")
+    config = _config(readable, template, "cfg")
+    ledger = _Ledger(organization, workspace, template)
+    traces = {project.id: uuid.uuid4() for project in (readable, deleted, walled)}
+    listed = set()
+    rows = []
+    for project in (readable, deleted, walled):
+        for stamped in (False, True):
+            log_id, row = ledger.row(
+                trace_id=traces[project.id],
+                config_id=config.id,
+                project_id=project.id if stamped else None,
+                double_encoded=double_encoded,
+            )
+            rows.append(row)
+            if project is readable:
+                listed.add(str(log_id))
+    clickhouse_usage(
+        traces=[(trace, project_id, 0, 1) for project_id, trace in traces.items()],
+        logs=rows,
+    )
+    Project.no_workspace_objects.filter(id=deleted.id).update(deleted=True)
+
+    result = _usage(template, organization, workspace)
+
+    assert _listed(result) == listed
+    assert result["logs"]["total"] == 2
 
 
 def test_a_snapshot_listed_by_eval_config_is_never_served(
@@ -414,3 +502,70 @@ def test_a_snapshot_listed_by_eval_config_is_never_served(
     result = response.json()["result"]
     assert result["query_status"] == "pending"
     assert result["stats"]["runs_period"] == 0
+
+
+@pytest.mark.parametrize("stamped", [False, True], ids=["older-worker", "current"])
+def test_a_snapshot_an_older_worker_cached_under_the_new_identity_is_a_miss(
+    auth_client, organization, workspace, template, settings, monkeypatch, stamped
+):
+    """During a rolling deploy a pre-TH-4804 worker can take a refresh job for
+    the current identity and cache a payload listed by eval config under it.
+    Only a payload that says it lists trace logs by their source is served."""
+
+    settings.EVAL_USAGE_CLICKHOUSE_ENABLED = True
+    monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
+    current_identity = {
+        "organization_id": str(organization.id),
+        "workspace_id": str(workspace.id),
+        "template_id": str(template.id),
+        "page": 0,
+        "page_size": 25,
+        "period": "30d",
+        "start_date": None,
+        "end_date": None,
+        "runs": "success",
+        "trace_logs_by": "source_project",
+    }
+    payload = {
+        "template_id": str(template.id),
+        "stats": {"runs_period": 7, "success_count": 7, "error_count": 0},
+        "query_complete": True,
+        "query_status": "complete",
+        "query_sampled": False,
+    }
+    if stamped:
+        payload["trace_logs_by"] = "source_project"
+    publish_exact_snapshot("eval-usage", current_identity, payload)
+    cache_only = exact_aggregation_cache.read_or_schedule_exact_snapshot
+    monkeypatch.setattr(
+        separate_evals,
+        "read_or_schedule_exact_snapshot",
+        lambda namespace, identity, **kwargs: cache_only(
+            namespace, identity, **{**kwargs, "schedule_on_miss": False}
+        ),
+    )
+    monkeypatch.setattr(
+        separate_evals, "eval_usage_snapshot_is_stale", lambda **kwargs: False
+    )
+
+    response = auth_client.get(
+        f"/model-hub/eval-templates/{template.id}/usage/",
+        {"page": 0, "page_size": 25, "period": "30d"},
+    )
+
+    assert response.status_code == 200, response.content
+    result = response.json()["result"]
+    if stamped:
+        assert result["query_status"] == "complete"
+        assert result["stats"]["runs_period"] == 7
+    else:
+        assert result["query_status"] == "pending"
+        assert result["stats"]["runs_period"] == 0
+
+
+def test_every_computed_usage_payload_names_its_listing_rule(
+    organization, workspace, template, clickhouse_usage
+):
+    assert _usage(template, organization, workspace)["trace_logs_by"] == (
+        "source_project"
+    )

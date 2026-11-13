@@ -5956,6 +5956,24 @@ def _pending_eval_usage_payload(template_id, page, page_size):
     }
 
 
+# How a Usage payload lists trace-attached logs. Every payload this code
+# computes carries it. During a rolling deploy an older worker can take a
+# refresh job keyed by the new identity (it ignores ``trace_logs_by``) and cache
+# a payload listed by eval config under it; a payload without the marker is
+# therefore a cache miss, as the observe namespaces treat an unmarked latency
+# snapshot (graph_metric_statistic.snapshot_names_its_statistic).
+EVAL_USAGE_TRACE_LOGS_BY = "source_project"
+
+
+def eval_usage_snapshot_lists_by_source(snapshot) -> bool:
+    """Whether a cached Usage payload was listed by the logs' source."""
+
+    return (
+        isinstance(snapshot, dict)
+        and snapshot.get("trace_logs_by") == EVAL_USAGE_TRACE_LOGS_BY
+    )
+
+
 def _eval_usage_source_project_ids(request, workspace, template_id) -> list[str]:
     """Projects whose trace-attached eval logs the Usage page may list.
 
@@ -6113,13 +6131,15 @@ class EvalUsageStatsView(APIView):
                 # Snapshots computed before trace logs were listed by their
                 # source (TH-4804) dropped logs whose eval config had moved or
                 # been deleted; a new identity never serves them.
-                "trace_logs_by": "source_project",
+                "trace_logs_by": EVAL_USAGE_TRACE_LOGS_BY,
             }
             clickhouse_usage_enabled = (
                 settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
             )
             if clickhouse_usage_enabled:
                 previous_exact = read_exact_snapshot("eval-usage", cache_identity)
+                if not eval_usage_snapshot_lists_by_source(previous_exact):
+                    previous_exact = None
                 if not getattr(request, "_exact_aggregation_worker", False):
                     return self._gm.success_response(
                         read_or_schedule_exact_snapshot(
@@ -6140,6 +6160,7 @@ class EvalUsageStatsView(APIView):
                                 page,
                                 page_size,
                             ),
+                            accept_snapshot=eval_usage_snapshot_lists_by_source,
                         )
                     )
 
@@ -6617,6 +6638,7 @@ class EvalUsageStatsView(APIView):
             # missing/mistyped field raises here (caught below → 400 + log)
             # instead of shipping a drifted shape to the FE.
             serialized = EvalUsageStatsResponseResultSerializer(instance=response).data
+            serialized["trace_logs_by"] = EVAL_USAGE_TRACE_LOGS_BY
             if (
                 getattr(request, "_exact_aggregation_worker", False)
                 or not clickhouse_usage_enabled

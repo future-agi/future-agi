@@ -865,15 +865,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "model_hub.selectors.eval_usage": {
         "_latest_usage_slice": filed(
             NO_SPAN_TABLE,
-            ROW_DRIVEN,
+            PROJECT_SET,
             why=(
-                "the eval usage page reads the API call log through the project scope "
-                "of each run's trace, for the projects of the eval configs of the "
-                "template (a join through the config's project, which uses no "
-                "manager)"
+                "the eval usage page reads the API call log and lists a run's trace "
+                "log by the source it ran on: the project the log recorded, or the "
+                "project holding its trace, always within the project ids its view "
+                "passes in (the caller's readable projects, from the project manager "
+                "in readable_source_projects)"
             ),
             table="usage_apicalllog",
-            row="tracer.CustomEvalConfig",
         ),
     },
     "model_hub.utils.clickhouse": {
