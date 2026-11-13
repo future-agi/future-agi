@@ -12499,37 +12499,56 @@ def _run_dataset_evaluation_row(metric_id, row_id, runner_args):
         close_old_connections()
 
 
-def _refresh_task_connection():
+def _refresh_task_connection(*, force=False):
     """Replace the task thread's idle or broken connection before it writes.
 
     The task thread waits while row futures run, so its pooled connection may
-    have been dropped, or a previous write may have broken it. Never drop a
-    connection that holds a caller's transaction.
+    have been dropped, or a previous write may have broken it. ``force`` also
+    drops a connection that still looks usable, so a retry never reuses the
+    session a write just failed on. Never drop a connection that holds a
+    caller's transaction.
     """
-    if not connection.in_atomic_block:
+    if connection.in_atomic_block:
+        return
+    if force:
+        connection.close()
+    else:
         close_old_connections()
 
 
 def _finish_failed_rerun_rows(metric_id, row_ids, column_id):
     """Best-effort terminal write for failed rows.
 
-    One failed write must not stop the task from finishing other rows or
-    recording the status of other metrics, so errors are logged, not raised.
+    A failed write is retried once on a fresh connection: a dropped session or
+    a lock timeout would otherwise leave the rows RUNNING, with the previous
+    run's reason. One failed write must not stop the task from finishing other
+    rows or recording the status of other metrics, so errors are logged, not
+    raised. Callers count the rows failed before calling, so a write that
+    never lands still reports the metric FAILED.
     """
     from model_hub.utils.eval_cell_status import mark_rerun_cells_failed
 
+    log_context = {
+        "metric_id": str(metric_id),
+        "row_ids": [str(row_id) for row_id in row_ids],
+    }
     _refresh_task_connection()
-    try:
-        mark_rerun_cells_failed(metric_id, row_ids, column_id=column_id)
-    except Exception:
-        logger.exception(
-            "dataset_rerun_failed_rows_not_marked",
-            metric_id=str(metric_id),
-            row_ids=[str(row_id) for row_id in row_ids],
-        )
-        # The failed write may have broken the connection; later metrics and
-        # status updates in this task need a usable one.
-        _refresh_task_connection()
+    for attempt in (1, 2):
+        try:
+            mark_rerun_cells_failed(metric_id, row_ids, column_id=column_id)
+            return
+        except Exception:
+            if attempt == 1:
+                logger.warning(
+                    "dataset_rerun_failed_rows_mark_retry",
+                    **log_context,
+                    exc_info=True,
+                )
+            else:
+                logger.exception("dataset_rerun_failed_rows_not_marked", **log_context)
+            # The failed write may have broken the connection; the retry,
+            # later metrics and status updates in this task need a usable one.
+            _refresh_task_connection(force=True)
 
 
 @temporal_activity(time_limit=3600, queue="tasks_s")

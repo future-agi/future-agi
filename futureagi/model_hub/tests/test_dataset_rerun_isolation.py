@@ -179,11 +179,12 @@ def drop_task_connection_on_first_marker():
     """Kill the task thread's session server-side on the first terminal write.
 
     This is what a pooler restart or failover does to the task's connection.
-    The real marker then runs on the dead session. Returns a record of the
-    kill (``rows`` holds the row ids whose write hit the dead session) and
-    the patch. Tests must call ``assert_marker_write_failed`` on the record:
-    a kill that misfires lets the write succeed, and the test would then
-    pass without reaching the error handling it covers.
+    The real marker then runs on the dead session; later calls, including the
+    retry, run the real marker. Returns a record of the kill (``rows`` holds
+    the row ids whose write hit the dead session) and the patch. Tests must
+    call ``assert_marker_write_failed`` on the record: a kill that misfires
+    lets the write succeed, and the test would then pass without reaching the
+    error handling it covers.
     """
     real_marker = eval_cell_status.mark_rerun_cells_failed
     kill = SimpleNamespace(
@@ -227,15 +228,18 @@ def drop_task_connection_on_first_marker():
     )
 
 
-def assert_marker_write_failed(kill, rerun):
-    """The kill landed and the first terminal write really failed, so the
-    lost rows' score cells are still RUNNING from the start of the task."""
+def assert_marker_write_failed(kill):
+    """The kill landed and the first terminal write really failed."""
     assert kill.killer_error is None, kill.killer_error
     assert kill.terminated is True
     assert isinstance(kill.write_error, OperationalError), kill.write_error
-    for row_id in kill.rows:
-        cell = Cell.objects.get(row_id=row_id, column=rerun.column)
-        assert (cell.status, cell.value) == (CellStatus.RUNNING.value, None)
+
+
+def assert_rows_finished(rerun, rows):
+    for row in rows:
+        for column in (rerun.column, rerun.reason_column):
+            cell = Cell.objects.get(row=row, column=column)
+            assert (cell.status, cell.value) == (CellStatus.ERROR.value, FAILED_REASON)
 
 
 def test_selected_rows_do_not_share_runner_initialization(rerun):
@@ -832,8 +836,9 @@ def test_later_rerun_completes_a_metric_an_earlier_rerun_failed(rerun):
 
 def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
     """Both selected rows of one metric fail; the task's session dies on the
-    first terminal write. The other failed row is still finished, and the
-    healthy metric keeps its completed result and completion event."""
+    first terminal write. The write is retried on a fresh connection, the
+    other failed row is still finished, and the healthy metric keeps its
+    completed result and completion event."""
     healthy, healthy_column = add_healthy_metric(rerun)
     kill, marker = drop_task_connection_on_first_marker()
     try:
@@ -849,12 +854,10 @@ def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
         connection.close()
 
     assert len(kill.rows) == 1
-    # The write that hit the dead session is logged; it cannot be stored.
-    assert_marker_write_failed(kill, rerun)
-    other_row = next(row for row in rerun.rows[:2] if str(row.id) not in kill.rows)
-    for column in (rerun.column, rerun.reason_column):
-        cell = Cell.objects.get(row=other_row, column=column)
-        assert (cell.status, cell.value) == (CellStatus.ERROR.value, FAILED_REASON)
+    assert_marker_write_failed(kill)
+    # The write that hit the dead session is retried, so no row stays RUNNING
+    # with the previous run's reason.
+    assert_rows_finished(rerun, rerun.rows[:2])
     assert status_of(rerun.metric) == StatusType.FAILED.value
     assert status_of(healthy) == StatusType.COMPLETED.value
     assert column_state(healthy_column) == [
@@ -872,7 +875,8 @@ def test_lost_connection_after_initialization_failure_still_runs_later_metrics(
     rerun,
 ):
     """The first metric fails before fan-out and its terminal write hits a dead
-    session. The next metric must still be submitted and complete."""
+    session. The write is retried on a fresh connection, and the next metric
+    must still be submitted and complete."""
     healthy, healthy_column = add_healthy_metric(rerun)
     kill, marker = drop_task_connection_on_first_marker()
     original_wrap = dataset_views.wrap_for_thread
@@ -895,7 +899,57 @@ def test_lost_connection_after_initialization_failure_still_runs_later_metrics(
         connection.close()
 
     assert sorted(kill.rows) == sorted(str(row.id) for row in rerun.rows[:2])
-    assert_marker_write_failed(kill, rerun)
+    assert_marker_write_failed(kill)
+    assert_rows_finished(rerun, rerun.rows[:2])
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+    assert status_of(healthy) == StatusType.COMPLETED.value
+    assert column_state(healthy_column) == [
+        (CellStatus.PASS.value, "row-0"),
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "previous result"),
+    ]
+    assert completion_counts(rerun) == [
+        (str(rerun.metric.id), 0, 2),
+        (str(healthy.id), 2, 0),
+    ]
+
+
+def test_failed_row_whose_terminal_write_fails_twice_still_fails_the_metric(
+    rerun,
+):
+    """The terminal write for one failed row fails on the first attempt and on
+    the retry. That row cannot be finished, but it is still counted failed:
+    the metric is FAILED, the other failed row is finished, and the healthy
+    metric is untouched."""
+    healthy, healthy_column = add_healthy_metric(rerun)
+    real_marker = eval_cell_status.mark_rerun_cells_failed
+    stuck_row = rerun.rows[0]
+    attempts = []
+
+    def marker(metric_id, row_ids, **kwargs):
+        attempts.append([str(row_id) for row_id in row_ids])
+        if row_ids == [str(stuck_row.id)]:
+            raise OperationalError("synthetic lock timeout")
+        return real_marker(metric_id, row_ids, **kwargs)
+
+    with (
+        patch(
+            "model_hub.utils.eval_cell_status.mark_rerun_cells_failed",
+            side_effect=marker,
+        ),
+        patch.object(
+            EvaluationRunner, "run_evaluation_for_row", fail_rows_of(rerun.metric)
+        ),
+        patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+    ):
+        run_selected(rerun, [rerun.metric, healthy])
+
+    assert attempts.count([str(stuck_row.id)]) == 2
+    assert len(attempts) == 3
+    assert_rows_finished(rerun, rerun.rows[1:2])
+    # Neither write landed, so this row keeps the task's RUNNING reset.
+    stuck = Cell.objects.get(row=stuck_row, column=rerun.column)
+    assert (stuck.status, stuck.value) == (CellStatus.RUNNING.value, None)
     assert status_of(rerun.metric) == StatusType.FAILED.value
     assert status_of(healthy) == StatusType.COMPLETED.value
     assert column_state(healthy_column) == [
