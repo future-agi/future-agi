@@ -147,11 +147,11 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(items.length + removed.length > 0, 'Renewal must expose at least one changed precondition');
         const decision = decisionFor({ packet: preview.packet, fingerprint: preview.fingerprint, revision: preview.revision + 1 });
         const kept = preview.packet.evidence.map((ref) => ref.source_id);
-        if (kept.length) await operator.click(dialog.getByRole('button', { name: 'Changed values', exact: true }), `${name}-inspect-retained-identities`);
         await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
-          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.join(', ')} for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
+          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.length} results? for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
+          for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
         const renewed = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
@@ -251,10 +251,10 @@ export async function createDriver({ jobId, runId, registration }) {
           // Carried forward from publication: kind, resource and candidate.
           // The only registered target is preselected and visible.
           await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
-          await op.click(author.getByRole('button', { name: 'Change', exact: true }), 'inspect-carried-candidate');
-          await expect(author.getByLabel('Release resource', { exact: true })).toHaveValue(input.contextName);
-          await expect(author.getByLabel('Published candidate', { exact: true })).toHaveValue(`v${published.number}`);
-          await expect(author.getByLabel('Application target', { exact: true })).toHaveText(/ · configuration r\d+$/);
+          const carriedCandidate = author.getByRole('group', { name: 'Carried release candidate', exact: true });
+          await expect(carriedCandidate).toContainText(input.contextName);
+          await expect(carriedCandidate).toContainText(new RegExp(` → v${published.number}(?!\\d)`));
+          await expect(carriedCandidate).toContainText(/ · configuration r\d+$/);
           // One explicit decision shares and attaches every listed
           // exact-candidate result; the confirmation names each record. The
           // same decision continues to the exact packet (server-prepared, not
@@ -320,7 +320,6 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.review('inspect-exact-diff', ['AGENTS.md'], [], async () => {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
-          await op.click(reviewer.getByRole('button', { name: 'Release identities', exact: true }), 'inspect-release-identities');
           await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
@@ -330,8 +329,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // unresolved human disagreement. Values come from the server.
           const outcomes = inspection.summaries.map((row) => ({ id: row.source_id, planned: row.planned, graded: row.graded, incomplete: row.incomplete, regressions: row.regressions, disagreements: row.disagreements }));
           await op.review('inspect-evidence-outcomes', outcomes.map((_, i) => `evidence-${i}`), [], async () => {
-            for (const [index, row] of outcomes.entries()) {
-              await op.click(reviewer.getByRole('table', { name: 'Test evidence' }).getByRole('row').nth(index + 1).getByRole('button', { name: 'Inspect', exact: true }), `inspect-evidence-${index}`);
+            for (const row of outcomes) {
               await expect(reviewer.getByTitle(row.id, { exact: true }).first()).toBeVisible();
               await expect(reviewer.getByText(`${row.graded}/${row.planned} attempts graded · ${row.incomplete} incomplete · ${row.regressions} regressions`, { exact: true }).first()).toBeVisible();
             }
@@ -420,8 +418,6 @@ export async function createDriver({ jobId, runId, registration }) {
           const outcome = (await inspected.json()).result.summaries.find((row) => row.source_id === remaining.source_id);
           requireValue(outcome && outcome.graded === outcome.planned && outcome.planned > 0 && outcome.incomplete === 0 && outcome.regressions === 0 && outcome.disagreements === 0,
             'Remaining evidence does not support approval of the renewed packet');
-          await op.click(reviewer.getByRole('button', { name: 'Release identities', exact: true }), 'inspect-renewed-identities');
-          await op.click(reviewer.getByRole('table', { name: 'Test evidence' }).getByRole('row').nth(1).getByRole('button', { name: 'Inspect', exact: true }), 'inspect-retained-result');
           await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
@@ -450,7 +446,6 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('durable-receipt', () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target: 'reopen-durable-receipt' }, () => reviewer.reload()));
           await op.review('pre-and-post-move', ['pre-move-currentness', 'post-move-pointer'], [], async () => {
             await expect(reviewer.getByText('Release receipt', { exact: true })).toBeVisible();
-            await op.click(reviewer.getByRole('button', { name: 'Audit details', exact: true }), 'inspect-receipt-audit');
             await expect(reviewer.getByText('Currentness before the move', { exact: true })).toBeVisible();
             await expect(reviewer.getByText('Pointer state after the move', { exact: true })).toBeVisible();
           });

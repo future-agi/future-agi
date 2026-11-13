@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { evidenceTitle } from '../utils/review-display';
+import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from "../components/TechnicalDetails";
 import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -183,11 +184,10 @@ export default function ReleaseRenewalDialog({
                 <Typography variant="s3" color="text.secondary">{REASONS[row.reason] || 'Evidence unavailable'}. It is not replaced.</Typography>
                 <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed packet.</Typography>
               </Stack>)}
-              <Typography variant="s3">{value.packet.evidence.length ? `The renewed packet keeps ${value.packet.evidence.length} results for the same candidate and target.` : 'The renewed packet keeps no evidence.'}</Typography>
-              {value.packet.evidence.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} direction="row" gap={1} flexWrap="wrap"><Typography variant="s3">{evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status={ref.outcome || (ref.status !== 'completed' ? ref.status : 'not_tested')} label={ref.outcome ? undefined : ref.status === 'completed' ? 'Result not recorded' : undefined} /></Stack>)}
+              <Typography variant="s3">{value.packet.evidence.length ? `The renewed packet keeps ${value.packet.evidence.length} ${value.packet.evidence.length === 1 ? 'result' : 'results'} for the same candidate and target.` : 'The renewed packet keeps no evidence.'}</Typography>
+              {value.packet.evidence.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3">{evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status={ref.outcome || (ref.status !== 'completed' ? ref.status : 'not_tested')} label={ref.outcome ? undefined : ref.status === 'completed' ? 'Result not recorded' : undefined} /><IdentityChip inline kind="id" label="Kept" value={ref.sourceId} /></Stack>)}
             </Stack>
             <TechnicalDetails title="Changed values">
-              {value.packet.evidence.length > 0 && <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>The renewed packet keeps {value.packet.evidence.map((ref) => ref.sourceId).join(', ')} for the same candidate and target.</Typography>}
               <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
             </TechnicalDetails>
             <Typography variant="s3">Approving creates revision {value.revision + 1} of this request.</Typography>

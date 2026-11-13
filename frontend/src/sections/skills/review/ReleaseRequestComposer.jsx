@@ -102,7 +102,9 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
   // The carried-forward candidate does not depend on which version page loaded.
   const carried = prefill && !renewal && candidateId === prefill.candidate.id && resourceId === prefill.subjectId;
   const candidate = carried ? prefill.candidate : versions.data?.results.find((item) => item.id === candidateId);
-  const target = options.data?.targets.find((item) => item.target.bindingId === targetId)?.target || null;
+  const targetOption = options.data?.targets.find((item) => item.target.bindingId === targetId);
+  const target = targetOption?.target || null;
+  const targetName = targetOption?.name;
   const changeResource = (value) => { setResourceId(value); setCandidateId(''); setVersionPage(1); setSelected([]); setTargetId(''); setError(''); };
   const changeCandidate = (value) => { setCandidateId(value); setSelected([]); setTargetId(''); targetTouched.current = false; setError(''); };
   // Exactly one registered target is preselected (visible, changeable).
@@ -152,7 +154,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
       {failed && <ReviewState state="error" onRetry={refresh} />}
       {error && <Alert severity="error">{error}</Alert>}
       <Section title="Release candidate"><Stack spacing={1.5}>
-        {carried && !editingCandidate ? <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Stack spacing={0.5}><Typography variant="m3">{prefill.name || 'Published candidate'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary">{target ? 'Application verification' : 'Compare instructions; no application target'}</Typography></Stack><Button onClick={() => setEditingCandidate(true)}>Change</Button></Stack> : <>
+        {carried && !editingCandidate ? <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{prefill.name || 'Published candidate'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application verification on ${targetName || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack><Button onClick={() => setEditingCandidate(true)}>Change</Button></Stack> : <>
 
         <TextField select size="small" label="Resource kind" value={kind} disabled={busy || Boolean(renewal)} onChange={(event) => { setKind(event.target.value); changeResource(''); setSubjectPage(1); }}>
           <MenuItem value="skill">Skill</MenuItem><MenuItem value="agent_context">Agent context</MenuItem>

@@ -209,7 +209,6 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(durable).toEqual(receipt);
     await page.reload();
     await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Audit details', exact: true }).click();
     await expect(page.getByText('Currentness before the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Pointer state after the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Review is stale or unavailable.', { exact: false })).not.toBeVisible();

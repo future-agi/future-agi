@@ -95,7 +95,8 @@ describe('exact repository review', () => {
 describe('independent observations and availability', () => {
   it('does not turn merged into installed or delivered', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Delivery observations' }));
+    // Observations stay visible without a disclosure: merged is never shown as delivered.
+    expect(screen.getByText('Independent delivery observations')).toBeVisible();
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
     expect(screen.getByText(/A merged PR doesn't mean the app has the change/)).toBeInTheDocument();
   });

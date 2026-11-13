@@ -39,12 +39,12 @@ export default function ReleaseReceipt({ receipt, request }) {
         <Typography variant="s3">Approval covered this candidate, target and attached evidence. This receipt records the release; it does not imply that expired evidence is still available.</Typography>
         {request?.packet && <Typography variant="s3">{request.packet.evidence.length} attached results · candidate v{request.packet.transition.version}</Typography>}
       </Stack></TechnicalDetails>
-      <TechnicalDetails title="Audit details">
+      {/* Before/after state is the receipt's evidence, so it stays visible; raw identifiers are disclosed. */}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
         <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Currentness before the move</Typography><Typography variant="s1">Release revision {receipt.currentnessAtAction?.release_revision ?? 'Not reported'} · Security policy revision {receipt.currentnessAtAction?.security_revision ?? 'Not reported'}</Typography></Stack>
         <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Pointer state after the move</Typography><Typography variant="s1">{labelName} v{after.version} · Release revision {after.releaseRevision ?? 'Not reported'}</Typography></Stack>
       </Stack>
-
+      <TechnicalDetails title="Audit details">
         <Stack spacing={1}>
           <IdentityChip label="Request" kind="id" value={receipt.requestId} />
           <IdentityChip label="Decision" kind="id" value={receipt.decisionId} />

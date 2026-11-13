@@ -187,7 +187,6 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
 
     await page.goto(`/dashboard/skills/contexts/${contextId}?version=1`);
     await page.getByRole('tab', { name: 'Use', exact: true }).click();
-    await page.getByRole('button', { name: 'Migration export', exact: true }).click();
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export 3 linked skills with mapping receipts', exact: true }).click();
     const bundlePath = join(root, 'migration-export.zip');

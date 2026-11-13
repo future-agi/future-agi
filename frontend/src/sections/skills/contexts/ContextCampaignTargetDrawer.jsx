@@ -67,17 +67,19 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         <IdentityChip kind="id" label="Release ID" value={target.desiredVersionId} />
         {target.plan && <Stack spacing={1}><Typography variant="s3">Planned repository ID {target.plan.repositoryId}</Typography><IdentityChip label="Base commit" value={target.plan.baseCommit} /><IdentityChip label="Plan" value={target.planDigest} /><IdentityChip label="Previous lock" value={target.plan.previousLockDigest || 'None — cold adoption'} /><IdentityChip label="Materialization" value={target.plan.materializationDigest} /></Stack>}
       </TechnicalDetails>
-      <TechnicalDetails title="Git observation">
-        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap"><StatusBadge status={target.prState} /><StatusBadge status={target.mergeState} label={target.mergeState === 'unknown' ? 'Merge status not reported' : humanizeCode(target.mergeState)} /></Stack>
-        {target.attempt && <><Typography variant="s3">{target.attempt.receipt?.pullRequestNumber ? `PR #${target.attempt.receipt.pullRequestNumber}` : 'No PR number observed'}</Typography><TechnicalDetails title="Pull request details"><Typography component="p" variant="s3" sx={source}>Branch {target.attempt.branch} · generation {target.attempt.generation} · Mode {target.attempt.mode}</Typography><IdentityChip label="Claim" kind="id" value={target.attempt.id} /></TechnicalDetails></>}
-        {target.prState === 'unknown' && <Alert severity="warning">Reconcile the existing branch and PR marker before retrying. Do not issue another create request.</Alert>}
-      </TechnicalDetails>
-      <TechnicalDetails title="Delivery observations"><Typography variant="s3">Only observations for this exact release are shown. Missing or stale reports are not recovery proof.</Typography>
-        {observations?.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={3} label="Loading delivery observations" /> : observations?.isError ? <ErrorState title="Could not load observations" onRetry={observations.refetch} /> : ['installed', 'discovered', 'delivered'].map((stage) => {
+      {/* Git and delivery observations stay visible: a merged PR is not delivery, and the
+          reconcile warning must be seen before anyone retries. Only raw identifiers are disclosed. */}
+      <Section title="Pull request">
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center"><StatusBadge status={target.prState} /><StatusBadge status={target.mergeState} label={target.mergeState === 'unknown' ? 'Merge status not reported' : humanizeCode(target.mergeState)} />{target.attempt && <Typography variant="s3" color="text.secondary">{target.attempt.receipt?.pullRequestNumber ? `PR #${target.attempt.receipt.pullRequestNumber}` : 'No PR number observed'}</Typography>}</Stack>
+        {target.prState === 'unknown' && <Alert severity="warning" sx={{ mt: 1 }}>Reconcile the existing branch and PR marker before retrying. Do not issue another create request.</Alert>}
+        {target.attempt && <TechnicalDetails title="Pull request details"><Typography component="p" variant="s3" sx={source}>Branch {target.attempt.branch} · generation {target.attempt.generation} · Mode {target.attempt.mode}</Typography><IdentityChip label="Claim" kind="id" value={target.attempt.id} /></TechnicalDetails>}
+      </Section>
+      <Section title="Independent delivery observations" description="Only observations for this exact release are shown. Missing or stale reports are not recovery proof.">
+        {observations?.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={3} label="Loading delivery observations" /> : observations?.isError ? <ErrorState title="Could not load observations" onRetry={observations.refetch} /> : <Stack divider={<Box sx={{ borderTop: 1, borderColor: 'divider' }} />}>{['installed', 'discovered', 'delivered'].map((stage) => {
           const fact = observations?.data?.[stage];
-          return <Box key={stage} sx={{ py: 1 }}><Typography component="h3" variant="m3">{humanizeCode(stage)}</Typography><StatusBadge status={fact ? (fact.stale ? 'expired' : 'acknowledged') : 'unknown'} label={fact ? (fact.stale ? 'Stale observation' : 'Observed exact release') : 'Not observed'} />{fact && <Typography component="p" variant="s3" sx={source}>{fDateTimeUTC(fact.observedAt)} · {humanizeCode(fact.origin)}</Typography>}</Box>;
-        })}
-      </TechnicalDetails>
+          return <Stack key={stage} direction="row" spacing={1} alignItems="center" justifyContent="space-between" useFlexGap flexWrap="wrap" sx={{ py: 1 }}><Box sx={{ minWidth: 0 }}><Typography component="h3" variant="m3">{humanizeCode(stage)}</Typography>{fact && <Typography component="p" variant="s3" color="text.secondary" sx={source}>{fDateTimeUTC(fact.observedAt)} · {humanizeCode(fact.origin)}</Typography>}</Box><StatusBadge status={fact ? (fact.stale ? 'expired' : 'acknowledged') : 'unknown'} label={fact ? (fact.stale ? 'Stale observation' : 'Observed exact release') : 'Not observed'} /></Stack>;
+        })}</Stack>}
+      </Section>
     </Stack>}
     {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography>{onNext && <Button variant="contained" onClick={onNext}>Next target needing review</Button>}</Stack>}
   </Drawer>;

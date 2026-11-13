@@ -452,7 +452,7 @@ export default function ReleaseReviewBody({
               : `v${packet.transition.expectedVersion}`}{" "}
             to v{packet.transition.version}
           </Typography>
-          {packet.target && <Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography>}
+          {packet.target && <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography><IdentityChip inline label="Configuration" value={packet.target.configurationDigest} /></Stack>}
           <TechnicalDetails title="Release identities">
           <IdentityValue
             label="Candidate version ID"
@@ -494,7 +494,15 @@ export default function ReleaseReviewBody({
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
           return { id: ref.sourceId, source: ref.source, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
-        })} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
+        })} renderAction={(item) => {
+          // The reviewer decides on these exact results: each row names its identity and
+          // grading completeness without an extra Inspect step.
+          const summary = summaries?.find((row) => evidenceKey(row) === `${item.source}:${item.id}`);
+          return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+            <IdentityChip inline kind="id" label="Evidence" value={item.id} />
+            {summary && <Typography variant="s3" color="text.secondary">{`${summary.graded ?? 'Unknown'}/${summary.planned ?? 'Unknown'} attempts graded · ${summary.incomplete ?? 'Unknown'} incomplete · ${summary.regressions ?? 'Unknown'} regressions`}</Typography>}
+          </Stack>;
+        }} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
         {selected.filter((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. It will not be silently dropped.</Alert>)}
         {inspecting && <TechnicalDetails title="Inspected result" defaultOpen><TypedEvidenceList {...{ packet, onShare, summaries }} selected={selected.filter((ref) => evidenceKey(ref) === inspecting)} onSelectionChange={onSelectionChange ? (refs) => onSelectionChange([...selected.filter((ref) => evidenceKey(ref) !== inspecting), ...refs]) : undefined} evidence={evidence.filter((ref) => evidenceKey(ref) === inspecting)} /></TechnicalDetails>}
       </Section>
