@@ -206,11 +206,27 @@ checks, so a check an administrator adds later is respected too.
   carried a success and, 10 seconds later, a skipped run. A head whose only
   runs of a required check were skipped waits, with no note on the PR.
 - So a skip must never stand in for a failed dependency. Before a check is
-  made required on `dev`, its job must use `if: always()` and fail when a
-  job it needs failed. The summary jobs of the three required checks and of
-  "Python Types Pass" do both. Without `if: always()`, a failed dependency
-  skips the summary job, and an older success on the same head would count.
-  Such a check must stay optional until its job is changed.
+  made required on `dev`, two things must hold:
+  - For the autopilot: its job uses `if: always()` and fails when a job it
+    needs failed. Without `if: always()`, a failed dependency skips the
+    summary job, and an older success on the same head would count.
+  - For a person's merge, which GitHub's own rule gates: the job reports a
+    result, never a skip, on every event its workflow runs on. GitHub
+    documents that a skipped job reports success. If a newer skipped run of
+    a check also outranks an older failure for that rule (inferred, not
+    tested), a skip after a failure would let a person merge over it.
+
+  The summary jobs of the three required checks meet both: each uses
+  `if: always()` with no other condition (`backend-ci.yml:623`,
+  `e2e-ci.yml:570`, `python-lint.yml:99`). "Python Types Pass" meets only
+  the first. `python-types.yml:148` skips its summary on an ordinary title
+  or body edit, so a failed type check followed by such an edit leaves a
+  newer skipped run on the same head; #4012, #4014 and #4026 had that
+  shape on 13 Nov (review round eight). Keep it optional until
+  `python-types.yml` runs its `changes` job and summary on those edits as
+  well, or otherwise reports a result on every event. The policy file's
+  `_checks_reason` and the header of `python-types.yml` (lines 9-11) still
+  give only the first condition.
 
 The label instructions describe the medium/high human policy; this workflow
 does not replace repository rules that enforce the number of human
