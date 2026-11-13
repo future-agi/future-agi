@@ -30,7 +30,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_exact_graph_filter_predicates,
 )
 from tracer.services.clickhouse.query_builders.time_series import TimeSeriesQueryBuilder
-from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2 import effective_tags
 from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 from tracer.services.clickhouse.v2.entity_tag_targets import TRACE_ASSIGNMENT_HOUR
@@ -766,6 +766,136 @@ def test_window_overlay_deadline_before_work_bound_is_retryable(stores, monkeypa
     monkeypatch.setattr(effective_tags, "_query_assignments", expired)
     response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
     assert response.status_code == 503, response.data
+
+
+def _dead_trace_pages(count, *, size=1_000):
+    """``count`` full pages of dead 'wanted' trace assignments."""
+    for page in range(count):
+        yield [
+            {
+                "project_id": PROJECT,
+                "entity_kind": "trace",
+                "trace_id": f"dead-{page}-{index}",
+                "span_id": "",
+                "start_hour": TRACE_ASSIGNMENT_HOUR,
+                "observation_type": "",
+                "service_name": "",
+                "manual_tags": [{"name": "wanted", "color": "#123456"}],
+            }
+            for index in range(size)
+        ]
+
+
+def _walk_until_deadline(monkeypatch, *, spent_on_page, failure):
+    """Walk dead pages; on ``spent_on_page`` the read fails with ``failure``.
+
+    A ``ReadDeadlineExceeded`` failure also spends the request's deadline, as
+    a real deadline hit does; any other failure leaves the deadline running.
+    """
+    import time
+
+    deadline = ReadDeadline.start(60_000)
+    pages = {"n": 0}
+    monkeypatch.setattr(
+        effective_tags, "_query_assignments", lambda *args, **kwargs: []
+    )
+
+    def walk(*args, **kwargs):
+        for page in _dead_trace_pages(effective_tags.MAX_GRAPH_OVERLAY_SCAN_PAGES):
+            pages["n"] += 1
+            yield page
+
+    def execute(_sql, params, **_kwargs):
+        if pages["n"] == spent_on_page:
+            if isinstance(failure, ReadDeadlineExceeded):
+                object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise failure
+        return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(effective_tags, "_assignment_pages", walk)
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.read_tag_overlay(
+            project_ids=(PROJECT,),
+            trace_ids=None,
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=execute,
+        )
+    return raised.value.code
+
+
+@pytest.mark.unit
+def test_deadline_after_eight_dead_pages_is_too_broad_not_retryable(monkeypatch):
+    """On a real stack a page costs ~165 ms, so the 5 s deadline, not the page
+    bound, ends a long walk. Once eight full pages of history were scanned,
+    retrying cannot help: the answer is the non-retryable "too broad"."""
+    code = _walk_until_deadline(
+        monkeypatch,
+        spent_on_page=effective_tags.MAX_WINDOW_OVERLAY_PAGES + 1,
+        failure=ReadDeadlineExceeded("read deadline exceeded"),
+    )
+    assert code == "tag_overlay_budget_exceeded"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "spent_on_page,failure",
+    [
+        (2, ReadDeadlineExceeded("read deadline exceeded")),
+        (9, OSError("connection reset")),
+    ],
+    ids=["early-deadline", "outage-after-eight-pages"],
+)
+def test_early_deadline_or_outage_in_the_walk_stays_retryable(
+    monkeypatch, spent_on_page, failure
+):
+    code = _walk_until_deadline(
+        monkeypatch, spent_on_page=spent_on_page, failure=failure
+    )
+    assert code == "tag_source_unavailable"
+
+
+@pytest.mark.unit
+def test_suppression_walk_deadline_after_eight_pages_is_too_broad(monkeypatch):
+    import time
+
+    deadline = ReadDeadline.start(60_000)
+    monkeypatch.setattr(
+        effective_tags, "_query_assignments", lambda *args, **kwargs: []
+    )
+    rows = [
+        {"legacy_project": PROJECT, "legacy_trace": f"curated-{index}"}
+        for index in range(effective_tags.MAX_TAG_OVERLAY_KEYS + 1)
+    ]
+    scoped = {"n": 0}
+
+    def execute(_sql, params, **_kwargs):
+        if not params["tag_suppress_scoped"]:
+            return SimpleNamespace(data=rows)
+        scoped["n"] += 1
+        if scoped["n"] == effective_tags.MAX_WINDOW_OVERLAY_PAGES * 2 + 1:
+            object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise ReadDeadlineExceeded("read deadline exceeded")
+        return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(
+        effective_tags,
+        "_assignment_pages",
+        lambda *args, **kwargs: _dead_trace_pages(
+            effective_tags.MAX_GRAPH_OVERLAY_SCAN_PAGES
+        ),
+    )
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.legacy_suppressions(
+            execute,
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+        )
 
 
 @pytest.mark.unit

@@ -46,10 +46,15 @@ MAX_TAG_CANDIDATE_TRACES = 512
 # those traces have an assignment; above it the assignments are paged instead.
 MAX_CURATED_SUPPRESSION_CANDIDATES = MAX_TAG_OVERLAY_KEYS
 _ASSIGNMENT_PAGE_SIZE = 1000
-# At most 64,000 examined assignment rows per window graph leaf. This is
-# deliberately well beyond the 8,100 dead rows in busy projects, but prevents
-# a lifetime-scale backlog from repeatedly timing out as a retryable 503.
-MAX_GRAPH_OVERLAY_SCAN_PAGES = 64
+# At most 24,000 examined assignment rows per window graph leaf: well beyond
+# the 8,100 dead rows of a busy project, and within the graph's 5 s overlay
+# deadline (a page plus its ClickHouse liveness reads took ~165 ms on the e2e
+# stack, so 64 pages could never finish before the deadline).
+MAX_GRAPH_OVERLAY_SCAN_PAGES = 24
+# A deadline hit after this many full pages of history is also "too broad":
+# the history, not a transient slowdown, used the budget, so a retry cannot
+# succeed. Earlier deadline hits and outages stay retryable.
+MIN_SCANNED_PAGES_FOR_TOO_BROAD = 8
 # Dense curated suppression fallbacks budget pages with window-live hits only.
 MAX_WINDOW_OVERLAY_PAGES = 8
 TAG_OVERLAY_SETTINGS = {
@@ -513,6 +518,22 @@ def _read_assignments(predicate: Q, *, deadline: ReadDeadline) -> list[dict[str,
     return records
 
 
+def _too_broad_after_deadline(
+    error: TagReadUnavailable, *, scanned_pages: int, deadline: ReadDeadline
+) -> TagReadUnavailable:
+    """Map a deadline hit deep into a windowed history walk to "too broad"."""
+    if (
+        error.code == "tag_overlay_budget_exceeded"
+        or scanned_pages < MIN_SCANNED_PAGES_FOR_TOO_BROAD
+    ):
+        return error
+    try:
+        deadline.remaining_ms()
+    except ReadDeadlineExceeded:
+        return TagReadUnavailable("tag_overlay_budget_exceeded")
+    return error
+
+
 def _assignment_pages(
     predicate: Q, *, deadline: ReadDeadline
 ) -> Iterable[list[dict[str, Any]]]:
@@ -625,75 +646,82 @@ def read_tag_overlay(
         # A graph's trace witness needs a live root in the window. Span
         # assignments additionally need their exact latest physical identity.
         # Page PostgreSQL first; only live keys count against SQL bind limits.
-        # Scanned rows have their own work bound; the deadline still protects
-        # slow reads that hit it before this deterministic bound.
-        for page_number, page in enumerate(
-            _assignment_pages(predicate, deadline=deadline), start=1
-        ):
-            if page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
-                raise TagReadUnavailable("tag_overlay_budget_exceeded")
-            candidates = TagOverlay()
-            for record in page:
-                candidates.add(record)
-            live: set[tuple] = set()
-            for batch, batch_overlay in _liveness_batches(
-                candidates.trace_names, candidates.span_names
+        # Scanned rows have their own work bound. A deadline hit after enough
+        # full pages is the same answer; earlier hits stay retryable.
+        scanned = 0
+        try:
+            for page_number, page in enumerate(
+                _assignment_pages(predicate, deadline=deadline), start=1
             ):
-                prefix = "tag_graph_live"
-                params = _scope_params(
-                    prefix,
-                    project_ids=project_ids,
-                    window_start=start,
-                    window_end=end,
-                    trace_ids=batch,
-                )
-                params[f"{prefix}_trace_keys"], params[f"{prefix}_span_keys"], _ = (
-                    batch_overlay.keys(None)
-                )
-                query = f"""
-                    SELECT DISTINCT toString(project_id) AS project_id, trace_id,
-                        if(is_root, '', id) AS span_id,
-                        if(is_root, 0, toInt64(toUnixTimestamp(start_hour))) AS hour,
-                        if(is_root, '', toString(observation_type)) AS observation_type,
-                        if(is_root, '', toString(service_name)) AS service_name
-                    FROM {live_tag_source_sql(prefix)}
-                    WHERE (is_root AND (toString(project_id), trace_id)
-                           IN %({prefix}_trace_keys)s)
-                       OR (NOT is_root AND {span_key_sql()} IN %({prefix}_span_keys)s)
-                    LIMIT %(tag_graph_live_limit)s
-                """
-                params["tag_graph_live_limit"] = MAX_TAG_OVERLAY_KEYS + 1
-                try:
-                    rows = _execute_overlay_read(
-                        execute,
-                        query,
-                        params,
-                        deadline=deadline,
-                        settings={},
-                        row_limit=MAX_TAG_OVERLAY_KEYS + 1,
-                    )
-                except (ReadDeadlineExceeded, ClickHouseError, OSError, EOFError):
-                    raise TagReadUnavailable("tag_source_unavailable") from None
-                if len(rows) > MAX_TAG_OVERLAY_KEYS:
+                if page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
                     raise TagReadUnavailable("tag_overlay_budget_exceeded")
-                for row in rows:
-                    key = (
-                        (str(row["project_id"]), str(row["trace_id"]))
-                        if row["span_id"] == ""
-                        else (
-                            str(row["project_id"]),
-                            str(row["trace_id"]),
-                            str(row["span_id"]),
-                            int(row["hour"]),
-                            str(row["observation_type"]),
-                            str(row["service_name"]),
-                        )
+                candidates = TagOverlay()
+                for record in page:
+                    candidates.add(record)
+                live: set[tuple] = set()
+                for batch, batch_overlay in _liveness_batches(
+                    candidates.trace_names, candidates.span_names
+                ):
+                    prefix = "tag_graph_live"
+                    params = _scope_params(
+                        prefix,
+                        project_ids=project_ids,
+                        window_start=start,
+                        window_end=end,
+                        trace_ids=batch,
                     )
-                    live.add(key)
-            for record in page:
-                if _assignment_key(record) in live:
-                    overlay.add(record)
-            overlay.keys(values)
+                    params[f"{prefix}_trace_keys"], params[f"{prefix}_span_keys"], _ = (
+                        batch_overlay.keys(None)
+                    )
+                    query = f"""
+                        SELECT DISTINCT toString(project_id) AS project_id, trace_id,
+                            if(is_root, '', id) AS span_id,
+                            if(is_root, 0, toInt64(toUnixTimestamp(start_hour))) AS hour,
+                            if(is_root, '', toString(observation_type)) AS observation_type,
+                            if(is_root, '', toString(service_name)) AS service_name
+                        FROM {live_tag_source_sql(prefix)}
+                        WHERE (is_root AND (toString(project_id), trace_id)
+                               IN %({prefix}_trace_keys)s)
+                           OR (NOT is_root AND {span_key_sql()} IN %({prefix}_span_keys)s)
+                        LIMIT %(tag_graph_live_limit)s
+                    """
+                    params["tag_graph_live_limit"] = MAX_TAG_OVERLAY_KEYS + 1
+                    try:
+                        rows = _execute_overlay_read(
+                            execute,
+                            query,
+                            params,
+                            deadline=deadline,
+                            settings={},
+                            row_limit=MAX_TAG_OVERLAY_KEYS + 1,
+                        )
+                    except (ReadDeadlineExceeded, ClickHouseError, OSError, EOFError):
+                        raise TagReadUnavailable("tag_source_unavailable") from None
+                    if len(rows) > MAX_TAG_OVERLAY_KEYS:
+                        raise TagReadUnavailable("tag_overlay_budget_exceeded")
+                    for row in rows:
+                        key = (
+                            (str(row["project_id"]), str(row["trace_id"]))
+                            if row["span_id"] == ""
+                            else (
+                                str(row["project_id"]),
+                                str(row["trace_id"]),
+                                str(row["span_id"]),
+                                int(row["hour"]),
+                                str(row["observation_type"]),
+                                str(row["service_name"]),
+                            )
+                        )
+                        live.add(key)
+                for record in page:
+                    if _assignment_key(record) in live:
+                        overlay.add(record)
+                overlay.keys(values)
+                scanned = page_number
+        except TagReadUnavailable as error:
+            raise _too_broad_after_deadline(
+                error, scanned_pages=scanned, deadline=deadline
+            ) from None
         return overlay
     for record in _read_assignments(predicate, deadline=deadline):
         overlay.add(record)
@@ -825,26 +853,35 @@ def legacy_suppressions(
             suppressed = {_assignment_key(record) for record in records} & curated
         return suppressed
     live_hit_pages = 0
-    for page_number, page in enumerate(
-        _assignment_pages(unmatched, deadline=deadline), start=1
-    ):
-        # Hitless pages cost no live budget, but still count as scanned work,
-        # so a lifetime walk ends as "too broad" and never as a deadline 503.
-        if live_roots and page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
-            raise TagReadUnavailable(over_budget)
-        keys = {_assignment_key(record) for record in page}
-        traces = sorted({trace for _, trace in keys})
-        page_hits: set[tuple[str, str]] = set()
-        for start in range(0, len(traces), MAX_TAG_CANDIDATE_TRACES):
-            batch = tuple(traces[start : start + MAX_TAG_CANDIDATE_TRACES])
-            page_hits |= curated_matches(batch) & keys
-        if live_roots and page_hits:
-            live_hit_pages += 1
-            if live_hit_pages > MAX_WINDOW_OVERLAY_PAGES:
+    scanned = 0
+    try:
+        for page_number, page in enumerate(
+            _assignment_pages(unmatched, deadline=deadline), start=1
+        ):
+            # Hitless pages cost no live budget, but still count as scanned work,
+            # so a lifetime walk ends as "too broad" and never as a deadline 503.
+            if live_roots and page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
                 raise TagReadUnavailable(over_budget)
-        suppressed |= page_hits
-        if len(suppressed) > MAX_TAG_OVERLAY_KEYS:
-            raise TagReadUnavailable(over_budget)
+            keys = {_assignment_key(record) for record in page}
+            traces = sorted({trace for _, trace in keys})
+            page_hits: set[tuple[str, str]] = set()
+            for start in range(0, len(traces), MAX_TAG_CANDIDATE_TRACES):
+                batch = tuple(traces[start : start + MAX_TAG_CANDIDATE_TRACES])
+                page_hits |= curated_matches(batch) & keys
+            if live_roots and page_hits:
+                live_hit_pages += 1
+                if live_hit_pages > MAX_WINDOW_OVERLAY_PAGES:
+                    raise TagReadUnavailable(over_budget)
+            suppressed |= page_hits
+            if len(suppressed) > MAX_TAG_OVERLAY_KEYS:
+                raise TagReadUnavailable(over_budget)
+            scanned = page_number
+    except TagReadUnavailable as error:
+        if not live_roots:
+            raise
+        raise _too_broad_after_deadline(
+            error, scanned_pages=scanned, deadline=deadline
+        ) from None
     return suppressed
 
 
