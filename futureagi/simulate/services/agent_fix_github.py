@@ -6,7 +6,6 @@ import re
 import tempfile
 from math import floor
 from pathlib import Path
-from textwrap import shorten
 from typing import Any
 from urllib.parse import quote
 
@@ -21,6 +20,7 @@ from simulate.selectors.agent_fix import (
     held_back_cases,
     limited_validation,
     overridable_regressions,
+    verdict_tiers,
 )
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import (
@@ -41,7 +41,7 @@ logger = structlog.get_logger(__name__)
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
-_TITLE_CHARS = 120
+_TITLE_CHARS = 72
 # GitHub refuses a pull request body over 65,536 characters; this leaves it room.
 _BODY_CHARS = 60_000
 # The changed files a body lists; the rest are counted.
@@ -231,43 +231,6 @@ def _changed_files(patch: bytes) -> list[tuple[str, int, int]]:
     return [(name, added, removed) for name, (added, removed) in files.items()]
 
 
-# What a title calls the files a change touches when no diagnosed cause names what it
-# fixes: the fix page's words for what a fix may change (fixRunView.js SURFACE_LABEL).
-_PROMPT_SUFFIXES = (".md", ".txt", ".prompt", ".j2", ".jinja", ".jinja2")
-_CONFIG_SUFFIXES = (".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env")
-
-
-def _kind(path: str) -> str:
-    parts = Path(path).parts
-    if {"test", "tests"} & set(parts[:-1]) or Path(path).name.startswith("test_"):
-        return "tests"
-    suffix = Path(path).suffix.lower()
-    if suffix in _PROMPT_SUFFIXES:
-        return "instructions"
-    if suffix in _CONFIG_SUFFIXES:
-        return "settings"
-    return "code"
-
-
-def _what_changed(files: list[tuple[str, int, int]], budget: int) -> str:
-    names = [Path(path).name for path, _, _ in files]
-    count = f"{len(files)} file{'' if len(files) == 1 else 's'}"
-    if not names:
-        # A patch that names no file (only binary or mode changes) still changes the agent.
-        return "update the agent"
-    if len(names) == 1:
-        phrase = f"change {names[0]}"
-    elif len(names) == 2:
-        phrase = f"change {names[0]} and {names[1]}"
-    else:
-        kinds = list(dict.fromkeys(_kind(path) for path, _, _ in files))
-        listed = (
-            kinds[0] if len(kinds) == 1 else f"{', '.join(kinds[:-1])} and {kinds[-1]}"
-        )
-        phrase = f"change {listed} in {count}"
-    return phrase if len(phrase) <= budget else f"change {count}"
-
-
 def _causes(candidate: AgentFixCandidate) -> list[str]:
     """What the fix's diagnosis found its target cases fail on, in its own words."""
     causes = (candidate.fix_run.diagnosis or {}).get("causes") or []
@@ -277,19 +240,23 @@ def _causes(candidate: AgentFixCandidate) -> list[str]:
 def _title(
     candidate: AgentFixCandidate, files: list[tuple[str, int, int]], marks: str
 ) -> str:
-    """What the change does across its whole diff: the cause it fixes, else the files it
-    changes. Cut only at a word, never mid-word, to fit."""
+    """What the pull request is for and where: the causes the diagnosis found, fixed in
+    the files the whole diff changes. Made only of counts and a file name, so it never
+    cuts a sentence; the first wording that fits is used."""
     name = f"Epoch ({marks})" if marks else "Epoch"
-    budget = _TITLE_CHARS - len(name) - len(": ")
-    causes = _causes(candidate)
+    causes = len(_causes(candidate))
+    counted = _plural(len(files), "file", "files") if files else "the agent"
+    places = [Path(files[0][0]).name, counted] if len(files) == 1 else [counted]
     if not causes:
-        return f"{name}: {_what_changed(files, budget)}"
-    others = len(causes) - 1
-    more = f" (+{others} more cause{'' if others == 1 else 's'})" if others else ""
-    count = f" · {len(files)} file{'' if len(files) == 1 else 's'}" if files else ""
-    headline = causes[0].splitlines()[0].rstrip(".")
-    room = budget - len(more) - len(count)
-    return f"{name}: {shorten(headline, width=room, placeholder='…')}{more}{count}"
+        wordings = [f"{name}: change {place}" for place in places]
+    else:
+        fixes = _plural(causes, "diagnosed cause", "diagnosed causes")
+        wordings = [f"{name}: fix {fixes} in {place}" for place in places]
+        # Both marks leave room only for the shorter word.
+        wordings.append(
+            f"{name}: fix {_plural(causes, 'cause', 'causes')} in {counted}"
+        )
+    return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
 
 
 def _cell(text: Any) -> str:
@@ -297,21 +264,22 @@ def _cell(text: Any) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
 
 
-# The fix page's words for a check and for the parts of the cost and latency check
-# (fixRunView.js: CHECK_LABELS, checkLabel, describePart). The engine's ids are never shown.
+# The fix page's words for a check and for the parts of the reply time and cost check
+# (fixRunView.js: CHECK_LABELS, checkLabel, describePart, unknownWhy). The engine's ids
+# are never shown.
 _CHECK_LABELS = {
-    "static": "Static checks",
-    "target": "Target cases",
-    "held-back": "Held-back set",
-    "must-pass": "Must-pass set",
-    "repeats": "Repeat runs",
-    "ceilings": "Cost and latency",
+    "static": "Change is valid",
+    "target": "Target scenarios",
+    "held-back": "Held-back scenarios",
+    "must-pass": "Must-pass scenarios",
+    "repeats": "Holds over repeats",
+    "ceilings": "Reply time and cost",
 }
 _PART_LABELS = {"reply latency": "Reply time", "agent cost": "Agent's cost"}
 _UNKNOWN_PARTS = {"reply latency": "Reply time unknown", "agent cost": "Cost unknown"}
 _UNTRACED_COST = (
-    "This agent isn't traced, so its cost isn't measured. Trace its model calls to"
-    " Future AGI to measure it."
+    "This agent's model calls weren't measured. Epoch measures calls made through the"
+    " OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing."
 )
 
 
@@ -331,42 +299,152 @@ def _result(status: str) -> str:
     return "Couldn't measure" if status == "skipped" else status.capitalize()
 
 
+def _part_line(part: dict, request: dict) -> str:
+    """A part of the reply time and cost check in words: within its limit, or unknown with
+    why and what would make it known (fixRunView.js partDetail, unknownWhy)."""
+    status, text = part.get("status"), str(part.get("detail") or "")
+    if status == "passed":
+        return "Within the limit."
+    if status == "failed":
+        return "Over the limit."
+    if part.get("name") == "reply latency":
+        return (
+            "The conversations recorded no reply times. Run again; if it repeats, check"
+            " that the agent replies within the turn."
+        )
+    if not request.get("meters_agent_cost"):
+        return _UNTRACED_COST
+    if "sandbox could not measure" in text:
+        return (
+            f"{_conversations(text, 'have a model call the sandbox')} made a model call"
+            " that couldn't be measured, such as a call through another SDK or a direct"
+            " HTTP request. Route that call through the OpenAI or Anthropic SDK, or add"
+            " traceAI tracing."
+        )
+    if re.search("baseline not measured|not verified against the baseline", text):
+        return (
+            "The current version's cost wasn't measured, so there is nothing to compare"
+            " it with. Run the environment again to measure it."
+        )
+    if "with no cost" in text:
+        return (
+            "A model the agent called has no price. Add a price for it to measure cost."
+        )
+    return (
+        f"{_conversations(text, 'exported no model call')} returned no model-call"
+        " record. Run again to measure them."
+    )
+
+
+def _conversations(text: str, cause: str) -> str:
+    """The count in the engine's "3 of 12 finalist conversations …", which the line keeps."""
+    found = re.search(rf"(\d+) of (\d+) finalist conversations {cause}", text)
+    return f"{found[1]} of {found[2]} conversations" if found else "Some conversations"
+
+
 def _part_row(part: dict, request: dict) -> str:
     name, status = str(part.get("name", "")), str(part.get("status", ""))
-    result, detail = _result(status), part.get("detail", "")
+    result = _result(status)
     if status == "skipped":
         result = _UNKNOWN_PARTS.get(name, result)
-        if name == "agent cost" and not request.get("meters_agent_cost"):
-            detail = _UNTRACED_COST
-    return f"| ↳ {_cell(_PART_LABELS.get(name, name))} | {result} | {_cell(detail)} |"
+    label = _cell(_PART_LABELS.get(name, name))
+    return f"| ↳ {label} | {result} | {_cell(_part_line(part, request))} |"
 
 
-# What measuring an agent's cost reads, said wherever a measured cost is shown.
+def _rate_line(rate: Any, gain: bool, tail: str = "") -> str:
+    said = "a clear gain" if gain else "not a clear gain"
+    if rate:
+        return f"{_percent(rate[0])} → {_percent(rate[1])}{tail}, {said}."
+    return f"{said[:1].upper()}{said[1:]}{tail}."
+
+
+# What a check that passed shows when the verdict holds no number for it.
+_PASSED = {
+    "static": "Applies cleanly and edits only allowed files.",
+    "repeats": "Held up over the repeat runs.",
+    "ceilings": "Within the reply-time and cost limits.",
+}
+
+
+def _tier_line(tier: dict, verdict: dict, plan: dict, request: dict) -> str:
+    """A check's result in plain words from the verdict's own numbers, as the fix page says
+    it (fixRunView.js tierLine). A shipped candidate passed every check but must-pass, or
+    could not measure one; the parts of one that could not measure say why."""
+    name, passed = tier.get("name"), tier.get("status") == "passed"
+    if name == "target":
+        return _rate_line(verdict.get("target_pass_rate"), passed)
+    if name == "held-back":
+        tail = " on scenarios the epoch never saw"
+        return _rate_line(verdict.get("held_back_pass_rate"), passed, tail)
+    if name == "must-pass":
+        broke = len(verdict.get("must_pass_regressions") or [])
+        if not passed:
+            scenarios = _plural(broke, "must-pass scenario", "must-pass scenarios")
+            return f"{scenarios} broke." if broke else "A must-pass scenario broke."
+        total, protected = plan.get("must_pass"), plan.get("protected")
+        kept = f", including the {protected} you protected" if protected else ""
+        if not total:
+            return "No must-pass scenario broke."
+        return f"None of the {total} must-pass scenarios broke{kept}."
+    if name == "model-lock":
+        models = request.get("allowed_models") or []
+        if passed:
+            return (
+                f"Called only {', '.join(models)}."
+                if models
+                else "Called only allowed models."
+            )
+        sent = (
+            "Some conversations sent no traces."
+            if request.get("observes_models")
+            else "This agent sends no traces."
+        )
+        return f"{sent} The change names no new model."
+    if not passed:
+        return ""
+    return _PASSED.get(str(name), "Passed.")
+
+
+# What measuring an agent's model calls on its own reads (fixRunView.js MEASURED_NOTICE).
 _MEASURED = (
     "Measured automatically: model, tokens and timing only. Prompts and replies are"
     " never recorded."
 )
 
 
-def _cost_measured(tiers: list[dict]) -> bool:
-    """Whether the cost and latency check shows a cost it measured: its agent cost part,
-    or the whole check when an older engine sent no parts."""
+def _decided_section(tiers: list[dict], verdict: dict, request: dict) -> str:
+    """The engine's own account of each check, its statistics included, folded away for a
+    reviewer who wants to see how the verdict was reached."""
+    lines = []
     for tier in tiers:
-        if tier.get("name") != "ceilings":
-            continue
-        parts = tier.get("parts") or []
-        if not parts:
-            return tier.get("status") != "skipped"
-        return any(
-            part.get("name") == "agent cost" and part.get("status") != "skipped"
-            for part in parts
-        )
-    return False
+        if tier.get("detail"):
+            label = _check_label(str(tier.get("name", "")), request)
+            lines.append(f"- {label}: {' '.join(str(tier['detail']).split())}")
+        lines += [
+            f"  - {_PART_LABELS.get(part.get('name'), part.get('name'))}:"
+            f" {' '.join(str(part['detail']).split())}"
+            for part in tier.get("parts") or []
+            if part.get("detail")
+        ]
+    if not lines:
+        return ""
+    # The engine reports the held-back pass rate from the repeat runs when they ran.
+    pooled = verdict.get("held_back_pass_rate") and any(
+        tier.get("name") == "repeats" for tier in tiers
+    )
+    note = (
+        "The held-back pass rate above comes from the repeat runs.\n\n"
+        if pooled
+        else ""
+    )
+    listed = "\n".join(lines)
+    return f"<details><summary>How it was decided</summary>\n\n{note}{listed}\n\n</details>"
 
 
-def _verdict_section(verdict: dict, standing: str, request: dict) -> str:
-    """The verdict's checks as the fix page names them, each part of one on its own row."""
-    tiers = verdict.get("tiers") or []
+def _verdict_section(verdict: dict, standing: str, request: dict, plan: dict) -> str:
+    """The verdict's checks in the fix page's words, each part of one on its own row, and
+    the engine's statistics folded below them."""
+    tiers = verdict_tiers(verdict, request)
     if not tiers:
         return f"### Verdict: {standing}"
     rows = []
@@ -374,13 +452,21 @@ def _verdict_section(verdict: dict, standing: str, request: dict) -> str:
         rows.append(
             f"| {_cell(_check_label(str(tier.get('name', '')), request))}"
             f" | {_result(str(tier.get('status', '')))}"
-            f" | {_cell(tier.get('detail', ''))} |"
+            f" | {_cell(_tier_line(tier, verdict, plan, request))} |"
         )
         rows += [_part_row(part, request) for part in tier.get("parts") or []]
     listed = "\n".join(rows)
     table = f"| Check | Result | Detail |\n|---|---|---|\n{listed}"
-    measured = f"\n\n{_MEASURED}" if _cost_measured(tiers) else ""
-    return f"### Verdict: {standing}\n\n{table}{measured}"
+    # Only when the platform measured the agent's model calls itself, as the fix page.
+    measured = (
+        f"\n\n{_MEASURED}" if request.get("measured_automatically") is True else ""
+    )
+    decided = _decided_section(tiers, verdict, request)
+    return "\n\n".join(
+        part
+        for part in (f"### Verdict: {standing}\n\n{table}{measured}", decided)
+        if part
+    )
 
 
 def _files_section(files: list[tuple[str, int, int]]) -> str:
@@ -535,7 +621,12 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
             _override_note(candidate) if overridden else "",
             _limited_note(candidate) if limited else "",
             f"{proof} by Epoch: {rates}" if rates else "",
-            _verdict_section(verdict, standing, candidate.fix_run.request or {}),
+            _verdict_section(
+                verdict,
+                standing,
+                candidate.fix_run.request or {},
+                candidate.fix_run.plan or {},
+            ),
             _files_section(files),
             _why_section(candidate),
             _risks_section(candidate, verdict),

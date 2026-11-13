@@ -1996,10 +1996,55 @@ class TestUserApi:
             [*old[:5], {"name": "ceilings", "status": "skipped", "detail": ""}]
         )
 
+        # Its ceilings judged an unmetered agent's reply time alone: the cost reads unknown.
         assert [(one["name"], one["status"]) for one in shown] == [
-            (one["name"], one["status"]) for one in old
+            (one["name"], "skipped" if one["name"] == "ceilings" else one["status"])
+            for one in old
         ]
         assert (allowed, unrun) == (True, False)
+
+    @pytest.mark.parametrize(
+        ("metered", "status", "parts"),
+        [
+            (
+                False,
+                "skipped",
+                [
+                    {"name": "reply latency", "status": "passed", "detail": ""},
+                    {"name": "agent cost", "status": "skipped", "detail": ""},
+                ],
+            ),
+            (True, "passed", []),
+        ],
+        ids=["unmetered", "metered"],
+    )
+    def test_an_older_engines_ceilings_read_its_cost_as_unknown_unless_metered(
+        self, auth_client, source_run, github, metered, status, parts
+    ):
+        detail = "cost not measurable; latency 32.6s (baseline 55.4s, ceiling 3600s)"
+        tiers = [
+            *self._final(failed="", skip=("ceilings",)),
+            {"name": "ceilings", "status": "passed", "detail": detail},
+        ]
+        fix_run, candidate = self._vetoed(source_run, "github", tiers=tiers)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "meters_agent_cost": metered}
+        )
+        stored = AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+
+        assert shown["verdict"]["tiers"][-1] == {
+            "name": "ceilings",
+            "status": status,
+            "detail": detail,
+            "parts": parts,
+        }
+        # Only the read changes: the stored verdict, which decides, is as the engine sent it.
+        assert (
+            AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+            == stored
+        )
 
     def _final(self, failed="must-pass", skip=()):
         return [

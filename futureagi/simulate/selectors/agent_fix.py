@@ -930,6 +930,36 @@ VERDICT_TIERS = (
 UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
 
 
+def verdict_tiers(verdict: Mapping | None, request: Mapping | None) -> list[dict]:
+    """A verdict's checks as the fix page and the pull request read them. An older engine
+    gave the cost and latency check one status. For an agent whose cost the platform does
+    not meter, that status judged the reply time alone and the cost was never measured. So
+    the check reads as its reply time with that status, a cost unknown, and not verified."""
+    tiers = list((verdict or {}).get("tiers") or [])
+    if (request or {}).get("meters_agent_cost"):
+        return tiers
+    return [
+        _unmetered_ceilings(tier)
+        if tier.get("name") == "ceilings" and not tier.get("parts")
+        else tier
+        for tier in tiers
+    ]
+
+
+def _unmetered_ceilings(tier: dict) -> dict:
+    status = tier.get("status")
+    cost = {"name": "agent cost", "status": "skipped", "detail": ""}
+    # A skipped tier may not have measured the reply time either, so it says none.
+    if status not in ("passed", "failed"):
+        return {**tier, "parts": [cost]}
+    latency = {"name": "reply latency", "status": status, "detail": ""}
+    return {
+        **tier,
+        "status": "failed" if status == "failed" else "skipped",
+        "parts": [latency, cost],
+    }
+
+
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     """The must-pass checks a refused candidate regressed on, as "scenario key: check",
     when nothing else refused it: its verdict holds the final check's every tier, each one
