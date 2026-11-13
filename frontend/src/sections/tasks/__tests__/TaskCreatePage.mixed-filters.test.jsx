@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => ({
   navigate: vi.fn(),
   saveDraft: vi.fn(),
   clearDraft: vi.fn(),
+  enqueueSnackbar: vi.fn(),
   initialValues: null,
 }));
 
@@ -111,7 +112,9 @@ vi.mock("../components/TaskLivePreview", async () => {
   return { default: ReactModule.forwardRef(() => null) };
 });
 vi.mock("src/components/iconify", () => ({ default: () => null }));
-vi.mock("src/components/snackbar", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("src/components/snackbar", () => ({
+  enqueueSnackbar: harness.enqueueSnackbar,
+}));
 
 describe("Task Create mixed catalog filter submission", () => {
   beforeEach(() => {
@@ -207,5 +210,73 @@ describe("Task Create mixed catalog filter submission", () => {
         }),
       );
     });
+  });
+
+  it("navigates to the created task Details page and clears the draft", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(harness.navigate).toHaveBeenCalledWith(
+        "/dashboard/tasks/task-1",
+      );
+    });
+    expect(harness.clearDraft).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSnackbar).toHaveBeenCalledWith(
+      "Task created successfully",
+      { variant: "success" },
+    );
+  });
+
+  it("falls back to the task list when a successful response has no ID", async () => {
+    axios.post.mockResolvedValueOnce({ data: { result: {} } });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(harness.navigate).toHaveBeenCalledWith("/dashboard/tasks");
+    });
+  });
+
+  it("keeps the create flow on errors and shows safe feedback", async () => {
+    axios.post.mockRejectedValueOnce(new Error("synthetic transport failure"));
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(harness.enqueueSnackbar).toHaveBeenCalledWith(
+        "Task could not be created. Review the filters and try again.",
+        { variant: "error" },
+      );
+    });
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(harness.clearDraft).not.toHaveBeenCalled();
   });
 });
