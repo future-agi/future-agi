@@ -133442,8 +133442,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         value: {
           title: "Value",
+          description:
+            "The group value. Null when the attribute is missing (present is false); an empty string when it is present but empty.",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         present: {

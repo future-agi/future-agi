@@ -203,7 +203,11 @@ class SamplingAuditSummarySerializer(serializers.Serializer):
 
 
 class SamplingBalanceCategorySerializer(serializers.Serializer):
-    value = serializers.CharField(allow_null=True)
+    value = serializers.CharField(
+        allow_null=True,
+        allow_blank=True,
+        help_text="The group value. Null when the attribute is missing (present is false); an empty string when it is present but empty.",
+    )
     present = serializers.BooleanField()
     population_size = serializers.IntegerField()
     achieved = serializers.IntegerField()

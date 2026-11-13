@@ -62096,7 +62096,11 @@ export const TracerEvalTaskSamplingAuditResponse = zod.object({
         source: zod.string().min(1),
         categories: zod.array(
           zod.object({
-            value: zod.string().min(1),
+            value: zod
+              .string()
+              .describe(
+                "The group value. Null when the attribute is missing (present is false); an empty string when it is present but empty.",
+              ),
             present: zod.boolean(),
             population_size: zod.number(),
             achieved: zod.number(),

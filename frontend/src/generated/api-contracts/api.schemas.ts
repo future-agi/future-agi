@@ -28683,7 +28683,7 @@ export interface SamplingAuditSummaryApi {
 }
 
 export interface SamplingBalanceCategoryApi {
-  /** @minLength 1 */
+  /** The group value. Null when the attribute is missing (present is false); an empty string when it is present but empty. */
   value: string;
   present: boolean;
   population_size: number;
