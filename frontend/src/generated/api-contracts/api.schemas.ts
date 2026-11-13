@@ -15980,12 +15980,15 @@ export interface ConfigureEvaluationsApi {
   config?: ConfigureEvaluationsApiConfig;
 }
 
+/**
+ * Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.
+ */
 export interface SDKConfigureEvaluationsRequestApi {
   eval_config: ConfigureEvaluationsApi;
   /** @minLength 1 */
   platform: string;
   custom_eval_name?: string;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKMessageResultApi {
@@ -16009,11 +16012,14 @@ export interface SDKErrorResponseApi {
 
 export type SDKStandaloneEvalRequestApiConfig = { [key: string]: string };
 
+/**
+ * One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.
+ */
 export interface SDKStandaloneEvalInputApi {
   input?: string;
   /** @minimum 1 */
   max_tokens?: number;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKStandaloneEvalRequestApi {
