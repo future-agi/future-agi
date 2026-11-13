@@ -365,8 +365,8 @@ STATUS_TOOL = "tool-2"
 REFUND_ANSWER = "Your refund of $40 has been issued and will reach your card in 3 days."
 
 
-def _status_only_trace(status="Error"):
-    trace = _trace(request="Please refund order 1182.", answer=REFUND_ANSWER)
+def _status_only_trace(status="Error", answer=REFUND_ANSWER):
+    trace = _trace(request="Please refund order 1182.", answer=answer)
     trace["spans"][0]["child_spans"] = [
         {
             "span_id": STATUS_TOOL,
@@ -424,6 +424,58 @@ class TestAStatusOnlyToolErrorCanBeCited:
             _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
         )
         assert _issues(result) == [("Tool-related", "H")]
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param(f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error", id="line"),
+            pytest.param("Error", id="bare"),
+        ],
+    )
+    def test_a_status_passage_quoting_the_status_line_is_kept(self, quote):
+        tools = {
+            "evidence": quote,
+            "verdict": "FAIL",
+            "cite": [_cite(STATUS_TOOL, "status", quote)],
+        }
+        result, _ = _scan(
+            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
+        )
+        assert _issues(result) == [("Tool-related", "H")]
+
+    def test_a_short_answer_quoted_whole_is_kept(self):
+        """An answer shorter than the quote floor is still a quote when it is
+        the entire recorded field."""
+        tools = {
+            "evidence": "status=Error. Refund sent.",
+            "verdict": "FAIL",
+            "cite": [
+                _cite(STATUS_TOOL, "status", "status=Error"),
+                _cite(ROOT, "out", "Refund sent."),
+            ],
+        }
+        result, _ = _scan(
+            _status_only_trace(answer="Refund sent."),
+            _reply({"tools": tools}, [TOOLS_ISSUE]),
+        )
+        assert _issues(result) == [("Tool-related", "H")]
+
+    def test_a_status_passage_with_text_the_span_did_not_record_is_dropped(self):
+        tools = {
+            "evidence": "status=Error, then the bank approved the refund anyway",
+            "verdict": "FAIL",
+            "cite": [
+                _cite(
+                    STATUS_TOOL,
+                    "status",
+                    "status=Error, then the bank approved the refund anyway",
+                )
+            ],
+        }
+        result, _ = _scan(
+            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
+        )
+        assert _issues(result) == []
 
     @pytest.mark.parametrize("recorded", ["Ok", "Unset"])
     def test_an_error_status_the_span_did_not_record_is_dropped(self, recorded):
@@ -492,6 +544,27 @@ class TestEveryPassageIsCheckedAgainstItsOwnField:
             _cite(ROOT, "in", REAL_ANSWER_PASSAGE),
         )
         assert self._scan_goal(goal) == CONTROL
+
+    def test_a_passage_with_an_invented_sentence_after_a_real_one_is_dropped(self):
+        goal = self._goal(
+            _cite(ROOT, "in", f"{REQUEST} The user also asked for a refund."),
+        )
+        assert self._scan_goal(goal) == CONTROL
+
+    def test_the_checked_passages_decide_a_merge_not_the_free_evidence(self):
+        """Two FAILs whose passages are distinct stay two claims, even when
+        their evidence strings are the same unchecked text."""
+        same = "The archive now holds twelve exported reports."
+        goal = self._goal(_cite(ROOT, "in", REAL_REQUEST_PASSAGE), evidence=same)
+        tools = self._goal(
+            _cite(TOOL, "out", "total 80.27 seconds across 9 files"), evidence=same
+        )
+        tools_issue = {**TOOLS_ISSUE, "brief": "misread the tool total"}
+        result, _ = _scan(
+            _trace(),
+            _reply({"goal": goal, "tools": tools}, [GOAL_ISSUE, tools_issue]),
+        )
+        assert _issues(result) == [("Goal Deviation", "M"), ("Tool-related", "H")]
 
     def test_a_joined_quote_with_an_invented_passage_is_dropped(self):
         """Without per-cite quotes the evidence is read as one passage per

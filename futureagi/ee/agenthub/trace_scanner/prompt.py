@@ -175,8 +175,8 @@ WHAT COUNTS AS EVIDENCE — this is strict, and quoting the wrong thing invalida
 CITE WHERE EVERY QUOTE CAME FROM. Each FAIL carries "cite": one entry per quoted passage, at
 most three, each naming the span id (the [id] on that span's line), the field the passage
 was copied from — "in", "out", or "status" for a span whose only record of the failure is
-its status — and the passage itself as "quote". Each passage is checked in code against the
-recorded text of the one field it cites. A FAIL that cites nothing, has any passage that is
+its status — and the passage itself as "quote", copied verbatim with nothing added. Each
+passage is checked in code against the recorded text of the one field it cites. A FAIL that cites nothing, has any passage that is
 not in the field it cites, or quotes these instructions or the trace's framing instead of a
 span field is discarded. COMPLETION names its span with "span" instead (see the dimension).
 

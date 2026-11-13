@@ -14,6 +14,7 @@ import structlog
 
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
+    _get_span_kind,
     attribute_key_moments,
     build_trace_payload,
     extract_programmatic_metadata,
@@ -199,6 +200,11 @@ def _evidence_is_quotable(evidence, haystack_norm: str) -> bool:
     for sentence in re.split(r"(?<=[.!?])\s+", ev):
         if len(sentence) >= _MIN_EVIDENCE_CHARS and sentence in haystack_norm:
             return True
+    return _trigrams_are_quoted(ev, haystack_norm)
+
+
+def _trigrams_are_quoted(ev: str, haystack_norm: str) -> bool:
+    """Enough of a normalised quote's word-trigrams appear in the haystack."""
     words = ev.split()
     if len(words) < 3:
         return False
@@ -227,6 +233,8 @@ _NO_STATUS = {"", "unset", "status_code_unset", "none"}
 # a third is slack. Citing more than that binds the quote to nothing in
 # particular, so it is refused rather than truncated.
 _MAX_CITES = 3
+# Words of a span's header line, for matching a quote of its status.
+_STATUS_WORD = re.compile(r"[a-z0-9_]+")
 # Where a quote without per-cite passages is split into one passage per cite.
 _PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
@@ -293,8 +301,16 @@ def _field_values(trace, span_id: str, name: str) -> list[str]:
     """
     spans = _named_spans(trace, span_id)
     if name == _STATUS_FIELD:
-        values = [str(s.get("status_code") or "").strip() for s in spans]
-        return [neutralize(v) for v in values if v.casefold() not in _NO_STATUS]
+        # The status as the prompt shows it: the span's whole header line.
+        lines = []
+        for s in spans:
+            status = str(s.get("status_code") or "").strip()
+            if status.casefold() in _NO_STATUS:
+                continue
+            kind = _get_span_kind(s.get("span_attributes") or {})
+            kind = f" ({kind})" if kind else ""
+            lines.append(f"[{span_id}] {s.get('span_name')}{kind} status={status}")
+        return [neutralize(line) for line in lines]
     values = [
         str((s.get("span_attributes") or {}).get(_FIELD_KEYS[name]) or "")
         for s in spans
@@ -306,38 +322,53 @@ def _passage_in_field(passage: str, name: str, values: list[str]) -> bool:
     """Is this passage a quote of the cited field?
 
     A status is a single recorded word ("Error"), shorter than any quote the
-    text gate accepts, so a passage citing it must name that exact status.
+    text gate accepts. A passage citing it must name that status and may
+    otherwise only repeat words from the span's header line (id, name, kind):
+    anything else in it was not recorded on that span.
     """
     if name == _STATUS_FIELD:
-        said = _norm_for_match(passage)
-        return any(
-            re.search(rf"(?<![a-z0-9]){re.escape(_norm_for_match(v))}(?![a-z0-9])", said)
-            for v in values
-        )
-    return _evidence_is_quotable(passage, _norm_for_match("\n".join(values)))
+        said = set(_STATUS_WORD.findall(_norm_for_match(passage)))
+        for line in map(_norm_for_match, values):
+            status = set(_STATUS_WORD.findall(line.rsplit("status=", 1)[-1]))
+            if status <= said <= set(_STATUS_WORD.findall(line)):
+                return True
+        return False
+    # One passage is one quote, so the leniencies for a quote followed by the
+    # model's own commentary (a matching first sentence or leading run) do not
+    # apply: they would let a real sentence carry one the field never held.
+    said = _norm_for_match(passage)
+    fields = [_norm_for_match(v) for v in values]
+    if said and said in fields:
+        # The whole field, however short, is unambiguous.
+        return True
+    if len(said) < _MIN_EVIDENCE_CHARS:
+        return False
+    hay = "\n".join(fields)
+    return said in hay or _trigrams_are_quoted(said, hay)
 
 
-def _unbound_reason(verdict: dict[str, Any], trace) -> str | None:
-    """Why this FAIL's evidence is not bound to the trace, or None if it is.
+def _bind(verdict: dict[str, Any], trace) -> tuple[str | None, list[str]]:
+    """(why this FAIL's evidence is not bound to the trace, its passages).
 
-    Every cited passage is checked against its own cited field, so one real
-    passage cannot carry another that is not in the trace.
+    The reason is None when every cited passage is found in its own cited
+    field, so one real passage cannot carry another that is not in the trace.
+    The passages are then the FAIL's evidence of record.
     """
     entries = _cites(verdict)
     if entries is None:
-        return "unreadable_cite"
+        return "unreadable_cite", []
     if not entries:
-        return "uncited"
+        return "uncited", []
     passages = _cited_passages(verdict, entries)
     if passages is None:
-        return "unpaired_passages"
+        return "unpaired_passages", []
     for (span_id, name, _quote), passage in zip(entries, passages):
         values = _field_values(trace, span_id, name)
         if not values:
-            return "cited_field_missing"
+            return "cited_field_missing", []
         if not _passage_in_field(passage, name, values):
-            return "not_in_cited_field"
-    return None
+            return "not_in_cited_field", []
+    return None, passages
 
 
 # Share of the shorter quote's word-trigrams that must appear in the longer one
@@ -769,6 +800,10 @@ class TraceScanner:
         failed = set()
         unverified = []
         reasons = set()
+        # Dimensions whose evidence was checked passage by passage carry those
+        # passages from here on, so text the gate never checked cannot decide
+        # which claims describe the same moment.
+        checked = {}
         for k, v in dims.items():
             if not isinstance(v, dict) or str(v.get("verdict", "")).upper() != "FAIL":
                 continue
@@ -817,11 +852,12 @@ class TraceScanner:
                     unverified.append(k)
                     continue
             elif trace is not None:
-                reason = _unbound_reason(v, trace)
+                reason, passages = _bind(v, trace)
                 if reason:
                     unverified.append(k)
                     reasons.add(reason)
                     continue
+                checked[k] = {**v, "evidence": " ".join(passages)}
             elif hay and not _evidence_is_quotable(v.get("evidence"), hay):
                 unverified.append(k)
                 continue
@@ -839,7 +875,7 @@ class TraceScanner:
             )
         # Collapse after gating, not before: a dimension whose evidence was
         # invented must not be the one that survives a merge.
-        failed = _collapse_same_event(failed, dims)
+        failed = _collapse_same_event(failed, {**dims, **checked})
         briefs = {
             i.get("dim"): i for i in (parsed.get("issues") or []) if isinstance(i, dict)
         }
