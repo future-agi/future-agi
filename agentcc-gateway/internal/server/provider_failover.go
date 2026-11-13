@@ -11,8 +11,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// executeProviderFailover keeps operator breakers active only for operator
-// instances. Resolve once so admission and retries use the same actual provider.
+// executeProviderFailover keeps operator breakers for operator instances and
+// gives org (BYOK) instances a breaker per (org, provider). Resolve once so admission and retries use the same actual provider.
 // call gets the routing ID as well as the instance: an org override instance has
 // its own registry ID, but responses, logs, metrics and prices name the target.
 func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig, call func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error) (*routing.FailoverResult, error) {
@@ -28,7 +28,8 @@ func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.Reque
 		resolved[id] = p
 		return p
 	}
-	scoped := fo.WithCircuitBreakerFilter(func(id string) bool {
+	// Attempts on an org's own key use that org's breaker, not the operator's.
+	scoped := fo.WithOrgCircuitBreakers(rc.Metadata["org_id"], func(id string) bool {
 		p := resolve(id)
 		base, ok := h.registry.GetProvider(id)
 		return ok && p == base

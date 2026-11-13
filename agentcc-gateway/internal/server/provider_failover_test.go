@@ -109,16 +109,24 @@ func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
 				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
 				for i := 0; i < 3; i++ {
 					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-mixed-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"fast"}})
-					if status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable") {
+					if i == 0 && (status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable")) {
 						t.Fatalf("mixed failover response: status=%d missing_error=%t", status, !strings.Contains(body, "synthetic upstream unavailable"))
+					}
+					// Both breakers are open now: the org's for its own fast key
+					// and the operator's for slow. Nothing is called.
+					if i > 0 && status != http.StatusInternalServerError {
+						t.Fatalf("request %d with every breaker open: status=%d", i, status)
 					}
 				}
 				globalHealth := srv.handlers.healthMonitor.GetHealth("slow")
 				if globalSlowCalls.Load() != 1 || globalHealth.ErrorCount != 1 || globalHealth.CircuitState != "open" {
 					t.Fatalf("mixed attempt lost operator breaker: calls=%d errors=%d circuit=%s", globalSlowCalls.Load(), globalHealth.ErrorCount, globalHealth.CircuitState)
 				}
+				// The org's own key failed once, which opens its own breaker
+				// (threshold 1), so later requests skip it instead of burning
+				// an attempt. The operator's fast stays untouched.
 				orgHealth := srv.handlers.healthMonitor.GetHealth("fast")
-				if orgCalls.Load() != 3 || globalFastCalls.Load() != 0 || orgHealth.RequestCount != 0 || orgHealth.CircuitState != "closed" {
+				if orgCalls.Load() != 1 || globalFastCalls.Load() != 0 || orgHealth.RequestCount != 0 || orgHealth.CircuitState != "closed" {
 					t.Fatalf("org attempt contaminated operator state: org_calls=%d global_calls=%d samples=%d circuit=%s", orgCalls.Load(), globalFastCalls.Load(), orgHealth.RequestCount, orgHealth.CircuitState)
 				}
 			})

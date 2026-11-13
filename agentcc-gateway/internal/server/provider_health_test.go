@@ -190,17 +190,27 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			if path != "org-first" {
 				headers.Set("x-agentcc-provider-lock", "fast")
 			}
+			wantOrgCalls := int64(3)
 			for i := 0; i < 3; i++ {
 				status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-probe", false, headers)
-				if status != http.StatusBadGateway {
-					t.Fatalf("org status=%d want=502", status)
+				want := http.StatusBadGateway
+				if path == "failover-override" {
+					// Each failure opens the org's own breaker (threshold 1) for
+					// that target, fast then backup; then nothing is left to try.
+					wantOrgCalls = 2
+					if i == 2 {
+						want = http.StatusInternalServerError
+					}
+				}
+				if status != want {
+					t.Fatalf("org request %d status=%d want=%d org_calls=%d", i, status, want, orgCalls.Load())
 				}
 			}
 			after := srv.handlers.healthMonitor.GetHealth("fast")
 			if got := len(srv.handlers.healthMonitor.GetAllHealth()); got != 1 {
 				t.Fatalf("global monitor retained org samples: providers=%d want=1", got)
 			}
-			if orgCalls.Load() != 3 || globalCalls.Load() != 1 {
+			if orgCalls.Load() != wantOrgCalls || globalCalls.Load() != 1 {
 				t.Fatalf("wrong instances called: global=%d org=%d", globalCalls.Load(), orgCalls.Load())
 			}
 			if after.RequestCount != before.RequestCount || after.ErrorCount != 0 || after.LatencyEWMAMs != before.LatencyEWMAMs || !after.Healthy || after.CircuitState == "open" {
