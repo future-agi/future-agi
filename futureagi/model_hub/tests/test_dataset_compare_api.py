@@ -298,8 +298,13 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "cleanup_queued",
+    [True, False],
+    ids=["cleanup-activity-queued", "synchronous-fallback"],
+)
 def test_compare_delete_logs_a_local_folder_it_cannot_remove(
-    auth_client, compare_datasets, monkeypatch, tmp_path
+    auth_client, compare_datasets, monkeypatch, tmp_path, cleanup_queued
 ):
     import os
     import shutil
@@ -321,7 +326,8 @@ def test_compare_delete_logs_a_local_folder_it_cannot_remove(
             "created_at": created_at_now(),
             "base_dataset_id": dataset_ids[0],
             "comparison_datasets": dataset_ids,
-        }
+        },
+        f"compare/{compare_id}/page_1.json": {},
     }
 
     def read(compare_id, name):
@@ -330,7 +336,18 @@ def test_compare_delete_logs_a_local_folder_it_cannot_remove(
             raise CompareObjectUnavailable(name)
         return shared[object_key]
 
+    def remove_shared_objects(compare_id):
+        for object_key in list(shared):
+            if object_key.startswith(f"compare/{compare_id}/"):
+                del shared[object_key]
+
     started = []
+
+    def start_activity(*args, **kwargs):
+        if not cleanup_queued:
+            raise RuntimeError("Temporal unavailable")
+        started.append((args, kwargs))
+
     real_rmtree = shutil.rmtree
 
     def rmtree(path, ignore_errors=False, onerror=None, **kwargs):
@@ -354,9 +371,10 @@ def test_compare_delete_logs_a_local_folder_it_cannot_remove(
         lambda compare_id: shared.pop(f"compare/{compare_id}/metadata.json"),
     )
     monkeypatch.setattr(
-        "tfc.temporal.drop_in.start_activity",
-        lambda *args, **kwargs: started.append((args, kwargs)),
+        "model_hub.utils.compare_storage.delete_compare_objects",
+        remove_shared_objects,
     )
+    monkeypatch.setattr("tfc.temporal.drop_in.start_activity", start_activity)
     monkeypatch.setattr(shutil, "rmtree", rmtree)
 
     with capture_logs() as logs:
@@ -365,11 +383,18 @@ def test_compare_delete_logs_a_local_folder_it_cannot_remove(
         )
 
     # The metadata is gone, so the comparison is no longer served; the folder
-    # is left to the local sweep and the failure is logged, not hidden.
+    # is left to the local sweep and the failure is logged, not hidden. When
+    # the cleanup activity cannot be queued, the shared objects are removed
+    # synchronously and the response is the same.
     assert response.status_code == status.HTTP_200_OK
-    assert shared == {}
+    assert response.json()["result"] == {"message": "File(s) deleted successfully"}
     assert compare_dir.exists()
-    assert len(started) == 1
+    if cleanup_queued:
+        assert len(started) == 1
+        assert shared == {f"compare/{compare_id}/page_1.json": {}}
+    else:
+        assert started == []
+        assert shared == {}
     failures = [
         log for log in logs if log["event"] == "compare_local_folder_delete_failed"
     ]

@@ -257,6 +257,7 @@ from model_hub.services.derived_variable_service import (
 )
 from model_hub.tasks.develop_dataset import ingest_files_to_s3, remove_kb_files
 from model_hub.types import ConversionResult
+from model_hub.utils import compare_storage
 from model_hub.utils.annotation_queue_helpers import (
     TEXT_FILTER_LOOKUPS,
     or_text_filter_q,
@@ -268,7 +269,6 @@ from model_hub.utils.compare_storage import (
     delete_compare_metadata,
     is_expired,
     read_compare_json,
-    remove_compare,
     remove_local_compare_dir,
     start_local_sweeper,
     write_compare_json,
@@ -13690,7 +13690,10 @@ class GetCompareDatasetRow(APIView):
             return self._gm.internal_server_error_response(COMPARE_ROW_ERROR_MESSAGE)
 
     def thread_delete(self, compare_id):
-        remove_compare(compare_id)
+        # Synchronous fallback for the cleanup activity. DELETE has already
+        # tried this replica's local folder (and logged any failure), so only
+        # the shared objects are left to remove here.
+        compare_storage.delete_compare_objects(compare_id)
 
     @swagger_auto_schema(
         responses={
