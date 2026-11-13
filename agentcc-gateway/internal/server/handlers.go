@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // maxSessionIDLen is the maximum allowed byte length for a session ID.
@@ -74,6 +75,12 @@ type Handlers struct {
 	// Key store for early org_id peek (before auth plugin runs).
 	keyStore *authpkg.KeyStore
 
+	// Decision calls by internal callers: the upstream for each dialect taken
+	// from config.yaml (its base_url only), and the providers built for the
+	// keys those callers bring.
+	decisionBaseURLs       map[string]string
+	keyedDecisionProviders keyedDecisionProviders
+
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
@@ -84,8 +91,15 @@ type Handlers struct {
 	// Files API store.
 	fileStore *files.Store
 
+	// trustedProxies is ip_acl.trusted_proxies: how many X-Forwarded-For hops
+	// clientIP trusts.
+	trustedProxies int
+
 	// Video generation store.
-	videoStore video.Store
+	videoIPACL    config.IPACLConfig
+	videoStore    video.Store
+	videoService  *lifecycle.Service
+	videoSyncWait time.Duration
 
 	// Phase 12A: Advanced routing components.
 	complexityAnalyzer   *routing.ComplexityAnalyzer
@@ -105,6 +119,27 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
+}
+
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
+	}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
+	}
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -119,6 +154,9 @@ func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
 
 func cloneRequestHeaders(r *http.Request) http.Header {
 	headers := r.Header.Clone()
+	// A caller's own provider key is for one decision call. Whatever route it
+	// was sent to, the copy kept for logs, spans and plugins never carries it.
+	headers.Del(models.ProviderKeyHeader)
 	if headers.Get("Authorization") == "" {
 		if apiKey := headers.Get("x-api-key"); apiKey != "" {
 			headers.Set("Authorization", "Bearer "+apiKey)
@@ -221,6 +259,8 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -292,6 +332,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -1003,7 +1044,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1037,19 +1078,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -1292,7 +1321,24 @@ func orgProviderError(model, providerID string, err error) *models.APIError {
 // providers: any key but an internal one, unless a license authorized the
 // request.
 func (h *Handlers) orgProvidersOnly(ctx context.Context, rc *models.RequestContext) bool {
-	return h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx)
+	return h.orgProvidersOnlyForKeyType(ctx, rc.Metadata["key_type"])
+}
+
+// orgProvidersOnlyForKeyType is the rule behind orgProvidersOnly for callers
+// that have a key type but no request context, such as the model listings.
+func (h *Handlers) orgProvidersOnlyForKeyType(ctx context.Context, keyType string) bool {
+	return h.keyStore != nil && keyType != "internal" && !middleware.IsLicenseAuthorized(ctx)
+}
+
+// globalModelsVisible reports whether r may see the global provider catalog.
+// It mirrors the call-time guard in resolveProvider: a key that cannot call a
+// global model must not be told the model exists.
+func (h *Handlers) globalModelsVisible(r *http.Request) bool {
+	keyType := ""
+	if ki := h.lookupHeaderKey(r); ki != nil {
+		keyType = ki.KeyType
+	}
+	return !h.orgProvidersOnlyForKeyType(r.Context(), keyType)
 }
 
 // resolveProvider resolves the provider for a model and the model name to send
@@ -2278,34 +2324,13 @@ func isBlockedMetadataKey(key string) bool {
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
+// clientIP returns the client address recorded as client_ip and judged by
+// ip_acl and per-key allowed_ips. X-Forwarded-For is honoured only for the
+// configured number of trusted proxy hops (ip_acl.trusted_proxies); with the
+// default of 0 it is the TCP peer. X-Real-IP is never trusted. See
+// trustedClientIP.
+func (h *Handlers) clientIP(r *http.Request) string {
+	return trustedClientIP(r, h.trustedProxies)
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"
@@ -2338,7 +2363,10 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
-	allModels := h.registry.ListAllModels()
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	db := h.ModelDB()
 
 	if scopedModels, ok := h.orgScopedModels(r); ok {
@@ -2393,9 +2421,10 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
-	if h.tenantStore == nil || h.keyStore == nil {
-		return nil, false
+// lookupHeaderKey returns the API key presented in r's headers, or nil.
+func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
+	if h.keyStore == nil {
+		return nil
 	}
 	rawKey := ""
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
@@ -2404,9 +2433,16 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		rawKey = apiKey
 	}
 	if rawKey == "" {
+		return nil
+	}
+	return h.keyStore.Lookup(rawKey)
+}
+
+func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
+	if h.tenantStore == nil {
 		return nil, false
 	}
-	ki := h.keyStore.Lookup(rawKey)
+	ki := h.lookupHeaderKey(r)
 	if ki == nil {
 		return nil, false
 	}
@@ -2462,8 +2498,11 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check global registry for non-tenant deployments.
-	allModels := h.registry.ListAllModels()
+	// The global catalog is visible only to keys that can call it.
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	for _, m := range allModels {
 		if m.ID == modelID {
 			w.Header().Set("Content-Type", "application/json")

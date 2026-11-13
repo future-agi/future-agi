@@ -8614,10 +8614,10 @@ class EditAndRunUserEvalView(APIView):
         },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -8653,6 +8653,16 @@ class EditAndRunUserEvalView(APIView):
                     return self._gm.bad_request(
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
+
+                from model_hub.utils.jev_templates import validate_jev_binding
+
+                jev_error = validate_jev_binding(
+                    eval_metric.template,
+                    model=request_data.get("model") or eval_metric.model,
+                    runtime_config=request_data.get("config") or eval_metric.config,
+                )
+                if jev_error is not None:
+                    return jev_error
 
                 if save_as_template:
                     template = eval_metric.template
@@ -8986,10 +8996,10 @@ class AddUserEvalView(CreateAPIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -9097,6 +9107,16 @@ class AddUserEvalView(CreateAPIView):
             )
             if not template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                template,
+                model=validated_data.get("model"),
+                runtime_config=validated_data.get("config"),
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Inherit template-level enablement unless caller explicitly overrides.
             if "error_localizer" in request.data:
                 error_localizer = self._coerce_bool(
@@ -9308,8 +9328,20 @@ class PreviewRunEvalView(APIView):
         responses={200: EvalPreviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        from tfc.ee_gates import ee_model_gate_for_template
+
+        request_data = request.validated_data
+        # Gated like the dataset run (AddUserEvalView): an unknown or
+        # unlicensed model is one 400/402, not an error on every previewed row.
+        gate = ee_model_gate_for_template(
+            request_data.get("model"),
+            template_id=request_data.get("template_id"),
+            eval_type=request_data.get("eval_type"),
+        )
+        if gate is not None:
+            return gate
+
         try:
-            request_data = request.validated_data
             config = request_data.get("config")
             if not config:
                 return self._gm.bad_request("config is required")
@@ -9347,6 +9379,13 @@ class PreviewRunEvalView(APIView):
             )
             if not eval_template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
 
             eval_class = globals().get(eval_template.config.get("eval_type_id"))
 
@@ -15253,7 +15292,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
                     metric.dataset.save()
 
                     # Create reason column
-                    reason_column, _ = Column.objects.create(
+                    reason_column = Column.objects.create(
                         name=f"{metric.name}-reason",
                         data_type=DataTypeChoices.TEXT.value,
                         source=SourceChoices.EVALUATION_REASON.value,

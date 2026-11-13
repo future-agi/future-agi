@@ -18,6 +18,7 @@ from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderCon
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
+from tfc.temporal.drop_in import temporal_activity
 
 logger = structlog.get_logger(__name__)
 
@@ -257,6 +258,11 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 else cfg
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
+            if isinstance(clean_cfg, dict) and name in _RULE_PROVIDER_DEFAULTS:
+                if not isinstance(inner, dict):
+                    inner = {}
+                    clean_cfg["config"] = inner
+                inner.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
             _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
@@ -755,3 +761,13 @@ def push_all_org_configs():
             failed += 1
 
     logger.info("config_push_all_complete", success=success, failed=failed)
+
+
+@temporal_activity(max_retries=0, time_limit=900, queue="default")
+def push_all_org_configs_activity():
+    """Re-sync every active org config to the gateway off the request path.
+
+    The gateway health check dispatches this on a cold sync cache instead of
+    pushing every organization's config while the user's request waits.
+    """
+    push_all_org_configs()

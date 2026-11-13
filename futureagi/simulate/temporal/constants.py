@@ -84,6 +84,11 @@ HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS = 65 * 60
 HOSTED_RUNNER_CHAT_MODE = "chat"
 
 
+# "Fix my agent": the wait between looks at the engine. A look costs about 8 history events and
+# 3 sandbox API calls, and a fix can run for a day, so a shorter wait would near Temporal's limits.
+AGENT_FIX_WATCH_TICK_SECONDS = 120
+
+
 # =============================================================================
 # Rate Limits (Defaults)
 # =============================================================================

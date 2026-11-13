@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/audit"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/otel"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
@@ -40,11 +43,13 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
-	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // Server is the Agentcc gateway HTTP server.
 type Server struct {
+	videoAudit       *audit.Logger
+	videoAuditOnce   sync.Once
 	cfg              *config.Config
 	configPath       string
 	httpServer       *http.Server
@@ -60,7 +65,11 @@ type Server struct {
 	TenantStore      *tenant.Store
 	OrgProviderCache *providers.OrgProviderCache
 	asyncWorker      *async.Worker
+	videoWorker      *lifecycle.Worker
+	videoExporter    otel.SpanExporter
+	videoInitErr     error
 	shadowFlusher    *routing.ShadowFlusher
+	router           *Router
 	ready            atomic.Bool
 }
 
@@ -230,6 +239,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
+	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -240,8 +251,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	responsesStore := responses.NewStore(responses.DefaultResponseTTL)
 	handlers.responsesStore = responsesStore
 
-	// Set up Video Generation store.
-	handlers.videoStore = video.NewMemoryStore()
+	// Video routes stay unconfigured when disabled (pin N2).
+	if cfg.Video.Enabled {
+		s.videoInitErr = s.configureVideo(redisClient)
+	}
 	// Shared through Redis when there is one, so the pod that sees a run
 	// finish can charge it whichever pod started it.
 	if redisClient != nil {
@@ -318,6 +331,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			"max_concurrent", cfg.Routing.Fastest.MaxConcurrent,
 		)
 	}
+
+	// Decision calls by internal callers take only a base_url from config.yaml.
+	handlers.decisionBaseURLs = providers.DecisionDialectBaseURLs(cfg.Providers)
 
 	// Provider locking.
 	handlers.providerLockResolver = routing.NewProviderLockResolver(cfg.Routing.ProviderLock)
@@ -410,6 +426,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	// Structured decisions, on the customer's own provider key only.
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
+	router.Handle("POST", "/v1/decisions", handlers.Decisions)
+	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
@@ -508,6 +528,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
 	router.Handle("GET", "/v1/videos", handlers.ListVideos)
 	// NOTE: specific sub-routes before generic {video_id}.
+	router.Handle("POST", "/v1/videos/{video_id}/cancel", handlers.CancelVideo)
+	router.Handle("GET", "/v1/videos/{video_id}/content", handlers.GetVideoContent)
 	router.Handle("GET", "/v1/videos/{video_id}", handlers.GetVideoStatus)
 	router.Handle("DELETE", "/v1/videos/{video_id}", handlers.DeleteVideo)
 
@@ -628,6 +650,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		router.Handle("POST", "/-/admin/providers/{id}/rotate/rollback", rotHandlers.RollbackRotation)
 	}
 
+	// Video administration uses the existing admin token and /-/admin prefix.
+	router.Handle("GET", "/-/admin/video/capabilities", s.adminVideoCapabilities)
+	router.Handle("POST", "/-/admin/video/killswitch", s.adminVideoKillSwitch)
+	router.Handle("POST", "/-/admin/video/jobs/{id}/attach", s.adminVideoAttach)
+	router.Handle("GET", "/-/admin/video/unsettled", s.adminVideoUnsettled)
 	// Cluster admin endpoint.
 	if cfg.Cluster.Enabled {
 		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
@@ -831,7 +858,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -839,8 +866,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
@@ -907,10 +941,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
+	s.router = router
+
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -925,6 +961,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		WriteTimeout:      cfg.Server.WriteTimeout,
 		IdleTimeout:       cfg.Server.IdleTimeout,
+		// 0 leaves net/http's default (1MB).
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
 
 	return s
@@ -932,6 +970,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
 func (s *Server) Start() error {
+	if s.videoInitErr != nil {
+		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
+	}
+	if s.videoWorker != nil {
+		s.videoWorker.Start()
+	}
 	s.ready.Store(true)
 
 	// Start cluster heartbeat if enabled.
@@ -962,6 +1006,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.clusterMgr.Stop()
 	}
 
+	// Stop video calls and release leases before closing shared Redis.
+	if s.videoWorker != nil {
+		if err := s.videoWorker.Stop(ctx); err != nil {
+			return err
+		}
+	}
 	// Stop async workers.
 	if s.asyncWorker != nil {
 		s.asyncWorker.Stop()
@@ -977,6 +1027,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
+	if s.videoAudit != nil {
+		s.videoAudit.Close()
+	}
+	if s.videoExporter != nil {
+		if exportErr := s.videoExporter.Shutdown(); exportErr != nil {
+			slog.Warn("video trace exporter shutdown failed")
+		}
+	}
+	if s.handlers.videoService != nil {
+		if closeErr := s.handlers.videoService.Close(); closeErr != nil {
+			slog.Warn("video artifact store close failed")
+		}
+	}
 	if err := s.registry.Close(); err != nil {
 		slog.Warn("error closing registry", "error", err)
 	}

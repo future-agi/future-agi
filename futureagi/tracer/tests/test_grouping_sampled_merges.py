@@ -547,6 +547,34 @@ def test_sampled_general_budget_denial_has_no_receipt_and_preserves_cached_calls
 
 
 @pytest.mark.django_db
+@override_settings(ERROR_FEED_GROUPING_BUDGET_ENFORCED=False)
+def test_cohort_call_cap_refuses_101st_reservation_but_keeps_cached_receipts(
+    sampled_claim,
+):
+    _, _, _, claim, _ = sampled_claim
+    common = {
+        "attempt_id": claim["attempt_id"],
+        "lease_token": claim["lease_token"],
+        "max_cost_usd": "0.01",
+        "request_digest": "sha256:" + "a" * 64,
+    }
+    first = None
+    for number in range(100):
+        result = reserve_call(**common, request_key=f"discovery:{number}")
+        assert result["created"]
+        first = first or result
+    for key in ["discovery:101", "merge-review:101"]:
+        denied = reserve_call(**common, request_key=key)
+        assert denied["status"] == "budget_exhausted"
+        assert denied["limit"] == "work_calls"
+        assert denied["created"] is False and "receipt_id" not in denied
+    cached = reserve_call(**common, request_key="discovery:0")
+    assert cached["receipt_id"] == first["receipt_id"] and cached["created"] is False
+    assert TraceGroupingCall.no_workspace_objects.count() == 100
+    assert not TraceGroupingCall.no_workspace_objects.filter(status="unknown").exists()
+
+
+@pytest.mark.django_db
 @override_settings(
     ERROR_FEED_GROUPING_ENABLED=True,
     ERROR_FEED_GROUPING_ALL_PROJECTS=True,

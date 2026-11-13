@@ -34,25 +34,21 @@ const BaseSelectionActions = ({
         label={`${selectedCount} selected`}
         size="small"
         sx={{
-          height: 28,
-          fontSize: "0.8rem",
-          color: "purple.500",
-          borderColor: "purple.500",
-          backgroundColor: "purple.o5",
+          color: "status.discovery.fg",
+          borderColor: "status.discovery.solid",
+          backgroundColor: "status.discovery.bg",
 
           ":hover": {
-            backgroundColor: "purple.o5",
+            backgroundColor: "status.discovery.bg",
           },
         }}
       />
       <Button
         size="small"
         variant="outlined"
-        startIcon={<Iconify icon="mdi:play" width={16} />}
+        startIcon={<Iconify icon="solar:play-linear" width={16} />}
         onClick={onRunEvals}
         sx={{
-          py: 0.75,
-          fontSize: "0.8rem",
           whiteSpace: "nowrap",
           color: "primary.main",
           borderColor: "primary.main",
@@ -69,19 +65,18 @@ const BaseSelectionActions = ({
         variant="outlined"
         startIcon={
           <SvgColor
+            width={2}
             // @ts-ignore
-            sx={{ height: 2, width: 2, mt: -0.5 }}
+            sx={{ mt: -0.5 }}
             src={"/assets/icons/ic_delete.svg"}
           />
         }
         onClick={onDelete}
         sx={{
-          py: 0.75,
-          fontSize: "0.8rem",
           whiteSpace: "nowrap",
           "&:hover": {
-            borderColor: "purple.600",
-            backgroundColor: "purple.o5",
+            borderColor: "status.discovery.solid",
+            backgroundColor: "status.discovery.bg",
           },
         }}
       >
@@ -92,8 +87,6 @@ const BaseSelectionActions = ({
         variant="text"
         onClick={onClearSelection}
         sx={{
-          py: 0.75,
-          fontSize: "0.8rem",
           color: "text.secondary",
           "&:hover": {
             backgroundColor: "action.hover",

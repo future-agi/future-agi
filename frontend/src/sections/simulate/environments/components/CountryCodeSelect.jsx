@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { Autocomplete, Box, InputAdornment, Stack, TextField, Typography, createFilterOptions } from "@mui/material";
 import { COUNTRY_OPTIONS, COUNTRY_BY_ISO } from "./countryCodes";
 
-const MONO = "ui-monospace, Menlo, monospace";
 const FIRST_REST_ISO = COUNTRY_OPTIONS.find((c, idx) => idx > 0 && !c.suggested && COUNTRY_OPTIONS[idx - 1]?.suggested)?.iso;
 const filterOptions = createFilterOptions({ stringify: (c) => `${c.name} ${c.dial} ${c.iso}` });
 
@@ -36,7 +35,6 @@ export default function CountryCodeSelect({ value, onChange }) {
               </InputAdornment>
             ),
           }}
-          sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
         />
       )}
       renderOption={(optionProps, c, { inputValue }) => {
@@ -46,7 +44,7 @@ export default function CountryCodeSelect({ value, onChange }) {
             {...optionProps}
             key={c.iso}
             sx={{
-              typography: "s2",
+              typography: "m3",
               py: 0.75,
               borderTop: !inputValue && c.iso === FIRST_REST_ISO ? "1px solid" : "none",
               borderColor: "divider",
@@ -55,11 +53,11 @@ export default function CountryCodeSelect({ value, onChange }) {
             <Stack direction="row" alignItems="center" spacing={1.25} sx={{ width: "100%" }}>
               <Box component="span" sx={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{c.flag}</Box>
               <Typography
-                sx={{ typography: "s2", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                sx={{ typography: "m3", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
               >
                 {c.name}
               </Typography>
-              <Typography sx={{ typography: "s2", color: "text.subtitle", fontFamily: MONO, flexShrink: 0 }}>
+              <Typography sx={{ typography: "s1", color: "text.subtitle", flexShrink: 0 }}>
                 {c.dial}
               </Typography>
             </Stack>

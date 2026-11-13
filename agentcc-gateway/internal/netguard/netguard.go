@@ -40,7 +40,22 @@ var (
 	)
 	loopbackNets = mustParseCIDRs("127.0.0.0/8", "::1/128")
 	privateNets  = mustParseCIDRs("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
+
+	// Metadata endpoints by name, refused before any lookup.
+	metadataHosts = map[string]bool{
+		"metadata":                   true,
+		"metadata.google.internal":   true,
+		"metadata.goog":              true,
+		"instance-data":              true,
+		"instance-data.ec2.internal": true,
+	}
 )
+
+// IsMetadataHost reports whether host is the name of a cloud metadata
+// service, in any case and with or without a trailing dot.
+func IsMetadataHost(host string) bool {
+	return metadataHosts[strings.TrimSuffix(strings.ToLower(host), ".")]
+}
 
 func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 	nets := make([]*net.IPNet, len(cidrs))
@@ -103,6 +118,9 @@ type BlockedError struct {
 
 func (e *BlockedError) Error() string {
 	if e.IP == nil {
+		if e.Class == Forbidden {
+			return "refused to connect: a cloud metadata host"
+		}
 		return "refused to connect: not an IP address"
 	}
 	return fmt.Sprintf("refused to connect to %s (%s address)", e.IP, e.Class)

@@ -167,6 +167,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
@@ -1855,9 +1856,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     task_id = eval_logger.eval_task_id
 
-                    eval_logger.deleted = True
-                    eval_logger.deleted_at = timezone.now()
-                    eval_logger.save(update_fields=["deleted", "deleted_at"])
+                    soft_delete_eval_results(
+                        EvalLogger.objects.filter(pk=eval_logger.pk)
+                    )
                 except EvalLogger.DoesNotExist:
                     raise Exception("No eval associated with this span")  # noqa: B904
 
@@ -3903,10 +3904,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         max_traces: int | None = None,
         max_spans: int | None = None,
     ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
-        paths = list(self._SESSION_PUBLIC_FIELDS)
+        """Session-level paths: session fields, the whole conversation
+        (``transcript``, and ``transcript_full`` with tool calls) +
+        ``traces.<i>.<trace_field>`` + ``traces.<i>.spans.<j>.<key>`` up to
+        the observed max traces-per-session and spans-per-trace."""
+        from tracer.utils.eval import (
+            SESSION_FULL_TRANSCRIPT_FIELD,
+            SESSION_TRANSCRIPT_FIELD,
+        )
+
+        paths = [
+            *self._SESSION_PUBLIC_FIELDS,
+            SESSION_TRANSCRIPT_FIELD,
+            SESSION_FULL_TRANSCRIPT_FIELD,
+        ]
         if max_traces is None:
             max_traces = self._max_traces_per_session(project_id)
         if max_spans is None:

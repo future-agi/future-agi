@@ -33,16 +33,28 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
   requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
-  requireSafe(same(Object.keys(cfg.providers ?? {}), ['openai']), 'provider set is not mock-only');
-  const provider = cfg.providers.openai;
-  requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
-    'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
-  requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
-    provider.api_format === 'openai', 'upstream route or key is not the deterministic mock');
-  const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'];
-  const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
-  requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
-    (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'perplexity', 'typesafe']),
+    'provider set is not mock-only');
+  for (const [name, provider] of Object.entries(cfg.providers) as [string, any][]) {
+    requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
+      'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
+    requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
+      provider.api_format === (name === 'openai' ? 'openai' : 'systemone'),
+    'upstream route or key is not the deterministic mock');
+    const pinned: Record<string, string[]> = {
+      openrouter: ['openai/gpt-6-luna-decisions', 'typesafe/jev-1.13', 'typesafe/jev-1.14', '~typesafe/jev-latest'],
+      perplexity: ['pplx-decider-flash-v1.2', 'pplx-decider-v1.2'],
+      typesafe: ['jev-1.13.0', 'jev-1.14.0', 'jev-latest'],
+    };
+    const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
+    if (name !== 'openai') {
+      requireSafe(same(routes, pinned[name]), 'unexpected decision model routes');
+      continue;
+    }
+    const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-6-luna', 'o1', 'o1-mini'];
+    requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
+      (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  }
   requireSafe(Object.keys(cfg.server).every(k => ['port', 'host', 'read_timeout', 'write_timeout',
     'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout',
     'max_request_timeout'].includes(k)) &&
@@ -178,6 +190,27 @@ export function validateBackgroundMockMounts(service: string, mounts: Container[
     'gateway credential suppression must be an exact read-only /dev/null bind');
   }
 }
+/** The public report is the only application bind allowed in Distributed E2E.
+ * Missing integration keeps the old mount-free contract. Never infer the expected
+ * source from inspect output; bin/e2e exports the independently chosen host slot.
+ */
+export function validateApplicationMounts(service: string, mounts: Container['Mounts'],
+  expectedDirectory = process.env.E2E_HOST_UPDATE_STATUS_DIR): void {
+  requireSafe(['backend', 'worker'].includes(service), 'unsupported application mount service');
+  if (mounts.length === 0) return;
+  requireSafe(service === 'backend' && mounts.length === 1 && expectedDirectory,
+    `${service} has application mounts`);
+  const mount = mounts[0];
+  requireSafe(mount.Type === 'bind' && mount.RW === false && mount.Destination === '/run/futureagi-host-update',
+    'unexpected backend status mount');
+  let matches = false;
+  try {
+    matches = statSync(expectedDirectory!).isDirectory() &&
+      realpathSync(mount.Source) === realpathSync(expectedDirectory!);
+  } catch { /* Missing/unreadable paths fail closed without exposing host paths. */ }
+  requireSafe(matches, 'backend status mount source mismatch');
+}
+
 export interface MockReceipt {
   context: string; project: string; networkId: string; gatewaySha: string; mockSha: string;
   services: { service: string; id: string; image: string; startedAt: string }[];
@@ -235,7 +268,7 @@ export function inspectManagedMock({ evalBackground = false }: { evalBackground?
 }
 
 function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
-  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]) {
+  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl, E2E.googleMockUrl]) {
     requireSafe(new URL(endpoint).hostname === 'localhost', 'requires localhost endpoints');
   }
   const context = process.env.DOCKER_CONTEXT || (process.env.CI ? 'default' : '');
@@ -301,14 +334,16 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
 
 function distributedMockStack(evalBackground: boolean): MockStack {
   return {
-    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
+    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
       ...(evalBackground ? ['temporal'] : [])],
     endpoints: [
+      ['mock-google', '28443/tcp', E2E.googleMockUrl],
       ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
       ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
       ['clickhouse', '8123/tcp', E2E.chUrl], ['mock-slack', '8080/tcp', E2E.slackMockUrl],
     ],
     sources: [
+      ['mock-google', '/srv/server.py', `${root}e2e/stack/mock-google/server.py`, ['/srv/server.py']],
       ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
       ['mock-slack', '/srv/server.mjs', `${root}e2e/stack/mock-slack/server.mjs`, ['node', '/srv/server.mjs']],
@@ -326,6 +361,9 @@ function distributedMockStack(evalBackground: boolean): MockStack {
         const env = environments[service] = containerEnvironment(selected[service]);
         validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
       }
+      validateGoogleFixtureMounts(selected.backend, selected['mock-google']);
+      for (const service of ['backend', 'worker']) validateApplicationMounts(service,
+        selected[service].Mounts.filter(m => service !== 'backend' || m.Destination !== '/run/google-fixture-tls'));
       if (!evalBackground) return undefined;
       // No tag resolution against a registry: local image inspect only. Main must
       // supply the same version pins used to recreate the managed application.
@@ -354,7 +392,6 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
         [service, selected[service].NetworkSettings.Networks[network].IPAddress]));
       const processes = ['backend', 'worker'].map(service => {
-        requireSafe(selected[service].Mounts.length === 0, `${service} has application mounts`);
         // Read-only process/source/constructor/GET-health and Describe RPCs only;
         // no Django setup, completion/embed call, registration or task submission.
         return JSON.parse(run('docker', ['--context', context, 'exec', '-i', '-e', 'PYTHONDONTWRITEBYTECODE=1',
@@ -395,4 +432,17 @@ export async function registerMockModel(actor: TestActor, probe: StateProbe,
   };
   await assertReady();
   return { id, model: MOCK_MODEL, assertReady };
+}
+
+/** Trust only the certificate volume shared with the owned mock, never a host CA directory. */
+export function validateGoogleFixtureMounts(app: Container, mock: Container): void {
+  const reader = app.Mounts.filter(m => m.Destination === '/run/google-fixture-tls');
+  const writer = mock.Mounts.filter(m => m.Destination === '/tls');
+  requireSafe(reader.length === 1 && writer.length === 1 && reader[0].Type === 'volume' &&
+    writer[0].Type === 'volume' && !reader[0].RW && writer[0].RW && reader[0].Source === writer[0].Source,
+    'Google fixture certificate volume mismatch');
+  requireSafe(same(mock.Config.Entrypoint, ['python']) && mock.Mounts.length === 2,
+    'unexpected Google fixture process or mounts');
+  requireSafe(containerEnvironment(app).REQUESTS_CA_BUNDLE === '/run/google-fixture-tls/ca.pem',
+    'Google fixture certificate trust mismatch');
 }

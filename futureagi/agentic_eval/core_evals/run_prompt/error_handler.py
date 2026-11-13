@@ -169,7 +169,7 @@ def _iter_exception_chain(exception: Exception) -> Iterator[Exception]:
         context = getattr(exc, "__context__", None)
         if cause is not None:
             stack.append(cause)
-        if context is not None and context is not cause:
+        elif context is not None and not exc.__suppress_context__:
             stack.append(context)
 
 

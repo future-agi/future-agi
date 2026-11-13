@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'yaml';
 import { E2E } from '../lib/env';
-import { inspectManagedMock, managedMockInspectionError, MOCK_BASE, MOCK_MODEL, registerMockModel, validateBackgroundMockMounts, validateMockEnvironment, validateMockRouting } from '../lib/managed-mock';
+import { inspectManagedMock, managedMockInspectionError, MOCK_BASE, MOCK_MODEL, registerMockModel, validateApplicationMounts, validateBackgroundMockMounts, validateMockEnvironment, validateMockRouting } from '../lib/managed-mock';
 import { validateStandaloneAppEnvironment } from '../lib/managed-mock-standalone';
 import { test as isolatedTest } from '../lib/mock-model-fixtures';
 import type { TestActor } from '../lib/provisioning';
@@ -58,6 +59,11 @@ const unsafeRoutes: [string, (cfg: any) => void][] = [
   ['control plane', c => { c.control_plane = { url: 'http://other.invalid' }; }],
   ['env expansion', c => { c.providers.openai.base_url = '${UNTRUSTED_UPSTREAM}'; }],
   ['unknown model', c => { c.providers.openai.models.push('another-model'); }],
+  ['decision external upstream', c => { c.providers.openrouter.base_url = 'https://openrouter.ai'; }],
+  ['decision wrong format', c => { c.providers.typesafe.api_format = 'openai'; }],
+  ['decision real key', c => { c.providers.perplexity.api_key = 'not-a-synthetic-key'; }],
+  ['decision unknown model', c => { c.providers.openrouter.models.push('unknown/model'); }],
+  ['missing decision connection', c => { delete c.providers.openrouter; }],
 ];
 for (const [name, mutate] of unsafeRoutes) {
   test(`managed mock rejects ${name} before registration`, async () => {
@@ -153,6 +159,74 @@ for (const evalBackground of [false, true]) {
     });
   }
 }
+
+for (const stack of ['distributed', 'standalone']) {
+  test(`managed mock runner keeps unset status-directory behavior for ${stack}`, ({}, testInfo) => {
+    const home = testInfo.outputPath('home');
+    const binaries = testInfo.outputPath('bin');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(binaries, { recursive: true });
+    writeFileSync(`${binaries}/yarn`, '#!/bin/sh\nprintf "%s\\n" "${E2E_HOST_UPDATE_STATUS_DIR-unset}" "$@"\n', { mode: 0o755 });
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binaries}:${process.env.PATH}`, E2E_STACK: stack,
+      E2E_COMPOSE_PROJECT: 'status-default-test' };
+    delete env.E2E_HOST_UPDATE_STATUS_DIR;
+    const output = execFileSync(fileURLToPath(new URL('../../bin/e2e', import.meta.url)),
+      ['test', 'flows/settings/host-update-status.spec.ts'], { encoding: 'utf8', env });
+    const directory = `${home}/.cache/futureagi-e2e/status-default-test/host-update-status`;
+    expect(output.trim().split('\n')).toEqual([
+      stack === 'distributed' ? directory : 'unset', 'playwright', 'test', 'flows/settings/host-update-status.spec.ts',
+    ]);
+    expect(existsSync(directory)).toBe(stack === 'distributed');
+    if (stack === 'distributed') expect(statSync(directory).mode & 0o777).toBe(0o755);
+  });
+}
+
+test('managed mock accepts exactly the public read-only backend status directory', ({}, testInfo) => {
+  const directory = testInfo.outputPath('status');
+  mkdirSync(directory, { recursive: true });
+  const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false };
+  validateApplicationMounts('backend', [mount], directory);
+  const alias = testInfo.outputPath('status-alias');
+  symlinkSync(directory, alias);
+  validateApplicationMounts('backend', [{ ...mount, Source: alias }], directory);
+  // The optional integration does not invalidate old mount-free installations.
+  validateApplicationMounts('backend', [], '');
+  validateApplicationMounts('worker', [], directory);
+});
+
+for (const [name, change] of [
+  ['writable status mount', { RW: true }],
+  ['non-bind status mount', { Type: 'volume' }],
+  ['wrong status destination', { Destination: '/app' }],
+  ['wrong existing status source', { Source: 'other' }],
+  ['missing status source', { Source: 'missing' }],
+  ['file instead of status directory', { Source: 'file' }],
+] as [string, Record<string, string | boolean>][]) {
+  test(`managed mock rejects ${name}`, ({}, testInfo) => {
+    const directory = testInfo.outputPath('status');
+    mkdirSync(directory, { recursive: true });
+    mkdirSync(testInfo.outputPath('other'));
+    writeFileSync(testInfo.outputPath('file'), '{}');
+    const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false,
+      ...change, ...(change.Source ? { Source: testInfo.outputPath(String(change.Source)) } : {}) };
+    expect(() => validateApplicationMounts('backend', [mount], directory)).toThrow('STOP: managed mock');
+  });
+}
+
+test('managed mock rejects extra, duplicate, unconfigured and worker status mounts', ({}, testInfo) => {
+  const directory = testInfo.outputPath('status');
+  mkdirSync(directory, { recursive: true });
+  const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false };
+  for (const mounts of [[mount, mount], [mount, { ...mount, Destination: '/extra' }]]) {
+    expect(() => validateApplicationMounts('backend', mounts, directory)).toThrow('backend has application mounts');
+  }
+  expect(() => validateApplicationMounts('backend', [mount], '')).toThrow('backend has application mounts');
+  expect(() => validateApplicationMounts('backend', [mount], `${directory}/absent`)).toThrow('source mismatch');
+  const file = testInfo.outputPath('file');
+  writeFileSync(file, '{}');
+  expect(() => validateApplicationMounts('backend', [{ ...mount, Source: file }], file)).toThrow('source mismatch');
+  expect(() => validateApplicationMounts('worker', [mount], directory)).toThrow('worker has application mounts');
+});
 
 const gatewayMounts = [
   { Type: 'bind', Source: '/fixture/gateway.e2e.yaml', Destination: '/app/config.yaml', RW: false },
@@ -288,7 +362,9 @@ function composedStandaloneEnvironment(): Record<string, string> {
     .split('\n').filter(line => /^[A-Z_][A-Z0-9_]*=/.test(line))
     .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   const compose = parse(readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8'));
-  return Object.fromEntries(Object.entries(compose.services.app.environment as Record<string, unknown>)
+  const overlay = parse(readFileSync(new URL('../stack/docker-compose.standalone-e2e.yml', import.meta.url), 'utf8'));
+  const environment = { ...compose.services.app.environment, ...overlay.services.app.environment };
+  return Object.fromEntries(Object.entries(environment as Record<string, unknown>)
     .map(([key, value]) => [key, String(value ?? '').replace(/\$\{([A-Z0-9_]+)(?::?-([^}]*))?\}/g,
       (_, name: string, fallback?: string) => vars[name] || fallback || '')]));
 }
@@ -349,7 +425,8 @@ esac
 `;
 const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 type FakeContainer = { service: string; ports?: Record<string, string>; cmd?: string[]; entrypoint?: string[];
-  env?: Record<string, string>; extraHosts?: string[]; mounts?: [string, string][] };
+  env?: Record<string, string>; extraHosts?: string[]; mounts?: [string, string][];
+  volumes?: [string, string, boolean][] };
 
 function fakeStack(stack: 'standalone' | 'distributed') {
   const project = stack === 'standalone' ? 'futureagi-e2e-standalone' : 'futureagi-e2e';
@@ -361,16 +438,27 @@ function fakeStack(stack: 'standalone' | 'distributed') {
   const mockSlack: FakeContainer = { service: 'mock-slack', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
     ports: { '8080/tcp': port(E2E.slackMockUrl) },
     mounts: [[repoFile('stack/mock-slack/server.mjs'), '/srv/server.mjs']] };
+  const mockGoogle: FakeContainer = { service: 'mock-google', cmd: ['/srv/server.py'], entrypoint: ['python'],
+    ports: { '28443/tcp': port(E2E.googleMockUrl) },
+    mounts: [[repoFile('stack/mock-google/server.py'), '/srv/server.py']],
+    volumes: [['/owned/google-tls', '/tls', true]] };
   const stores: FakeContainer[] = [{ service: 'postgres', ports: { '5432/tcp': port(E2E.pgUrl) } },
     { service: 'clickhouse', ports: { '8123/tcp': port(E2E.chUrl) } }];
   const services: FakeContainer[] = stack === 'standalone' ? [{ service: 'app', env: composedStandaloneEnvironment(),
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
-    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json']],
-  }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
+    volumes: [['/owned/google-tls', '/run/google-fixture-tls', false]],
+    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json'],
+      [repoFile('stack/backend/settings_e2e.py'), '/app/backend/tfc/settings/e2e.py'],
+      [repoFile('stack/backend/urls_e2e.py'), '/app/backend/tfc/urls_e2e.py'],
+      [repoFile('stack/backend/e2e_clean_signup.py'), '/app/backend/accounts/views/e2e_clean_signup.py'],
+      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py'],
+      [repoFile('stack/backend/e2e_google.py'), '/app/backend/tfc/views/e2e_google.py']],
+  }, mock, mockGoogle, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
-    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,
-  { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock' } },
+    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack, mockGoogle,
+  { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock', REQUESTS_CA_BUNDLE: '/run/google-fixture-tls/ca.pem' },
+    volumes: [['/owned/google-tls', '/run/google-fixture-tls', false]] },
   { service: 'worker' }, { service: 'frontend', ports: { '80/tcp': port(E2E.appUrl) } }, ...stores];
   const containers = services.map((c, i) => ({
     Id: String(i + 1).repeat(64), Image: `sha256:${String(i + 1).repeat(64)}`,
@@ -378,7 +466,10 @@ function fakeStack(stack: 'standalone' | 'distributed') {
     Config: { Labels: { 'com.docker.compose.service': c.service, 'com.docker.compose.project': project },
       Env: Object.entries(c.env ?? {}).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
     HostConfig: { ExtraHosts: c.extraHosts ?? null },
-    Mounts: (c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
+    Mounts: [
+      ...(c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
+      ...(c.volumes ?? []).map(([Source, Destination, RW]) => ({ Type: 'volume', Source, Destination, RW })),
+    ],
     NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' } },
       Ports: Object.fromEntries(Object.entries(c.ports ?? {}).map(([p, host]) => [p, [{ HostIp: '127.0.0.1', HostPort: host }]])) },
   }));
@@ -396,10 +487,11 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/docker`, fakeDockerScript, { mode: 0o755 });
   for (const [name, body] of Object.entries(files)) writeFileSync(`${dir}/${name}`, typeof body === 'string' ? body : JSON.stringify(body));
-  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
+  mkdirSync(`${dir}/status`, { recursive: true });
+  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'E2E_HOST_UPDATE_STATUS_DIR', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
     .map(key => [key, process.env[key]]));
   Object.assign(process.env, { PATH: `${dir}:${process.env.PATH}`, DOCKER_CONTEXT: 'e2e-fake', E2E_STACK: stack,
-    FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
+    E2E_HOST_UPDATE_STATUS_DIR: `${dir}/status`, FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
   delete process.env.DOCKER_HOST;
   try {
     return inspect();
@@ -413,13 +505,33 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
 const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]
   .every(url => new URL(url).hostname === 'localhost');
 
+for (const variant of ['valid', 'writable', 'wrong-source', 'wrong-destination', 'non-bind', 'extra', 'worker'] as const) {
+  test(`managed mock offline inspection checks the ${variant} host status bind`, ({}, testInfo) => {
+    test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+    const dir = testInfo.outputPath('docker');
+    const files = fakeStack('distributed');
+    const containers = files['containers.json'];
+    const backend = containers.find((c: any) => c.Config.Labels['com.docker.compose.service'] === 'backend');
+    const worker = containers.find((c: any) => c.Config.Labels['com.docker.compose.service'] === 'worker');
+    const mount = { Type: variant === 'non-bind' ? 'volume' : 'bind',
+      Source: variant === 'wrong-source' ? dir : `${dir}/status`,
+      Destination: variant === 'wrong-destination' ? '/app' : '/run/futureagi-host-update',
+      RW: variant === 'writable' };
+    if (variant === 'worker') worker.Mounts = [mount];
+    else backend.Mounts.push(...(variant === 'extra' ? [mount, { ...mount, Destination: '/extra' }] : [mount]));
+    const inspect = () => withFakeDocker(dir, 'distributed', files, () => inspectManagedMock());
+    if (variant === 'valid') expect(inspect().services.map(service => service.service)).toContain('backend');
+    else expect(inspect).toThrow('STOP: managed mock');
+  });
+}
+
 for (const stack of ['standalone', 'distributed'] as const) {
   test(`managed mock inspects a well-formed ${stack} stack offline`, ({}, testInfo) => {
     test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
     const receipt = withFakeDocker(testInfo.outputPath('docker'), stack, fakeStack(stack), () => inspectManagedMock());
     expect(receipt.services.map(s => s.service)).toEqual(stack === 'standalone'
-      ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+      ? ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse']
+      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   });
 
   test(`managed mock refuses a ${stack} network the project does not own`, ({}, testInfo) => {
@@ -442,8 +554,8 @@ test('managed stack routing has runtime labels, network and read-only source pro
   // Standalone runs the gateway, backend, worker and UI in one `app` container
   // (lib/managed-mock-standalone.ts).
   expect(receipt.services.map(s => s.service)).toEqual(process.env.E2E_STACK === 'standalone'
-    ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+    ? ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse']
+    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   expect(receipt.gatewaySha).toMatch(/^[a-f0-9]{64}$/);
   expect(receipt.mockSha).toMatch(/^[a-f0-9]{64}$/);
   await testInfo.attach('verified-managed-mock', { contentType: 'application/json', body: JSON.stringify(receipt) });

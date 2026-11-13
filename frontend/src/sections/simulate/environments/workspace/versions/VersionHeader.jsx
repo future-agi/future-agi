@@ -1,13 +1,11 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { VersionBadge } from "../EnvVersionPin";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { PreflightBadge } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 
-const ACCENT = BUILD_TONES.accent;
 const MONO = "ui-monospace, Menlo, monospace";
 
 // A version's label, badges, origin, summary and when and by whom it was made.
@@ -38,14 +36,14 @@ export default function VersionHeader({ version }) {
         <Typography
           sx={{
             typography: "s2",
-            fontWeight: "fontWeightBold",
+            fontWeight: 500,
             fontFamily: MONO,
           }}
         >
           {named(version)}
         </Typography>
         {version.isDefault && (
-          <VersionBadge label={VERSIONS_COPY.default} tone={ACCENT} />
+          <VersionBadge label={VERSIONS_COPY.default} />
         )}
         {status && <VersionBadge label={status} />}
         <PreflightBadge status={version.preflightStatus} />
