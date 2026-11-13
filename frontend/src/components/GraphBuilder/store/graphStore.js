@@ -159,6 +159,33 @@ export const useGraphStore = create((set, get) => ({
       ),
     });
   },
+  renameNode: (nodeId, name) => {
+    set((state) => {
+      const nextName = name.trim();
+
+      if (
+        !nextName ||
+        state.nodes.some((node) => node.id !== nodeId && node.id === nextName)
+      ) {
+        return state;
+      }
+
+      return {
+        nodes: state.nodes.map((node) =>
+          node.id === nodeId
+            ? { ...node, id: nextName, data: { ...node.data, name: nextName } }
+            : node,
+        ),
+        edges: state.edges.map((edge) => ({
+          ...edge,
+          source: edge.source === nodeId ? nextName : edge.source,
+          target: edge.target === nodeId ? nextName : edge.target,
+        })),
+        activeNodeId:
+          state.activeNodeId === nodeId ? nextName : state.activeNodeId,
+      };
+    });
+  },
   updateNode: (nodeId, newData) => {
     set({
       nodes: get().nodes.map((node) =>
