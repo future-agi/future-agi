@@ -352,6 +352,53 @@ class LinkAcceptance(unittest.TestCase):
                     self.assertIn("not http or https", result["reason"])
                     check.assert_not_called()
 
+    def test_scheme_relative_link_after_equals_or_colon_is_found(self):
+        for text, link in (
+            ("<img src=//allowed.example/pixel>", "//allowed.example/pixel"),
+            ("href=//allowed.example", "//allowed.example"),
+            ("<a href=//allowed.example/x>", "//allowed.example/x"),
+            ("url: //allowed.example/x", "//allowed.example/x"),
+            ("Open http:://allowed.example/x", "//allowed.example/x"),
+        ):
+            for name in NAMES:
+                evaluate = load(name)
+                check = mock.Mock(return_value=200)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+                ):
+                    self.assertEqual(evaluate.__globals__["_links"](text), [link])
+                    result = evaluate(None, text, None, None)
+                    self.assertEqual(result["score"], 0.0)
+                    self.assertIn("not http or https", result["reason"])
+                    check.assert_not_called()
+
+    def test_explicit_scheme_link_is_found_once(self):
+        for text, links in (
+            ("ftp://allowed.example/x", ["ftp://allowed.example/x"]),
+            ("Connect to ws://allowed.example", ["ws://allowed.example"]),
+            ("src=ftp://allowed.example/a", ["ftp://allowed.example/a"]),
+            ("x:ftp://allowed.example", ["ftp://allowed.example"]),
+            (
+                "href=https://allowed.example/a",
+                ["https://allowed.example/a"],
+            ),
+        ):
+            for name in NAMES:
+                with self.subTest(text=text, name=name):
+                    self.assertEqual(load(name).__globals__["_links"](text), links)
+
+    def test_comment_after_equals_is_not_a_link(self):
+        for text in (
+            "x=//increment",
+            "flag=//go:build linux",
+            "a=//TODO tidy",
+            "path=//package.json",
+        ):
+            for name in NAMES:
+                with self.subTest(text=text, name=name):
+                    self.assertEqual(load(name).__globals__["_links"](text), [])
+
     def test_link_matching_stays_fast_on_long_input(self):
         inputs = (
             "a" * 1_000_000,
