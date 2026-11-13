@@ -375,8 +375,11 @@ def activate_account(request, uidb64, token):
 
     try:
         # Decode the uidb64 to the user ID
-        uid = force_str(urlsafe_base64_decode(uidb64))
-        user = User.objects.get(pk=uid)
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (ValueError, TypeError, ValidationError):
+            return _gm.bad_request("Activation link is invalid or has expired.")
 
         # Check if the token is valid
         if account_activation_token.check_token(user, token):
