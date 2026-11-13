@@ -259,6 +259,10 @@ class _CreationClient:
         self.create_code = create_code
         self.created = []
         self.written = []
+        # The buckets of the credentials' project, as GCS lists them.
+        self.project_buckets = []
+        self.list_error = None
+        self.listings = 0
 
     def bucket_exists(self, bucket):
         return self.exists
@@ -279,12 +283,19 @@ class _CreationClient:
     def put_object(self, **kwargs):
         self.written.append(kwargs["object_name"])
 
+    def list_buckets(self):
+        self.listings += 1
+        if self.list_error is not None:
+            raise self.list_error
+        return [SimpleNamespace(name=name) for name in self.project_buckets]
+
 
 def _use_creation_client(monkeypatch, settings, client, backend):
     settings.UPLOAD_BUCKET_NAME = "test-upload"
     settings.COMPARE_BUCKET_NAME = f"test-upload-compare-{uuid.uuid4().hex[:8]}"
     monkeypatch.setattr(storage_client, "_client", client)
     monkeypatch.setattr(storage_client, "STORAGE_BACKEND", backend)
+    client.project_buckets = [settings.COMPARE_BUCKET_NAME]
     return settings.COMPARE_BUCKET_NAME
 
 
@@ -551,6 +562,67 @@ def test_gcs_refuses_a_missing_compare_bucket_with_a_clear_error(monkeypatch, se
     write_compare_json(compare_id, "metadata.json", {"status": "completed"})
     assert client.written == [f"compare/{compare_id}/metadata.json"]
     assert client.policy_reads == 0
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["in-this-project", "in-another-project", "listing-fails"],
+)
+def test_gcs_uses_a_compare_bucket_only_from_the_credentials_project(
+    monkeypatch, settings, case
+):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    client = _ReadsCountingClient(exists=True)
+    bucket = _use_creation_client(monkeypatch, settings, client, "gcs")
+    logged = []
+    monkeypatch.setattr(
+        storage_client.logger,
+        "error",
+        lambda event, **fields: logged.append((event, fields)),
+    )
+    if case == "in-another-project":
+        # A bucket of that name exists, but belongs to someone else.
+        client.project_buckets = ["test-upload", "unrelated-bucket"]
+    elif case == "listing-fails":
+        client.list_error = _storage_error("AccessDenied")
+    compare_id = str(uuid.uuid4())
+
+    if case == "in-this-project":
+        write_compare_json(compare_id, "page_1.json", {"rows": []})
+        write_compare_json(compare_id, "page_2.json", {"rows": []})
+        assert client.written == [
+            f"compare/{compare_id}/page_1.json",
+            f"compare/{compare_id}/page_2.json",
+        ]
+        # Found in the project once, then used until the recheck.
+        assert client.listings == 1
+        assert logged == []
+        return
+
+    with pytest.raises(PrivateBucketRefused) as refused:
+        write_compare_json(compare_id, "page_1.json", {"rows": []})
+    assert client.written == []
+    if case == "in-another-project":
+        assert str(refused.value) == f"compare bucket {bucket} is not in this project"
+        assert [event for event, _ in logged] == [
+            "storage_private_bucket_not_in_project"
+        ]
+    else:
+        assert "could not be checked" in str(refused.value)
+        assert [event for event, _ in logged] == [
+            "storage_private_bucket_project_unknown"
+        ]
+    assert logged[0][1]["bucket"] == bucket
+
+    # A refusal is not remembered: once the bucket is the project's, it is
+    # used.
+    client.list_error = None
+    client.project_buckets = [bucket]
+    write_compare_json(compare_id, "page_1.json", {"rows": []})
+    assert client.written == [f"compare/{compare_id}/page_1.json"]
+    assert client.listings == 2
 
 
 class _PolicyTextClient:
