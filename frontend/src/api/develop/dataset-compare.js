@@ -1,6 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
+import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { RESPONSE_CODES } from "src/utils/constants";
+
+export const COMPARISON_EXPIRED_MESSAGE =
+  "This comparison expired and is being rebuilt. Download it again once the table has loaded.";
 
 export const useDeleteCompare = () => {
   return useMutation({
@@ -16,6 +20,63 @@ export const useDeleteCompare = () => {
         if (error?.statusCode === RESPONSE_CODES.NOT_FOUND) return null;
         throw error;
       }
+    },
+  });
+};
+
+// Downloads the comparison as CSV. A comparison that expired answers 404:
+// that is not an error to show. The table is rebuilt (onComparisonExpired)
+// and the user is asked to download again once it has loaded.
+export const useDownloadCompare = ({
+  compareId,
+  selectedDatasetsValues,
+  baseColumn,
+  onComparisonExpired,
+}) => {
+  return useMutation({
+    mutationFn: async () => {
+      const requestCompareId = compareId?.current ?? null;
+      try {
+        const response = await axios.post(
+          endpoints.dataset.getCompareDatasetDownload(
+            selectedDatasetsValues[0],
+          ),
+          {
+            dataset_ids: selectedDatasetsValues.slice(1),
+            base_column_name: baseColumn,
+            compare_id: requestCompareId,
+          },
+        );
+        return { response };
+      } catch (error) {
+        if (
+          requestCompareId &&
+          error?.statusCode === RESPONSE_CODES.NOT_FOUND
+        ) {
+          return { expiredCompareId: requestCompareId };
+        }
+        throw error;
+      }
+    },
+    onSuccess: ({ response, expiredCompareId }) => {
+      if (expiredCompareId) {
+        // Rebuild only if the table has not already moved on to a new one.
+        if (compareId?.current === expiredCompareId) onComparisonExpired?.();
+        enqueueSnackbar(COMPARISON_EXPIRED_MESSAGE, { variant: "info" });
+        return;
+      }
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `dataset-${selectedDatasetsValues[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      enqueueSnackbar("Dataset downloaded successfully", {
+        variant: "success",
+      });
     },
   });
 };

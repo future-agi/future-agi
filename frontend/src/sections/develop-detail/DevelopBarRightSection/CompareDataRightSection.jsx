@@ -9,9 +9,7 @@ import {
 import React, { useState, useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
-import { useMutation } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
-import { enqueueSnackbar } from "src/components/snackbar";
+import { useDownloadCompare } from "src/api/develop/dataset-compare";
 import CustomTooltip from "src/components/tooltip";
 import ColumnMenu from "./ColumnMenu";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
@@ -27,6 +25,7 @@ const CompareDataRightSection = ({
   compareId,
   setColumns,
   selectedColumns,
+  onComparisonExpired,
 }) => {
   const [columnPopoverOpen, setColumnPopoverOpen] = useState(false);
   // const [selectedColumns, setSelectedColumns] = useState([]);
@@ -63,30 +62,11 @@ const CompareDataRightSection = ({
     setColumnPopoverOpen(false);
   };
 
-  const { mutate: handleDownloadCompareDataset } = useMutation({
-    mutationFn: () =>
-      axios.post(
-        endpoints.dataset.getCompareDatasetDownload(selectedDatasetsValues[0]),
-        {
-          dataset_ids: selectedDatasetsValues.slice(1),
-          base_column_name: baseColumn,
-          compare_id: compareId?.current,
-        },
-      ),
-    onSuccess: (response) => {
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `dataset-${selectedDatasetsValues[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      enqueueSnackbar("Dataset downloaded successfully", {
-        variant: "success",
-      });
-    },
+  const { mutate: handleDownloadCompareDataset } = useDownloadCompare({
+    compareId,
+    selectedDatasetsValues,
+    baseColumn,
+    onComparisonExpired,
   });
 
   const handleColumnSelect = (column, parentId) => {
@@ -288,6 +268,7 @@ CompareDataRightSection.propTypes = {
   baseColumn: PropTypes.string,
   columns: PropTypes.arrayOf(PropTypes.string),
   compareId: PropTypes.any,
+  onComparisonExpired: PropTypes.func,
   setColumns: PropTypes.func,
   selectedColumns: PropTypes.array,
 };

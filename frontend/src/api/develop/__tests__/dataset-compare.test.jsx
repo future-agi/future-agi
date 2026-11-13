@@ -8,24 +8,33 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 
-const mocks = vi.hoisted(() => ({ delete: vi.fn() }));
+const mocks = vi.hoisted(() => ({ delete: vi.fn(), post: vi.fn() }));
+const snackbar = vi.hoisted(() => ({ enqueueSnackbar: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
   endpoints: {
     dataset: {
       deleteCompareDataset: (id) => `/model-hub/datasets/delete-compare/${id}/`,
+      getCompareDatasetDownload: (id) =>
+        `/model-hub/datasets/${id}/compare-datasets/download/`,
     },
   },
 }));
 
-import { useDeleteCompare } from "../dataset-compare";
+vi.mock("src/components/snackbar", () => snackbar);
+
+import {
+  COMPARISON_EXPIRED_MESSAGE,
+  useDeleteCompare,
+  useDownloadCompare,
+} from "../dataset-compare";
 
 const COMPARE_ID = "00000000-0000-4000-8000-0000000000aa";
 
 // The app's MutationCache onError toasts every failed mutation, so record what
 // reaches it the same way.
-function renderDeleteCompare() {
+function renderMutation(useHook) {
   const onError = vi.fn();
   const queryClient = new QueryClient({
     mutationCache: new MutationCache({ onError }),
@@ -38,8 +47,12 @@ function renderDeleteCompare() {
     );
   }
   Wrapper.propTypes = { children: PropTypes.node };
-  const { result } = renderHook(() => useDeleteCompare(), { wrapper: Wrapper });
+  const { result } = renderHook(useHook, { wrapper: Wrapper });
   return { result, onError };
+}
+
+function renderDeleteCompare() {
+  return renderMutation(() => useDeleteCompare());
 }
 
 describe("useDeleteCompare", () => {
@@ -90,5 +103,143 @@ describe("useDeleteCompare", () => {
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBe(failure);
+  });
+});
+
+const LEFT_ID = "00000000-0000-4000-8000-000000000001";
+const RIGHT_ID = "00000000-0000-4000-8000-000000000002";
+const NEW_COMPARE_ID = "00000000-0000-4000-8000-0000000000bb";
+
+function renderDownloadCompare(compareId, onComparisonExpired) {
+  return renderMutation(() =>
+    useDownloadCompare({
+      compareId,
+      selectedDatasetsValues: [LEFT_ID, RIGHT_ID],
+      baseColumn: "question",
+      onComparisonExpired,
+    }),
+  );
+}
+
+describe("useDownloadCompare", () => {
+  beforeEach(() => {
+    mocks.post.mockReset();
+    snackbar.enqueueSnackbar.mockReset();
+    window.URL.createObjectURL = vi.fn(() => "blob:compare");
+    window.URL.revokeObjectURL = vi.fn();
+  });
+
+  it("downloads the comparison it was built for", async () => {
+    mocks.post.mockResolvedValue({ data: "question,answer\n" });
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: COMPARE_ID },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(mocks.post).toHaveBeenCalledExactlyOnceWith(
+      `/model-hub/datasets/${LEFT_ID}/compare-datasets/download/`,
+      {
+        dataset_ids: [RIGHT_ID],
+        base_column_name: "question",
+        compare_id: COMPARE_ID,
+      },
+    );
+    expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      "Dataset downloaded successfully",
+      { variant: "success" },
+    );
+    expect(onComparisonExpired).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds an expired comparison instead of reporting a 404", async () => {
+    mocks.post.mockRejectedValue({
+      statusCode: 404,
+      result: "This comparison was not found or has expired.",
+    });
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: COMPARE_ID },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onComparisonExpired).toHaveBeenCalledTimes(1);
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      COMPARISON_EXPIRED_MESSAGE,
+      { variant: "info" },
+    );
+    expect(window.URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("does not rebuild again when the table already has a new comparison", async () => {
+    const compareId = { current: COMPARE_ID };
+    mocks.post.mockImplementation(async () => {
+      // The table started over while the download was in flight.
+      compareId.current = NEW_COMPARE_ID;
+      throw { statusCode: 404, result: "Not found." };
+    });
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      compareId,
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onComparisonExpired).not.toHaveBeenCalled();
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      COMPARISON_EXPIRED_MESSAGE,
+      { variant: "info" },
+    );
+  });
+
+  it("still reports other download failures", async () => {
+    const failure = { statusCode: 500, result: "Something went wrong" };
+    mocks.post.mockRejectedValue(failure);
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: COMPARE_ID },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toBe(failure);
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBe(failure);
+    expect(onComparisonExpired).not.toHaveBeenCalled();
+    expect(snackbar.enqueueSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("reports a 404 when no comparison was sent", async () => {
+    const failure = { statusCode: 404, result: "Dataset not found." };
+    mocks.post.mockRejectedValue(failure);
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: null },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toBe(failure);
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onComparisonExpired).not.toHaveBeenCalled();
   });
 });
