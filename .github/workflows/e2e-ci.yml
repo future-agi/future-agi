@@ -533,6 +533,29 @@ jobs:
               print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
 
+      - name: Capture backend lifecycle on failure
+        if: failure() && steps.boot.outcome == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-lifecycle"
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(app)
+          else
+            services=(backend fi-collector)
+          fi
+          bin/e2e compose logs --no-color --timestamps "${services[@]}" > "$RUNNER_TEMP/backend-lifecycle/logs.txt" 2>&1
+          for id in $(bin/e2e compose ps -aq "${services[@]}"); do
+            docker inspect --format '{{.Name}} restartCount={{.RestartCount}} state={{json .State}}' "$id"
+          done > "$RUNNER_TEMP/backend-lifecycle/state.txt"
+
+      - name: Upload backend lifecycle diagnostics
+        if: failure() && steps.boot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lifecycle-${{ matrix.stack }}
+          path: ${{ runner.temp }}/backend-lifecycle
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Dump stack state on failure
         if: failure()
         run: |
