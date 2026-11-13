@@ -2274,7 +2274,7 @@ class RetrieveRunPromptOptionsView(APIView):
                 organization_id=getattr(self.request, "organization", None)
                 or self.request.user.organization.id,
             )
-            available_models = model_manager.models
+            available_models = [model.copy() for model in model_manager.models]
 
             # Get provider status
             providers = LiteLlmModelProvider.get_choices()
