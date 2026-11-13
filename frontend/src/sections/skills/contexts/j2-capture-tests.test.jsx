@@ -97,7 +97,8 @@ it('does not grant capture rights from a context list entry alone', () => {
 });
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
   render(<ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite />);
-  expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
+  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText(/Application verification is off/)).toBeVisible();
   expect(screen.getByText('No regression cases yet')).toBeVisible();
 });
@@ -105,8 +106,10 @@ it('offers application verification only when the deployment has a hosted runtim
   state.runtime = true;
   render(<ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite />);
   expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText('Application target')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add application target' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Runtime details' }));
   expect(screen.getByText(/synthetic fixture/)).toBeVisible();
 });
 it('does not turn an inaccessible suite into empty successful coverage', () => {

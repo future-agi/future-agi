@@ -19,6 +19,7 @@ vi.mock('src/api/skills/context-testing', () => ({
 }));
 vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: () => ({ data: { results: h.annotations } }), useAppendEvidenceAnnotation: () => ({ mutateAsync: async () => {} }) }));
 vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: () => ({ data: { name: 'Support context' } }) }));
+vi.mock('src/api/skills/j6-recovery', () => ({ useRecoveryReviewers: () => ({ data: [{ id: 'reviewer', name: 'Case reviewer' }] }) }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
 const versions = [7, 6, 4].map((number) => ({ number, id: `v${number}` }));
 const cases = [{ id: 'refund', title: 'Original refund failure', reviewed: true }, { id: 'chargeback', title: 'Working chargeback case', reviewed: true }, { id: 'draft', title: 'Unreviewed', reviewed: false }];
@@ -74,7 +75,7 @@ it('uses one baseline when recorded reference is also production and retains the
   expect(h.preview.plans).toHaveLength(1);
   expect(h.preview.plans[0].baselines).toEqual({ reference: 6 });
   expect(screen.getByText('Recorded reference v6 · also production')).toBeVisible();
-  expect(screen.queryByRole('alert')).toHaveTextContent('paid ceiling');
+  expect(screen.getByText(/Up to 6 runs · at most/)).toBeVisible();
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I accept up to $1.5 in provider charges for this run.' }));
   fireEvent.click(button);
@@ -98,7 +99,10 @@ it('opens an attempt with the keyboard, shows disagreement scope and returns foc
   await user.keyboard('{Enter}');
   expect(screen.getByRole('heading', { name: 'Refund', level: 2 })).toBeVisible();
   expect(screen.getByText(/Applies to the whole attempt/)).toBeVisible();
-  expect(screen.getByText('disagree: Wrong business action')).toBeVisible();
+  expect(screen.getByText('Disagrees')).toBeVisible();
+  expect(screen.getByText('Wrong business action')).toBeVisible();
+  expect(screen.getByText('Case reviewer')).toBeVisible();
+  expect(screen.getByText('1 disagreement below')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Close', exact: true }));
   await waitFor(() => expect(inspect).toHaveFocus());
 });
@@ -111,4 +115,38 @@ it('continues to the composer with the complete candidate, target and shared run
   expect(Object.fromEntries(url.searchParams)).toMatchObject({ kind: 'agent_context', subject: 'context', name: 'Support context', candidate: 'candidate-id', number: '6', digest: 'sha256:full-digest', evidence: 'simulation_native:previous', target: 'binding', label: 'production' });
   expect(url.searchParams.has('annotation_revision')).toBe(false);
   expect(screen.getByText(/Packet ready/)).toBeVisible();
+});
+
+it('chooses the newest result across both run types and keeps a combined history', () => {
+  h.runs[0].createdAt = '2026-11-11T12:00:00Z';
+  renderPanel({ answerHistory: { data: { results: [{ id: 'answer', status: 'completed', created_at: '2026-11-12T12:00:00Z', candidate: { version: 7 } }] } }, renderAnswer: (id) => <p>Answer result {id}</p> });
+  expect(screen.getByText('Answer result answer')).toBeVisible();
+  expect(screen.getByRole('table', { name: 'Test history' })).toHaveTextContent('Answer check');
+  expect(screen.getByRole('table', { name: 'Test history' })).toHaveTextContent('Application verification');
+});
+it('explains disabled packet prerequisites and marks the earlier-run scope', () => {
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  renderPanel();
+  expect(screen.getByText('Fill the three CI fields to share this run.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toBeDisabled();
+  expect(screen.getByText('This packet applies to the earlier run, not your current selection.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Run on the application' })).toHaveClass('MuiButton-outlined');
+});
+it('reconciles preparing plus returned work without announcing the result grid', () => {
+  h.detail.jobState = 'provisioning';
+  h.detail.received = 1;
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'running' }];
+  renderPanel();
+  expect(screen.getByRole('status')).toHaveTextContent('1 of 2 runs finished');
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+  expect(screen.getByRole('region', { name: 'Latest result' })).not.toHaveAttribute('aria-live');
+  expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
+  expect(screen.getAllByText('Pending')).toHaveLength(4);
+});
+
+it('offers the first-run primary in the real-route empty preview even with retained history', () => {
+  renderPanel({ state: 'empty' });
+  expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
 });

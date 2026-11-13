@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTestsPanel from './ContextTestsPanel';
@@ -32,19 +32,22 @@ afterEach(cleanup);
 
 it('shows regression cases, application verification and whole-context tests in one panel', () => {
   mount();
-  expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
+  expect(screen.getByText('Reviewed cases')).toBeVisible();
   expect(screen.getByRole('table', { name: 'Context regression cases' })).toHaveTextContent('Refund failure');
   expect(screen.getByText('Application target')).toBeVisible();
-  expect(screen.getByText('Verify on the application')).toBeVisible();
-  expect(screen.getByText('Check answers with this context')).toBeVisible();
+  expect(screen.getByRole('radio', { name: /^Verify on the application/ })).toBeChecked();
+  expect(screen.getByRole('radio', { name: /^Check answers with this context/ })).not.toBeChecked();
+  expect(screen.queryByRole('textbox', { name: 'Test request' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   expect(screen.getByText('Release v4')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toBeInTheDocument();
 });
 it('keeps application verification when whole-context testing is unavailable', () => {
   h.optionsError = true;
   mount();
-  expect(screen.getByText('Context testing unavailable')).toBeVisible();
   expect(screen.getByText('Application target')).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+  expect(screen.getByText("Couldn't load answer-check options.")).toBeVisible();
   expect(screen.getByRole('table', { name: 'Context regression cases' })).toBeVisible();
 });
 it('keeps whole-context tests when the regression suite cannot load', () => {
@@ -57,18 +60,20 @@ it('switches only the whole-context candidate to the saved draft', () => {
   const onSelect = vi.fn();
   const source = { testingDraft: false, draftAvailable: true, releaseAvailable: true, onSelect };
   const view = mount({ source });
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   fireEvent.click(screen.getByRole('radio', { name: 'Saved draft' }));
   expect(onSelect).toHaveBeenCalledWith(true);
   view.rerender(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version]} canWrite source={{ ...source, testingDraft: true }} draft={{ revision: 9, digest }} /></MemoryRouter>);
   expect(screen.getByText('Saved draft revision 9')).toBeVisible();
   // Application verification still names the viewed release.
-  expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
+  expect(screen.getByText('Reviewed cases')).toBeVisible();
   expect(screen.getByRole('radio', { name: 'Saved draft' })).toBeChecked();
   expect(screen.getByRole('radio', { name: 'Published version' })).toBeEnabled();
 });
 it('never falls back to the release while the saved draft is loading or failed', () => {
   const source = { testingDraft: true, draftAvailable: true, releaseAvailable: true, onSelect: () => {}, isError: true, onRetry: () => {} };
   mount({ source });
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   expect(screen.getByText('Saved draft unavailable')).toBeVisible();
   expect(screen.queryByText('Release v4')).not.toBeInTheDocument();
   // The switch remains so the author can go back to the viewed release.
@@ -77,8 +82,27 @@ it('never falls back to the release while the saved draft is loading or failed',
 it('hands the editor draft off to the saved-revision tests without an inline run', () => {
   const onOpen = vi.fn();
   render(<MemoryRouter><ContextTestsPanel contextId="context" canWrite onOpenSavedDraft={onOpen} /></MemoryRouter>);
-  expect(screen.getByText(/Context regression cases/)).toBeVisible();
+  expect(screen.getByText('Reviewed cases')).toBeVisible();
   expect(screen.queryByRole('textbox', { name: 'Test request' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Save and open whole-context tests' }));
   expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a single first-run action and unticked acknowledgments while switching test types', () => {
+  mount();
+  expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+  expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.' })).not.toBeChecked();
+  expect(screen.getByText('History')).toBeVisible();
+  expect(screen.queryByText('Context test history')).not.toBeInTheDocument();
+});
+
+it('moves the first-run action into the selected form rather than its hidden sibling', async () => {
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Run your first test' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Candidate version' })).toHaveFocus());
+  expect(screen.queryByRole('textbox', { name: 'Test request' })).not.toBeInTheDocument();
 });

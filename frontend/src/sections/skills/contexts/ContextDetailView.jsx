@@ -35,10 +35,10 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
     <PageHeader title={context.name} description={descriptor?.description || context.description} />
     <ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === "production")?.version} draft={query.data.ownDraft} />
     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-      {query.data.ownDraft && <Button variant="contained" disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+      {query.data.ownDraft && <Button variant={tab === "tests" ? "outlined" : "contained"} disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
       {/* J4: a saved draft can go straight to its publication review. */}
       {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
-      <Button variant={query.data.ownDraft ? "outlined" : "contained"} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : "version"}</Button>
+      <Button variant={query.data.ownDraft || tab === "tests" ? "outlined" : "contained"} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : "version"}</Button>
       <TextField select size="small" label="Viewed release" value={viewed?.number || ""} disabled={!onSelectVersion} onChange={(event) => onSelectVersion(Number(event.target.value))}>
         {!viewed && <MenuItem value="">Not published</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
       </TextField>

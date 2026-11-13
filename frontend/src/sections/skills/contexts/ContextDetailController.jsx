@@ -66,9 +66,9 @@ function Detail() {
     {!query.data?.context.latestVersion && query.data && !query.data.ownDraft && <Button variant="contained" onClick={() => navigate(paths.dashboard.skills.contextEdit(contextId))}>Start unpublished draft</Button>}
     <ContextDetailView initialTab={params.get('tab')} scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
-      onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onReviewDraft={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined} state={params.get('state')}
+      onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onReviewDraft={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined} state={params.get('tab') === 'tests' ? undefined : params.get('state')}
       sections={{
-        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={productionVersion} seed={testSeed}
+        tests: <ContextTestsPanel contextName={query.data?.context?.name} contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={productionVersion} seed={testSeed}
           canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} state={params.get('state')} draft={testingDraft ? draft.data : undefined}
           source={{ testingDraft, draftAvailable: Boolean(query.data?.ownDraft), releaseAvailable: Boolean(selectedVersion), isLoading: testingDraft && draft.isLoading, isError: testingDraft && draft.isError, onRetry: draft.refetch,
             onSelect: (useDraft) => setParams((current) => { const next = new URLSearchParams(current); if (useDraft) next.set('draft', '1'); else next.delete('draft'); return next; }) }} />,

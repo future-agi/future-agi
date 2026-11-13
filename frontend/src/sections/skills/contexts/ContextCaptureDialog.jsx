@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
 import CaseImportDialog from "../review/CaseImportDialog";
+import TechnicalDetails from '../components/TechnicalDetails';
 import { IdentityValue, ReviewState } from "../review/ReleaseReviewBody";
 import {
   OperationFeedback,
@@ -82,6 +83,7 @@ function Capture({
                 redaction and expectation review. This does not run a
                 model or copy hidden reasoning.
               </Alert>
+              <TechnicalDetails title="Source identity">
               <IdentityValue
                 label="Source project"
                 value={source.traceRef.projectId}
@@ -90,6 +92,7 @@ function Capture({
                 label="Physical span"
                 value={`${source.traceRef.traceId} / ${source.traceRef.spanId} / ${source.traceRef.startTime}`}
               />
+              </TechnicalDetails>
               {!segments.length && (
                 <Typography variant="s1">
                   No supported request or tool-result segments. Assistant

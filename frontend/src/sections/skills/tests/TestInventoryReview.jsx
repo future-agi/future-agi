@@ -14,6 +14,7 @@ import {
 
 import Section from "src/components/section";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
+import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from "../components/IdentityChip";
 import InventoryFileDrawer from "./InventoryFileDrawer";
 
@@ -26,6 +27,7 @@ export default function TestInventoryReview({
   disabled = false,
   subjectKind,
   subjectId,
+  subjectName,
 }) {
   const [inspected, setInspected] = useState(null);
   const flagged = preview.inventory.flatMap((bundle) =>
@@ -106,6 +108,12 @@ export default function TestInventoryReview({
       ],
     });
   };
+  const snapshot = (bundle) => [preview.candidate, preview.production, preview.reference, ...(preview.competitors || [])].find((item) => item?.digest === bundle.digest && (item.skillId ?? item.skill_id) === bundle.skillId);
+  const sourceLabel = (bundle) => {
+    const source = snapshot(bundle);
+    const name = bundle.skillId === subjectId ? subjectName || (subjectKind === 'agent_context' ? 'This context' : 'This skill') : bundle.name || 'Linked skill';
+    return `${name}${source?.version ? ` v${source.version}` : source?.draftRevision ? ` · draft revision ${source.draftRevision}` : ''}`;
+  };
   return (
     <Stack spacing={2}>
       <Section
@@ -117,10 +125,10 @@ export default function TestInventoryReview({
             <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
             <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
               <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="s1">{file.path}</Typography></TableCell>
-              <TableCell><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TableCell>
+              <TableCell><Typography variant="s1">{sourceLabel(bundle)}</Typography><TechnicalDetails title="Source details"><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TechnicalDetails></TableCell>
               <TableCell><Typography variant="s3">{file.flags.length ? file.flags.map((flag) => flag.replaceAll('_', ' ')).join(', ') : 'None'}</Typography></TableCell>
               <TableCell><Typography variant="s3">{file.sizeBytes} bytes</Typography></TableCell>
-              <TableCell><Button size="small" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
+              <TableCell><Button size="small" variant="outlined" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
             </TableRow>))}</TableBody>
           </Table></TableContainer>
           {inspected && inspected.fingerprint === preview.fingerprint && <InventoryFileDrawer key={`${preview.fingerprint}:${inspected.file.path}:${inspected.file.sha256}`} subjectKind={subjectKind} subjectId={subjectId} candidate={[preview.candidate, preview.production, preview.reference, ...(preview.competitors || [])].find((item) => item?.digest === inspected.bundle.digest && (item.skillId ?? item.skill_id) === inspected.bundle.skillId)} bundle={inspected.bundle} file={inspected.file} onClose={() => setInspected(null)} />}
@@ -284,6 +292,7 @@ export default function TestInventoryReview({
           </Stack>
         </Section>
       )}
+      <Typography variant="s3" color="text.secondary">Read the files above and check what will be sent to the model before confirming.</Typography>
       <FormControlLabel
         control={
           <Checkbox
@@ -308,10 +317,10 @@ export default function TestInventoryReview({
         }
         label="I reviewed the entire inventory and outbound inputs"
       />
-      <Typography variant="s3" color="text.secondary">
+      <TechnicalDetails title="About diagnostic runs"><Typography variant="s3" color="text.secondary">
         Detection is not proof of independence. A diagnostic run keeps all files
         and cannot claim answer improvement.
-      </Typography>
+      </Typography></TechnicalDetails>
     </Stack>
   );
 }
@@ -322,4 +331,5 @@ TestInventoryReview.propTypes = {
   disabled: PropTypes.bool,
   subjectKind: PropTypes.string,
   subjectId: PropTypes.string,
+  subjectName: PropTypes.string,
 };
