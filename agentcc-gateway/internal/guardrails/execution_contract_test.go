@@ -150,7 +150,7 @@ func TestExecutionEnvelopeHTTPContract(t *testing.T) {
 							}
 							if want != 200 {
 								if _, exists := body["choices"]; exists {
-									t.Error("refusal leaked provider choices")
+									t.Error("refusal response included provider choices")
 								}
 								errorBody, _ := body["error"].(map[string]interface{})
 								code := "content_blocked"

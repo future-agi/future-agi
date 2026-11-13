@@ -155,7 +155,7 @@ type PipelineResult struct {
 }
 
 // shouldTrigger applies the configured threshold to score-based guardrails.
-// Execution failures bypass scores. Pass=false without a score is a hard rejection.
+// Execution failures trigger regardless of score. Pass=false without a score is a hard rejection.
 func shouldTrigger(result *CheckResult, threshold float64) bool {
 	if result == nil {
 		return false
@@ -170,7 +170,7 @@ func shouldTrigger(result *CheckResult, threshold float64) bool {
 }
 
 // checkResultError validates the execution envelope without reinterpreting a
-// legitimate rejecting result as an outage (which fail_open could bypass).
+// legitimate rejecting result as an outage (which fail_open would then let through).
 func checkResultError(cr *CheckResult) error {
 	if cr == nil {
 		return fmt.Errorf("guardrail returned no result")
