@@ -118,7 +118,7 @@ describe("PDF preview rendering", () => {
     ).toBeDisabled();
     expect(page.props.pageNumber).toBe(1);
     expect(page.props.renderTextLayer).toBe(true);
-    expect(page.props.renderAnnotationLayer).toBe(false);
+    expect(page.props.renderAnnotationLayer).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(screen.getByText("Page 2 of 2")).toBeVisible();
     expect(page.props.pageNumber).toBe(2);

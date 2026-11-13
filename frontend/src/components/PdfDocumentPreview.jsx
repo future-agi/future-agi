@@ -8,6 +8,7 @@ import openjpegWasmUrl from "pdfjs-dist/wasm/openjpeg.wasm?url";
 // unavailable; vite.config.js emits both decoder files there unhashed.
 import "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
 import { safePdfDocumentOptions } from "./pdf-document-options.mjs";
+import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // Keep the worker and renderer on the same pinned PDF.js version.
@@ -18,6 +19,10 @@ const documentOptions = safePdfDocumentOptions({
   // JPEG 2000 images (common in scanned PDFs) decode only with these files.
   wasmUrl: new URL(".", new URL(openjpegWasmUrl, window.location.href)).href,
 });
+
+// Keep the PDF's links clickable; other annotation types are not shown.
+const keepLinkAnnotations = ({ annotations }) =>
+  annotations.filter((annotation) => annotation.subtype === "Link");
 
 export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
   const container = useRef(null);
@@ -46,6 +51,13 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
           onLoad();
         }}
         onLoadError={onError}
+        // Only the current page is rendered, so internal links (tables of
+        // contents, cross references) move the preview to their page.
+        onItemClick={({ pageNumber: target }) => {
+          if (target >= 1 && target <= pages) setPageNumber(target);
+        }}
+        externalLinkTarget="_blank"
+        externalLinkRel="noopener noreferrer nofollow"
         loading={<Typography role="status">Loading PDF…</Typography>}
         error={<Typography role="alert">Failed to load Resource</Typography>}
       >
@@ -77,7 +89,8 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
               pageNumber={pageNumber}
               width={width}
               renderTextLayer
-              renderAnnotationLayer={false}
+              renderAnnotationLayer
+              filterAnnotations={keepLinkAnnotations}
               onRenderError={onError}
               loading={<Typography role="status">Rendering page…</Typography>}
             />
