@@ -510,8 +510,21 @@ $COMPOSE pull
 # run the release's initialization jobs: the commands of "Performing that
 # initialization" above that its release notes call for (every release with
 # database migrations needs step 1); `run --rm` starts nothing else
+# Before enabling the new trace/span tag editor, compare PG legacy tags against
+# curated CH tags, review the count, then apply the one-time reconciliation.
+# Run both commands after migrations and native CH setup, while stores are up.
+$COMPOSE run --rm --no-deps --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+$COMPOSE run --rm --no-deps --entrypoint python backend manage.py reconcile_legacy_trace_tags
+# Release the new editor only after reconciliation completes; do not expose it
+# with the frontend pin before these commands have finished.
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
+
+**Known limits:** the collector's root-span writes carry `tags DEFAULT '[]'` and
+can reset `traces.tags` to `[]` on co-owned traces after reconciliation. Recheck
+those traces after collector writes; this one-time command does not prevent later
+collector resets. This is an operator-run upgrade step, not an automatic hook or
+migration.
 
 Do not run `up` (or `deploy/setup.sh`) between the pin and the initialization:
 it would start the new images on the old schema, and the check-only bootstrap

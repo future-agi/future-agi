@@ -16,11 +16,19 @@ from django.core.management.base import BaseCommand, CommandError
 from tracer.services.clickhouse.v2 import get_v2_config
 
 
+def _matches_tags(raw_tags, pg_tags):
+    try:
+        return json.loads(raw_tags) == pg_tags
+    except (ValueError, TypeError):
+        return False
+
+
 class Command(BaseCommand):
     help = "Reconcile PG-only trace editor tags with the CH curated trace replica."
 
     def add_arguments(self, parser):
         parser.add_argument("--batch-size", type=int, default=500)
+        parser.add_argument("--after-id", type=UUID, help="Resume after this trace ID.")
         parser.add_argument("--project-id", type=UUID, help="Limit to one project.")
         parser.add_argument(
             "--organization-id", type=UUID, help="Limit to one organization."
@@ -55,59 +63,96 @@ class Command(BaseCommand):
             qs = qs.filter(project__organization_id=opts["organization_id"])
 
         scanned = different = written = missing = 0
-        last_id = None
+        last_id = opts["after_id"]
         try:
             while True:
-                page = list((qs.filter(id__gt=last_id) if last_id else qs)[:size])
+                page = list(
+                    (qs.filter(id__gt=last_id) if last_id else qs).values_list(
+                        "id", "project_id", "deleted"
+                    )[:size]
+                )
                 if not page:
                     break
-                last_id = page[-1].id
+                last_id = page[-1][0]
                 scanned += len(page)
-                result = client.query(
-                    """SELECT * FROM traces
+                params = {
+                    "projects": tuple({str(project_id) for _, project_id, _ in page}),
+                    "ids": tuple(str(trace_id) for trace_id, _, _ in page),
+                }
+                # Read the narrow CH state before PG tags: a new editor write
+                # between these reads must not be undone with stale PG values.
+                states = client.query(
+                    """SELECT project_id, id,
+                    argMax(tuple(tags, is_deleted), _version) AS state
+                    FROM traces
                     WHERE project_id IN %(projects)s AND id IN %(ids)s
-                    ORDER BY _version DESC
-                    LIMIT 1 BY project_id, id""",
-                    parameters={
-                        "projects": tuple({str(t.project_id) for t in page}),
-                        "ids": tuple(str(t.id) for t in page),
-                    },
+                    GROUP BY project_id, id""",
+                    parameters=params,
                 )
-                columns = list(result.column_names)
-                latest = {}
-                for values in result.result_rows:
-                    row = dict(zip(columns, values, strict=True))
-                    latest[(str(row["project_id"]), str(row["id"]))] = row
-                changes = []
-                for trace in page:
-                    prior = latest.get((str(trace.project_id), str(trace.id)))
-                    if prior is None or prior.get("is_deleted") or trace.deleted:
-                        # Not a tag difference: no live CH trace row to correct.
-                        # Never backfill or resurrect a trace from here.
-                        missing += prior is None
-                        continue
-                    pg_tags = trace.tags if trace.tags is not None else []
-                    try:
-                        equal = json.loads(prior["tags"]) == pg_tags
-                    except (ValueError, TypeError):
-                        equal = False
-                    if equal:
-                        continue
-                    different += 1
-                    if not opts["dry_run"]:
-                        # Only the tags change: every other column keeps the
-                        # latest CH value, which can be newer than PG's copy.
-                        row = {
-                            **prior,
-                            "tags": json.dumps(
-                                pg_tags, default=str, ensure_ascii=False
-                            ),
-                            "_version": prior["_version"] + 1,
-                        }
-                        changes.append([row[column] for column in columns])
-                if changes:
-                    client.insert("traces", changes, column_names=columns)
-                    written += len(changes)
+                ch_states = {
+                    (str(project_id), str(trace_id)): state
+                    for project_id, trace_id, state in states.result_rows
+                }
+                live_ids = []
+                for trace_id, project_id, deleted in page:
+                    state = ch_states.get((str(project_id), str(trace_id)))
+                    if state is None:
+                        missing += 1
+                    elif not deleted and not state[1]:
+                        live_ids.append(trace_id)
+                # PG tags are fetched only for IDs with a live CH candidate.
+                pg_tags_by_id = {
+                    str(trace_id): tags if tags is not None else []
+                    for trace_id, tags in qs.filter(
+                        id__in=live_ids, deleted=False
+                    ).values_list("id", "tags")
+                }
+                candidates = {
+                    (str(project_id), str(trace_id)): pg_tags_by_id[str(trace_id)]
+                    for trace_id, project_id, _ in page
+                    if str(trace_id) in pg_tags_by_id
+                    and not _matches_tags(
+                        ch_states[(str(project_id), str(trace_id))][0],
+                        pg_tags_by_id[str(trace_id)],
+                    )
+                }
+                if candidates:
+                    result = client.query(
+                        """SELECT * FROM traces
+                        WHERE project_id IN %(projects)s AND id IN %(ids)s
+                        ORDER BY _version DESC
+                        LIMIT 1 BY project_id, id""",
+                        parameters={
+                            "projects": tuple({project for project, _ in candidates}),
+                            "ids": tuple(trace_id for _, trace_id in candidates),
+                        },
+                    )
+                    columns = list(result.column_names)
+                    changes = []
+                    for values in result.result_rows:
+                        prior = dict(zip(columns, values, strict=True))
+                        key = (str(prior["project_id"]), str(prior["id"]))
+                        pg_tags = candidates.get(key)
+                        if (
+                            pg_tags is None
+                            or prior["is_deleted"]
+                            or _matches_tags(prior["tags"], pg_tags)
+                        ):
+                            continue
+                        different += 1
+                        if not opts["dry_run"]:
+                            # Preserve every non-tag column from the latest CH row.
+                            row = {
+                                **prior,
+                                "tags": json.dumps(
+                                    pg_tags, default=str, ensure_ascii=False
+                                ),
+                                "_version": prior["_version"] + 1,
+                            }
+                            changes.append([row[column] for column in columns])
+                    if changes:
+                        client.insert("traces", changes, column_names=columns)
+                        written += len(changes)
                 self.stdout.write(
                     f"  scanned {scanned} trace(s); differing {different}; "
                     f"no CH trace row {missing}"

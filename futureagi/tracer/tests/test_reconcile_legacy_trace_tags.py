@@ -2,6 +2,7 @@
 
 import json
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +16,17 @@ from tracer.services.entity_tag_reads import attach_legacy_trace_tags
 from tracer.tests.test_entity_tag_assignment_postgres import assignment_schema  # noqa: F401
 from tracer.tests.test_entity_tag_target import PROJECT
 from tracer.tests.test_entity_tag_targets_ch25 import OTHER_PROJECT
+
+
+def test_upgrade_docs_run_reconcile_before_releasing_editor():
+    guide = (Path(__file__).resolve().parents[3] / "deploy/README.md").read_text()
+    upgrade = guide.split("### Upgrading a production install", 1)[1]
+    assert upgrade.index("reconcile_legacy_trace_tags --dry-run") < upgrade.index(
+        "reconcile_legacy_trace_tags\n"
+    )
+    assert "collector's root-span writes" in upgrade
+    assert "tags DEFAULT '[]'" in upgrade
+
 
 ORG = "55555555-5555-5555-5555-555555555555"
 OTHER_ORG = "66666666-6666-6666-6666-666666666666"
@@ -218,6 +230,106 @@ def test_organization_scope_and_newest_ch_tags_replaced(stores):
     )
     assert latest(trace) == ["pg"]
     assert version(trace) > original[0]
+
+
+def test_dual_write_between_ch_candidate_and_pg_tag_reads_is_not_reverted(
+    stores, monkeypatch
+):
+    seed, latest, version, _ = stores
+    trace = seed(PROJECT, ["old-pg"], ["stale-ch"])
+    cfg = get_v2_config()
+    ch = clickhouse_connect.get_client(
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
+    )
+    original_get_client = clickhouse_connect.get_client
+    raced = False
+
+    class RacingClient:
+        def __init__(self, client):
+            self.client = client
+
+        def query(self, sql, *args, **kwargs):
+            nonlocal raced
+            result = self.client.query(sql, *args, **kwargs)
+            if not raced:
+                raced = True
+                # Both halves of a new editor write land after the CH read.
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE tracer_trace SET tags = %s::jsonb WHERE id = %s",
+                        [json.dumps(["fresh"]), trace],
+                    )
+                ch.insert(
+                    "traces",
+                    [[trace, PROJECT, json.dumps(["fresh"]), 2]],
+                    column_names=["id", "project_id", "tags", "_version"],
+                )
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.client, name)
+
+    monkeypatch.setattr(
+        clickhouse_connect,
+        "get_client",
+        lambda **kwargs: RacingClient(original_get_client(**kwargs)),
+    )
+    try:
+        call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+        assert raced
+        assert latest(trace) == ["fresh"]
+        assert version(trace) == 2
+    finally:
+        ch.close()
+
+
+def test_reconcile_fetches_full_ch_rows_only_for_differences(stores, monkeypatch):
+    seed, latest, _, _ = stores
+    different = seed(PROJECT, ["pg"], ["ch"])
+    seed(PROJECT, ["equal"], ["equal"])
+    seed(PROJECT, ["missing"])
+    seed(PROJECT, ["deleted"], ["stale"], ch_deleted=1)
+    issued = []
+    original_get_client = clickhouse_connect.get_client
+
+    class RecordingClient:
+        def __init__(self, client):
+            self.client = client
+
+        def query(self, sql, *args, **kwargs):
+            issued.append((sql, kwargs.get("parameters")))
+            return self.client.query(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.client, name)
+
+    monkeypatch.setattr(
+        clickhouse_connect,
+        "get_client",
+        lambda **kwargs: RecordingClient(original_get_client(**kwargs)),
+    )
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    assert "argMax(tuple(tags, is_deleted), _version)" in issued[0][0]
+    full_reads = [(sql, params) for sql, params in issued if "SELECT *" in sql]
+    assert len(full_reads) == 1
+    assert full_reads[0][1]["ids"] == (different,)
+    assert latest(different) == ["pg"]
+
+
+def test_resume_after_id_skips_earlier_traces(stores):
+    seed, latest, _, _ = stores
+    traces = sorted(seed(PROJECT, ["pg"], ["ch"]) for _ in range(3))
+    call_command(
+        "reconcile_legacy_trace_tags",
+        "--after-id",
+        traces[1],
+        stdout=StringIO(),
+    )
+    assert [latest(trace) for trace in traces] == [["ch"], ["ch"], ["pg"]]
 
 
 def test_only_tags_change_and_deleted_traces_stay_deleted(stores):
