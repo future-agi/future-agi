@@ -3741,7 +3741,7 @@ def send_rule_completion_email(
 
         try:
             user = get_user_model().objects.get(pk=triggered_by_user_id)
-            triggered_by_name = user.get_full_name() or user.email or triggered_by_name
+            triggered_by_name = user.name or user.email or triggered_by_name
         except Exception:
             pass
 

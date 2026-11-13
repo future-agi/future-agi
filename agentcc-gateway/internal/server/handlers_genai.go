@@ -61,7 +61,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.IsStream = false
 	}
 
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Extract auth from query param, header, or Authorization header.
 	if key := r.URL.Query().Get("key"); key != "" {
@@ -80,6 +80,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
 		parseMetadataHeader(meta, rc)
 	}
+	applyCacheHeaders(rc, r)
 
 	// Read request body.
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))

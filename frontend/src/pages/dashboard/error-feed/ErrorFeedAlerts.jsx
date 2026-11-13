@@ -87,10 +87,8 @@ function readReturningDraft() {
     return null;
   try {
     const draft = JSON.parse(sessionStorage.getItem(ALERT_DRAFT_KEY) || "null");
-    sessionStorage.removeItem(ALERT_DRAFT_KEY);
     return draft && typeof draft === "object" ? draft : null;
   } catch {
-    sessionStorage.removeItem(ALERT_DRAFT_KEY);
     return null;
   }
 }
@@ -1036,6 +1034,16 @@ function SectionTitle({ step, title, subtitle }) {
 export default function ErrorFeedAlerts() {
   const navigate = useNavigate();
   const [returningDraft] = useState(readReturningDraft);
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("resume_alert"))
+      return;
+    // Consume only after commit: a discarded render must still find the draft.
+    try {
+      sessionStorage.removeItem(ALERT_DRAFT_KEY);
+    } catch {
+      // Unavailable storage must not prevent using the already restored form.
+    }
+  }, [returningDraft]);
   const alertsQuery = useErrorFeedAlerts();
   const { data: rawRules = [], isLoading, isError } = alertsQuery;
   const rules = useMemo(

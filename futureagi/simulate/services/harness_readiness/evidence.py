@@ -7,7 +7,6 @@ version's build certificate, measured with the agent it was built with.
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,23 +35,25 @@ from simulate.services.harness_readiness.catalogue import (
     targets,
 )
 from simulate.services.harness_versioning import archives, assembly
+from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
-TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
-ACTION_CERTIFICATION = "generic-harness/action-certification.json"
+TOOL_CERTIFICATION = assembly.TOOL_CERTIFICATION
+ACTION_CERTIFICATION = assembly.ACTION_CERTIFICATION
 # Each tool call the qualification conversation made that reached the test world.
-TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
+TOOL_ROUTING = assembly.TOOL_ROUTING
 _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # An archive's files never change, so they are kept long; an unreadable one is tried
 # again soon.
 _FILES_TTL_SECONDS = 7 * 24 * 3600
 _UNREADABLE_TTL_SECONDS = 300
-# One reader per archive at a time; the others wait up to 10 s (in the request) for its
-# result, then read the archive themselves.
-_READING_TTL_SECONDS = 60
+# One reader per archive at a time, for as long as a read may take; the others wait up
+# to 10 s (in the request) for its result, then are told to try again.
+_READING_TTL_SECONDS = 300
 _WAIT_STEP_SECONDS = 0.25
 _WAIT_STEPS = 40
+_RETRY_AFTER_SECONDS = 10
 _SANDBOX_SOURCES = frozenset(
     {
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
@@ -102,11 +103,37 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
     )
 
 
-def _certification_files(object_key: str) -> dict[str, Any]:
-    """The per-tool and per-action certification an archive holds, read once per
-    object by one reader: archives are content-addressed, so a key never changes what
-    it holds. Only the two files are read, off the stream. An archive that cannot be
-    read reads as holding neither, for a few minutes."""
+_FILES = ("tools", "actions", "routed", "unobserved")
+
+
+def _certification_files(
+    row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
+) -> dict[str, Any]:
+    """The per-tool and per-action certification and tool routing of the archive at
+    ``object_key``, kept on ``row``. A bundle stored since they are kept has them
+    already; an older row has its archive read once, and keeps what was read. An
+    archive that cannot be read is marked ``unreadable``."""
+    kept = row.certification_files
+    if isinstance(kept, Mapping) and kept.get("object_key") == object_key:
+        return {name: _items(kept, name) for name in _FILES}
+    files, readable = _read_once(object_key)
+    if not readable:
+        return {**files, "unreadable": True}
+    key_field = (
+        "object_key" if isinstance(row, HarnessAssembledBundle) else "archive_object_key"
+    )
+    type(row)._base_manager.filter(id=row.id, **{key_field: object_key}).update(
+        certification_files={"object_key": object_key, **files}
+    )
+    return files
+
+
+def _read_once(object_key: str) -> tuple[dict[str, list[Mapping[str, Any]]], bool]:
+    """The archive's certification files and whether it could be read, by one reader
+    per archive: archives are content-addressed, so a key never changes what it holds.
+    A request that finds another reading waits for its result, and is told to try again
+    when it does not come in time. An archive that cannot be read reads as holding
+    neither, for a few minutes."""
     cache_key = (
         "harness-readiness-certification:"
         + hashlib.sha256(object_key.encode()).hexdigest()
@@ -115,21 +142,29 @@ def _certification_files(object_key: str) -> dict[str, Any]:
     if cached is not None:
         return cached
     reading = cache_key + ":reading"
-    owner = cache.add(reading, 1, timeout=_READING_TTL_SECONDS)
-    if not owner:
+    if not cache.add(reading, 1, timeout=_READING_TTL_SECONDS):
         for _ in range(_WAIT_STEPS):
             time.sleep(_WAIT_STEP_SECONDS)
             cached = cache.get(cache_key)
             if cached is not None:
                 return cached
+        raise HostedHarnessError(
+            "certification_reading",
+            "This pairing's certification is still being read. Try again in a few "
+            "seconds.",
+            status_code=503,
+            retryable=True,
+            details={"retry_after": _RETRY_AFTER_SECONDS},
+        )
     try:
         return _read_certification_files(object_key, cache_key)
     finally:
-        if owner:
-            cache.delete(reading)
+        cache.delete(reading)
 
 
-def _read_certification_files(object_key: str, cache_key: str) -> dict[str, Any]:
+def _read_certification_files(
+    object_key: str, cache_key: str
+) -> tuple[dict[str, list[Mapping[str, Any]]], bool]:
     try:
         found = archives.stream_members(
             object_key,
@@ -142,30 +177,13 @@ def _read_certification_files(object_key: str, cache_key: str) -> dict[str, Any]
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: dict[str, Any] = {
-            "tools": [],
-            "actions": [],
-            "routed": [],
-            "unobserved": [],
-            "unreadable": True,
-        }
+        unreadable = ({name: [] for name in _FILES}, False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
-    files = {
-        "tools": _items(_json(found.get(TOOL_CERTIFICATION)), "tools"),
-        "actions": _items(_json(found.get(ACTION_CERTIFICATION)), "actions"),
-        "routed": _items(_json(found.get(TOOL_ROUTING)), "tools"),
-        "unobserved": _items(_json(found.get(TOOL_ROUTING)), "unobserved"),
-    }
-    cache.set(cache_key, files, timeout=_FILES_TTL_SECONDS)
-    return files
-
-
-def _json(body: bytes | None) -> Any:
-    try:
-        return json.loads(body) if body else None
-    except ValueError:
-        return None
+    kept = assembly.certification_files(found, object_key)
+    read = ({name: kept[name] for name in _FILES}, True)
+    cache.set(cache_key, read, timeout=_FILES_TTL_SECONDS)
+    return read
 
 
 def _items(document: Any, name: str) -> list[Mapping[str, Any]]:
@@ -197,7 +215,7 @@ def agent_tools(pairing: Pairing) -> list[Mapping[str, Any]] | None:
 def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Evidence:
     """A certified pair bundle, else the environment version's build certificate."""
     if certified(bundle):
-        files = _certification_files(bundle.object_key)
+        files = _certification_files(bundle, bundle.object_key)
         checks = (bundle.certificate or {}).get("checks")
         kept = (bundle.certificate or {}).get("tool_routing")
         kept = kept if isinstance(kept, Mapping) else {}
@@ -220,7 +238,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
     checks = certificate.get("checks") if isinstance(certificate, Mapping) else None
     # Only an archive kept whole holds the sealed tool certification.
     files = (
-        _certification_files(version.archive_object_key)
+        _certification_files(version, version.archive_object_key)
         if version.archive_layout == ArchiveLayout.COMBINED
         else {}
     )

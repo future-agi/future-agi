@@ -68,9 +68,14 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 
 	// Writes and searches go through the pipeline — rate limits, budgets,
 	// the request log; deletes too, but no budget refuses them. Reads stay
-	// outside it, as the other lifecycle reads do.
+	// outside it, as the other lifecycle reads do, but not outside its
+	// access checks.
 	if method == http.MethodGet {
-		err = call(ctx, rc)
+		if apiErr := h.engine.CheckAccess(ctx, rc); apiErr != nil {
+			err = apiErr
+		} else {
+			err = call(ctx, rc)
+		}
 	} else {
 		err = h.engine.Process(ctx, rc, call)
 	}
