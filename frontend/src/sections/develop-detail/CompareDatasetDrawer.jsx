@@ -197,7 +197,7 @@ const CompareDatasetDrawer = ({
           onChange={(e) => setSearchQuery(e.target.value)}
         />
         <Typography
-          sx={{ fontWeight: 400, fontSize: "13px", color: "text.primary" }}
+          sx={{ fontWeight: 400, fontSize: "12px", color: "text.primary" }}
         >
           Select datasets to compare with:
         </Typography>
@@ -233,7 +233,7 @@ const CompareDatasetDrawer = ({
                       sx={{
                         color: "text.primary",
                         fontWeight: 400,
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     >
                       {val?.label?.length > 68
