@@ -177,7 +177,6 @@ from tracer.services.eval_tasks.recalculate import (
     KEPT,
     LEFT_RETIRED,
     RESTORED,
-    RecalculationBusy,
     RecalculationRefused,
     abandon_recalculation,
     begin_recalculation,
@@ -726,12 +725,6 @@ class _RecalculateLeftNoResult(Exception):
     def message(self) -> str:
         return _LEFT_NO_RESULT_MESSAGES[self.outcome]
 
-
-_RECALCULATION_BUSY_MESSAGE = (
-    "The evaluation could not be recalculated. Its span, trace or eval is "
-    "being changed right now; the previous result will be put back "
-    "automatically if it still exists."
-)
 
 _LEFT_NO_RESULT_MESSAGES = {
     RESTORED: (
@@ -2115,9 +2108,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     return self._gm.bad_request(refused.message)
                 except _RecalculateLeftNoResult as left:
                     return self._gm.bad_request(left.message)
-                except RecalculationBusy:
-                    # Its close was left to the recalculation sweep.
-                    return self._gm.bad_request(_RECALCULATION_BUSY_MESSAGE)
 
                 if status:
                     count = 1
