@@ -37,7 +37,7 @@ const states = [
   ["unavailable", "The source is unavailable or you do not have access.", null],
   [
     "source_not_recorded",
-    "This log was written before evaluation sources were recorded, so it can't open its trace.",
+    "This log was written before evaluation sources were recorded, so its trace or call can't be opened.",
     null,
   ],
   [

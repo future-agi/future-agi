@@ -15,7 +15,7 @@ const COPY = {
   ambiguous_reference: "Can't tell which trace or call this evaluation ran on.",
   unavailable: "The source is unavailable or you do not have access.",
   source_not_recorded:
-    "This log was written before evaluation sources were recorded, so it can't open its trace.",
+    "This log was written before evaluation sources were recorded, so its trace or call can't be opened.",
   temporarily_unavailable: "Source details could not be loaded. Try again.",
   unsupported_backend: "Source navigation is not available on this server.",
 };

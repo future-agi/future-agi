@@ -771,11 +771,13 @@ def test_older_logs_are_listed_exactly_as_on_dev(
     organization, user, workspace, template, clickhouse_usage
 ):
     """TH-4804 r9: an older log is listed by dev's rule, limited to readable
-    projects, with no new rule of its own. The gate's tombstone case
-    (``tombstoned_a_live_b``: A holds the original tombstoned, B a live replay)
-    and a trace held only by a readable project without a config are not
-    listed, exactly as on dev; ``a_and_hidden`` is listed, as on dev, whatever
-    the inaccessible workspace holds."""
+    projects, with no new rule of its own. In ``tombstoned_a_live_b`` (A holds
+    the original tombstoned, B a live replay, and both still run the eval) the
+    log is not listed, and a trace held only by a readable project without a
+    config is not listed either, exactly as on dev. When A no longer runs the
+    eval and B does, the replay in B is listed, as on dev: for older logs only
+    navigation is closed, never the dev listing. ``a_and_hidden`` is listed,
+    as on dev, whatever the inaccessible workspace holds."""
     seed = _older_log_scenarios(organization, user, workspace, template)
     # The moved-away config: its project no longer runs the eval.
     CustomEvalConfig.all_objects.filter(id=seed.moved_config.id).update(project=seed.b)
