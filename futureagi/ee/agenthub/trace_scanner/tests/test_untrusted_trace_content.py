@@ -790,6 +790,15 @@ def _trace_with_declared_tools():
     return trace
 
 
+def _shown_tools_line(trace):
+    _, messages = _scan(trace, _reply({"tools": {"verdict": "PASS"}}, []))
+    [line] = [
+        ln for ln in messages[1]["content"].splitlines()
+        if ln.startswith("TOOLS AVAILABLE: ")
+    ]
+    return line
+
+
 class TestTheToolsListCanBeCited:
     """A TOOLS FAIL for an available tool the agent never called quotes the
     tool's name from TOOLS AVAILABLE."""
@@ -801,14 +810,10 @@ class TestTheToolsListCanBeCited:
         assert "TOOLS AVAILABLE: " in messages[1]["content"]
         assert "issue_refund" in messages[1]["content"]
 
-    @pytest.mark.parametrize(
-        "quote",
-        [
-            pytest.param("issue_refund", id="name"),
-            pytest.param("TOOLS AVAILABLE: lookup_order, issue_refund", id="line"),
-        ],
-    )
+    @pytest.mark.parametrize("quote", ["issue_refund", "<the shown line>"])
     def test_a_fail_quoting_an_available_tool_is_kept(self, quote):
+        if quote == "<the shown line>":
+            quote = _shown_tools_line(_trace_with_declared_tools())
         tools = _tools_fail(
             {"field": "tools", "quote": quote}, _cite(ROOT, "out", REFUND_PASSAGE)
         )
@@ -925,3 +930,139 @@ class TestOneCiteQuoteFollowedByCommentary:
             None,
             ["Refund request received for order 1182."],
         )
+
+
+# A recorded tool error ending in a full stop, quoted with a short clause added
+# inside its last sentence.
+HELD_REFUND = (
+    "A real failure was observed and documented by the server which made the "
+    "refund unavailable for this order pending further verification."
+)
+
+
+class TestAddedWordsAreNotAbsorbedByTheTolerance:
+    """Punctuation a model rewrites is ignored; words it adds are not."""
+
+    def test_a_short_clause_added_to_the_end_of_a_real_sentence_is_dropped(self):
+        quote = HELD_REFUND[:-1] + " and it succeeded."
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(HELD_REFUND), tools) == []
+
+    def test_a_short_clause_added_to_the_start_of_a_real_sentence_is_dropped(self):
+        quote = "It succeeded, but " + HELD_REFUND[0].lower() + HELD_REFUND[1:]
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(HELD_REFUND), tools) == []
+
+    @pytest.mark.parametrize(
+        "recorded, quote",
+        [
+            pytest.param(
+                "Dr Smith confirmed the payment processor declined the refund for "
+                "order 1182 and the charge was never captured.",
+                "Dr. Smith confirmed the payment processor declined the refund for "
+                "order 1182 and the charge was never captured.",
+                id="abbreviation-period",
+            ),
+            pytest.param(
+                "The payment processor rejected the charge, so the refund cannot "
+                "be issued until the customer updates their payment method.",
+                "The payment processor rejected the charge; so, the refund cannot "
+                "be issued until the customer updates their payment method.",
+                id="adjacent-punctuation",
+            ),
+            pytest.param(HELD_REFUND, HELD_REFUND.upper(), id="casing"),
+        ],
+    )
+    def test_a_quote_with_only_punctuation_rewritten_is_kept(self, recorded, quote):
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(recorded), tools) == [
+            ("Tool-related", "H")
+        ]
+
+
+def _called_and_declared_trace():
+    """issue_refund is declared AND was called, and succeeded."""
+    trace = _trace_with_declared_tools()
+    trace["spans"][0]["child_spans"] = [
+        {
+            "span_id": REFUND_TOOL,
+            "span_name": "issue_refund",
+            "duration": "PT0.3S",
+            "status_code": "Ok",
+            "span_attributes": {
+                "span.kind": "TOOL",
+                "input.value": "issue_refund(order=1182, amount=40)",
+                "output.value": "Refund issued successfully for order 1182.",
+            },
+            "child_spans": [],
+        }
+    ]
+    return trace
+
+
+class TestAToolsCiteMustMatchWhatWasShownAndNotCalled:
+    def test_a_tool_the_agent_did_call_cannot_be_cited_as_never_called(self):
+        tools = _tools_fail(
+            {"field": "tools", "quote": "issue_refund"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_called_and_declared_trace(), tools) == []
+
+    def test_a_tool_the_agent_did_not_call_is_still_citable_next_to_one_it_did(self):
+        tools = _tools_fail(
+            {"field": "tools", "quote": "lookup_order"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_called_and_declared_trace(), tools) == [
+            ("Tool-related", "H")
+        ]
+
+    def test_a_reordered_tools_line_is_dropped(self):
+        trace = _trace_with_declared_tools()
+        label, names = _shown_tools_line(trace).split(": ", 1)
+        reordered = f"{label}: " + ", ".join(reversed(names.split(", ")))
+        assert reordered != _shown_tools_line(trace)
+        tools = _tools_fail(
+            {"field": "tools", "quote": reordered},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(trace, tools) == []
+
+
+def _trace_cut_by_the_prompt_budget():
+    """A root output long enough that the prompt's length cut drops the tool
+    span after it."""
+    trace = _tool_error_trace("The refund gateway refused order 1182 outright.")
+    trace["spans"][0]["span_attributes"]["output.value"] = (
+        REFUND_ANSWER + " " + "x" * 2_010_000
+    )
+    return trace
+
+
+class TestOnlyWhatThePromptShowedCanBeCited:
+    def test_the_tool_span_is_cut_from_the_prompt(self):
+        _, messages = _scan(
+            _trace_cut_by_the_prompt_budget(),
+            _reply({"tools": {"verdict": "PASS"}}, []),
+        )
+        assert f"[{REFUND_TOOL}]" not in messages[1]["content"]
+
+    @pytest.mark.parametrize(
+        "cite",
+        [
+            pytest.param(_cite(REFUND_TOOL, "status", "status=Error"), id="status"),
+            pytest.param(
+                _cite(REFUND_TOOL, "out", "The refund gateway refused order 1182"),
+                id="output",
+            ),
+        ],
+    )
+    def test_a_cite_of_a_span_the_prompt_left_out_is_dropped(self, cite):
+        tools = _tools_fail(cite, _cite(ROOT, "out", REFUND_PASSAGE))
+        assert _scan_tools(_trace_cut_by_the_prompt_budget(), tools) == []

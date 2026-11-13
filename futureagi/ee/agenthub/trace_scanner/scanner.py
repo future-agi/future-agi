@@ -15,9 +15,11 @@ import structlog
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
     _OK_STATUS,
+    _get_span_kind,
     attribute_key_moments,
     build_trace_payload,
     extract_programmatic_metadata,
+    flatten_spans,
     recover_verbatim,
     structural_prefilter_with_ids,
     unwrap_output,
@@ -28,7 +30,7 @@ from ee.agenthub.trace_scanner.prompt import (
     SUBCAT_TO_GROUP,
     SYSTEM_V8,
     VALID_SUBCATEGORIES,
-    build_prompt_v8,
+    build_prompt_v8_with_view,
     span_header,
     tools_available_text,
 )
@@ -246,9 +248,11 @@ _STATUS_WORD = re.compile(r"[a-z0-9_]+")
 # no per-cite passages, and one checked sentence at a time within a passage.
 _PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
 # Within one sentence matched by its trigrams, the longest run of consecutive
-# trigrams that may be missing from the field. One rewritten word misses at
-# most three; a run of added words misses one more per word.
+# trigrams that may be missing from the field. One changed word misses at most
+# three; punctuation and casing are compared away before trigrams are counted.
 _MAX_UNMATCHED_RUN = 3
+# Words of a quote with punctuation and casing set aside.
+_WORD = re.compile(r"\w+")
 # An optional label in front of a quote of the tools list, as the prompt shows it.
 _TOOLS_LABEL = re.compile(r"^tools available\s*:\s*")
 
@@ -347,7 +351,7 @@ def _status_lines(shown, span_id: str) -> list[tuple[str, str]]:
 
 
 def _shown_tool_names(shown) -> list[str]:
-    """The tool names the TOOLS AVAILABLE line shows in full."""
+    """The tool names the TOOLS AVAILABLE line shows in full, in its order."""
     names = [neutralize(t) for t in (shown or {}).get("tools_available") or ()]
     text = tools_available_text(names)
     visible, end = [], 0
@@ -358,6 +362,22 @@ def _shown_tool_names(shown) -> list[str]:
         visible.append(n)
         end += len(", ")
     return visible
+
+
+def _called_tool_names(trace) -> set[str]:
+    """Names of the tool spans the trace recorded, by the prefilter's rule."""
+    called = set()
+    for top in (trace or {}).get("spans") or []:
+        for span, _depth in flatten_spans(top):
+            name = str(span.get("span_name") or "")
+            kind = _get_span_kind(span.get("span_attributes") or {})
+            if kind in {"Tool", "TOOL"} or "Tool" in name:
+                called.add(_norm_for_match(neutralize(name)))
+    return called
+
+
+def _shown_span_ids(shown) -> set[str]:
+    return {str(s.get("id") or "") for s in (shown or {}).get("spans") or []}
 
 
 def _passage_names_status(passage: str | None, lines) -> bool:
@@ -382,29 +402,51 @@ def _passage_names_status(passage: str | None, lines) -> bool:
     return False
 
 
-def _passage_names_tools(passage: str, names: list[str]) -> bool:
-    """Is this passage one or more tool names copied from TOOLS AVAILABLE?
+def _passage_names_tools(passage: str, names: list[str], called: set[str]) -> bool:
+    """Is this passage copied from TOOLS AVAILABLE, naming a tool never called?
 
-    Each comma-separated item must be a whole listed name, so a passage cannot
-    carry anything the list does not hold.
+    The passage must be one listed name or a run of them in the order the
+    line shows (optionally with its label), and at least one of them must
+    have no recorded call: a tools cite supports a FAIL for an available tool
+    the agent never called, and a tool it did call cannot show that.
     """
     said = _TOOLS_LABEL.sub("", _norm_for_match(passage))
-    listed = {_norm_for_match(n) for n in names}
     items = [i.strip(" \"'`.") for i in said.split(",")]
-    return bool(items) and all(i and i in listed for i in items)
+    if not items or not all(items):
+        return False
+    listed = [_norm_for_match(n) for n in names]
+    width = len(items)
+    in_order = any(
+        listed[i : i + width] == items for i in range(len(listed) - width + 1)
+    )
+    return in_order and any(i not in called for i in items)
 
 
-def _sentence_is_quoted(sentence: str, hay: str) -> bool:
-    """One sentence of a passage, found in the cited field on its own: exactly,
-    or by its trigrams within the tolerance and with no long run of trigrams
-    the field does not hold."""
-    if sentence in hay:
+def _words(text) -> str:
+    """A quote's words, space-separated and padded, with punctuation and casing
+    set aside, so a word sequence is matched on word boundaries."""
+    return f" {' '.join(_WORD.findall(str(text or '').casefold()))} "
+
+
+def _sentence_is_quoted(sentence: str, fields: list[str]) -> bool:
+    """One sentence of a passage, found in the cited field on its own.
+
+    ``fields`` are the field copies as ``_words``. The sentence's words must
+    appear in order, or match by trigrams within the tolerance with both its
+    first and last trigram found and no run of more than three missing: a
+    changed word is tolerated, words added at either end or in a run are not.
+    """
+    words = _words(sentence).split()
+    if not words:
         return True
-    words = sentence.split()
+    if any(f" {' '.join(words)} " in f for f in fields):
+        return True
     if len(words) < 3:
         return False
-    grams = [" ".join(words[i : i + 3]) for i in range(len(words) - 2)]
-    found = [g in hay for g in grams]
+    grams = [f" {' '.join(words[i : i + 3])} " for i in range(len(words) - 2)]
+    found = [any(g in f for f in fields) for g in grams]
+    if not (found[0] and found[-1]):
+        return False
     if sum(found) / len(grams) < _EVIDENCE_TRIGRAM_FLOOR:
         return False
     run = longest = 0
@@ -417,9 +459,10 @@ def _sentence_is_quoted(sentence: str, hay: str) -> bool:
 def _passage_in_field(passage: str, values: list[str]) -> bool:
     """Is this passage a quote of the cited span field?
 
-    One passage is one quote, so every sentence in it has to be found in the
-    field on its own: scored as a whole, a long real sentence would carry an
-    added one inside the trigram tolerance.
+    Punctuation and casing a model rewrites are set aside, but one passage is
+    one quote: unless its words appear in the field in order, every sentence
+    in it has to be found in the field on its own. Scored as a whole, a long
+    real sentence would carry an added one inside the trigram tolerance.
     """
     said = _norm_for_match(passage)
     fields = [_norm_for_match(v) for v in values]
@@ -428,11 +471,13 @@ def _passage_in_field(passage: str, values: list[str]) -> bool:
         return True
     if len(said) < _MIN_EVIDENCE_CHARS:
         return False
-    hay = "\n".join(fields)
-    if said in hay:
+    if any(said in f for f in fields):
+        return True
+    field_words = [_words(v) for v in values]
+    if _words(said).strip() and any(_words(said) in f for f in field_words):
         return True
     sentences = [s for s in _PASSAGE_BREAK.split(said) if s]
-    return all(_sentence_is_quoted(s, hay) for s in sentences)
+    return all(_sentence_is_quoted(s, field_words) for s in sentences)
 
 
 def _leading_quote(evidence: str, values: list[str]) -> str | None:
@@ -457,9 +502,9 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
     The reason is None when every cited passage is found in its own cited
     field, so one real passage cannot carry another that is not in the trace.
     The passages are then the FAIL's evidence of record. ``shown`` is the
-    payload the prompt was built from: span statuses and the tools list are
-    matched as the prompt showed them, span inputs and outputs against the
-    trace's recorded values.
+    part of the payload the prompt showed: only its spans and tools list can
+    be cited, span statuses and the tools list are matched as the prompt
+    showed them, span inputs and outputs against the trace's recorded values.
     """
     entries = _cites(verdict)
     if entries is None:
@@ -486,10 +531,12 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
             names = _shown_tool_names(shown)
             if not names:
                 return "cited_field_missing", []
-            if not _passage_names_tools(passage, names):
+            if not _passage_names_tools(passage, names, _called_tool_names(trace)):
                 return "not_in_cited_field", []
             checked.append(passage)
             continue
+        if shown is not None and span_id not in _shown_span_ids(shown):
+            return "cited_field_missing", []
         values = _field_values(trace, span_id, name)
         if not values:
             return "cited_field_missing", []
@@ -711,7 +758,9 @@ class TraceScanner:
 
         # Build prompt and call LLM. BATCH_SIZE is 1, so this is one trace per call
         # and the decomposed prompt gets the model's full attention on it.
-        user_prompt = build_prompt_v8(payloads)
+        # The view is what the prompt actually shows after its length guard;
+        # only that can be cited.
+        user_prompt, shown = build_prompt_v8_with_view(payloads)
         messages = [
             {"role": "system", "content": SYSTEM_V8},
             {"role": "user", "content": user_prompt},
@@ -738,9 +787,9 @@ class TraceScanner:
                         trace_has_content=_trace_has_captured_content(
                             trace_map[first_label][0]
                         ),
-                        # What the model was shown of span statuses and the
-                        # tools list, for the cites that quote them.
-                        shown=payloads[0],
+                        # What the model was shown: which spans and whether
+                        # the tools list, and the lines a status cite quotes.
+                        shown=shown,
                     )
                 }
         except Exception as e:
@@ -928,17 +977,20 @@ class TraceScanner:
         fail-closed — a dropped real issue costs recall, a kept invented one
         costs the user's trust in every other row.
 
-        ``shown`` is the payload the prompt was built from (build_trace_payload):
-        a cited status is matched against the span's header line exactly as
-        the prompt rendered it, and a cited tool name against the TOOLS
-        AVAILABLE list it showed. Rebuilt from the trace when not supplied.
+        ``shown`` is the part of the payload the prompt showed
+        (build_prompt_v8_with_view): only spans and a tools list it showed can
+        be cited, a cited status is matched against the span's header line
+        exactly as the prompt rendered it, and a cited tool name against the
+        TOOLS AVAILABLE list. Rebuilt from the trace when not supplied.
 
         ``seen_text`` is consulted only when no trace is supplied; the scanner
         always supplies one.
         """
         dims = parsed.get("dimensions") or {}
         if trace is not None and shown is None:
-            shown = build_trace_payload(trace, structural_prefilter_with_ids(trace))
+            shown = build_prompt_v8_with_view(
+                build_trace_payload(trace, structural_prefilter_with_ids(trace))
+            )[1]
         hay = "" if trace is not None else _norm_for_match(seen_text)
         failed = set()
         unverified = []

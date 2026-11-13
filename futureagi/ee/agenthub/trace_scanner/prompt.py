@@ -328,11 +328,21 @@ def span_header(s) -> str:
 
 
 def build_prompt_v8(payloads):
+    """The scanner's user prompt for one trace (see build_prompt_v8_with_view)."""
+    return build_prompt_v8_with_view(payloads)[0]
+
+
+def build_prompt_v8_with_view(payloads):
     """One trace per call — the full span tree, nothing pre-selected.
 
     Span ids are rendered so the model can reference a span (the completion
     gate verifies its claim against the named span's real output, and every
     other FAIL cites the span fields its quote came from).
+
+    Returns ``(prompt, view)``. ``view`` is the payload reduced to what the
+    prompt actually shows: the spans whose lines all made it past the runaway
+    guard, and the tools list only if its line did. The evidence gate accepts
+    cites of those and nothing else.
 
     Everything taken from the trace — tool names, the flow outline, span ids,
     names and statuses, and each field's text — sits inside the
@@ -342,8 +352,12 @@ def build_prompt_v8(payloads):
     t = payloads[0] if isinstance(payloads, list) else payloads
     u = neutralize
     parts = []
+    # Index of the last part each cited thing needs, to tell what a cut kept.
+    tools_part = None
+    span_parts = []
     if t.get("tools_available"):
         parts.append(TOOLS_AVAILABLE_LABEL + tools_available_text(t["tools_available"]))
+        tools_part = len(parts) - 1
     if t.get("flow"):
         parts.append(f"\nEXECUTION FLOW:\n{u(t['flow'])}")
     if t.get("signals"):
@@ -361,21 +375,35 @@ def build_prompt_v8(payloads):
                 parts.append(f"      in : {field(s['in'])}")
             if s.get("out"):
                 parts.append(f"      out: {field(s['out'])}")
+            span_parts.append((s, len(parts) - 1))
     header = f"TRACE {u(t.get('tid', 't1'))}\n{_TRACE_DATA_PREAMBLE}\n{TRACE_DATA_OPEN}\n"
     footer = f"\n{TRACE_DATA_CLOSE}\n{_TRACE_DATA_REMINDER}"
     body = "\n".join(parts)
     # The framing counts against the guard, so a cut trace still closes its
     # block and the whole prompt stays within the budget plus the marker.
     budget = PROMPT_RUNAWAY_BUDGET - len(header) - len(footer)
+    kept = len(body)
     if len(body) > budget:
         cut = body[:budget]
         nl = cut.rfind("\n")
         if nl > 0:
             cut = cut[:nl]
+        kept = len(cut)
         body = close_open_field(
             f"{cut}\n{SCANNER_TRUNCATION_MARK}, {len(body) - len(cut)} chars omitted⟩"
         )
-    return f"{header}{body}{footer}"
+    # Where each part ends in the uncut body: a part is shown only when all of
+    # it lies before the cut.
+    ends, pos = [], 0
+    for part in parts:
+        pos += len(part)
+        ends.append(pos)
+        pos += 1
+    view = {k: v for k, v in t.items() if k not in ("spans", "tools_available")}
+    view["spans"] = [s for s, last in span_parts if ends[last] <= kept]
+    if tools_part is not None and ends[tools_part] <= kept:
+        view["tools_available"] = t["tools_available"]
+    return f"{header}{body}{footer}", view
 
 
 # ---------------------------------------------------------------------------
