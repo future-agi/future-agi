@@ -9,10 +9,15 @@ import {
   Link,
   Stack,
   Typography,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
 } from "@mui/material";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
+import CapabilityNotice from "../components/CapabilityNotice";
+import IdentityChip from "../components/IdentityChip";
+import TechnicalDetails from "../components/TechnicalDetails";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -80,6 +85,7 @@ export function evidenceProblems(ref, packet, now = Date.now()) {
 }
 
 export function IdentityValue({ label, value }) {
+  if (typeof value === 'string' && (/^(?:sha256:)?[a-f0-9]{64}$/i.test(value) || /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value))) return <IdentityChip label={label} value={value} kind={value.includes('-') ? 'id' : 'digest'} />;
   return (
     <Stack spacing={0.25} sx={{ minWidth: 0 }}>
       <Typography variant="s3" color="text.secondary">
@@ -101,8 +107,10 @@ IdentityValue.propTypes = {
 };
 
 export function ReviewState({ state, onRetry }) {
+  if (state === "off" || state === "unavailable") return <CapabilityNotice title="Release reviews are not available" description="You can still inspect published versions. Ask an admin about review access for this workspace." />;
+  if (state === "denied" || state === "forbidden") return <ErrorState title="You no longer have access to this review." detail="Private details are hidden. Ask an admin to check your access." />;
   if (state === "loading")
-    return <ContentSkeleton label="Loading review" rows={4} />;
+    return <ContentSkeleton variant="panel" label="Loading review" rows={4} />;
   if (state === "error")
     return (
       <ErrorState
@@ -418,7 +426,9 @@ ExternalPipeline.propTypes = { reference: PropTypes.object };
 export default function ReleaseReviewBody({
   packet,
   changes = [],
-  dependencyChanges = [],
+  dependencyChanges,
+  dependencyError = false,
+  onRetryDependencies,
   checks,
   capabilities,
   targetConfiguration,
@@ -452,6 +462,8 @@ export default function ReleaseReviewBody({
               : `v${packet.transition.expectedVersion}`}{" "}
             to v{packet.transition.version}
           </Typography>
+          {packet.target && <IdentityChip label={`Target configuration r${packet.target.revision}`} value={packet.target.configurationDigest} />}
+          <TechnicalDetails title="Release identities">
           <IdentityValue
             label="Candidate version ID"
             value={packet.candidateVersionId}
@@ -485,11 +497,8 @@ export default function ReleaseReviewBody({
               established.
             </Typography>
           )}
-          <Alert severity="info">
-            Publishing and approving do not move production. Existing threads
-            and checked-in locks may still use another version after a label
-            moves.
-          </Alert>
+          </TechnicalDetails>
+<Typography variant="s3" color="text.secondary">Production stays unchanged until this release is approved and executed. Existing threads and locked versions may keep using earlier content.</Typography>
         </Stack>
       </Section>
       <Section id="review-files" title="File changes">
@@ -497,7 +506,7 @@ export default function ReleaseReviewBody({
           {!ordered.length && (
             <Typography variant="s3">No file changes loaded.</Typography>
           )}
-          {ordered.map((file) => (
+          {ordered.filter((file) => file.path !== ".futureagi/context.json").map((file) => (
             <Box
               component="details"
               key={file.path}
@@ -518,6 +527,9 @@ export default function ReleaseReviewBody({
               <ReviewFileDiff file={file} />
             </Box>
           ))}
+          {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Generated files">
+            {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} /></Stack>)}
+          </TechnicalDetails>}
           {moreChanges && (
             <Button
               variant="outlined"
@@ -535,26 +547,19 @@ export default function ReleaseReviewBody({
         </Stack>
       </Section>
       <Section id="review-dependencies" title="Accepted dependencies">
-        <Stack spacing={1}>
-          {!dependencyChanges.length && (
-            <Typography variant="s3">No dependency changes loaded.</Typography>
-          )}
-          {dependencyChanges.map((item) => (
-            <Box key={item.skillId}>
-              <IdentityValue
-                label={`${item.mount} · ${item.change}`}
-                value={`Included ${item.before ? `v${item.before.version}` : "none"} → ${item.after ? `v${item.after.version}` : "none"}`}
-              />
-              <Typography variant="s3">
-                Upstream{" "}
-                {item.upstreamVersion
-                  ? `v${item.upstreamVersion}`
-                  : "unavailable"}
-                ; the accepted lock does not follow new bytes automatically.
-              </Typography>
-            </Box>
-          ))}
-        </Stack>
+        {packet.subjectKind !== 'agent_context' ? <Typography variant="s3">Not available for skills</Typography>
+          : dependencyError || !dependencyChanges ? <ErrorState title="Couldn't load the linked-skill comparison" onRetry={onRetryDependencies} />
+            : !dependencyChanges.length ? <Typography variant="s3">No linked-skill changes</Typography>
+              : <TableContainer><Table size="small" aria-label="Linked-skill changes">
+                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill (mount)</TableCell><TableCell>Policy</TableCell><TableCell>Production → Candidate</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
+                <TableBody>{dependencyChanges.map((item) => <TableRow key={item.mount} hover sx={{ height: ROW_HEIGHT.default }}>
+                  <TableCell>{item.mount}</TableCell>
+                  <TableCell>{(item.after || item.before)?.requested?.label ? `Follows ${(item.after || item.before).requested.label}` : `Pinned to v${(item.after || item.before)?.requested?.version}`}</TableCell>
+                  <TableCell>{item.before ? `v${item.before.version}` : 'Not linked'} → {item.after ? `v${item.after.version}` : 'Removed'}</TableCell>
+                  <TableCell><IdentityChip label="Locked digest" value={(item.after || item.before)?.digest} /></TableCell>
+                </TableRow>)}</TableBody>
+              </Table></TableContainer>}
+
       </Section>
       <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
       <Section title="Static checks">
@@ -613,6 +618,8 @@ ReleaseReviewBody.propTypes = {
   packet: PropTypes.object.isRequired,
   changes: PropTypes.array,
   dependencyChanges: PropTypes.array,
+  dependencyError: PropTypes.bool,
+  onRetryDependencies: PropTypes.func,
   checks: PropTypes.object,
   capabilities: PropTypes.object,
   targetConfiguration: PropTypes.object,

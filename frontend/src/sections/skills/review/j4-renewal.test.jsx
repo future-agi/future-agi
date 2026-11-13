@@ -51,7 +51,7 @@ it('offers explicit renewal only to the assigned reviewer of a stale packet', ()
   expect(screen.getByText(/stale \(release_conflict\)/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Renew review' }));
   expect(props.onRenew).toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
   rerender(<ReleaseRequestPanel {...props} permissions={{ canDecide: false, canExecute: false }} />);
   expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();
 });
@@ -91,10 +91,10 @@ it('keeps a reviewer attestation only for the same revision and fingerprint', ()
     request: { id: 'request', revision: 2, status: 'approved' }, review: { complete: true }, permissions: { canDecide: true, canExecute: true }, onExecute: vi.fn(), onDecide: vi.fn() };
   const { rerender } = render(<ReleaseRequestPanel {...props} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
   expect(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).toBeChecked();
-  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
   rerender(<ReleaseRequestPanel {...props} request={{ ...props.request, revision: 3 }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
   expect(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
-  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
 });
 
 it('clears a refusal from the previous revision when the renewed revision is approved', async () => {
@@ -102,7 +102,7 @@ it('clears a refusal from the previous revision when the renewed revision is app
     permissions: { canDecide: true, canExecute: true }, onDecide: vi.fn(), onRenew: vi.fn(),
     onExecute: vi.fn().mockRejectedValue({ statusCode: 409, code: 'release_conflict' }) };
   const { rerender } = render(<ReleaseRequestPanel {...props} request={{ id: 'request', revision: 2, status: 'approved' }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Release approved packet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production' }));
   expect(await screen.findByText(/Request rejected/)).toBeVisible();
   // The confirmation is still closing; wait until the page is interactive again.

@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import axios from 'src/utils/axios';
-import { readContextText, loadContextReview, useContextInspection, useContextInspectionFile, useContextDraftFile, useContextDraftInventory } from './context-production';
+import { readContextText, loadAcceptedDependencyComparison, loadContextReview, useContextInspection, useContextInspectionFile, useContextDraftFile, useContextDraftInventory } from './context-production';
 
 const state = vi.hoisted(() => ({ workspace: 'workspace-a' }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: 'author' } }) }));
@@ -92,4 +92,19 @@ it('refuses a different compiled draft revision', async () => {
   const hook = renderHook(() => useContextDraftInventory('context', 3), { wrapper });
   await waitFor(() => expect(hook.result.current.isError).toBe(true));
   expect(hook.result.current.data).toBeUndefined();
+});
+
+it('compares inspected locked versions without mistaking missing data for no changes', async () => {
+  const link = { mount: 'skills/refund-policy/', skill_id: 'skill', requested: { label: 'production' }, version: 1, version_id: 'v1', digest: 'old' };
+  axios.get.mockImplementation(async (url) => {
+    const number = url.includes('/versions/1/') ? 1 : 2;
+    return envelope({ manifest: { version: number, digest: number === 2 ? digest : 'baseline' }, descriptor: { links: [{ ...link, ...(number === 2 ? { version: 2, version_id: 'v2', digest: 'new' } : {}) }] } });
+  });
+  expect(await loadAcceptedDependencyComparison('context', 1, 2, digest, {})).toMatchObject([{ mount: link.mount, change: 'Changed', before: { version: 1 }, after: { version: 2 } }]);
+  axios.get.mockRejectedValue(new Error('unavailable'));
+  await expect(loadAcceptedDependencyComparison('context', 1, 2, digest, {})).rejects.toThrow('unavailable');
+});
+it('rejects a candidate digest mismatch in the linked-skill inspection', async () => {
+  axios.get.mockResolvedValue(envelope({ manifest: { version: 2, digest: 'wrong' }, descriptor: { links: [] } }));
+  await expect(loadAcceptedDependencyComparison('context', null, 2, digest, {})).rejects.toThrow('candidate changed');
 });

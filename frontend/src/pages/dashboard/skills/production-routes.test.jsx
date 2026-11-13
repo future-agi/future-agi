@@ -264,11 +264,11 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   expect(acknowledge).toBeEnabled();
   if (kind === 'agent_context') expect(screen.getByText(/2 followers · 1 intentional pins/)).toBeVisible();
   fireEvent.click(acknowledge);
-  fireEvent.click(screen.getByRole('button', { name: 'Approve exact packet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
   await waitFor(() => expect(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ })).not.toBeChecked());
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Release approved packet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production', exact: true }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/execute/'))).toBe(true));
 });
@@ -277,16 +277,16 @@ it.each(['agent_context', 'skill'])('keeps a stale %s packet fail-closed', async
   mount('/dashboard/skills/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
   expect(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Approve exact packet' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
 });
 it.each(['agent_context', 'skill'])('does not grant %s release authority from readable content', async (kind) => {
   installRequest(kind, { canMove: false, authorId: 'author' });
   mount('/dashboard/skills/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ }));
-  expect(screen.getByRole('button', { name: 'Approve exact packet' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
 });
 
 it('does not substitute latest when a malformed explicit release was requested', async () => {

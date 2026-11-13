@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTestsPanel from './ContextTestsPanel';
-import ContextLabelRequestPanel from './ContextLabelRequestPanel';
 import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextConsumersView from './ContextConsumersView';
 import ContextDetailView from './ContextDetailView';
@@ -80,39 +79,11 @@ it('recovers an uncertain admission using the identical body and key, without a 
   expect(state.create.mock.calls[1][0]).toEqual(state.create.mock.calls[0][0]);
   expect(state.prepare).toHaveBeenCalledOnce();
 });
-it('requires an independent reviewer and only submits a label request, not a label mutation', async () => {
-  mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Preview parent label move' }));
-  await screen.findByRole('button', { name: 'Send parent release request' });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Independent reviewer user ID' }), { target: { value: '00000000-0000-4000-8000-000000000001' } });
-  fireEvent.click(screen.getByRole('checkbox'));
-  expect(screen.getByRole('button', { name: 'Send parent release request' })).toBeDisabled();
-  fireEvent.change(screen.getByRole('textbox', { name: 'Independent reviewer user ID' }), { target: { value: '00000000-0000-4000-8000-000000000002' } });
-  fireEvent.click(screen.getByRole('checkbox'));
-  fireEvent.click(screen.getByRole('button', { name: 'Send parent release request' }));
-  await waitFor(() => expect(state.submitLabel).toHaveBeenCalledOnce());
-  expect(state.submitLabel.mock.calls[0][0]).toMatchObject({ packet: labelPreview.packet, fingerprint: 'packet' });
-  expect(await screen.findByText(/No label move has been confirmed/)).toBeVisible();
-});
-it('does not carry the last reviewer or test request across logins', () => {
-  window.localStorage.setItem('skills.releaseRequest.lastReviewer:org:workspace:someone-else', '00000000-0000-4000-8000-000000000002');
-  mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
-  expect(screen.getByRole('textbox', { name: 'Independent reviewer user ID' })).toHaveValue('');
-  cleanup();
+it('does not carry the last test request across logins', () => {
   window.localStorage.setItem('skills.contextTest.last:org:workspace:someone-else', JSON.stringify({ prompt: 'private request' }));
   mount(<ContextTestsPanel contextId="parent" version={version} />);
   expect(screen.getByRole('textbox', { name: 'Test request' })).toHaveValue('');
   window.localStorage.clear();
-});
-it('keeps the last chosen reviewer visible for the next parent without submitting anything for the author', async () => {
-  window.localStorage.setItem(`skills.releaseRequest.lastReviewer:${state.identity}`, '00000000-0000-4000-8000-000000000002');
-  mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
-  expect(screen.getByRole('textbox', { name: 'Independent reviewer user ID' })).toHaveValue('00000000-0000-4000-8000-000000000002');
-  fireEvent.click(screen.getByRole('button', { name: 'Preview parent label move' }));
-  await screen.findByRole('button', { name: 'Send parent release request' });
-  expect(screen.getByRole('button', { name: 'Send parent release request' })).toBeDisabled();
-  expect(state.submitLabel).not.toHaveBeenCalled();
-  window.localStorage.removeItem(`skills.releaseRequest.lastReviewer:${state.identity}`);
 });
 it('shows dependent failures rather than claiming an empty inventory', () => {
   state.dependents = { isError: true, refetch: vi.fn() };

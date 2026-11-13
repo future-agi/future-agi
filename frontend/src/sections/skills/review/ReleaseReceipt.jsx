@@ -1,26 +1,56 @@
+import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Stack, Typography } from '@mui/material';
+import { Alert, Button, Stack, Typography } from '@mui/material';
+import { enqueueSnackbar } from 'notistack';
 import Section from 'src/components/section';
-import { IdentityValue } from './ReleaseReviewBody';
+import { paths } from 'src/routes/paths';
+import IdentityChip from '../components/IdentityChip';
+import TechnicalDetails from '../components/TechnicalDetails';
 
-// History is a metadata receipt, not a re-render of retained evidence. Keep the
-// pre-move checks and post-move pointer visibly separate even after expiry.
-export default function ReleaseReceipt({ receipt }) {
-  return <Section title="Durable release receipt">
-    <Stack spacing={1}>
-      <IdentityValue label="Request" value={receipt.requestId} />
-      <IdentityValue label="Decision" value={receipt.decisionId} />
-      <IdentityValue label="Executed by" value={receipt.executedBy} />
-      <Box component="details" open>
-        <Typography component="summary" variant="m3">Currentness before the move</Typography>
-        <Typography component="pre" variant="s3" sx={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{JSON.stringify(receipt.currentnessAtAction, null, 2)}</Typography>
-      </Box>
-      <Box component="details" open>
-        <Typography component="summary" variant="m3">Pointer state after the move</Typography>
-        <Typography component="pre" variant="s3" sx={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{JSON.stringify(receipt.postMoveState, null, 2)}</Typography>
-      </Box>
-      <Alert severity="info">This receipt records the pointer at execution, not its current position. Installation and model delivery require their own observations.</Alert>
+// A durable historical record is not a statement about today's production.
+export default function ReleaseReceipt({ receipt, request }) {
+  const [copyError, setCopyError] = useState(false);
+  const after = receipt.postMoveState;
+  const before = receipt.currentnessAtAction?.version ?? receipt.currentnessAtAction?.expected_version;
+  const label = after.label || 'production';
+  const labelName = label.charAt(0).toUpperCase() + label.slice(1);
+  const subjectId = request?.subjectId || receipt.subjectId;
+  const kind = request?.subjectKind || receipt.subjectKind;
+  const resourceUrl = subjectId ? (kind === 'agent_context' ? paths.dashboard.skills.contextDetail(subjectId) : paths.dashboard.skills.detail(subjectId)) : null;
+  const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
+  return <Section title="Release receipt">
+    <Stack spacing={1.5}>
+      <Typography variant="m3">{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography>
+      {(request?.name || receipt.name) && <Typography variant="s1">{request?.name || receipt.name}</Typography>}
+      <Typography variant="s3">Recorded: {receipt.recordedAt ? new Date(receipt.recordedAt).toLocaleString() : 'Not reported'} · Released by: {receipt.executedByName || 'Unavailable member'} · Approved by: {receipt.approvedByName || 'Unavailable member'}</Typography>
+      <Typography variant="s1" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
+      <Stack direction="row" flexWrap="wrap" gap={1}>
+        <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
+        <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=versions` : undefined} disabled={!resourceUrl}>View release history</Button>
+        <Button onClick={async () => {
+          try { await navigator.clipboard.writeText(new URL(receiptUrl, window.location.origin).href); setCopyError(false); enqueueSnackbar('Copied'); }
+          catch { setCopyError(true); }
+        }}>Copy receipt link</Button>
+      </Stack>
+      {!resourceUrl && <Typography variant="s3" color="text.secondary">Version links are unavailable because this retained receipt does not include its resource.</Typography>}
+      {copyError && <Alert severity="warning">Couldn&apos;t copy. Receipt link: {receiptUrl}</Alert>}
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
+        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Currentness before the move</Typography><Typography variant="s1">Release revision {receipt.currentnessAtAction?.release_revision ?? 'Not reported'} · Security policy revision {receipt.currentnessAtAction?.security_revision ?? 'Not reported'}</Typography></Stack>
+        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Pointer state after the move</Typography><Typography variant="s1">{labelName} v{after.version} · Release revision {after.releaseRevision ?? 'Not reported'}</Typography></Stack>
+      </Stack>
+      <TechnicalDetails title="Audit details">
+        <Stack spacing={1}>
+          <IdentityChip label="Request" kind="id" value={receipt.requestId} />
+          <IdentityChip label="Decision" kind="id" value={receipt.decisionId} />
+          <IdentityChip label="Executed by" kind="id" value={receipt.executedBy} />
+          <Typography variant="m3">Recorded preconditions</Typography>
+          <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(receipt.currentnessAtAction, null, 2)}</Typography>
+          <Typography variant="m3">Recorded result</Typography>
+          <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(after, null, 2)}</Typography>
+          <Typography variant="s3">Installation and model delivery require their own observations.</Typography>
+        </Stack>
+      </TechnicalDetails>
     </Stack>
   </Section>;
 }
-ReleaseReceipt.propTypes = { receipt: PropTypes.object.isRequired };
+ReleaseReceipt.propTypes = { receipt: PropTypes.object.isRequired, request: PropTypes.object };

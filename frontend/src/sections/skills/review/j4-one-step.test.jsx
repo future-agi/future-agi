@@ -77,6 +77,8 @@ it('carries the published candidate forward, preselects the only target and shar
   expect(screen.getByLabelText('Release resource')).toHaveValue('Refund policy');
   expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
+  expect(screen.getAllByRole('checkbox', { name: /^Attach text evidence / })).toHaveLength(2);
+  screen.getAllByRole('checkbox', { name: /^Attach text evidence / }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
   expect(screen.getByText(/run-a · private/)).toBeVisible();
   expect(screen.getByText(/run-b · private/)).toBeVisible();
@@ -151,6 +153,7 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'External pipeline (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Attach 1 results' }));
   await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach text evidence / })).toBeChecked());

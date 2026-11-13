@@ -5,13 +5,14 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
-  MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
 import Section from "src/components/section";
+import StatusBadge from "src/components/status-badge";
+import PeoplePicker from "../components/PeoplePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import ReleaseReceipt from './ReleaseReceipt';
 import ReleaseReviewBody, {
@@ -120,6 +121,9 @@ function PacketActions({
   request,
   preview,
   recipients,
+  recipientsLoading,
+  recipientsError,
+  onRetryRecipients,
   permissions,
   onSubmit,
   onDecide,
@@ -201,8 +205,7 @@ function PacketActions({
     current &&
     permissions.canDecide &&
     request &&
-    request.status !== "released" &&
-    request.status !== "superseded";
+    request.status === "pending";
   // Declining grants nothing, so a reviewer can close a packet that went stale.
   const canRequestChanges =
     permissions.canDecide &&
@@ -224,7 +227,19 @@ function PacketActions({
   const closed = Boolean(finalReceipt) || request?.status === "released";
   return (
     <Stack spacing={3}>
-      <ReleaseReviewBody {...review} packet={packet} />
+      {request && <Stack spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" aria-label="Release progress">
+          <StatusBadge status="in_review" label="Submitted" />
+          <Typography variant="s3" aria-hidden="true">→</Typography>
+          <StatusBadge status={request.status === 'approved' || closed ? 'approved' : 'draft'} label="Approved" />
+          <Typography variant="s3" aria-hidden="true">→</Typography>
+          <StatusBadge status={closed ? 'released' : 'draft'} label="Released" />
+        </Stack>
+        <Typography variant="s3" color="text.secondary">Revision {request.revision} · Author: {request.authorName || 'Unavailable member'} · Reviewer: {request.recipients?.map((person) => person.name || 'Unavailable member').join(', ') || 'Unavailable member'}</Typography>
+        {request.decision && <Typography variant="s3">Decision: {request.decision}</Typography>}
+      </Stack>}
+      {!finalReceipt && <Typography variant="s1">Candidate v{packet.transition.version} · {review?.changes ? `${review.changes.length} files changed` : 'File changes not loaded'} · {review?.dependencyChanges ? `${review.dependencyChanges.length} linked-skill changes` : 'Linked-skill comparison not loaded'} · {packet.transition.label} stays {packet.transition.expectedVersion == null ? 'unassigned' : `v${packet.transition.expectedVersion}`} until released.</Typography>}
+      {!finalReceipt && <ReleaseReviewBody {...review} packet={packet} onRetryDependencies={onRefresh} />}
       {!current && !closed && (
         <Alert severity="warning">
           Review is stale or unavailable.{" "}
@@ -269,25 +284,9 @@ function PacketActions({
               not grant release authority.
             </Typography>
             {!request && (
-              <TextField
-                select
-                size="small"
-                label="Assigned reviewer"
-                value={
-                  recipients.some((item) => item.id === recipientId)
-                    ? recipientId
-                    : ""
-                }
-                onChange={(event) => setRecipientId(event.target.value)}
-                disabled={locked || !permissions.canSubmit}
-              >
-                <MenuItem value="">Choose an authorized reviewer</MenuItem>
-                {recipients.map((item) => (
-                  <MenuItem key={item.id} value={item.id}>
-                    {item.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+              <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
+                onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
+                helperText="An independent reviewer must approve before production can move." />
             )}
             {request && (
               <TextField
@@ -322,10 +321,10 @@ function PacketActions({
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               {!request && (
                 <Button
-                  variant="contained"
+                  variant="contained" color="primary"
                   disabled={
                     !onSubmit ||
-                    !permissions.canSubmit ||
+                    !permissions.canSubmit || recipientsLoading || Boolean(recipientsError) ||
                     !current ||
                     !reviewed ||
                     locked ||
@@ -346,7 +345,7 @@ function PacketActions({
               {request && (
                 <>
                   <Button
-                    variant={canExecute ? "outlined" : "contained"}
+                    variant={canExecute ? "outlined" : "contained"} color="primary"
                     disabled={!onDecide || !canDecide || !reviewed || locked}
                     onClick={() =>
                       operation.run(onDecide, {
@@ -356,7 +355,7 @@ function PacketActions({
                       })
                     }
                   >
-                    Approve exact packet
+                    Approve release
                   </Button>
                   <Button
                     variant="outlined"
@@ -377,15 +376,17 @@ function PacketActions({
                     Request changes
                   </Button>
                   <Button
-                    variant={canExecute ? "contained" : "outlined"}
+                    variant={canExecute ? "contained" : "outlined"} color="primary"
                     disabled={!onExecute || !canExecute || !reviewed || locked}
                     onClick={() => setConfirm(true)}
                   >
-                    Release approved packet
+                    Release to production
                   </Button>
                 </>
               )}
             </Stack>
+            {!reviewed && current && <Typography variant="s3" color="text.secondary">Confirm that you reviewed the candidate and release consequence to continue.</Typography>}
+            {request?.status !== 'pending' && !canExecute && <Typography variant="s3" color="text.secondary">Only a pending request can be approved. Releasing requires a current approval and release access.</Typography>}
             {request && !permissions.canExecute && (
               <Typography variant="s3">
                 A currently authorized releaser must execute the approved
@@ -395,7 +396,7 @@ function PacketActions({
           </Stack>
         </Section>
       )}
-      {finalReceipt && <ReleaseReceipt receipt={finalReceipt} />}
+      {finalReceipt && <ReleaseReceipt receipt={finalReceipt} request={request} />}
       <ConfirmDialog
         open={confirm && !closed}
         onClose={() => {
@@ -403,10 +404,10 @@ function PacketActions({
         }}
         closeDisabled={operation.busy}
         title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
-        content={`Execute only approved packet revision ${request?.revision ?? ""}. Existing threads and checked-in locks may still use another version. Current authority and all packet preconditions are rechecked by the server.`}
+        content={`${request?.name || "This resource"}: ${packet.transition.label} ${packet.transition.expectedVersion == null ? "unassigned" : `v${packet.transition.expectedVersion}`} → v${packet.transition.version}. ${packet.target ? `Application target: ${review?.targetConfiguration?.name || packet.target.bindingId || packet.target.environmentId}.` : "No application target."} Execute only approved revision ${request?.revision ?? ""}. Existing threads and checked-in locks may still use another version. Current authority and all packet preconditions are rechecked by the server.`}
         action={
           <Button
-            variant="contained"
+            variant="contained" color="primary"
             disabled={!canExecute || !reviewed || locked}
             onClick={async () => {
               await operation.run(onExecute, actionInput);
@@ -426,6 +427,9 @@ PacketActions.propTypes = {
   request: PropTypes.object,
   preview: PropTypes.object.isRequired,
   recipients: PropTypes.array.isRequired,
+  recipientsLoading: PropTypes.bool,
+  recipientsError: PropTypes.any,
+  onRetryRecipients: PropTypes.func,
   permissions: PropTypes.object.isRequired,
   onSubmit: PropTypes.func,
   onDecide: PropTypes.func,
@@ -452,7 +456,7 @@ export default function ReleaseRequestPanel({
   onRetry,
   ...props
 }) {
-  if (scopeKey && state === 'ready' && props.receipt) return <ReleaseReceipt receipt={props.receipt} />;
+  if (scopeKey && state === 'ready' && props.receipt) return <ReleaseReceipt receipt={props.receipt} request={request} />;
   if (
     !scopeKey ||
     ["loading", "error", "forbidden", "unavailable", "empty"].includes(state) ||

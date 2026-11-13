@@ -14,6 +14,8 @@ import {
   Typography,
 } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import TechnicalDetails from "../components/TechnicalDetails";
+import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
@@ -31,7 +33,14 @@ import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 // that revision. Both writes are server-checked; if anything moved after the
 // inspection, the server refuses and the revision stays pending.
 const show = (value) =>
-  value === null || value === undefined ? "None" : JSON.stringify(value);
+  value === null || value === undefined ? "None" : typeof value === 'object' ? 'See details' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+const setting = (path) => {
+  if (path.endsWith('expected_security_revision')) return 'Security policy revision';
+  if (path.endsWith('expected_release_revision')) return 'Release revision';
+  if (path.startsWith('target')) return `Application configuration: ${path.split('.').slice(1).join(' ').replaceAll('_', ' ')}`;
+  if (path.startsWith('evidence')) return `Evidence ${path.split('.').slice(1).join(' ').replaceAll('_', ' ')}`;
+  return path.replace(/^transition\./, '').replaceAll('_', ' ');
+};
 
 const REASONS = {
   evidence_expired: "Detailed evidence expired",
@@ -139,9 +148,10 @@ export default function ReleaseRenewalDialog({
             <Table size="small" aria-label="Changed preconditions">
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                  <TableCell>Changed item</TableCell>
-                  <TableCell>Reviewed</TableCell>
-                  <TableCell>Current</TableCell>
+                  <TableCell>Setting</TableCell>
+                  <TableCell>Field</TableCell>
+                  <TableCell>Before</TableCell>
+                  <TableCell>After</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -151,7 +161,8 @@ export default function ReleaseRenewalDialog({
                     hover
                     sx={{ height: ROW_HEIGHT.default }}
                   >
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
+                    <TableCell>{setting(row.item)}{JSON.stringify(row.before) === JSON.stringify(row.after) && <Typography variant="s3" display="block">Changed and restored</Typography>}</TableCell>
+                    <TableCell sx={{ typography: "s3", fontFamily: "monospace", overflowWrap: "anywhere" }}>
                       {row.item}
                     </TableCell>
                     <TableCell sx={{ overflowWrap: "anywhere" }}>
@@ -167,7 +178,7 @@ export default function ReleaseRenewalDialog({
             {value.removedEvidence.map((row) => (
               <Alert severity="warning" key={`${row.source}:${row.sourceId}`}>
                 {REASONS[row.reason] || "Evidence unavailable"}: {row.sourceId}{" "}
-                is removed from the renewed packet. It is not replaced.
+                is removed from the renewed packet. It is not replaced. <StatusBadge status="expired" label={row.reason === 'evidence_expired' ? 'Removed (expired)' : 'Removed (unavailable)'} />
               </Alert>
             ))}
             <Typography variant="s3">
@@ -177,6 +188,10 @@ export default function ReleaseRenewalDialog({
                 : "no evidence"}{" "}
               for the same candidate and target.
             </Typography>
+            <TechnicalDetails title="Changed values">
+              <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
+            </TechnicalDetails>
+            <Typography variant="s3">Approving creates revision {value.revision + 1} of this request.</Typography>
             <FormControlLabel
               control={
                 <Checkbox

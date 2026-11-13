@@ -163,7 +163,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
     return {
       request: mapRequest({ ...raw, subject_kind: packet.subject_kind }),
       preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(!staleCode && inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current?.fingerprint === raw.fingerprint) },
-      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
+      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } : undefined,
       canExecute, staleCode,
     };
 }

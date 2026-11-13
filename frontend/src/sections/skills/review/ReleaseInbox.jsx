@@ -16,6 +16,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
@@ -42,7 +43,7 @@ function InboxRows({
   return (
     <Stack spacing={1}>
       <Typography variant="s1" role="status">
-        {authored ? 'Requests you authored. Open an unreleased request to renew its review.' : `${data.unreadCount} unread assigned request(s)`}
+        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : `${data.unreadCount} unread assigned request(s)`}
       </Typography>
       <ListToolbar>
         <TextField
@@ -50,6 +51,8 @@ function InboxRows({
           size="small"
           label="Request status"
           value={status}
+          InputLabelProps={{ shrink: true }}
+          SelectProps={{ displayEmpty: true }}
           onChange={(event) => onStatusChange(event.target.value)}
         >
           <MenuItem value="">All statuses</MenuItem>
@@ -79,8 +82,10 @@ function InboxRows({
             <Table size="small" aria-label="Assigned release reviews">
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                  <TableCell>Candidate</TableCell>
+                  <TableCell>Release</TableCell>
                   <TableCell>Status</TableCell>
+                  <TableCell>Revision</TableCell>
+                  <TableCell>Updated</TableCell>
                   <TableCell>Review</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
@@ -113,20 +118,16 @@ function InboxRows({
                         {item.subjectKind === "agent_context"
                           ? "Agent context"
                           : "Skill"}{" "}
-                        · packet r{item.revision}
-                        {/* Requests for one context look alike; the update time tells them apart. */}
-                        {item.updatedAt
-                          ? ` · updated ${new Date(item.updatedAt)
-                              .toISOString()
-                              .slice(0, 19)
-                              .replace("T", " ")} UTC`
-                          : ""}
+
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={item.status} />
+                      <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
                     </TableCell>
+                    <TableCell>{item.revision}</TableCell>
+                    <TableCell><Tooltip title={item.updatedAt || 'Not reported'}><Typography component="span" variant="s3">{item.updatedAt && Number.isFinite(Date.parse(item.updatedAt)) ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(Math.round((Date.parse(item.updatedAt) - Date.now()) / 60000), 'minute') : 'Not reported'}</Typography></Tooltip></TableCell>
                     <TableCell>
+                      {item.unread && <Box component="span" aria-label="Unread" sx={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', bgcolor: 'text.primary', mr: 1 }} />}
                       <Typography variant="s3">
                         {authored ? 'Authored by you' : item.unread ? "Unread" : "Seen — not approval"}
                       </Typography>
@@ -226,7 +227,7 @@ export default function ReleaseInbox({
         sx={{ mb: 0 }}
         actions={scopeKey && <>
           {onToggleAuthored && <Button variant="outlined" onClick={onToggleAuthored}>{authored ? 'Assigned to me' : 'My requests'}</Button>}
-          {onCompose && <Button variant="contained" onClick={onCompose}>Request review</Button>}
+          {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request review</Button>}
         </>}
       />
       {scopeKey && state === "ready" && data ? (
