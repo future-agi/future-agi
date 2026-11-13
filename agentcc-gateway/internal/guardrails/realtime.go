@@ -233,6 +233,9 @@ func runRealtimeCheck(ctx context.Context, rule resolvedRule, input *CheckInput)
 		after, _ := json.Marshal(input)
 		if result.result != nil {
 			result.err = result.result.Err
+			if result.err == nil {
+				result.err = result.result.RealtimeErr
+			}
 			if math.IsNaN(result.result.Score) || math.IsInf(result.result.Score, 0) || result.result.Score < 0 || result.result.Score > 1 {
 				result.err = errors.New("guardrail returned an invalid score")
 			}

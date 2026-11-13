@@ -82,6 +82,12 @@ type Handlers struct {
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
+	// asyncKeyRequired is set by server wiring when license auth is enabled
+	// without API-key auth: async jobs then have no anonymous owner.
+	asyncKeyRequired bool
+	// resultIPACL holds the global network rules applied when stored results
+	// (async jobs, batches, admin video jobs) are read or changed.
+	resultIPACL config.IPACLConfig
 
 	// Responses API store.
 	responsesStore *responses.Store
