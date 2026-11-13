@@ -298,6 +298,133 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
 
 
 @pytest.mark.django_db
+def test_compare_delete_logs_a_local_folder_it_cannot_remove(
+    auth_client, compare_datasets, monkeypatch, tmp_path
+):
+    import os
+    import shutil
+
+    from structlog.testing import capture_logs
+
+    compare_id = uuid.uuid4()
+    monkeypatch.chdir(tmp_path)
+    compare_dir = Path(get_compare_local_dir(compare_id))
+    compare_dir.mkdir(parents=True)
+    (compare_dir / "page_1.json").write_text("{}", encoding="utf-8")
+    dataset_ids = [
+        str(compare_datasets["base_dataset"].id),
+        str(compare_datasets["other_dataset"].id),
+    ]
+    shared = {
+        f"compare/{compare_id}/metadata.json": {
+            "status": "completed",
+            "created_at": created_at_now(),
+            "base_dataset_id": dataset_ids[0],
+            "comparison_datasets": dataset_ids,
+        }
+    }
+
+    def read(compare_id, name):
+        object_key = f"compare/{compare_id}/{name}"
+        if object_key not in shared:
+            raise CompareObjectUnavailable(name)
+        return shared[object_key]
+
+    started = []
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, ignore_errors=False, onerror=None, **kwargs):
+        # The folder's page cannot be removed (e.g. its permissions changed).
+        if os.fspath(path) != os.fspath(get_compare_local_dir(compare_id)):
+            return real_rmtree(
+                path, ignore_errors=ignore_errors, onerror=onerror, **kwargs
+            )
+        error = PermissionError(13, "Permission denied")
+        if ignore_errors:
+            return None
+        if onerror is None:
+            raise error
+        page = str(compare_dir / "page_1.json")
+        onerror(os.unlink, page, (type(error), error, None))
+        return None
+
+    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", read)
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata",
+        lambda compare_id: shared.pop(f"compare/{compare_id}/metadata.json"),
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.drop_in.start_activity",
+        lambda *args, **kwargs: started.append((args, kwargs)),
+    )
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+
+    with capture_logs() as logs:
+        response = auth_client.delete(
+            f"/model-hub/datasets/delete-compare/{compare_id}/"
+        )
+
+    # The metadata is gone, so the comparison is no longer served; the folder
+    # is left to the local sweep and the failure is logged, not hidden.
+    assert response.status_code == status.HTTP_200_OK
+    assert shared == {}
+    assert compare_dir.exists()
+    assert len(started) == 1
+    failures = [
+        log for log in logs if log["event"] == "compare_local_folder_delete_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0]["log_level"] == "warning"
+    assert failures[0]["compare_id"] == str(compare_id)
+    assert failures[0]["exc_info"] is True
+
+
+@pytest.mark.django_db
+def test_compare_delete_quietly_skips_a_local_folder_already_gone(
+    auth_client, compare_datasets, monkeypatch, tmp_path
+):
+    from structlog.testing import capture_logs
+
+    compare_id = uuid.uuid4()
+    monkeypatch.chdir(tmp_path)
+    dataset_ids = [
+        str(compare_datasets["base_dataset"].id),
+        str(compare_datasets["other_dataset"].id),
+    ]
+    shared = {
+        f"compare/{compare_id}/metadata.json": {
+            "status": "completed",
+            "created_at": created_at_now(),
+            "base_dataset_id": dataset_ids[0],
+            "comparison_datasets": dataset_ids,
+        }
+    }
+
+    def read(compare_id, name):
+        object_key = f"compare/{compare_id}/{name}"
+        if object_key not in shared:
+            raise CompareObjectUnavailable(name)
+        return shared[object_key]
+
+    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", read)
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata",
+        lambda compare_id: shared.pop(f"compare/{compare_id}/metadata.json"),
+    )
+    monkeypatch.setattr("tfc.temporal.drop_in.start_activity", lambda *a, **k: None)
+
+    with capture_logs() as logs:
+        response = auth_client.delete(
+            f"/model-hub/datasets/delete-compare/{compare_id}/"
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert not [
+        log for log in logs if log["event"] == "compare_local_folder_delete_failed"
+    ]
+
+
+@pytest.mark.django_db
 def test_compare_pagination_tolerates_eval_columns_without_source_id(
     compare_datasets, monkeypatch
 ):

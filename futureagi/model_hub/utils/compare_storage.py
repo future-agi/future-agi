@@ -170,11 +170,27 @@ def _remove_prefix(client, bucket: str, compare_id) -> None:
         client.remove_object(bucket, obj.object_name)
 
 
+def _ignore_missing_path(function, path, exc_info):
+    # rmtree's error handler: a path a concurrent cleanup already removed is
+    # fine, including a child of the folder; any other error is raised.
+    error = exc_info[1]
+    if not isinstance(error, FileNotFoundError):
+        raise error
+
+
+def remove_local_compare_dir(compare_id) -> None:
+    """Remove this process's local folder of a comparison. A folder that is
+    already gone is not an error; one that cannot be removed raises OSError."""
+    shutil.rmtree(get_compare_local_dir(compare_id), onerror=_ignore_missing_path)
+
+
 def remove_compare(compare_id) -> None:
     """Remove a comparison's objects, then its local folder. The local folder
-    stays when the remote removal fails, so the local sweep retries it."""
+    stays when the remote removal fails, so the local sweep retries it. A local
+    folder that is already gone is not an error; one that cannot be removed
+    raises, so the caller retries it."""
     delete_compare_objects(compare_id)
-    shutil.rmtree(get_compare_local_dir(compare_id), ignore_errors=True)
+    remove_local_compare_dir(compare_id)
 
 
 def sweep_local_compare_root(now: float | None = None) -> None:

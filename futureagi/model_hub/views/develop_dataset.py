@@ -6,7 +6,6 @@ import json
 import math
 import os
 import re
-import shutil
 import time
 import traceback
 import uuid
@@ -270,6 +269,7 @@ from model_hub.utils.compare_storage import (
     is_expired,
     read_compare_json,
     remove_compare,
+    remove_local_compare_dir,
     start_local_sweeper,
     write_compare_json,
 )
@@ -13715,9 +13715,17 @@ class GetCompareDatasetRow(APIView):
 
             # The activity may run on another machine, so remove this
             # replica's local copy here; the activity removes the shared files.
-            compare_dir = get_compare_local_dir(compare_id)
-            if os.path.isdir(compare_dir):
-                shutil.rmtree(compare_dir, ignore_errors=True)
+            # The metadata is already gone, so the comparison is no longer
+            # served: a folder that cannot be removed is logged and left to the
+            # local sweep, which retries it once it is old enough.
+            try:
+                remove_local_compare_dir(compare_id)
+            except OSError:
+                logger.warning(
+                    "compare_local_folder_delete_failed",
+                    compare_id=str(compare_id),
+                    exc_info=True,
+                )
 
             # Import the activity to register it
             import tfc.temporal.background_tasks.activities  # noqa: F401
