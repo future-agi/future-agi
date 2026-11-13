@@ -2,7 +2,8 @@
 
 Two independent, opt-in policies remove the routine release-PR merge and image
 publication approval. Neither policy deploys a cluster. Both switches ship off.
-The main-ancestry guard is unconditional: even a manually approved release must
+They are repository variables, so any member with the Write role can turn
+them on or off (see "Who can change the switches"). The main-ancestry guard is unconditional: even a manually approved release must
 come from reviewed `main` history.
 
 Four `future-agi/deployment` files this document cites are on open PRs, not
@@ -18,7 +19,7 @@ All variables below are **repository variables**, not environment variables set
 in the `Production` environment. The guard runs before entering an environment.
 Only the exact value `on` enables a switch.
 
-| Variable | Unset default | Admin action / meaning |
+| Variable | Unset default | Value / meaning |
 | --- | --- | --- |
 | `RELEASE_AUTOPILOT` | Off | Set `on` to approve and merge eligible release-please PRs. |
 | `RELEASE_AUTO_APPROVE` | Off | Set `on` to let migration-free tag pushes use `production-auto` instead of `Production`. Independent of PR auto-merge. |
@@ -26,6 +27,37 @@ Only the exact value `on` enables a switch.
 | `RELEASE_AUTOPILOT_MIN_AGE_MINUTES` | `30` | Non-negative integer minutes since the PR's last update (0–999999). The exact threshold is inclusive; malformed or future timestamps stop the merge. |
 | `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. |
 | `RELEASE_AUTOPILOT_WEEKENDS` | Off | Set `on` to allow Saturday/Sunday UTC. The day is the current UTC day, including for an overnight window. |
+
+**Who can change the switches.** Any member with the Write role can create,
+change or delete repository variables, in the UI or by REST (GitHub's
+documentation, not tested). So every variable in the table is an operating
+switch, not an owner-only gate. One writer can turn either policy on, set
+`RELEASE_AUTOPILOT_MIN_AGE_MINUTES` to `0`, widen the hours window, allow
+weekends, or undo a pause set with these variables. This allows the
+following:
+
+- With `RELEASE_AUTO_APPROVE=on`, the next migration-free tag that the
+  release App pushes on main publishes images in `production-auto`, without
+  the Production reviewers. This needs no other owner setup: `production-auto`
+  exists and has no reviewers. Before this PR, every publication waited for
+  Production review.
+- With `RELEASE_AUTOPILOT=on`, once the owner has added the approver key and
+  the labels, the next eligible release PR is approved and merged. One writer
+  can already approve and merge that PR by hand, so this adds little.
+- What ships is still reviewed `main` code. The tag must be on main and its
+  release must add no migration files, and the PR policy merges only the four
+  release-metadata files.
+
+The `check` job of `release-autopilot.yml` and the `guard` job of
+`release-images.yml` name no environment, so they read the repository value.
+The `merge` job and the `approve` recheck name an environment, so a value set
+on that environment takes precedence there. GitHub's pages disagree on
+whether a writer can edit an environment variable, and the scratch-repository
+test in the `deploy_github.tf` header of `future-agi/deployment` decides it.
+Until that test shows a writer cannot, an environment copy is not an
+owner-only stop. A switch that only reviewed changes can flip would be a
+value in a file on main, read from the main checkout both workflows already
+use. That needs a code change and is not part of this PR.
 
 An admin must also make these settings before enabling either policy. Code
 changes none of them.
@@ -751,12 +783,17 @@ bump could compare between the pinned and the new backend digest.
 
 - To hold a release before merge, add `release-hold` to the release PR. Displayed
   spellings such as `Release-Hold` and `RELEASE-HOLD` also stop approval and merge.
-  Remove it when ready; its update restarts the normal cooldown. To stop the entire PR
-  policy, unset `RELEASE_AUTOPILOT` or set it to `off`.
+  Remove it when ready; its update restarts the normal cooldown. Any writer can
+  also remove the label. To stop the entire PR policy, unset `RELEASE_AUTOPILOT`
+  or set it to `off`.
 - After merge/tagging, `release-hold` cannot undo the release. Set
   `RELEASE_AUTO_APPROVE=off` for future runs, cancel any already-running release
   that must stop, and retain the deployment repo's separate hold and rollout
   controls. A variable change does not cancel jobs already publishing images.
+- Neither variable is an owner-only stop: any writer can set it back to `on`
+  (see "Who can change the switches"). The stops that do not depend on a
+  variable are the `release-hold` label, for the PR policy only, and
+  cancelling the running `release-images.yml` run, for publication.
 - The bot leaves a SHA-bound policy comment, an approval review,
   `autopilot-approved`, and a decision summary. A successful merge adds
   `autopilot-merged` and a completion comment linked to the run. An attempted
@@ -779,10 +816,10 @@ bump could compare between the pinned and the new backend digest.
   main: the policy runs from main, and both release-images steps stop with a
   clear error if the script is missing there. Keep the script's arguments and outputs backward
   compatible until a change reaches main.
-- The merge also requires the `migrations-callout` workflow to have passed on the
-  release head (identified by its workflow file, because its job is named
-  `check` like other checks), and the release PR to be current with main or main
-  to have been quiet for the cooldown. A behind PR merges on checks that ran
+- The merge also requires the `migrations-callout` workflow's `check` job to have
+  passed on the release head (the run is identified by its workflow file,
+  because its job is named `check` like other checks), and the release PR to be
+  current with main or main to have been quiet for the cooldown. A behind PR merges on checks that ran
   against an older main; the tag-time migration count still selects Production
   review for what main added. If GitHub reports the PR as `behind` (main
   requires up-to-date branches), the run waits: before approving when the
@@ -790,13 +827,44 @@ bump could compare between the pinned and the new backend digest.
   `blocked` first. If GitHub still refuses the merge (HTTP 405 or 422), the
   run records the refused
   head in a PR comment, keeps the approval and ends green; the next eligible run
-  retries once, and a second refusal of the same head fails the run. Only runs
-  from the release PR itself count: the run's head branch must be
-  `release-please--branches--main` in
-  `future-agi/future-agi`. Runs from a fork or another branch at the same commit
-  are ignored before the newest run is chosen, so another PR can neither pass
-  nor block this gate. GitHub allows one open PR per head branch and base, and
-  the callout workflow runs only for PRs to `main`.
+  retries once, and a second refusal of the same head fails the run.
+- **Which callout run counts.** Only runs of the release PR itself count. The
+  run's head branch must be `release-please--branches--main` in
+  `future-agi/future-agi`, and the run must list this PR, with base `main`,
+  among its pull requests. Runs from a fork or another branch at the same
+  commit are ignored. The callout workflow (from dev, 10 Nov) runs for PRs
+  into `dev` and `main`. Its `self-test` job runs on every PR. Its `check` job
+  runs only for a `release-please--` head into `main`; on a PR into dev it is
+  skipped and the run still ends green (run 43330391546, for PR #3872 into
+  dev, shows that shape). GitHub lists every open PR from a branch on each of its runs
+  (seen on PRs #549 and #550), so a second PR from the release branch into
+  dev would show up on the release PR's runs. The gate therefore decides on
+  the `check` job, not on the run. It reads each run's jobs, newest run first,
+  and passes over a completed run whose `check` job was skipped. The first
+  other run decides: the run and its `check` job must both have completed
+  with success. A run still queued or running, a run with no `check` job, or
+  a malformed job list makes the release wait, so an older pass never counts
+  over a newer run that has not finished. GitHub allows one open PR per head
+  branch and base.
+- **What the callout check reads.** On a PR event the `check` job's script
+  (`.github/scripts/migrations_callout.py`) reads the run's own merge preview:
+  `GITHUB_SHA`, the `refs/pull/N/merge` commit that the checkout fetched. It
+  fails unless that is a merge with two parents whose second parent is the PR
+  head. The release range starts at the newest stable tag reachable from the
+  merge's first parent (main's tip when GitHub built the preview), so both
+  ends come from one snapshot. It does not read the payload's
+  `merge_commit_sha`. GitHub computes the preview after it creates the PR, so
+  an `opened` payload often carries null, and a re-run reuses the payload.
+  Migration-free release PRs #3636 and #3594 each had one callout run, from
+  `opened`, and no later one. The checkout logs of release PR runs (#3636,
+  #3720, and the force-push runs on #3629 and #3585) all show the run's head
+  commit as the preview's second parent.
+- The callout script change ships in the same PR as `release-autopilot.yml`.
+  It must reach main no later than that workflow, and before
+  `RELEASE_AUTOPILOT` is turned on. Promotions merge all of dev, so both
+  arrive together unless one is reverted or picked alone. On the first
+  release PR after that promotion, confirm that the callout run from the
+  `opened` event ran its `check` job and passed, with no edit to the PR.
 - First merge with both variables unset. Verify labels, App permissions, the
   approver App live check, environment protections, default-branch/main
   availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
@@ -871,6 +939,7 @@ immutable Git API evidence, current-SHA status handling, transaction rechecks,
 idempotent audit/approval, approver App identity, refused merges, environment
 decisions, the release-branch push check, the reason given for a red or running
 required check, the workflow's job split, wake-up triggers and action pins,
+the callout workflow's triggers and `check` job, which callout run decides,
 `sdk-sync.yml`'s base and version checks (its real first step runs under
 `bash -e`), and the bump job itself. Its count, bump, verify and `Open bump PR`
 steps run in workflow order on synthetic values files shaped like the
@@ -906,11 +975,14 @@ Run workload tests only in E2B or CI, not on the shared development host.
 (`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and,
 from `scripts/`, runs three test modules by name: `test_release_autopilot`,
 `test_release_error_feed_worker` and `test_verify_platform_image_tags`. It runs
-when `release-images.yml`, `release-autopilot.yml`, `sdk-sync.yml`, the three
-scripts, their tests, `scripts/image_size_budget.py` or this document change.
-This document is listed because a test checks that it quotes the autopilot's
-wait reasons. `scripts/image_size_budget.py` is listed because the isolation
-test runs it as `size-report` does. Its own tests,
+when `release-images.yml`, `release-autopilot.yml`, `sdk-sync.yml`,
+`migrations-callout-check.yml`, the three scripts, their tests,
+`scripts/image_size_budget.py` or this document change. This document is
+listed because a test checks that it quotes the autopilot's wait reasons, and
+the callout workflow because a test pins its triggers and `check` job. The
+callout script's own tests run in that workflow's `self-test` job.
+`scripts/image_size_budget.py` is listed because the isolation test runs it
+as `size-report` does. Its own tests,
 `deploy/tests/test_image_size_budget.py`, run in `images-ci.yml`. A test
 checks that every script the isolation test runs is in the list. Other `scripts/test_*.py` files run in their own
 workflows with their own tools: `python-lint.yml` runs the lint-gate test with
