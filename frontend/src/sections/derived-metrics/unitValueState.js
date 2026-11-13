@@ -81,6 +81,8 @@ export function pointValueState(point, options = {}) {
       return present(point.value, "number", options.stale);
     case "no_data":
       return absent("empty", metricCopy.empty);
+    case "not_calculated":
+      return absent("pending", metricCopy.notCalculated);
     case "sampled_inputs_not_supported":
       return absent("unsupported", metricCopy.sampledInputs);
     case "missing_inputs":

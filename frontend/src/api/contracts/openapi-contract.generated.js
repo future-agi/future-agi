@@ -77280,6 +77280,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["on_demand"],
         },
+        calculated_through: {
+          title: "Calculated through",
+          description:
+            "window_not_calculated_yet: units starting at or after this instant are not calculated yet",
+          type: "string",
+          format: "date-time",
+        },
       },
     },
     MetricUnitValuesRequest: {
@@ -111041,6 +111048,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
           "x-nullable": true,
         },
+        calculated_through: {
+          title: "Calculated through",
+          description:
+            "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
       },
     },
     MetricUnitValue: {
@@ -111303,6 +111318,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "non_finite",
             "retention_expired",
             "sampled_inputs_not_supported",
+            "not_calculated",
           ],
         },
         rate_eligible: {
@@ -111413,6 +111429,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "non_finite",
             "retention_expired",
             "sampled_inputs_not_supported",
+            "not_calculated",
           ],
         },
         rate_eligible: {
@@ -111599,6 +111616,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "non_finite",
             "retention_expired",
             "sampled_inputs_not_supported",
+            "not_calculated",
           ],
         },
         rate_eligible: {

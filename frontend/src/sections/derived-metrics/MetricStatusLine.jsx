@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { formatMetricTime, formatRelativeMetricTime } from "./metricTime";
-import { forwardCoverageCopy } from "./copy";
+import { calculatedThroughCopy, forwardCoverageCopy } from "./copy";
 
 import { metricReadMessage } from "./metricPageValues";
 
@@ -64,9 +64,32 @@ MetricCoverageLine.propTypes = {
   definition: PropTypes.object,
 };
 
+/** Where calculated values stop when the read's window runs past them (a
+ * forward metric whose latest calculations are due or failing). */
+export function MetricCalculatedThroughLine({ provenance, window }) {
+  const through = Date.parse(provenance?.calculated_through ?? "");
+  const end = Date.parse(window?.window_end ?? "");
+  if (!Number.isFinite(through) || !Number.isFinite(end) || through >= end)
+    return null;
+  return (
+    <Typography
+      variant="body2"
+      color="text.secondary"
+      data-testid="metric-calculated-through"
+    >
+      {calculatedThroughCopy(provenance.calculated_through)}
+    </Typography>
+  );
+}
+MetricCalculatedThroughLine.propTypes = {
+  provenance: PropTypes.object,
+  window: PropTypes.object,
+};
+
 export default function MetricStatusLine({
   provenance,
   definition,
+  window,
   showFreshness = true,
 }) {
   const done = provenance?.backfill_days_done ?? definition?.backfill_days_done;
@@ -84,6 +107,7 @@ export default function MetricStatusLine({
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
       {/* Started with no history: say where values begin. */}
       <MetricCoverageLine provenance={provenance} definition={definition} />
+      <MetricCalculatedThroughLine provenance={provenance} window={window} />
       {failed && (
         <Alert severity="warning">
           History recalculation failed. Previously committed values have not
@@ -130,5 +154,6 @@ export default function MetricStatusLine({
 MetricStatusLine.propTypes = {
   provenance: PropTypes.object,
   definition: PropTypes.object,
+  window: PropTypes.object,
   showFreshness: PropTypes.bool,
 };

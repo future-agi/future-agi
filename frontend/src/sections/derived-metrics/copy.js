@@ -61,6 +61,17 @@ const intervalReasons = {
 export const forwardCoverageCopy = (coverageStart) =>
   `Values from ${formatMetricTime(firstValuesInstant(coverageStart))}. History isn't computed for projects this large yet.`;
 
+/** Where a forward metric's calculated values stop, when a window runs past
+ * it: nothing starting at or after it is calculated yet. */
+export const calculatedThroughCopy = (through) =>
+  `Calculated through ${formatMetricTime(through)}. Later values are not calculated yet.`;
+
+/** A window that starts after a forward metric's calculated values stop. */
+export const windowNotCalculatedYetCopy = (through) =>
+  through
+    ? `Not calculated yet. Values are calculated through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`
+    : "Not calculated yet. Choose an earlier window or check back after the next calculation.";
+
 /** A window that holds no whole 15-minute period of a forward metric's values
  * yet (coverageReadableAt says when it will). */
 export function forwardPendingCopy(definition, now = new Date()) {

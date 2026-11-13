@@ -698,6 +698,13 @@ class MetricUnavailableSerializer(serializers.Serializer):
     message = serializers.CharField()
     retryable = serializers.BooleanField()
     value_mode = serializers.ChoiceField(choices=["on_demand"], required=False)
+    calculated_through = serializers.DateTimeField(
+        required=False,
+        help_text=(
+            "window_not_calculated_yet: units starting at or after this instant "
+            "are not calculated yet"
+        ),
+    )
 
 
 class MetricWindowSerializer(StrictInputSerializer):
@@ -783,6 +790,14 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
         help_text="forward: started with no history; values exist from coverage_start",
     )
     coverage_start = serializers.DateTimeField(allow_null=True, required=False)
+    calculated_through = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "forward: units starting at or after this instant are not calculated "
+            "yet (the consumed source cut, or a pending burst sweep's floor)"
+        ),
+    )
 
 
 class MetricEffectiveWindowSerializer(serializers.Serializer):
@@ -804,6 +819,7 @@ class MetricPointSerializer(serializers.Serializer):
             "non_finite",
             "retention_expired",
             "sampled_inputs_not_supported",
+            "not_calculated",
         ]
     )
     rate_eligible = serializers.BooleanField()

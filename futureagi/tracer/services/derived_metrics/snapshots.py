@@ -156,6 +156,9 @@ def request_snapshot(metric, data, user):
         # version whose head predates its calculation without creating a pin.
         head = MetricProjectRefresh.for_project(metric.project_id).head_manifest
         require_forward_definition_published(head, metric.active_version)
+        if metric.active_version is not None:
+            # Likewise refuse a window nothing of which is calculated yet.
+            require_calculated_window(metric.active_version, window, head)
         supported, reason = snapshot_support(metric.active_version)
         if not supported:
             raise SnapshotNotSupportedError(reason)
@@ -188,7 +191,7 @@ def request_snapshot(metric, data, user):
                 "snapshot_unavailable",
                 "No usable committed result is available to capture.",
             ) from exc
-        require_calculated_window(pin.definition_version, window)
+        require_calculated_window(pin.definition_version, window, pin.manifest)
         run = DerivedMetricRun.objects.create(
             id=run_id,
             definition=pin.definition_version,
@@ -1012,9 +1015,10 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
                 error=(
                     "expired"
                     if isinstance(exc, MetricStateConflict)
-                    else "window_not_calculated"
+                    else exc.code
                     if isinstance(exc, MetricUnavailableError)
-                    and exc.code == "window_not_calculated"
+                    and exc.code
+                    in {"window_not_calculated", "window_not_calculated_yet"}
                     else "capture_failed"
                 ),
             )

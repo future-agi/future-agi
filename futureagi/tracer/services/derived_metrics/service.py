@@ -675,9 +675,11 @@ class MetricUnavailableError(Exception):
         message="Metric reads are temporarily unavailable. Retry after a committed refresh.",
         *,
         value_mode=None,
+        calculated_through=None,
     ):
         self.code, self.message = code, message
         self.value_mode = value_mode
+        self.calculated_through = calculated_through
         super().__init__(message)
 
 

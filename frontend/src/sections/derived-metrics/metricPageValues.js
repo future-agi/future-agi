@@ -1,5 +1,5 @@
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
-import { windowNotCalculatedCopy } from "./copy";
+import { windowNotCalculatedCopy, windowNotCalculatedYetCopy } from "./copy";
 import { formatMetricValue } from "./formatMetricValue";
 import { formatMetricTime, forwardValuesStart } from "./metricTime";
 import { pointValueState } from "./unitValueState";
@@ -75,6 +75,7 @@ const unavailableMessages = {
   metric_recalculating:
     "Not calculated yet. A completed active definition is not available.",
   window_not_calculated: windowNotCalculatedCopy,
+  window_not_calculated_yet: windowNotCalculatedYetCopy(),
   metric_version_changed:
     "The active definition changed. Reload the metric to read the new version.",
 };
@@ -102,6 +103,8 @@ export function metricReadMessage(error, label, definition) {
   const first = forwardValuesStart(definition);
   if (error?.code === "metric_recalculating" && first)
     return `Not calculated yet. Values from ${formatMetricTime(first)} appear after the next calculation.`;
+  if (error?.code === "window_not_calculated_yet")
+    return windowNotCalculatedYetCopy(error.calculated_through);
   return (
     unavailableMessages[error?.code] ||
     (error?.statusCode === 403

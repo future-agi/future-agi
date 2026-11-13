@@ -51,6 +51,8 @@ const statusLabels = {
 // own state; an unknown code says only that it failed.
 const failedCopy = {
   window_not_calculated: `Not saved. ${windowNotCalculatedCopy}`,
+  window_not_calculated_yet:
+    "Not saved. This window was not calculated yet. Try again after the next calculation.",
   capture_failed: "Not saved. The capture did not finish. Try again.",
 };
 

@@ -102,6 +102,11 @@ class MetricViewSet(viewsets.GenericViewSet):
                     "message": exc.message,
                     "retryable": True,
                     **({"value_mode": exc.value_mode} if exc.value_mode else {}),
+                    **(
+                        {"calculated_through": exc.calculated_through.isoformat()}
+                        if exc.calculated_through
+                        else {}
+                    ),
                 },
                 status=503,
             )

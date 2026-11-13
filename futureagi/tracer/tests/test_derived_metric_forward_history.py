@@ -878,3 +878,138 @@ def test_history_initial_sweep_covers_only_the_window_the_size_gate_counted(
     assert measured == [window] and window == NOW - timedelta(days=2)
     assert floors == [window, window]
     assert first.backfill_cursor["phase"] == "complete"
+
+
+@pytest.mark.django_db
+def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_data(
+    setup_runner,
+    observe_project,
+    workspace,
+    monkeypatch,
+    auth_client,
+    enabled_metrics,
+):
+    """10M BIG: every pass since 22:20 failed, yet KPI [22:15, 22:31) said 200
+    no_data with eligible_count 0 while ~4.6k conversations sat uncalculated.
+
+    The pinned head reflects arrivals up to the consumed watermark, and a
+    pending burst sweep has not re-read units from its floor: nothing starting
+    at or after the lesser is calculated. A window starting there is "not
+    calculated yet" (KPI, trend, drivers, snapshots), a window running past it
+    carries calculated_through, and trend points past it are not_calculated.
+    """
+    runner, clock = setup_runner
+    draft = make_version(observe_project, workspace)
+    DerivedMetricVersion.objects.filter(id=draft.id).update(
+        created_at=NOW - timedelta(hours=3)
+    )
+    monkeypatch.setattr(backfill, "history_window_spans", _size(1))
+    assert _enter(runner) == {str(draft.id): "forward"}
+    clock[0] = NOW + timedelta(seconds=30)
+    cut = NOW - timedelta(minutes=20)
+    head = _consume(runner, cut)
+    metric = DerivedMetric.objects.select_related("active_version", "project").get(
+        id=draft.metric_id
+    )
+    definition = metric.active_version
+    assert definition.id == draft.id and str(draft.id) in _prepared(head)
+
+    def window(minutes):
+        return {"window_start": NOW - timedelta(minutes=minutes), "window_end": NOW}
+
+    def pinned(connection, project_id, *, metric_id=None):
+        return nullcontext((head, definition))
+
+    # ClickHouse answers every read with nothing, as for an uncalculated window.
+    monkeypatch.setattr(reads, "read_store", lambda: nullcontext(object()))
+    monkeypatch.setattr(reads, "pinned_read", pinned)
+    monkeypatch.setattr(reads, "bucket_select", lambda *a, **k: ("SELECT 1", {}))
+    monkeypatch.setattr(reads, "_rows", lambda *a, **k: [])
+    monkeypatch.setattr(reads, "_aggregate", lambda *a, **k: reads.empty_row())
+    monkeypatch.setattr(
+        reads,
+        "_aggregate_periods",
+        lambda *a, **k: (reads.empty_row(), reads.empty_row()),
+    )
+
+    def wire(minutes):
+        query = {
+            "window_start": window(minutes)["window_start"].isoformat(),
+            "window_end": NOW.isoformat(),
+        }
+        return {
+            action: auth_client.get(f"{ROOT}{metric.id}/{action}/", query)
+            for action in ("kpi", "trend", "drivers")
+        }
+
+    # The wire: a window starting at the consumed cut is the retryable
+    # not-calculated-yet state with where values stop, never 200 no_data.
+    for action, result in wire(15).items():
+        assert result.status_code == 503, (action, result.status_code, result.data)
+        assert result.data["code"] == "window_not_calculated_yet", action
+        assert result.data["retryable"] is True
+        assert datetime.fromisoformat(result.data["calculated_through"]) == cut
+
+    assert reads.calculated_through(head, definition) == cut
+    # A history version has no such bound.
+    assert (
+        reads.calculated_through(head, SimpleNamespace(history_mode="history")) is None
+    )
+    assert reads.require_calculated_window(definition, window(60), head) == cut
+    with pytest.raises(reads.MetricUnavailableError) as past:
+        reads.require_calculated_window(definition, window(15), head)
+    assert past.value.code == "window_not_calculated_yet"
+    assert past.value.calculated_through == cut
+    kpi = reads.read_kpi(metric, window(60), store=object())
+    assert kpi["provenance"]["calculated_through"] == cut
+    serialized = MetricReadProvenanceSerializer(kpi["provenance"]).data
+    assert serialized["calculated_through"].startswith(cut.strftime("%Y-%m-%dT%H:%M"))
+    trend = reads.read_trend(metric, {**window(60), "points": 4}, store=object())
+    assert [p["point_status"] for p in trend["results"]] == [
+        "no_data",
+        "no_data",
+        "no_data",  # [11:30, 11:45) runs past the cut but holds calculated units
+        "not_calculated",
+    ]
+    assert trend["provenance"]["calculated_through"] == cut
+
+    # A pending burst sweep has not re-read units from its floor, which can
+    # lie before the consumed watermark.
+    floor = NOW - timedelta(minutes=50)
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        pending_repair=True,
+        reconciliation_cursor=changes.ReconciliationCheckpoint(
+            started_at=NOW, floor=floor
+        ).to_dict(),
+    )
+    assert reads.calculated_through(head, definition) == floor
+    with pytest.raises(reads.MetricUnavailableError) as burst:
+        reads.require_calculated_window(definition, window(45), head)
+    assert burst.value.calculated_through == floor
+
+    for action, result in wire(45).items():
+        assert result.status_code == 503, (action, result.status_code, result.data)
+        assert result.data["code"] == "window_not_calculated_yet", action
+        assert datetime.fromisoformat(result.data["calculated_through"]) == floor
+    # A snapshot request is refused the same way, without creating a pin.
+    with pytest.raises(reads.MetricUnavailableError) as snapshot:
+        snapshots.request_snapshot(
+            metric, {**window(45), "idempotency_key": str(uuid4())}, None
+        )
+    assert snapshot.value.code == "window_not_calculated_yet"
+    assert not MetricGenerationPin.objects.filter(
+        project_id=observe_project.id, consumer_kind="snapshot"
+    ).exists()
+
+    # An idle pass (no arrivals; run_incremental's ceiling is its clock) still
+    # consumes up to its ceiling, so a quiet project's recent windows become
+    # readable at the next pass instead of staying "not calculated yet".
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        pending_repair=False, reconciliation_cursor=None
+    )
+    clock[0] = NOW + timedelta(minutes=1)
+    idle = _consume(runner, NOW - timedelta(minutes=5))
+    assert reads.calculated_through(idle, definition) == NOW - timedelta(minutes=5)
+    assert reads.require_calculated_window(definition, window(15), idle) == (
+        NOW - timedelta(minutes=5)
+    )

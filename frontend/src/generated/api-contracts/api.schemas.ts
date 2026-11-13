@@ -28860,6 +28860,8 @@ export interface MetricUnavailableApi {
   message: string;
   retryable: boolean;
   value_mode?: MetricUnavailableApiValueMode;
+  /** window_not_calculated_yet: units starting at or after this instant are not calculated yet */
+  calculated_through?: string;
 }
 
 export interface MetricDraftPreviewCancelApi {
@@ -28914,6 +28916,8 @@ export interface MetricReadProvenanceApi {
   /** forward: started with no history; values exist from coverage_start */
   history_mode?: MetricReadProvenanceApiHistoryMode;
   coverage_start?: string;
+  /** forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor) */
+  calculated_through?: string;
 }
 
 export interface MetricEffectiveWindowApi {
@@ -29203,6 +29207,7 @@ export const MetricPointApiPointStatus = {
   non_finite: "non_finite",
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
 } as const;
 
 export type MetricPointApiValueMode =
@@ -29254,6 +29259,7 @@ export const MetricKpiPreviousPointApiPointStatus = {
   non_finite: "non_finite",
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
 } as const;
 
 export type MetricKpiPreviousPointApiValueMode =
@@ -29409,6 +29415,7 @@ export const MetricTrendPointApiPointStatus = {
   non_finite: "non_finite",
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
 } as const;
 
 export type MetricTrendPointApiValueMode =

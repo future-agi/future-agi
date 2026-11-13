@@ -64686,6 +64686,13 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    calculated_through: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+      ),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -65719,6 +65726,13 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    calculated_through: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+      ),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -65737,6 +65751,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       "non_finite",
       "retention_expired",
       "sampled_inputs_not_supported",
+      "not_calculated",
     ]),
     rate_eligible: zod.boolean(),
     weighted: zod.boolean(),
@@ -65827,6 +65842,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       "non_finite",
       "retention_expired",
       "sampled_inputs_not_supported",
+      "not_calculated",
     ]),
     rate_eligible: zod.boolean(),
     weighted: zod.boolean(),
@@ -67300,6 +67316,13 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    calculated_through: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+      ),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -67319,6 +67342,7 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
         "non_finite",
         "retention_expired",
         "sampled_inputs_not_supported",
+        "not_calculated",
       ]),
       rate_eligible: zod.boolean(),
       weighted: zod.boolean(),
@@ -67468,6 +67492,13 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    calculated_through: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+      ),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),

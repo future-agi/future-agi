@@ -222,7 +222,52 @@ def metric_read(metric, *, store=None):
             yield connection, manifest, definition
 
 
-def provenance(manifest, definition):
+def calculated_through(manifest, definition):
+    """Where a forward-only version's pinned values end, or None if unbounded.
+
+    The pinned head reflects arrivals up to the project's consumed watermark: a
+    unit starting at or after it cannot have arrived yet. A pending burst sweep
+    has not yet read units starting at or after its floor, which can lie before
+    that watermark. So nothing starting at or after the lesser of the two is in
+    these values, whether passes are merely due or have been failing. A head
+    pinned before the current one also bounds by its own frozen watermark.
+    """
+    if (
+        manifest is None
+        or getattr(definition, "history_mode", None)
+        != DerivedMetricVersion.HistoryMode.FORWARD
+    ):
+        return None
+    from tracer.services.derived_metrics.changes import from_ns
+
+    state = (
+        MetricProjectRefresh.objects.filter(project_id=manifest.project_id)
+        .values(
+            "head_manifest_id",
+            "watermark_ns",
+            "pending_repair",
+            "reconciliation_cursor",
+        )
+        .first()
+    )
+    if state is None:
+        raise MetricUnavailableError(message="Metric refresh state is unavailable.")
+    watermarks = [state["watermark_ns"]]
+    if state["head_manifest_id"] != manifest.id:
+        frozen = (
+            manifest.published_by.source_ceilings.get("cursor_updates") or {}
+        ).get("watermark_ns")
+        if frozen is not None:
+            watermarks.append(int(frozen))
+    through = from_ns(min(watermarks))
+    cursor = state["reconciliation_cursor"] or {}
+    if state["pending_repair"] and cursor.get("floor"):
+        floor = datetime.fromisoformat(str(cursor["floor"]))
+        through = min(through, floor if floor.tzinfo else floor.replace(tzinfo=UTC))
+    return through
+
+
+def provenance(manifest, definition, through=None):
     return {
         "manifest_id": manifest.id,
         "generation": manifest.generation,
@@ -234,6 +279,7 @@ def provenance(manifest, definition):
         "backfill_days_total": definition.backfill_days_total,
         "history_mode": definition.history_mode,
         "coverage_start": definition.coverage_start,
+        "calculated_through": through,
     }
 
 
@@ -438,12 +484,29 @@ def window_is_calculated(definition, window):
     return window["window_start"] >= start
 
 
-def require_calculated_window(definition, window):
+def require_calculated_window(definition, window, manifest=None):
+    """Reject a window nothing of which is calculated; return calculated_through.
+
+    A window that starts at or after calculated_through holds no calculated
+    unit at all, so its empty result would claim "no data" while units are
+    simply not calculated yet (for instance while refreshes are failing). A
+    window that only ends after it is answered, with calculated_through in the
+    provenance, so the reader can say where calculated values stop.
+    """
     if not window_is_calculated(definition, window):
         raise MetricUnavailableError(
             "window_not_calculated",
             "This window predates the completed metric backfill. Choose a later start.",
         )
+    through = calculated_through(manifest, definition)
+    if through is not None and window["window_start"] >= through:
+        raise MetricUnavailableError(
+            "window_not_calculated_yet",
+            f"Values are calculated through {through.astimezone(UTC):%Y-%m-%d %H:%M} UTC. "
+            "This window is not calculated yet.",
+            calculated_through=through,
+        )
+    return through
 
 
 def read_kpi(metric, data, *, store=None):
@@ -455,7 +518,7 @@ def read_kpi(metric, data, *, store=None):
         "window_end": window["window_start"],
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
-        require_calculated_window(definition, window)
+        through = require_calculated_window(definition, window, manifest)
         if window_is_calculated(definition, previous):
             current_row, previous_row = _aggregate_periods(
                 store, metric, definition, manifest, window, previous
@@ -475,7 +538,7 @@ def read_kpi(metric, data, *, store=None):
         if delta is not None and not math.isfinite(delta):
             delta = None
         return {
-            "provenance": provenance(manifest, definition),
+            "provenance": provenance(manifest, definition, through),
             "effective_window": window,
             "current": current,
             "previous": prior,
@@ -501,7 +564,7 @@ def read_trend(metric, data, *, store=None):
     buckets = int((window["window_end"] - window["window_start"]) / QUARTER)
     width = math.ceil(buckets / count)
     with metric_read(metric, store=store) as (store, manifest, definition):
-        require_calculated_window(definition, window)
+        through = require_calculated_window(definition, window, manifest)
         group_by = data.get("group_by", "")
         dimensions = list(definition.group_dims or [])
         allowed_groups = dimensions or (
@@ -565,9 +628,22 @@ def read_trend(metric, data, *, store=None):
                         ),
                     }
                 )
+        if through is not None:
+            # A point starting at or after calculated_through holds no
+            # calculated unit: it is not calculated yet, never "no data".
+            result = [
+                {
+                    **row,
+                    **point(empty_row(), definition),
+                    "point_status": "not_calculated",
+                }
+                if row["window_start"] >= through
+                else row
+                for row in result
+            ]
         result.sort(key=lambda row: (row["window_start"], row["group_key"]))
         return {
-            "provenance": provenance(manifest, definition),
+            "provenance": provenance(manifest, definition, through),
             "effective_window": window,
             "results": result,
         }
@@ -795,6 +871,11 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 "metric_drivers_unavailable",
                 "Exact leave-one-out drivers cannot be recovered from distinct or percentile sketches.",
             )
+        through = (
+            require_calculated_window(definition, window, manifest)
+            if drivers
+            else calculated_through(manifest, definition)
+        )
         if (
             not drivers
             and data["context"] == "users"
@@ -821,7 +902,6 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
         context = _cursor_context(metric, definition, manifest, window)
         after = data.get("after", "")
         if drivers:
-            require_calculated_window(definition, window)
             total = _aggregate(store, metric, definition, manifest, window)
             if definition.level == "span":
                 # Older manifests may contain span totals without evidence. A
@@ -889,7 +969,7 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
             by_id = {row["unit_id"]: row for row in rows}
             results = [_unit_value(by_id.get(unit), unit) for unit in ids]
         return {
-            "provenance": provenance(manifest, definition),
+            "provenance": provenance(manifest, definition, through),
             "effective_window": window,
             "results": results,
             "next_cursor": next_cursor,

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "src/utils/test-utils";
 import MetricStatusLine from "../MetricStatusLine";
 import { forwardCoverageCopy } from "../copy";
+import { metricReadMessage } from "../metricPageValues";
+import { pointValueState } from "../unitValueState";
 import {
   coveragePending,
   coverageWindow,
@@ -88,5 +90,54 @@ it("treats a forward window inside the coverage-start bucket as pending", () => 
   expect(coverageWindow(currentBucket, forward)).toEqual({
     ...currentBucket,
     window_start: "2026-11-05T09:15:00.000Z",
+  });
+});
+
+describe("a forward metric whose latest calculations are due or failing", () => {
+  const through = "2026-11-07T22:14:28.000Z";
+
+  it("says where calculated values stop when the window runs past them", () => {
+    render(
+      <MetricStatusLine
+        provenance={{ ...provenance, ...forward, calculated_through: through }}
+        definition={{ backfill_status: "complete" }}
+        window={window}
+      />,
+    );
+    expect(screen.getByTestId("metric-calculated-through")).toHaveTextContent(
+      `Calculated through ${formatMetricTime(through)}. Later values are not calculated yet.`,
+    );
+  });
+
+  it("says nothing more when the window ends within calculated values", () => {
+    render(
+      <MetricStatusLine
+        provenance={{ ...provenance, ...forward, calculated_through: through }}
+        definition={{ backfill_status: "complete" }}
+        window={{ ...window, window_end: "2026-11-07T22:00:00.000Z" }}
+      />,
+    );
+    expect(
+      screen.queryByTestId("metric-calculated-through"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never shows a window past them as no data", () => {
+    expect(
+      metricReadMessage(
+        { code: "window_not_calculated_yet", calculated_through: through },
+        "KPI",
+        forward,
+      ),
+    ).toBe(
+      `Not calculated yet. Values are calculated through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`,
+    );
+    const state = pointValueState({
+      point_status: "not_calculated",
+      value: null,
+      value_mode: "materialized",
+    });
+    expect(state.state).toBe("pending");
+    expect(state.label).toBe("Not calculated yet");
   });
 });
