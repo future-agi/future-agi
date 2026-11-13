@@ -1,9 +1,7 @@
 import { Box, IconButton, Skeleton } from "@mui/material";
 import React, { useState } from "react";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
-import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
-import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
-import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import SyntaxHighlighter from "src/utils/snippet-syntax-highlighter";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import SvgColor from "src/components/svg-color";
 import { primaryFont } from "src/theme/typography";
@@ -11,9 +9,6 @@ import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
-
-SyntaxHighlighter.registerLanguage("python", python);
-SyntaxHighlighter.registerLanguage("typescript", typescript);
 
 const MetricEmptyState = () => {
   const [activeTab, setActiveTab] = useState("python");

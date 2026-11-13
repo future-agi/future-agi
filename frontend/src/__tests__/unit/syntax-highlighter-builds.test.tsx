@@ -1,4 +1,6 @@
 import React from "react";
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import CodeInput from "src/sections/develop-detail/Common/EvaluationConfigure/CodeInput";
@@ -48,21 +50,41 @@ type Highlighter = React.ComponentType<{
   children: string;
 }>;
 
-const fullMarkup = async (language: string, text: string, prism = true) => {
-  const { default: FullHighlighter, Prism: FullPrism } = await vi.importActual<{
-    default: Highlighter;
-    Prism: Highlighter;
-  }>("react-syntax-highlighter");
-  const Highlighter = prism ? FullPrism : FullHighlighter;
-  const view = render(
-    <Highlighter useInlineStyles={false} language={language}>
-      {text}
-    </Highlighter>,
+const require = createRequire(import.meta.url);
+
+// A fresh Node process loads only the full renderer, never the candidate's
+// refractor singleton. Importing the full build in this test process is not an
+// independent oracle: earlier light registrations would silently win.
+const fullMarkup = (language: string, text: string, prism = true) => {
+  const html = execFileSync(
+    process.execPath,
+    [
+      "--input-type=commonjs",
+      "-e",
+      `const React = require(${JSON.stringify(require.resolve("react"))});
+       const { renderToStaticMarkup } = require(${JSON.stringify(require.resolve("react-dom/server"))});
+       const full = require(${JSON.stringify(require.resolve("react-syntax-highlighter"))});
+       const { language, text, prism } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+       process.stdout.write(renderToStaticMarkup(React.createElement(
+         prism ? full.Prism : full.default,
+         { language, useInlineStyles: false }, text)));`,
+    ],
+    {
+      input: JSON.stringify({ language, text, prism }),
+      encoding: "utf8",
+    },
   );
-  const markup = codeMarkup(view.container);
-  view.unmount();
-  return markup;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  return codeMarkup(container);
 };
+
+const typescriptCases = [
+  mocks.snippets.typescript,
+  'import { Client } from "client";\nexport const run = async () => {\n  const values: Array<string> = [...items];\n  if (values.length) return Promise.resolve(values.map(String));\n};',
+  "/**\n * @param {string} name - display name\n * @returns {Promise<string>} message\n */\nfunction greet<T extends string>(name: T): Promise<T> { return Promise.resolve(name); }",
+  'const message = `Hello ${name.toUpperCase()}`;\nconst style = css`a.link:hover { color: red; }`;\nconst view = html`<b class="value">${message}</b>`;\nconst icon = svg`<path fill="red" />`;\nconst query = gql`query { user { id } }`;\nconst rows = sql`SELECT id FROM users WHERE id = ${id}`;',
+];
 
 afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
@@ -113,6 +135,16 @@ describe("light syntax highlighter builds", () => {
     },
   );
 
+  it.each(typescriptCases)(
+    "matches isolated full-build TypeScript markup for %s",
+    (text) => {
+      const { container } = render(
+        <InstructionCodeCopy text={text} language="typescript" />,
+      );
+      expect(codeMarkup(container)).toBe(fullMarkup("typescript", text));
+    },
+  );
+
   it.each([undefined, "java", "javascript", "unknown"])(
     "renders unsupported instruction language %s as plain text",
     (language) => {
@@ -155,5 +187,27 @@ describe("light syntax highlighter builds", () => {
     expect(codeMarkup(container)).toBe(expectedTypeScript);
     fireEvent.click(screen.getByRole("button"));
     expect(mocks.copy).toHaveBeenLastCalledWith(mocks.snippets.typescript);
+  });
+
+  it("preserves tokens when a full-Prism route loads after the light route", async () => {
+    const { Prism: FullPrism } = await vi.importActual<{ Prism: Highlighter }>(
+      "react-syntax-highlighter",
+    );
+    for (const text of typescriptCases) {
+      for (const language of ["typescript", "javascript"]) {
+        const view = render(
+          <FullPrism useInlineStyles={false} language={language}>
+            {text}
+          </FullPrism>,
+        );
+        expect(codeMarkup(view.container)).toBe(fullMarkup(language, text));
+        view.unmount();
+      }
+      const view = render(
+        <InstructionCodeCopy text={text} language="typescript" />,
+      );
+      expect(codeMarkup(view.container)).toBe(fullMarkup("typescript", text));
+      view.unmount();
+    }
   });
 });
