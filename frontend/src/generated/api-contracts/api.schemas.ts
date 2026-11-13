@@ -483,6 +483,8 @@ export interface CreateSecretKeyApi {
    * @maxLength 100
    */
   key_name: string;
+  /** Optional expiry. Omit or send null for a key that never expires. */
+  expires_at?: string | null;
   type?: CreateSecretKeyApiType;
   simulation_environment_id?: string;
 }
@@ -499,6 +501,7 @@ export interface SecretKeyCreateResultApi {
   secret_key: string;
   /** @minLength 1 */
   masked_secret_key: string;
+  expires_at: string | null;
 }
 
 export interface SecretKeyCreateResponseApi {
@@ -526,6 +529,8 @@ export interface SecretKeyListItemApi {
   enabled: boolean;
   /** @minLength 1 */
   type: string;
+  expires_at: string | null;
+  is_expired: boolean;
 }
 
 export interface SecretKeyListResultApi {

@@ -24,6 +24,7 @@ const maxAsyncGuardrails = 64
 
 // Engine manages guardrail execution.
 type Engine struct {
+	unresolved     []config.GuardrailRuleConfig
 	preGuardrails  []resolvedRule
 	postGuardrails []resolvedRule
 	failOpen       bool
@@ -45,6 +46,7 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 	for _, rule := range cfg.Rules {
 		g, ok := registry[rule.Name]
 		if !ok {
+			e.unresolved = append(e.unresolved, rule)
 			slog.Warn("guardrail not found in registry, skipping",
 				"name", rule.Name,
 			)
@@ -70,6 +72,7 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 		case "post":
 			e.postGuardrails = append(e.postGuardrails, resolved)
 		default:
+			e.unresolved = append(e.unresolved, rule)
 			slog.Warn("unknown guardrail stage, skipping",
 				"name", rule.Name,
 				"stage", rule.Stage,

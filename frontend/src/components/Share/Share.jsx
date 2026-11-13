@@ -84,7 +84,7 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
               size="small"
               sx={{
                 color: "text.primary",
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 400,
               }}
               InputProps={{

@@ -58,7 +58,7 @@ const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 fontWeight: 500,
-                fontSize: "13px",
+                fontSize: "12px",
                 fontFamily: "IBM Plex Sans,sans-serif",
                 color: "var(--text-primary)",
               }}

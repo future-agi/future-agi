@@ -97,8 +97,6 @@ const NumberQuickFilterPopover = ({
         "& .MuiPaper-root": {
           borderRadius: "8px",
           padding: "12px",
-          border: "1px solid",
-          borderColor: "divider",
           minWidth: "320px",
         },
       }}

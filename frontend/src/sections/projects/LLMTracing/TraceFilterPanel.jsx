@@ -2655,7 +2655,7 @@ function PropertyPicker({
                     </Typography>
                   </InputAdornment>
                 ),
-                sx: { fontSize: 13 },
+                sx: { fontSize: 12 },
               }}
             />
             {(enableExactAttributeLookup || legacyAttributeFallbackActive) &&
@@ -2920,7 +2920,7 @@ function PropertyPicker({
                 >
                   <OverflowText
                     text={prop.name}
-                    sx={{ fontSize: 13, flex: 1, maxWidth: 250 }}
+                    sx={{ fontSize: 12, flex: 1, maxWidth: 250 }}
                   />
                   {prop.outputType && (
                     <Chip
@@ -3684,7 +3684,7 @@ function ValuePicker({
                   <OverflowText
                     text={label}
                     sx={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: isSelected ? 500 : 400,
                       color: "text.primary",
                     }}
@@ -5465,7 +5465,7 @@ const TraceFilterPanel = ({
                       </IconButton>
                     </InputAdornment>
                   ) : null,
-                sx: { fontSize: 13, height: 32 },
+                sx: { fontSize: 12, height: 32 },
               }}
             />
             {aiError && (

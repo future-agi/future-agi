@@ -92,7 +92,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         </Typography>
         <Typography
           color="text.primary"
-          fontSize={13}
+          fontSize={12}
           lineHeight="20px"
           fontWeight={"fontWeightMedium"}
         >

@@ -429,7 +429,7 @@ const PrimaryGraph = ({
   const pillSx = {
     textTransform: "none",
     fontWeight: 500,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: "'IBM Plex Sans', sans-serif",
     height: 26,
     border: "1px solid",
@@ -1145,7 +1145,7 @@ const PrimaryGraph = ({
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography
-            sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
           >
             {graphLabel}
           </Typography>

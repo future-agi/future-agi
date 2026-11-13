@@ -196,8 +196,6 @@ const ConfigureStepLLM = ({
           "& .MuiPopover-paper": {
             borderRadius: "4px !important",
             padding: 0.5,
-            border: "1px solid",
-            borderColor: "divider",
             backgroundColor: "background.paper",
           },
         }}
@@ -246,7 +244,7 @@ const ConfigureStepLLM = ({
                 }}
               >
                 <SvgColor sx={{ width: 20 }} src={config.icon} />
-                <Typography sx={{ fontSize: 13 }}>{config.label}</Typography>
+                <Typography sx={{ fontSize: 12 }}>{config.label}</Typography>
               </Box>
               <IconButton
                 size="small"
@@ -290,9 +288,6 @@ const ConfigureStepLLM = ({
           "& .MuiPopover-paper": {
             borderRadius: "4px !important",
             padding: 0.5,
-
-            border: "1px solid",
-            borderColor: "divider",
           },
         }}
       >

@@ -191,7 +191,7 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
             flex: 1,
@@ -1516,7 +1516,7 @@ const EventCard = ({ event }) => {
             sx={{ color: "error.main" }}
           />
           <Typography
-            sx={{ fontSize: 13, fontWeight: 600, color: "error.main", flex: 1 }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "error.main", flex: 1 }}
           >
             {exType || "Exception"}
           </Typography>
@@ -1540,7 +1540,7 @@ const EventCard = ({ event }) => {
             }}
           >
             <Typography
-              sx={{ fontSize: 13, color: "text.primary", lineHeight: 1.5 }}
+              sx={{ fontSize: 12, color: "text.primary", lineHeight: 1.5 }}
             >
               {exMessage}
             </Typography>
@@ -1641,7 +1641,7 @@ const EventCard = ({ event }) => {
           sx={{ color: "text.disabled" }}
         />
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", flex: 1 }}
+          sx={{ fontSize: 12, fontWeight: 600, color: "text.primary", flex: 1 }}
         >
           {event?.name || "Event"}
         </Typography>
@@ -1850,7 +1850,7 @@ const SpanDetailPane = ({
                 variant="body1"
                 noWrap
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
                 }}
@@ -2531,7 +2531,7 @@ const AttributesCard = ({
             <Typography
               variant="body2"
               sx={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 500,
                 fontFamily: "'IBM Plex Sans', sans-serif",
                 flex: 1,
