@@ -134,6 +134,7 @@ const analytics = {
         value: 30,
         modality: "voice",
         provider: "livekit",
+        completed_at: "2026-10-31T12:00:00Z",
       },
     ],
     most_expensive_tasks: [],
@@ -602,11 +603,13 @@ describe("RunAnalytics", () => {
         { name: "Open task 1" },
       ),
     );
+    // With its end time, so the drawer checks again for a worker record still arriving.
     expect(open).toHaveBeenCalledWith({
       id: "call-1",
       scenario: "Handle a refund",
       simulationCallType: "voice",
       provider: "livekit",
+      completedAt: "2026-10-31T12:00:00Z",
     });
   });
 

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1139,
+  endpointCount: 1140,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -32969,6 +32969,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/v3/call-executions/{call_execution_id}/workers/": {
+      get: {
+        operationId: "simulate_v3_call_execution_workers",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/CallWorkersResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/v3/test-executions/{test_execution_id}/analytics/": {
       get: {
         operationId: "simulate_v3_test_execution_analytics",
@@ -57172,6 +57189,92 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    CallWorkersResponse: {
+      required: [
+        "workers",
+        "events",
+        "collected_at",
+        "steps",
+        "turns",
+        "depth",
+        "parallel",
+        "overlap_unknown",
+        "worker_depths",
+      ],
+      type: "object",
+      properties: {
+        workers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorker",
+          },
+        },
+        events: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerEvent",
+          },
+        },
+        events_omitted: {
+          title: "Events omitted",
+          type: "integer",
+        },
+        coordinator: {
+          $ref: "#/definitions/CallWorkerCoordinator",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        spans_received: {
+          title: "Spans received",
+          type: "boolean",
+        },
+        collected_at: {
+          title: "Collected at",
+          type: "string",
+          minLength: 1,
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+          enum: ["complete", "partial", "unavailable", "no_evidence"],
+        },
+        steps: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerStep",
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerRound",
+          },
+        },
+        depth: {
+          title: "Depth",
+          type: "integer",
+        },
+        parallel: {
+          title: "Parallel",
+          type: "integer",
+        },
+        overlap_unknown: {
+          title: "Overlap unknown",
+          type: "boolean",
+        },
+        worker_depths: {
+          title: "Worker depths",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
         },
       },
     },
@@ -96148,6 +96251,271 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallWorker: {
+      required: [
+        "worker_id",
+        "id",
+        "name",
+        "observed",
+        "undeclared",
+        "instance_ids",
+      ],
+      type: "object",
+      properties: {
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        observed: {
+          title: "Observed",
+          type: "boolean",
+        },
+        undeclared: {
+          title: "Undeclared",
+          type: "boolean",
+        },
+        instance_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          minLength: 1,
+        },
+        tokens: {
+          title: "Tokens",
+          type: "integer",
+        },
+      },
+    },
+    CallWorkerCoordinator: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    CallWorkerEvent: {
+      required: ["seq", "type", "worker_id", "at", "attribution"],
+      type: "object",
+      properties: {
+        seq: {
+          title: "Seq",
+          type: "integer",
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["delegated", "transferred", "tool_call", "returned"],
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        by: {
+          title: "By",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        delegation_id: {
+          title: "Delegation id",
+          type: "string",
+          minLength: 1,
+        },
+        task: {
+          title: "Task",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "error"],
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        input: {
+          title: "Input",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        input_omitted: {
+          title: "Input omitted",
+          type: "boolean",
+        },
+        output_omitted: {
+          title: "Output omitted",
+          type: "boolean",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attribution: {
+          title: "Attribution",
+          type: "string",
+          enum: ["reported", "unattributed"],
+        },
+      },
+    },
+    CallWorkerRound: {
+      required: ["turn", "request", "response"],
+      type: "object",
+      properties: {
+        turn: {
+          title: "Turn",
+          type: "integer",
+          "x-nullable": true,
+        },
+        request: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+        response: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+      },
+    },
+    CallWorkerStep: {
+      required: [
+        "kind",
+        "key",
+        "parent",
+        "depth",
+        "worker_id",
+        "turn",
+        "order",
+        "relationship",
+      ],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["handoff", "tool_call"],
+        },
+        key: {
+          title: "Key",
+          type: "integer",
+        },
+        parent: {
+          title: "Parent",
+          type: "integer",
+          "x-nullable": true,
+        },
+        depth: {
+          title: "Depth",
+          type: "integer",
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        transfer: {
+          title: "Transfer",
+          type: "boolean",
+        },
+        handoff: {
+          $ref: "#/definitions/CallWorkerEventOrNull",
+        },
+        returned: {
+          $ref: "#/definitions/CallWorkerEventOrNull",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ended_at: {
+          title: "Ended at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parallel: {
+          title: "Parallel",
+          type: "boolean",
+        },
+        call: {
+          $ref: "#/definitions/CallWorkerEvent",
+        },
+        turn: {
+          title: "Turn",
+          type: "integer",
+          "x-nullable": true,
+        },
+        order: {
+          title: "Order",
+          type: "integer",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
+        },
+      },
+    },
     CapabilityFeature: {
       required: [
         "display_name",
@@ -118457,6 +118825,128 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallWorkerTurn: {
+      required: ["text", "at"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    CallWorkerEventOrNull: {
+      required: ["seq", "type", "worker_id", "at", "attribution"],
+      type: "object",
+      properties: {
+        seq: {
+          title: "Seq",
+          type: "integer",
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["delegated", "transferred", "tool_call", "returned"],
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        by: {
+          title: "By",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        delegation_id: {
+          title: "Delegation id",
+          type: "string",
+          minLength: 1,
+        },
+        task: {
+          title: "Task",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "error"],
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        input: {
+          title: "Input",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        input_omitted: {
+          title: "Input omitted",
+          type: "boolean",
+        },
+        output_omitted: {
+          title: "Output omitted",
+          type: "boolean",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attribution: {
+          title: "Attribution",
+          type: "string",
+          enum: ["reported", "unattributed"],
+        },
+      },
+      "x-nullable": true,
+    },
     InvestigationEvidenceWindow: {
       required: ["start", "end"],
       type: "object",
@@ -127081,6 +127571,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "value",
         "modality",
         "provider",
+        "completed_at",
       ],
       type: "object",
       properties: {
@@ -127117,6 +127608,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Provider",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
           "x-nullable": true,
         },
       },

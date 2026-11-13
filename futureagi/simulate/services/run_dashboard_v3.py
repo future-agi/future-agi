@@ -362,7 +362,12 @@ def _tails(queryset: QuerySet, field: str) -> list[dict]:
         queryset.filter(**{f"{field}__isnull": False})
         .order_by(f"-{field}", "id")
         .values(
-            "id", "result_scenario", "simulation_call_type", "result_provider", field
+            "id",
+            "result_scenario",
+            "simulation_call_type",
+            "result_provider",
+            "completed_at",
+            field,
         )[:8]
     )
     return [
@@ -374,6 +379,7 @@ def _tails(queryset: QuerySet, field: str) -> list[dict]:
             "value": row[field],
             "modality": row["simulation_call_type"],
             "provider": row["result_provider"],
+            "completed_at": row["completed_at"],
         }
         for index, row in enumerate(rows)
     ]

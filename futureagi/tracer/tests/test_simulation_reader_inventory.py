@@ -2030,7 +2030,12 @@ _RUN_SCOPE_CALLERS = frozenset(
     }
 )
 _RUN_TRACES_CALLERS = frozenset(
-    {"simulate/services/run_traces_v3.py", "simulate/views/run_results_v3.py"}
+    {
+        "simulate/services/run_traces_v3.py",
+        "simulate/views/run_results_v3.py",
+        # The worker record reads the traces of the one call it records, at most MAX_TRACES of them.
+        "simulate/services/harness_workers.py",
+    }
 )
 # The entry points that hand those readers their project ids, pinned the same
 # way so that a new route to a builder fails here too.
