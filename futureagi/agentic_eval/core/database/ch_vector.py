@@ -758,7 +758,7 @@ class ClickHouseVectorDB:
         # contributes its nearest rows; rank those together before returning.
         results = []
         for offset in range(0, len(feedback_ids), 1000):
-            params = {"feedback_ids": tuple(feedback_ids[offset:offset + 1000])}
+            params = {"feedback_ids": tuple(feedback_ids[offset : offset + 1000])}
             results.extend(self.execute_read(query, params))
         results.sort(key=lambda row: row[-1])
         return results[:top_k] if top_k is not None else results
