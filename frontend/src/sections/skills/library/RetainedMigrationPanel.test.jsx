@@ -62,6 +62,15 @@ it('previews every source of one inventory packet into one reviewed set', async 
   expect(JSON.parse(form.get('source_identities'))).toEqual({ key: { resource: 'private/f' } });
 });
 
+it('collapses source format after preview and restores it only when changing sources', async () => {
+  api.reload.mockResolvedValueOnce([plan]);
+  view({ initialPlanIds: ['plan-1'] });
+  await screen.findByRole('button', { name: 'Change sources' });
+  expect(screen.queryByRole('combobox', { name: 'Retained source format' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Change sources' }));
+  expect(screen.getByRole('combobox', { name: 'Retained source format' })).toBeVisible();
+});
+
 it('rejects a file that is not an inventory packet without previewing anything', async () => {
   view();
   fireEvent.change(screen.getByLabelText('Inventory migration packet'), { target: { files: [new File(['{"kind":"other"}'], 'x.json')] } });

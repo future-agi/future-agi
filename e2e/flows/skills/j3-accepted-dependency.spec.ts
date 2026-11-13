@@ -301,11 +301,13 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       for (const parent of parents.slice(0, 2)) {
         await page.goto(`${UI}/${parent.id}?version=2`);
         await page.getByRole('tab', { name: 'Versions', exact: true }).click();
-        await page.getByRole('textbox', { name: 'Independent reviewer user ID', exact: true }).fill(owner.userId);
-        await page.getByRole('button', { name: 'Preview parent label move', exact: true }).click();
-        await page.getByRole('checkbox', { name: 'Request independent review of this exact parent transition. Do not move its label yet.', exact: true }).check();
+        await page.getByRole('button', { name: 'Request release review', exact: true }).click();
+        await page.getByRole('button', { name: 'Prepare exact review', exact: true }).click();
+        await page.getByLabel('Assigned reviewer').click();
+        await page.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
+        await page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
         const submitted = page.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
-        await page.getByRole('button', { name: 'Send parent release request', exact: true }).click();
+        await page.getByRole('button', { name: 'Send review request', exact: true }).click();
         const response = await submitted;
         expect(response.status()).toBe(201);
         const release = (await response.json()).result;
@@ -314,18 +316,18 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         const reviewed = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
         await expect(reviewed).toBeEnabled();
         await reviewed.check();
-        await reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+        await reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click();
         // The acknowledgement is keyed to the exact packet revision and fingerprint, so it carries
         // across pending -> approved for the unchanged revision; any renewal clears it (J4).
         await expect(reviewed).toBeChecked();
-        await reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+        await reviewerPage.getByRole('button', { name: 'Release to production', exact: true }).click();
         await reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click();
-        await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
+        await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();
         const labels = await scopeProbe.pg('SELECT to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id = $1', [parent.id]);
         expect(labels).toEqual([{ to_version: wrong === 'authorized-label' ? 99 : 2, actor_id: owner.userId }]);
         events.push({ stage: 'independent-parent-release', parent: parent.id, requestId: release.id, labels });
         await expect(reviewerPage.getByRole('dialog')).toHaveCount(0);
-        await reviewerPage.getByText('Durable release receipt', { exact: true }).scrollIntoViewIfNeeded();
+        await reviewerPage.getByText('Release receipt', { exact: true }).scrollIntoViewIfNeeded();
         const image = await reviewerPage.screenshot();
         if (evidence) await writeFile(`${evidence}/shots/authorized-${parent.name}.png`, image);
       }

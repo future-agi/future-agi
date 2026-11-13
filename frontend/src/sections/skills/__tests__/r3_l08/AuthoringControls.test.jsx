@@ -1,11 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render } from "src/utils/test-utils";
 import HotfixHeadReview from "../../editor/HotfixHeadReview";
 import RecoverableDraftChanges from "../../editor/RecoverableDraftChanges";
 import ContextLinksPanel from "../../contexts/ContextLinksPanel";
 import ContextSafetyDialog from "../../contexts/ContextSafetyDialog";
 import ContextImportDialog from "../../contexts/ContextImportDialog";
 import MigrationPlanPanel from "../../library/MigrationPlanPanel";
+
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 
 const scopeKey = "org:workspace:author:resource";
 const digest = `sha256:${"a".repeat(64)}`;
@@ -24,6 +27,8 @@ const draft = () => {
   return value;
 };
 const headPreview = { review: { subjectId: "resource", draftRevision: 12, candidateDigest: digest, baseVersion: 4, expectedHeadVersion: 6, reviewFingerprint: "head-fingerprint" }, originChanges: [], headChanges: [] };
+const matchMedia = window.matchMedia.getMockImplementation();
+beforeEach(() => { window.matchMedia.mockImplementation(matchMedia); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("historical head review", () => {
@@ -76,7 +81,8 @@ describe("accepted dependency review", () => {
   it("keeps accepted v8 while v9 is available and sends only an explicit refresh", async () => {
     const session = draft(); const preview = vi.fn(async () => ({ revision: 12, fingerprint: "plan", candidateDigest: digest, changes: [], checks: { summary: { errors: 0 } } })); const apply = vi.fn(async () => ({ ...session, revision: 13 }));
     render(<ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={availableSkills} upstream={{ child: { version: 9 } }} onPreview={preview} onApply={apply} />);
-    expect(screen.getByText("v9 available; this draft still includes v8.")).toBeVisible();
+    expect(screen.getByText("v9 available")).toBeVisible();
+    expect(screen.getByText("v8", { exact: true })).toBeVisible();
     expect(preview).not.toHaveBeenCalled();
     check("Review update for refunds"); click("Preview dependency changes");
     await screen.findByText(/Compiled candidate/);
@@ -104,8 +110,9 @@ describe("accepted dependency review", () => {
   });
   it("is entirely read-only for a retained release", () => {
     render(<ContextLinksPanel scopeKey={scopeKey} session={draft()} readOnly />);
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText(/Included v8/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Preview dependency changes|Apply selected updates to draft|Add to proposed links|Remove/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getByText("v8", { exact: true })).toBeVisible();
   });
 });
 
@@ -223,9 +230,9 @@ describe("additional recovery boundaries", () => {
   });
   it("replaces displayed links only when the server accepts a different lock", () => {
     const session = draft(); const view = render(<ContextLinksPanel scopeKey={scopeKey} session={session} readOnly />);
-    expect(screen.getByText(/Included v8/)).toBeVisible();
+    expect(screen.getByText("v8", { exact: true })).toBeVisible();
     view.rerender(<ContextLinksPanel scopeKey={scopeKey} session={{ ...session, resolvedLock: { links: [{ ...session.resolvedLock.links[0], version: 9 }] } }} readOnly />);
-    expect(screen.getByText(/Included v9/)).toBeVisible();
+    expect(screen.getByText("v9", { exact: true })).toBeVisible();
   });
 });
 
@@ -255,6 +262,7 @@ describe("retained source intake", () => {
     const accept = vi.fn(async () => ({ id: "receipt" }));
     render(<MigrationPlanPanel scopeKey={scopeKey} plan={plan} onKeep={accept} />);
     choose("Review item", "refunds");
+    choose("Source update decision", "Keep Hub content");
     check("Apply this exact decision to the reviewed identity and head, without changing production."); click("Record keep decision");
     await waitFor(() => expect(accept).toHaveBeenCalledOnce());
     expect(accept.mock.calls[0][0]).toMatchObject({ planId: "plan-id", expectedFingerprint: "plan-fingerprint", itemKey: "source-id", expectedHeadVersion: 6, expectedHeadDigest: digest });
@@ -264,7 +272,8 @@ describe("retained source intake", () => {
     const plan = { id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", sourceChanges: [], hubChanges: [], expectedHeadVersion: 6, expectedHeadDigest: digest }] };
     const accept = vi.fn().mockRejectedValueOnce(new Error("Lost response")).mockResolvedValueOnce({ id: "receipt" });
     const view = render(<MigrationPlanPanel scopeKey={scopeKey} plan={plan} onKeep={accept} />);
-    choose("Review item", "refunds"); check("Apply this exact decision to the reviewed identity and head, without changing production."); click("Record keep decision");
+    choose("Review item", "refunds");
+    choose("Source update decision", "Keep Hub content"); check("Apply this exact decision to the reviewed identity and head, without changing production."); click("Record keep decision");
     await screen.findByText(/could not be confirmed/);
     view.rerender(<MigrationPlanPanel scopeKey={scopeKey} plan={{ ...plan, expiresAt: "2000-01-01T00:00:00Z" }} onKeep={accept} />);
     expect(button("Retry exact decision")).not.toBeDisabled(); click("Retry exact decision");
@@ -275,6 +284,7 @@ describe("retained source intake", () => {
     const accept = vi.fn(async () => ({ id: "replacement-receipt" }));
     render(<MigrationPlanPanel scopeKey={scopeKey} plan={{ id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", sourceChanges: [], hubChanges: [], expectedHeadVersion: 6, expectedHeadDigest: digest }] }} onAccept={accept} />);
     choose("Review item", "refunds");
+    choose("Source update decision", "Keep Hub content");
     check("Apply this exact decision to the reviewed identity and head, without changing production.");
     expect(button("Record keep decision")).toBeDisabled();
     expect(accept).not.toHaveBeenCalled();
@@ -290,10 +300,11 @@ describe("retained source intake", () => {
   });
   it("blocks replacing a diverged destination with a live personal draft", () => {
     render(<MigrationPlanPanel scopeKey={scopeKey} plan={{ id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", hasDraft: true, diverged: true }] }} onAccept={vi.fn()} />);
-    choose("Review item", "refunds"); choose("Source update decision", "Replace with reviewed source");
+    choose("Review item", "refunds");
+    choose("Source update decision", "Keep Hub content"); choose("Source update decision", "Replace with reviewed source");
     check("I have reviewed source rights, licenses and retained notices."); check("Apply this exact decision to the reviewed identity and head, without changing production.");
     expect(button("Import reviewed item as draft")).toBeDisabled();
-    expect(screen.getByText(/existing draft blocks replacement/)).toBeVisible();
+    expect(screen.getByText(/Preserve your draft before replacing it/)).toBeVisible();
   });
 });
 

@@ -60,7 +60,7 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
   const preview = async (files: File[], revision: string) => {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Retained migration', exact: true }).click();
+    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
     const exportData = { format: 'langfuse-skills-v1', origin: 'synthetic.invalid', project: name,
       skills: [{ resource: 'retained-policy', revision, digest: skillDigest(files), files }] };
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'source.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exportData)) });
@@ -69,7 +69,8 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
     const result = await response;
     assert.equal(result.status(), 200);
     const plan = (await result.json()).result as Plan;
-    await expect(page.getByRole('heading', { name: 'Review retained migration plan', exact: true })).toBeVisible({ timeout: UI_READY });
+    await page.getByRole('button', { name: 'Decide one item at a time', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review one item', exact: true })).toBeVisible({ timeout: UI_READY });
     await choose('Review item', name);
     return read<Plan>(`intake/${plan.id}/`);
   };
@@ -137,7 +138,8 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
     assert.throws(() => mappingOracle(second, { ...current, files: source }));
     await choose('Source update decision', 'Replace with reviewed source');
     await expect(page.getByRole('button', { name: 'Import reviewed item as draft', exact: true })).toBeDisabled();
-    await expect(page.getByText('Source and Hub both changed. Replacement is not a semantic merge; review both differences.', { exact: true })).toBeVisible();
+    await expect(page.getByText(`${name} changed both in your source and here. Choose which version to keep.`, { exact: true })).toBeVisible();
+    await expect(page.getByText('Preserve your draft before replacing it, then preview again.', { exact: true })).toBeVisible();
     await page.screenshot({ path: join(root, 'shots', '01-divergence.png') });
     await page.getByRole('button', { name: 'Preserve draft', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Preserve your draft', exact: true })).toBeVisible({ timeout: UI_READY });
@@ -202,6 +204,8 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
     for (const [number, expectedFiles, relation, revision] of [[2, hub, 'derived', 'v1'], [3, source, 'identical', 'v2']] as const) {
       // Viewed v2 must not silently export latest v3.
       await page.goto(`/dashboard/skills/${id}?version=${number}`);
+      await page.getByRole('button', { name: 'Skill actions', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Export with source mapping', exact: true }).click();
       await page.getByRole('button', { name: `Prepare v${number} migration export`, exact: true }).click();
       await expect(page.getByRole('button', { name: 'Download exact ZIP', exact: true })).toBeVisible({ timeout: UI_READY });
       const zipDownload = page.waitForEvent('download');

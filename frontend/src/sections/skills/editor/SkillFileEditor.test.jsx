@@ -17,6 +17,7 @@ vi.mock("@monaco-editor/react", async () => {
     options: PropTypes.shape({ readOnly: PropTypes.bool }).isRequired,
   };
   return {
+    loader: { init: () => Promise.resolve() },
     useMonaco: () => ({
       Uri: { parse: (path) => ({ toString: () => path }) },
       editor: {

@@ -65,11 +65,12 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Retained migration', exact: true }).click();
+    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'exchange.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exchange)) });
     const exchangeResponse = page.waitForResponse(response => response.url().endsWith('/skills/intake/langfuse/preview/') && response.status() === 200);
     await page.getByRole('button', { name: 'Preview retained migration', exact: true }).click();
     const plan = await read<Plan>(`/model-hub/skills/intake/${((await (await exchangeResponse).json()).result as Plan).id}/`);
+    await page.getByRole('button', { name: 'Change sources', exact: true }).click();
     await page.getByRole('combobox', { name: 'Retained source format', exact: true }).click();
     await page.getByRole('option', { name: 'Private folder or ZIP', exact: true }).click();
     await page.getByLabel('Retained source files', { exact: true }).setInputFiles({ name: 'private-library.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(entries, { level: 0 })) });
@@ -152,12 +153,12 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
     const contextId: string = createdBody.context_id ?? createdBody.context?.id;
     assert.ok(contextId);
     await expect(page.getByText(/3 skills from your migration are proposed/)).toBeVisible();
-    await expect(page.getByText(/^Compiled candidate /)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy full Compiled candidate', exact: true })).toBeVisible();
     const apply = page.getByRole('button', { name: 'Apply selected updates to draft', exact: true });
     await expect(apply).toBeDisabled();
     await page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies.', exact: true }).check();
     await apply.click();
-    await expect(page.getByRole('heading', { name: 'Linked skills · 3 accepted locks', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Linked skills (3)', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Review changes', exact: true }).click();
     await expect(page.getByText('Immutable candidate', { exact: true })).toBeVisible();
     const reviewCandidate = async () => {

@@ -6,6 +6,24 @@ import { mapContextFile, mapLockedContextLink, contextHeadAcknowledgmentInput, c
 import { mapChecks, mapPublish, mapVersion } from './mappers';
 import { mapV11Page } from './v11-mappers';
 import { mapContextBinding } from './context-consumers';
+import { lineDiff } from 'src/sections/skills/contexts/closureDiff';
+
+export async function loadAcceptedDependencyComparison(contextId, from, to, digest, config) {
+  const read = async (number) => {
+    const value = skillV11Result(await axios.get(inspection(contextId, number), config));
+    if (value.manifest.version !== number || !Array.isArray(value.descriptor?.links)) throw new Error('Linked-skill inspection is unavailable.');
+    if (number === to && value.manifest.digest !== digest) throw new Error('The candidate changed during inspection.');
+    return value.descriptor.links.map(mapLockedContextLink);
+  };
+  const [before, after] = await Promise.all([from == null ? [] : read(from), read(to)]);
+  const mounts = [...new Set([...before, ...after].map((link) => link.mount))];
+  return mounts.flatMap((mount) => {
+    const old = before.find((link) => link.mount === mount);
+    const next = after.find((link) => link.mount === mount);
+    if (!lineDiff(old ? JSON.stringify(old) : null, next ? JSON.stringify(next) : null).some((line) => line.kind !== 'same')) return [];
+    return [{ mount, skillId: next?.skillId || old?.skillId, before: old, after: next, change: !old ? 'Added' : !next ? 'Removed' : 'Changed' }];
+  });
+}
 
 const inspection = (context_id, number) => apiPath('/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/', { context_id, number });
 const versionFile = (context_id, number) => apiPath('/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/files/', { context_id, number });
@@ -120,7 +138,13 @@ export async function loadContextReview(contextId, revision, config, published =
   const hydrate = (files, number) => Promise.all(files.filter((file) => file.status !== 'unchanged').map(async (file) => ({ path: file.path, status: file.status, fromText: await read(file, number, false), toText: await read(file, null, true) })));
   const changes = await hydrate(origin, snapshot.changes.from);
   const headChanges = await hydrate(head, snapshot.latest_version);
-  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, headChanges, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: { ...snapshot.impact, moreAvailable: snapshot.impact.more_available }, complete: true };
+  let dependencyChanges;
+  let dependencyError = false;
+  if (published) {
+    try { dependencyChanges = await loadAcceptedDependencyComparison(contextId, snapshot.changes.from, published.target_version, snapshot.candidate.digest, config); }
+    catch { dependencyError = true; }
+  }
+  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, headChanges, dependencyChanges, dependencyError, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: { ...snapshot.impact, moreAvailable: snapshot.impact.more_available }, complete: !dependencyError };
 }
 export function usePreviewContextRelease(contextId) {
   return useSkillV11Mutation({ send: (input, config) => loadContextReview(contextId, input.revision, config) });

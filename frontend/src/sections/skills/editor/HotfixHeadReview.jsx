@@ -150,7 +150,7 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
       <FileChanges files={preview.headChanges} beforeTitle={`Latest v${review.expectedHeadVersion}`} afterTitle="Candidate" />
       {!current && <Alert severity="info">{session.mutationError ? "Recover the original acknowledgment with Retry head acknowledgment before reviewing or publishing." : "The draft changed. Review the head again before acknowledging it."}</Alert>}
       <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={!current || operation.pending} />} label="I reviewed both comparisons and the new-latest consequence." />
-      <Button variant="contained" disabled={!current || !confirmed || !onAcknowledge || operation.pending} onClick={acknowledge}>Acknowledge reviewed head</Button>
+      <Button variant="contained" color="primary" disabled={!current || !confirmed || !onAcknowledge || operation.pending} onClick={acknowledge}>Acknowledge reviewed head</Button>
     </>}
   </Stack>;
 }

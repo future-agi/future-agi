@@ -207,7 +207,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const run = await waitRun(evidenceId, signal);
           requireValue(run.status === 'completed' && run.result.reproduction === 'reproduced', `Historical failure was not reproduced (${run.result?.reproduction ?? run.failure})`);
           state.runs.reproduction = run;
-          await op.transition('reproduction-result', () => expect(page.getByText(/Historical failure: reproduced/)).toBeVisible({ timeout: 120_000 }));
+          await op.transition('reproduction-result', () => expect(page.getByText(new RegExp(`the recorded failure reproduced on v${input.versions.recorded}`))).toBeVisible({ timeout: 120_000 }));
           await shot('03-reproduced');
           receipt('api', await record('reproduction-run', { evidenceClass: 'synthetic fixture', run }));
           return;
@@ -272,8 +272,8 @@ export async function createDriver({ jobId, runId, registration }) {
           requireValue(run.status === 'completed', `Matched run did not complete (${run.failure})`);
           state.runs.matched = run;
           state.matchedId = evidenceId;
-          await op.transition('matched-result', () => expect(page.getByText(/Release-ready on the application|Hold this release/).first()).toBeVisible({ timeout: 120_000 }));
-          await expect(page.getByLabel('Verification', { exact: true })).toContainText('completed');
+          await op.transition('matched-result', () => expect(page.getByText(/Repair verified:|Repair not verified:|Application checks passed for these cases|Hold this release/).first()).toBeVisible({ timeout: 120_000 }));
+          await expect(page.getByRole('region', { name: 'Latest result' }).getByText('Completed', { exact: true })).toBeVisible();
           await shot('05-matched-result');
           // Acceptance-matrix controls through the public API (not operator work).
           const targets = await api('GET', `${root}native/targets/`);
@@ -314,7 +314,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const historical = run.cases.find((item) => item.historical);
           const cells = run.cells.filter((cell) => cell.case_id === historical.id && cell.variant === 'reference');
           const decision = { packet_sha256: digest({ run: run.id, cell: cells[0].attempt_id, outcomes: [cells[0].tools, cells[0].answer] }), preconditions_sha256: digest({ annotationRevision: run.annotation_revision, fingerprint: run.execution_fingerprint }) };
-          await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Recorded reference`) }).first(), 'open-original-failure-cell');
+          await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Recorded v`) }).first(), 'open-original-failure-cell');
           await expect(page.getByText('Observed by the application')).toBeVisible();
           await shot('06-cell-observation');
           await op.click(page.getByRole('radio', { name: /Disagree/ }), 'choose-disagree');
@@ -357,12 +357,12 @@ export async function createDriver({ jobId, runId, registration }) {
           // reviewed cell and continues; nothing is reopened or chosen again.
           await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
           await expect(page.getByText('Release packet')).toBeVisible({ timeout: 120_000 });
-          await expect(page.getByText(new RegExp(`Verification ${state.runs.matched.execution_fingerprint.replace('sha256:', '').slice(0, 12)}`))).toBeVisible();
+          await expect(page.locator(`[data-execution-fingerprint="${state.runs.matched.execution_fingerprint}"]`)).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {
-            await page.getByLabel('Retained pipeline run URL').fill(state.ci.summary.url);
-            await page.getByLabel('Pipeline configuration identity').fill(state.ci.report.configuration_identity);
-            await page.getByLabel('Pipeline decision').fill(state.ci.report.passed ? 'passed' : 'failed');
+            await page.getByLabel('CI run link').fill(state.ci.summary.url);
+            await page.getByLabel('CI configuration ID').fill(state.ci.report.configuration_identity);
+            await page.getByLabel('CI result (pass or hold)').fill(state.ci.report.passed ? 'passed' : 'failed');
           });
           await op.click(page.getByRole('button', { name: 'Share evidence and prepare packet', exact: true }), 'prepare-release-packet');
           await expect(page.getByText(/Packet ready/)).toBeVisible();

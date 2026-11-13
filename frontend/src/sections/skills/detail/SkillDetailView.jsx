@@ -25,6 +25,7 @@ import {
   getSkillErrorCode,
   useArchiveSkill,
   useSkill,
+  useSkillVersion,
 } from "src/api/skills";
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { HOST_API } from "src/config-global";
@@ -33,10 +34,13 @@ import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
-import PageHeader from "src/components/page-header";
+import ObjectHeader from "../components/ObjectHeader";
+import VersionSelect from "../components/VersionSelect";
+import { ClosableDialog } from "src/components/custom-dialog";
+import VersionIdentityRow from "../components/VersionIdentityRow";
+import OperationFeedback from "../components/OperationFeedback";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { CustomTabs } from "src/components/tabs/tabs";
-import LabelChip from "../components/LabelChip";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildInstallCommand } from "../utils/install";
 import TestsTab from '../tests/TestsTab';
@@ -64,9 +68,11 @@ function DetailContent({ skill, preview }) {
   const [params, setParams] = useSearchParams();
   const archive = useArchiveSkill();
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [archiveRevision, setArchiveRevision] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [operationError, setOperationError] = useState(null);
   const tab = TABS.includes(params.get("tab")) ? params.get("tab") : "files";
   const production = skill.labels.find((label) => label.name === "production");
   const otherDrafts = (skill.drafts || []).filter((draft) => !draft.isMine);
@@ -74,6 +80,7 @@ function DetailContent({ skill, preview }) {
     skill,
     params.get("version"),
   );
+  const viewedVersion = useSkillVersion(skill.id, downloadNumber);
   const changeTab = (value) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -102,63 +109,52 @@ function DetailContent({ skill, preview }) {
   const download = async () => {
     setMenuAnchor(null);
     setDownloading(true);
+    setOperationError(null);
     try {
       await downloadVersionZip(skill.id, downloadNumber);
-    } catch {
-      enqueueSnackbar("Could not download this version. Try again.", {
-        variant: "error",
-      });
+    } catch (error) {
+      setOperationError({ error: { ...error, code: "retryable_transport", message: error.message }, action: "download this version" });
     } finally {
       setDownloading(false);
     }
   };
   const confirmArchive = async () => {
+    setOperationError(null);
     try {
       await archive.mutateAsync({ id: skill.id, expectedReleaseRevision: archiveRevision });
       enqueueSnackbar("Skill archived", { variant: "success" });
       navigate(paths.dashboard.skills.root);
-    } catch {
-      enqueueSnackbar("Could not archive this skill. Try again.", {
-        variant: "error",
-      });
+    } catch (error) {
+      setConfirmOpen(false);
+      setOperationError({ error, action: "archive this skill" });
     }
   };
 
   return (
     <>
-      <PageHeader
+      <ObjectHeader
+        crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.name }]}
         title={
           <Box component="span" sx={{ fontFamily: "monospace" }}>
             {skill.name}
           </Box>
         }
-        description={skill.description}
-        badge={
-          production && (
-            <LabelChip name="production" version={production.version} />
-          )
-        }
-        back={
-          <IconButton
-            component={RouterLink}
-            to={paths.dashboard.skills.root}
-            aria-label="Back to Skills"
-          >
-            <Iconify icon="solar:arrow-left-linear" />
-          </IconButton>
-        }
+        purpose={skill.description}
+        identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
+            <Box sx={{ minWidth: 140 }}><VersionSelect label="Viewing" skillId={skill.id} value={resolveViewedVersion(skill, params.get("version")).value} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>
             <Button variant="outlined" onClick={() => changeTab("use")}>
               Use skill
             </Button>
             <Button
-              variant={tab === "tests" ? "outlined" : "contained"}
+              variant={['tests', 'dependents'].includes(tab) ? 'outlined' : 'contained'}
+              color="primary"
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
-              {skill.hasDraft ? 'Continue draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
+              {skill.hasDraft ? 'Resume your draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
             </Button>
             <IconButton
               aria-label="Skill actions"
@@ -172,9 +168,8 @@ function DetailContent({ skill, preview }) {
           </>
         }
       />
-      <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>
-        Viewed {downloadNumber ? `v${downloadNumber}` : 'not available'} · Production {production ? `v${production.version}` : 'unassigned'} · Latest {skill.latestVersion ? `v${skill.latestVersion}` : 'unpublished'}. {skill.hasDraft ? 'Continue draft retains its original content basis.' : 'The current legacy editor starts from latest; it does not silently use the viewed release.'}
-      </Typography>
+      {!skill.hasDraft && downloadNumber && downloadNumber !== skill.latestVersion && <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>Editing starts from latest v{skill.latestVersion}, not the v{downloadNumber} you&apos;re viewing.</Typography>}
+      {operationError && <OperationFeedback {...operationError} onRetry={operationError.action.startsWith('download') ? download : undefined} onRefresh={() => window.location.reload()} onReconcile={() => window.location.reload()} />}
       {otherDrafts.length > 0 && (
         <Alert severity="info" sx={{ mb: 1.5 }}>
           {otherDrafts.map((draft) => draft.user.name).join(", ")}{" "}
@@ -212,7 +207,7 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <Stack spacing={3}><FilesTab skill={skill} /><J1MigrationExport resourceId={skill.id} number={downloadNumber} /><GitHubSourcePanel skill={skill} /></Stack>
+            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}
@@ -226,6 +221,7 @@ function DetailContent({ skill, preview }) {
         open={Boolean(menuAnchor)}
         onClose={() => setMenuAnchor(null)}
       >
+        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with source mapping</MenuItem>
         <MenuItem disabled={!downloadNumber || downloading} onClick={download}>
           <ListItemIcon>
             <Iconify icon="solar:download-linear" width={16} />
@@ -269,6 +265,7 @@ function DetailContent({ skill, preview }) {
           Archive
         </MenuItem>
       </Menu>
+      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with source mapping"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => {
@@ -324,7 +321,7 @@ export default function SkillDetailView() {
               <Button
                 component={RouterLink}
                 to={paths.dashboard.skills.root}
-                variant="contained"
+                variant="contained" color="primary"
               >
                 Back to Skills
               </Button>

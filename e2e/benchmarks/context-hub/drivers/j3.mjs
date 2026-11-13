@@ -166,7 +166,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const production = dialog.getByRole('checkbox', { name: 'production', exact: true });
           if (!await production.isChecked()) await operator.click(production, 'leaf-production-selection');
           const warning = dialog.getByRole('checkbox', { name: 'I reviewed the warnings and want to publish this version.', exact: true });
-          const publish = dialog.getByRole('button', { name: 'Publish', exact: true });
+          const publish = dialog.getByRole('button', { name: 'Publish and move production', exact: true });
           await expect.poll(async () => await warning.isVisible() || await publish.isEnabled(), { timeout: 60_000 }).toBe(true);
           if (await warning.isVisible()) await operator.click(warning, 'acknowledge-leaf-static-warnings');
           await operator.click(publish, 'publish-leaf-v8');
@@ -182,12 +182,15 @@ export async function createDriver({ jobId, runId, registration }) {
             const row = active.results.find((item) => item.context_id === parent.id);
             requireValue(row && row.locked_version === 7 && row.update_state === (index === 2 ? 'pinned_as_intended' : 'update_available'), 'Wrong dependent lock or selector');
           }
-          // One review covers the whole inventory, active and historical on one screen; the deliberate pin is the shown exception.
+          const historyDisclosure = page.getByRole('button', { name: 'Show superseded releases', exact: true });
+          const hasSuperseded = await historyDisclosure.isVisible();
+          if (hasSuperseded) await operator.click(historyDisclosure, 'show-superseded-context-releases');
+          // Identical active/history rows are not duplicated; superseded releases remain reviewable.
           await operator.review('inspect-dependent-inventory', [...input.parents.map((_, index) => `parent-${index}`), 'historical-references'], ['parent-2'], async () => {
             for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` }).first()).toBeVisible();
             for (const parent of followers) await expect(page.getByRole('checkbox', { name: `Select ${parent.name} v1 for update` })).toBeChecked();
             await expect(page.getByRole('checkbox', { name: `Select ${input.parents[2].name} v1 for update` })).toBeDisabled();
-            await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
+            if (hasSuperseded) await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
           });
           await snapshot('dependent-inventory', page);
           observations.dependents = { active, history: await read(`${child.id}/context-dependents/?view=history`, signal) };
@@ -195,9 +198,9 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'accept-followers') {
           // One reviewed update over the preselected followers, started from the dependents inventory the person is already viewing.
-          await click(`Preview updates for ${followers.length} selected contexts`, 'followers-preview');
+          await click(`Prepare draft updates for ${followers.length} contexts`, 'followers-preview');
           await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
-          const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByText('Compiled candidate')).toHaveCount(followers.length));
+          const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByRole('button', { name: 'Technical details', exact: true })).toHaveCount(followers.length));
           await reviewPlans('followers-dependency-review');
           await command('source-label-aba', operationsArgs('source-aba', '8'));
           ledger.fault('source-aba', 'source-production-eight-seven-eight');
@@ -251,9 +254,9 @@ export async function createDriver({ jobId, runId, registration }) {
                 const production = dialog.getByRole('checkbox', { name: 'production', exact: true });
                 if (!await production.isChecked()) await ownerOp.click(production, 'upstream-production');
                 const warning = dialog.getByRole('checkbox', { name: 'I reviewed the warnings and want to publish this version.', exact: true });
-                await expect.poll(async () => await warning.isVisible() || await dialog.getByRole('button', { name: 'Publish', exact: true }).isEnabled()).toBe(true);
+                await expect.poll(async () => await warning.isVisible() || await dialog.getByRole('button', { name: 'Publish and move production', exact: true }).isEnabled()).toBe(true);
                 if (await warning.isVisible()) await ownerOp.click(warning, 'upstream-warnings');
-                await ownerOp.click(dialog.getByRole('button', { name: 'Publish', exact: true }), 'upstream-publish-v9');
+                await ownerOp.click(dialog.getByRole('button', { name: 'Publish and move production', exact: true }), 'upstream-publish-v9');
                 await expect.poll(async () => (await read(`${child.id}/`, signal)).latest_version).toBe(9);
                 const still = await read(`contexts/${parent.id}/draft/`, signal);
                 requireValue(still.revision === pending.revision && compiled(still) === 8, 'Pending save or accepted lock changed during race');
@@ -349,16 +352,16 @@ export async function createDriver({ jobId, runId, registration }) {
             const reviewed = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
             await expect(reviewed).toBeEnabled();
             await reviewer.review(`parent-${index}-release-review`, ['parent-candidate', 'target', 'evidence-absence', 'release-consequence'], [], () => reviewed.check(), decision);
-            await reviewer.approve(`parent-${index}-approve-packet`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
+            await reviewer.approve(`parent-${index}-approve-packet`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);
             await command(`parent-${index}-unrelated-heartbeat`, operationsArgs('heartbeat', index));
             ledger.fault('unrelated-heartbeat', `parent-${index}-observation-only`);
             // The acknowledgement is keyed to the exact packet revision and fingerprint and carries across
             // pending -> approved; only a cleared acknowledgement (a new revision) is a new review action.
             if (!(await reviewed.isChecked())) await reviewer.review(`parent-${index}-execution-review`, ['exact-approved-packet', 'current-preconditions'], [], () => reviewed.check(), decision);
             await expect(reviewed).toBeChecked();
-            await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }).click(), decision);
+            await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Release to production', exact: true }).click(), decision);
             await reviewer.approve(`parent-${index}-move-production`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
-            await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
+            await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();
             observations.releases.push((await pool.query('SELECT to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id = $1', [parent.id])).rows);
             requireValue(canonical(observations.releases[index]) === canonical([{ to_version: 2, actor_id: input.owner.userId }]), 'Wrong parent authorization actor or duplicate release');
             await expect(reviewerPage.getByRole('dialog')).toHaveCount(0);

@@ -129,7 +129,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await page.screenshot({ path: `${output}/shots/02-exact-review.png` });
     await acknowledged.check();
     const decisionResponse = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/decisions/`) && res.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await decisionResponse).ok()).toBe(true);
     const decisions = await probe.pg('SELECT d.actor_id::text AS reviewer_id, p.fingerprint AS packet_fingerprint, p.revision AS request_revision FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id = d.packet_id WHERE p.request_id = $1', [submitted.id]);
     evidence.decisions = decisions;
@@ -138,7 +138,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     // The same reviewer's attestation of this unchanged revision survives the
     // pending -> approved refresh; it is not re-requested before release.
     await expect(acknowledged).toBeChecked();
-    await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     // Environmental race: policy A -> B -> A leaves visible protection unchanged
     // but must invalidate approval by monotonically advancing release revision.
     const protection = await api(reviewer, 'GET', `${id}/label-protection/`);
@@ -154,6 +154,10 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     if (process.env.J4_FALLIBILITY === 'policy') beforeRenewal.push({ id: 'unexpected-event' });
     expect(beforeRenewal).toHaveLength(0);
     await page.screenshot({ path: `${output}/shots/05-stale-policy-refused.png` });
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('This changed since you opened it. Refresh and review again.', { exact: true })).toBeVisible();
+    await page.screenshot({ path: `${output}/shots/review-stale.png` });
     const renewalContext = await scopeActors.openContext(browser, author);
     const renewalPage = await renewalContext.newPage();
     renewalPage.setDefaultTimeout(60_000);
@@ -162,6 +166,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
       await renewalPage.getByRole('tab', { name: 'Reviews', exact: true }).click();
       await renewalPage.getByRole('button', { name: 'My requests', exact: true }).click();
       await renewalPage.getByRole('button', { name, exact: true }).click();
+      await renewalPage.getByRole('button', { name: 'Revise request', exact: true }).click();
       await expect(renewalPage.getByRole('heading', { name: 'Renew release review', exact: true })).toBeVisible();
       await renewalPage.getByLabel('Published candidate').click();
       await renewalPage.getByRole('option', { name: /^v2/ }).click();
@@ -182,10 +187,10 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await expect(acknowledged).not.toBeChecked();
     await acknowledged.check();
     const renewedDecision = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/decisions/`) && res.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await renewedDecision).ok()).toBe(true);
     await expect(acknowledged).toBeChecked();
-    await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     evidence.policyRace = { restored, beforeRenewal, staleStatus: 409 };
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
@@ -203,14 +208,14 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(durable.post_move_state.release_revision).toBe(restored.release_revision + 1);
     expect(durable).toEqual(receipt);
     await page.reload();
-    await expect(page.getByText('Durable release receipt', { exact: true })).toBeVisible();
+    await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
     await expect(page.getByText('Currentness before the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Pointer state after the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Review is stale or unavailable.', { exact: false })).not.toBeVisible();
     await page.screenshot({ path: `${output}/shots/03-durable-receipt-light.png` });
     await page.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await page.reload();
-    await expect(page.getByText('Durable release receipt', { exact: true })).toBeVisible();
+    await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/04-durable-receipt-dark.png` });
   } finally {
     if (testInfo.status !== testInfo.expectedStatus) await page.screenshot({ path: `${output}/shots/failure.png` }).catch(() => {});

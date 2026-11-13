@@ -124,21 +124,25 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
       const complete = table.getByRole('row').filter({ hasText: bindings[0].name });
       await expect(complete.getByText('Matches target', { exact: true })).toBeVisible();
       await expect(complete.getByText('Pinned as intended', { exact: true })).toBeVisible();
+      // Exercise raw server timestamps and fractional ages, not preformatted UI fixtures.
+      await expect(page.getByText(/^As of \d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
+      await expect(complete.getByText(/^Updated \d+(s|min|h) ago$/)).toBeVisible();
+      await expect(page.getByText('3 of 4 consumers still need delivery verification.', { exact: true })).toBeVisible();
       for (const binding of bindings.slice(1)) {
         const row = table.getByRole('row').filter({ hasText: binding.name });
         await expect(row.getByText('Runtime loading not observed', { exact: true })).toBeVisible();
         await expect(row.getByText('Matches target', { exact: true })).toHaveCount(0);
       }
-      await page.screenshot({ path: testInfo.outputPath('j6-consumers.png') });
+      await page.screenshot({ path: testInfo.outputPath('j6-consumers.png'), animations: 'disabled' });
       await table.getByRole('row').filter({ hasText: bindings[3].name }).scrollIntoViewIfNeeded();
-      await page.screenshot({ path: testInfo.outputPath('j6-unobserved.png') });
+      await page.screenshot({ path: testInfo.outputPath('j6-unobserved.png'), animations: 'disabled' });
     }, { timeout: UI_READY });
     await test.step('Inspect retained delivery without claiming business recovery', async () => {
       await page.getByRole('button', { name: bindings[1].name, exact: true }).click();
       await expect(page.getByText('Delivery receipts', { exact: true })).toBeVisible();
-      await expect(page.getByText('observe_runtime', { exact: true })).toBeVisible();
-      await expect(page.getByText(/Delivery is supplied content, not proven compliance/)).toBeVisible();
-      await page.screenshot({ path: testInfo.outputPath('j6-receipts.png') });
+      await expect(page.getByText('Wait for a runtime delivery report.', { exact: true })).toBeVisible();
+      await expect(page.getByText(/Delivered means the release was sent to this runtime/)).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath('j6-receipts.png'), animations: 'disabled' });
     }, { timeout: UI_READY });
   } finally {
     // Public credential revocation; retained synthetic rows are isolated by actor/name.

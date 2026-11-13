@@ -1,29 +1,21 @@
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
+import IdentityChip from '../components/IdentityChip';
+import CapabilityNotice from '../components/CapabilityNotice';
 import Section from "src/components/section";
 
 export default function CapabilityChanges({ changes, onOpenFile }) {
   return (
     <Section title="Execution-related changes">
       <Stack spacing={1.5}>
-        <Typography variant="s3" color="text.secondary">
-          Declared permissions are not a sandbox. Unrecognized behavior may
-          still exist. Opening this review executes nothing.
-        </Typography>
         {!changes ? (
-          <Alert severity="info">
-            Capability comparison unavailable. No safety conclusion can be
-            drawn.
-          </Alert>
+          <CapabilityNotice title="Permission comparison unavailable" description="Review the file changes before deciding." />
         ) : (
           <>
-            <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-              Before {changes.beforeDigest} · candidate {changes.afterDigest}
-            </Typography>
+            <Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip label="Before" value={changes.beforeDigest} /><IdentityChip label="Candidate" value={changes.afterDigest} /></Stack>
             {!changes.changes.length && (
               <Typography variant="s1">
-                No changes in recognized static declarations. This is not a
-                safety certification.
+                No changes in recognized static declarations. This is not a safety certification.
               </Typography>
             )}
             {changes.changes.map((item) => (

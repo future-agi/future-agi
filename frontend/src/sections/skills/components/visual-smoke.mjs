@@ -28,7 +28,7 @@ import FileTree from 'src/sections/skills/components/FileTree';
 import SkillMarkdownPreview from 'src/sections/skills/components/SkillMarkdownPreview';
 import TextDiff from 'src/sections/skills/components/TextDiff';
 import ChecksList from 'src/sections/skills/components/ChecksList';
-import LabelChip from 'src/sections/skills/components/LabelChip';
+import StatusBadge from 'src/components/status-badge';
 import {SKILLS_NAV_ICON} from 'src/sections/skills/components/skillIcons';
 const h = React.createElement;
 const mode = new URLSearchParams(location.search).get('mode') || 'light';
@@ -39,7 +39,7 @@ function App() {
  const [selected, select] = React.useState('SKILL.md');
  const [files, setFiles] = React.useState([{path:'SKILL.md'}, {path:'references/policy.md',status:'modified'}]);
  return h(ThemeProvider,{theme},h(CssBaseline),h(Box,{sx:{p:2,maxWidth:1200,mx:'auto'}},
-  h(Box,{sx:{display:'flex',alignItems:'center',gap:1,mb:2}},h(Iconify,{icon:SKILLS_NAV_ICON,'data-testid':'nav-icon'}),h(Typography,{variant:'m1',component:'h1'},'Skills'),h(LabelChip,{name:'production',version:2})),
+  h(Box,{sx:{display:'flex',alignItems:'center',gap:1,mb:2}},h(Iconify,{icon:SKILLS_NAV_ICON,'data-testid':'nav-icon'}),h(Typography,{variant:'m1',component:'h1'},'Skills'),h(StatusBadge,{status:'neutral',label:'Production v2'})),
   h(Box,{sx:{display:'grid',gridTemplateColumns:{xs:'minmax(0,1fr)',md:'260px minmax(0,1fr)'},gap:3}},
    h(FileTree,{files,selectedPath:selected,onSelect:select,readOnly:false,onCreate:(p)=>setFiles([...files,{path:p}]),onRename:(a,b)=>setFiles(files.map(f=>f.path===a?{path:b}:f)),onDelete:(p)=>setFiles(files.filter(f=>f.path!==p))}),
    h(Box,{sx:{minWidth:0}},h(Typography,{variant:'s3','data-testid':'selected'},'Selected: '+selected),h(SkillMarkdownPreview,{content:markdown,currentPath:'SKILL.md',onOpenPath:select}))),

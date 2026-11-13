@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useMonaco } from "@monaco-editor/react";
+import { loader, useMonaco } from "@monaco-editor/react";
+import { Box } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
 import { useForm } from "react-hook-form";
 
 import { FormCodeEditor } from "src/components/form-code-editor";
@@ -9,6 +12,13 @@ import { languageForPath } from "src/sections/skills/utils/paths";
 export default function SkillFileEditor({ file, onChange, target, readOnly = false }) {
   const { control, setValue } = useForm({ defaultValues: { content: file.content } });
   const monaco = useMonaco();
+  const [loadError, setLoadError] = useState(null);
+  useEffect(() => {
+    let active = true;
+    setLoadError(null);
+    loader.init().catch((error) => { if (active) setLoadError(error); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => { setValue("content", file.content); }, [file.content, setValue]);
 
   useEffect(() => {
@@ -42,8 +52,10 @@ export default function SkillFileEditor({ file, onChange, target, readOnly = fal
     return () => { active = false; subscription.dispose(); layoutSubscription?.dispose(); };
   }, [monaco, file.path, target]);
 
+  if (loadError) return <ErrorState title="Couldn't load the editor." detail="Save your changes before retrying. Retry reloads this page to download the editor again." onRetry={() => window.location.reload()} />;
   return (
     <FormCodeEditor
+      loading={<Box sx={{ width: 1, height: 1, minHeight: 240, bgcolor: 'background.paper', p: 1.5 }}><ContentSkeleton variant="panel" label="Loading editor…" /></Box>}
       control={control}
       fieldName="content"
       label={file.path}
@@ -53,8 +65,8 @@ export default function SkillFileEditor({ file, onChange, target, readOnly = fal
       readOnly={readOnly}
       language={languageForPath(file.path)}
       height="100%"
-      sx={{ flex: 1, minHeight: 0, '& > .MuiBox-root': { flex: 1, minHeight: 0 } }}
-      options={{ readOnly, domReadOnly: readOnly, automaticLayout: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
+      sx={{ flex: 1, minHeight: 0, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden', '& > .MuiBox-root': { flex: 1, minHeight: 0 } }}
+      options={{ renderLineHighlight: "none", readOnly, domReadOnly: readOnly, automaticLayout: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
     />
   );
 }

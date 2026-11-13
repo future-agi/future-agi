@@ -54,6 +54,8 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationFooter, setMigrationFooter] = useState(null);
+  const [migrationConsequence, setMigrationConsequence] = useState("Review the source items before importing. Production labels don’t change.");
   const busy = migrationBusy || previewMutation.isPending || importMutation.isPending;
   const selectedBundles = preview ? preview.bundles.filter((bundle) => selected.includes(bundle.key)) : [];
   const hasWarnings = selectedBundles.some((bundle) => bundle.checks.summary.warnings > 0);
@@ -95,12 +97,12 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
   };
 
   return (
-    <ModalWrapper open={open} onClose={onClose} title="Import skills" modalWidth="880px" paperSx={{ maxWidth: 880 }}
-      subTitle={tab !== "upload" ? "Review the source, then import as an unpublished draft." : "Review files and checks before publishing versions to your workspace."}
+    <ModalWrapper open={open} onClose={onClose} title="Import skills" modalWidth={tab === "migration" ? "1200px" : "880px"} paperSx={{ maxWidth: tab === "migration" ? "lg" : 880, overflow: "hidden" }}
+      subTitle={tab === "migration" ? migrationConsequence : tab === "github" ? "Review the source, then import as an unpublished draft." : "Review files and checks before publishing versions to your workspace."}
       isLoading={busy} isValid={Boolean(result) || (preview ? canImport : files.length > 0)}
-      onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
-      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Retained migration" disabled={busy} /></CustomTabs>
-      {tab === 'migration' ? <RetainedMigrationPanel onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
+      dialogActionSx={tab === "migration" ? { display: "none" } : {}} onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
+      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Review sources" disabled={busy} /></CustomTabs>
+      {tab === 'migration' ? <RetainedMigrationPanel footerTarget={migrationFooter} onConsequenceChange={setMigrationConsequence} onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
         const id = receipt.consumed?.skillId ?? receipt.skill?.id;
         if (id) { onClose(); navigate(`${paths.dashboard.skills.edit(id)}?tab=tests`); }
       }} /></Box> : <Stack spacing={2} sx={{ minWidth: 0, overflowY: "auto" }}>
@@ -155,6 +157,7 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
           {result.failed.length > 0 && <Typography variant="s3" color="text.secondary">Successful imports are saved. Fix the failed skills and import them again.</Typography>}
         </>}
       </Stack>}
+      {tab === "migration" && <Box ref={setMigrationFooter} sx={{ flexShrink: 0, bgcolor: "background.paper" }} />}
     </ModalWrapper>
   );
 }

@@ -3,10 +3,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextLinksPanel from './ContextLinksPanel';
+import ContextFollowerUpdate from './ContextFollowerUpdate';
 
-const empty = { data: { count: 0, as_of: 'now', total_pages: 1, results: [] }, refetch: () => {} };
 const state = vi.hoisted(() => ({ dependents: null, history: null, prepare: vi.fn(), apply: vi.fn() }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:ws:author' }) }));
+vi.mock('src/api/skills', () => ({ useSkill: () => ({ data: { latestVersion: 8, labels: [{ name: 'production', version: 8 }] } }) }));
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: (_skill, { view }) => (view === 'history' ? state.history : state.dependents) }));
 vi.mock('src/api/skills/context-follower-update', () => ({ useFollowerUpdates: () => ({ prepare: state.prepare, apply: state.apply }) }));
 const row = (id, update_state, name = id) => ({ context_id: id, name, context_version: 1, labels: [], requested: update_state === 'pinned_as_intended' ? { version: 7 } : { label: 'production' }, locked_version: 7, update_state });
@@ -25,8 +27,9 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   expect(screen.getByRole('checkbox', { name: 'Select a v1 for update' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Select b v1 for update' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Select c v1 for update' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Preview updates for 2 selected contexts' }));
-  expect(await screen.findAllByText('skills/policy/ · updated · v7 → v8')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
+  expect(await screen.findByText('policy v7 → v8 in a · 0 skills unchanged · production stays as is')).toBeVisible();
+  expect(screen.getByText('policy v7 → v8 in b · 0 skills unchanged · production stays as is')).toBeVisible();
   expect(state.prepare).toHaveBeenCalledWith([{ contextId: 'a', name: 'a', version: 1 }, { contextId: 'b', name: 'b', version: 1 }]);
 });
 
@@ -34,7 +37,7 @@ it('requires one explicit acknowledgement, applies only previewed plans, and ren
   state.prepare.mockResolvedValueOnce([plan('a'), plan('b')]).mockResolvedValueOnce([plan('b', 'plan-b-2')]);
   state.apply.mockResolvedValueOnce([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2, digest: 'd' }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'error', code: 'stale_plan', httpStatus: 409 }]);
   mount();
-  fireEvent.click(screen.getByRole('button', { name: 'Preview updates for 2 selected contexts' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
   const apply = await screen.findByRole('button', { name: 'Apply selected updates to 2 context drafts' });
   expect(apply).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies for all 2 contexts.' }));
@@ -52,19 +55,56 @@ it('requires one explicit acknowledgement, applies only previewed plans, and ren
 it('shows a different-origin draft as an exception and never selects an unavailable pin', async () => {
   state.prepare.mockResolvedValue([plan('a'), { target: { contextId: 'b', name: 'b', version: 1 }, status: 'error', code: 'different_origin' }]);
   mount();
-  fireEvent.click(screen.getByRole('button', { name: 'Preview updates for 2 selected contexts' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
   await screen.findByText(/already has a draft started from another release/);
   expect(screen.getByRole('button', { name: 'Apply selected updates to 1 context draft' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Preview again for 1 context that did not update' })).toBeVisible();
 });
 
-it('shows active references and every historical reference in one view, with no scope to switch', () => {
+it('keeps superseded references available in a disclosure without duplicating the live table', () => {
   mount();
   expect(screen.queryByRole('combobox', { name: /Reference scope/ })).not.toBeInTheDocument();
   expect(within(screen.getByRole('table', { name: 'Published context dependents' })).getByText('a · v1')).toBeVisible();
+  expect(screen.queryByRole('table', { name: 'Historical context references' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Show superseded releases' }));
   const history = screen.getByRole('table', { name: 'Historical context references' });
   expect(within(history).getByText('retired · v0')).toBeVisible();
   expect(within(history).queryByRole('checkbox')).not.toBeInTheDocument();
+});
+
+it('invalidates the prepared set and acknowledgement when selection changes, including changed then restored', async () => {
+  state.prepare.mockResolvedValue([plan('a'), plan('b')]);
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
+  expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
+  expect(state.apply).not.toHaveBeenCalled();
+});
+
+it('discards an in-flight preparation for an earlier selection', async () => {
+  let resolve;
+  state.prepare.mockReturnValue(new Promise((done) => { resolve = done; }));
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
+  resolve([plan('a'), plan('b')]);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' })).toBeEnabled());
+  expect(screen.queryByRole('checkbox', { name: /Accept these exact resolved versions/ })).not.toBeInTheDocument();
+});
+
+it('invalidates reviewed plans when the source release changes', async () => {
+  state.prepare.mockResolvedValue([plan('a')]);
+  const targets = [{ contextId: 'a', name: 'a', version: 1 }];
+  const view = render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} sourceRelease="v8" /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
+  view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} sourceRelease="v9" /></MemoryRouter>);
+  expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
 });
 
 const available = [{ id: 'one', name: 'one', kind: 'skill', latestVersion: 7 }, { id: 'two', name: 'two', kind: 'skill', latestVersion: 7 }, { id: 'three', name: 'three', kind: 'skill', latestVersion: 7 }];
@@ -82,4 +122,24 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
   fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
   await waitFor(() => expect(preview).toHaveBeenCalledOnce());
   expect(preview.mock.calls[0][0].links).toEqual([{ skillId: 'one', selector: { version: 7 } }, { skillId: 'two', selector: { label: 'production' } }, { skillId: 'three', selector: { label: 'production' } }]);
+});
+
+it('clears a prepared selection silently when no context remains and never restores acceptance', async () => {
+  state.prepare.mockResolvedValue([plan('a')]);
+  const targets = [{ contextId: 'a', name: 'a', version: 1 }];
+  const view = render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
+  view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={[]} /></MemoryRouter>);
+  expect(screen.getByText('Select at least one context to prepare updates.')).toBeVisible();
+  expect(screen.queryByText('Selection changed — prepare again.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Prepare draft updates', exact: true })).toBeDisabled();
+  view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} /></MemoryRouter>);
+  expect(screen.queryByRole('button', { name: /Apply selected updates/ })).not.toBeInTheDocument();
+  expect(state.apply).not.toHaveBeenCalled();
+});
+it('does not repeat historical rows that are identical to active references', () => {
+  state.history = state.dependents;
+  mount();
+  expect(screen.queryByRole('button', { name: 'Show superseded releases' })).not.toBeInTheDocument();
 });

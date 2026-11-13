@@ -17,10 +17,12 @@ import SkillDetailView from "./SkillDetailView";
 
 vi.mock("src/api/skills", () => ({
   useSkill: vi.fn(),
+  useSkillVersion: () => ({ data: { digest: "sha256:" + "a".repeat(64) } }),
   useArchiveSkill: vi.fn(),
   downloadVersionZip: vi.fn(),
   getSkillErrorCode: (error) => error?.code,
 }));
+vi.mock("../components/VersionSelect", () => ({ default: ({ value, onChange, label }) => <select aria-label={label} value={value} onChange={(event) => onChange(Number(event.target.value))}><option value="1">v1</option><option value="2">v2</option><option value="label:production">Production</option><option value="label:latest">Latest</option></select> }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock('src/api/skills/j1-migration-export', () => ({ useMigrationExport: () => ({ mutateAsync: vi.fn() }) }));
 vi.mock("src/config-global", () => ({ HOST_API: "https://api.example.test" }));
@@ -111,9 +113,9 @@ describe("Skill detail route", () => {
     expect(
       screen.getByRole("heading", { name: "support-policy" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/production.*v2/)).toBeInTheDocument();
+    expect(screen.getByText(/Production.*v2/)).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Continue draft" }),
+      screen.getByRole("link", { name: "Resume your draft" }),
     ).toHaveAttribute("href", "/dashboard/skills/skill-a/edit");
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Avery has a draft in progress",
@@ -126,7 +128,10 @@ describe("Skill detail route", () => {
     );
     show('?version=2');
     expect(screen.getByRole('link', { name: 'Edit latest v4' })).toBeInTheDocument();
-    expect(screen.getByText(/Viewed v2 · Production v2 · Latest v4/)).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Viewing' })).toHaveValue('2');
+    expect(screen.getByText('Production v2')).toBeVisible();
+    expect(screen.getByText('Latest v4')).toBeVisible();
+    expect(screen.getByText("Editing starts from latest v4, not the v2 you're viewing.")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("restores the URL tab and preserves deep links when changing it", () => {
@@ -188,12 +193,8 @@ describe("Skill detail route", () => {
     show();
     fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Download ZIP" }));
-    await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        expect.stringContaining("Could not download"),
-        { variant: "error" },
-      ),
-    );
+    expect(await screen.findByText("Couldn't reach the server. Nothing was changed.")).toBeVisible();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
     fireEvent.click(
       screen.getByRole("menuitem", { name: "Copy install command" }),
@@ -248,7 +249,7 @@ describe("Skill detail route", () => {
     );
     expect(useArchiveSkill().mutateAsync).toHaveBeenCalledWith({ id: "skill-a", expectedReleaseRevision: 2 });
   });
-  it("retains the confirmation and page on archive failure", async () => {
+  it("retains the page and persistent feedback on an uncertain archive outcome", async () => {
     useArchiveSkill().mutateAsync.mockRejectedValueOnce(new Error("Denied"));
     show();
     fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
@@ -259,13 +260,9 @@ describe("Skill detail route", () => {
         exact: true,
       }),
     );
-    await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        expect.stringContaining("Could not archive"),
-        { variant: "error" },
-      ),
-    );
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't confirm whether this went through. Check before trying again.")).toBeVisible();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.getByLabelText("URL")).toHaveTextContent(
       "/dashboard/skills/skill-a",
     );
@@ -320,8 +317,15 @@ it('mounts Tests without losing immutable result deep links or competing primary
   show('?tab=tests&run=run-id&case=case-id&attempt=attempt-id');
   expect(screen.getByText('Skill tests')).toBeInTheDocument();
   expect(screen.getByLabelText('URL')).toHaveTextContent('run=run-id&case=case-id&attempt=attempt-id');
-  expect(screen.getByRole('link', { name: 'Continue draft' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Resume your draft' })).toHaveClass('MuiButton-outlined');
 });
 
 vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));
 vi.mock("src/api/skills/context-follower-update", () => ({ useFollowerUpdates: () => ({ prepare: vi.fn(), apply: vi.fn() }) }));
+
+it("switches the viewed version in the identity row and resets the file path", () => {
+  useSkill.mockReturnValue(success(skill));
+  show("?version=1&path=references%2Fpolicy.md&tab=files");
+  fireEvent.change(screen.getByLabelText("Viewing"), { target: { value: "2" } });
+  expect(screen.getByLabelText("URL")).toHaveTextContent("version=2&path=SKILL.md&tab=files");
+});

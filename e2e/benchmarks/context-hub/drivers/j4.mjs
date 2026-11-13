@@ -126,7 +126,7 @@ export async function createDriver({ jobId, runId, registration }) {
       };
       const attempt = async (reviewer, operator, name) => {
         await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
-        await operator.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), `${name}-open-release`);
+        await operator.click(reviewer.getByRole('button', { name: 'Release to production', exact: true }), `${name}-open-release`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
         await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
         const result = await response;
@@ -150,7 +150,8 @@ export async function createDriver({ jobId, runId, registration }) {
         await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
-          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.join(', ')} for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
+          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.length} results? for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
+          for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
         const renewed = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
@@ -167,9 +168,9 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(ack(reviewer)).toBeEnabled();
         await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
-        await operator.approve(`${name}-approve`, ['release-packet'], () => reviewer.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
+        await operator.approve(`${name}-approve`, ['release-packet'], () => reviewer.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);
         requireValue((await response).ok(), 'Reviewer decision rejected');
-        await expect(reviewer.getByRole('button', { name: 'Release approved packet', exact: true })).toBeEnabled({ timeout: 60_000 });
+        await expect(reviewer.getByRole('button', { name: 'Release to production', exact: true })).toBeEnabled({ timeout: 60_000 });
       };
       // Each race must be refused for its own reason, never a leftover one.
       const EXPECTED = { 'policy-aba': [409, 'release_conflict'], 'target-config-change': [409, 'impact_changed'],
@@ -250,18 +251,25 @@ export async function createDriver({ jobId, runId, registration }) {
           // Carried forward from publication: kind, resource and candidate.
           // The only registered target is preselected and visible.
           await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
-          await expect(author.getByLabel('Release resource', { exact: true })).toHaveValue(input.contextName);
-          await expect(author.getByLabel('Published candidate', { exact: true })).toHaveValue(`v${published.number}`);
-          await expect(author.getByLabel('Application target', { exact: true })).toHaveText(/ · configuration r\d+$/);
+          const carriedCandidate = author.getByRole('group', { name: 'Carried release candidate', exact: true });
+          await expect(carriedCandidate).toContainText(input.contextName);
+          await expect(carriedCandidate).toContainText(new RegExp(` → v${published.number}(?!\\d)`));
+          await expect(carriedCandidate).toContainText(/ · configuration r\d+$/);
           // One explicit decision shares and attaches every listed
           // exact-candidate result; the confirmation names each record. The
           // same decision continues to the exact packet (server-prepared, not
           // sent); the author still inspects and attests it below.
-          const attach = author.getByRole('checkbox', { name: /^Attach text evidence / });
+          const attach = author.getByRole('checkbox', { name: /^Attach Text comparison/ });
           await expect(attach).toHaveCount(input.evidenceIds.length);
+          await expect(author.getByText('No matching test evidence. Not tested is not a pass.', { exact: true })).toHaveCount(0);
+          await expect(author.getByRole('button', { name: 'Share and attach', exact: true })).toHaveCount(input.evidenceIds.length);
+          // Capture without scrolling or adding an operator action. Private
+          // results must occupy the same evidence table, never an empty state.
+          await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
           await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
-          for (const id of input.evidenceIds) await expect(confirmShare.getByText(new RegExp(`${id} · private`))).toBeVisible();
+          for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();
+          await expect(confirmShare.getByText(/ · private$/)).toHaveCount(input.evidenceIds.length);
           const prepared = responseFor(author, '/release-requests/preview/');
           await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
           const preview = (await (await prepared).json()).result;
@@ -313,7 +321,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
           await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
-            await expect(reviewer.getByText(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
           }, decision);
           // Correct decision rule for this synthetic fixture: approve only if
@@ -321,12 +329,16 @@ export async function createDriver({ jobId, runId, registration }) {
           // unresolved human disagreement. Values come from the server.
           const outcomes = inspection.summaries.map((row) => ({ id: row.source_id, planned: row.planned, graded: row.graded, incomplete: row.incomplete, regressions: row.regressions, disagreements: row.disagreements }));
           await op.review('inspect-evidence-outcomes', outcomes.map((_, i) => `evidence-${i}`), [], async () => {
-            for (const row of outcomes) await expect(reviewer.getByText(`${row.graded}/${row.planned} attempts graded · ${row.incomplete} incomplete · ${row.regressions} regressions`, { exact: true }).first()).toBeVisible();
+            for (const row of outcomes) {
+              await expect(reviewer.getByTitle(row.id, { exact: true }).first()).toBeVisible();
+              await expect(reviewer.getByText(`${row.graded}/${row.planned} attempts graded · ${row.incomplete} incomplete · ${row.regressions} regressions`, { exact: true }).first()).toBeVisible();
+            }
           }, decision);
           const correct = outcomes.every((row) => row.graded === row.planned && row.planned > 0 && row.incomplete === 0 && row.regressions === 0 && row.disagreements === 0);
           requireValue(correct, 'Fixture evidence does not support approval; the correct decision would be request changes');
           await op.review('inspect-capabilities-and-impact', ['capabilities', 'impact'], [], async () => {
-            await expect(reviewer.getByText(`Before ${inspection.capabilities.before_digest} · candidate ${inspection.capabilities.after_digest}`, { exact: true })).toBeVisible();
+            await expect(reviewer.getByTitle(inspection.capabilities.before_digest, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByTitle(inspection.capabilities.after_digest, { exact: true }).first()).toBeVisible();
           }, decision);
           await shot(reviewer, 'review-packet');
           await stamp('reviewed-packet', { request: detail, inspection, outcomes, correctDecision: 'approve', humanComprehensionMeasured: false }, decision);
@@ -408,9 +420,9 @@ export async function createDriver({ jobId, runId, registration }) {
             'Remaining evidence does not support approval of the renewed packet');
           await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
-            await expect(reviewer.getByText(remaining.source_id, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
-            await expect(reviewer.getByText(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             await expect(ack(reviewer)).toBeEnabled();
           }, renewed.decision);
           await shot(reviewer, 'renewed-review');
@@ -420,7 +432,7 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'authorized-release') {
           const decision = decisionFor(detail);
           await attestIfRequired(reviewer, op, 'acknowledge-final-release');
-          await op.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), 'prepare-authorized-release');
+          await op.click(reviewer.getByRole('button', { name: 'Release to production', exact: true }), 'prepare-authorized-release');
           const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
           await op.approve('authorize-exact-transition', ['release-packet'], () => reviewer.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
           const result = await response;
@@ -433,7 +445,7 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'inspect-receipt') {
           await op.transition('durable-receipt', () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target: 'reopen-durable-receipt' }, () => reviewer.reload()));
           await op.review('pre-and-post-move', ['pre-move-currentness', 'post-move-pointer'], [], async () => {
-            await expect(reviewer.getByText('Durable release receipt', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('Release receipt', { exact: true })).toBeVisible();
             await expect(reviewer.getByText('Currentness before the move', { exact: true })).toBeVisible();
             await expect(reviewer.getByText('Pointer state after the move', { exact: true })).toBeVisible();
           });

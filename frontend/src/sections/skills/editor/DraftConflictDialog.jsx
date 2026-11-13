@@ -40,7 +40,7 @@ export default function DraftConflictDialog({ open, onClose, refetch, onReload, 
       </DialogContent>
       <DialogActions>
         <Button variant="outlined" disabled={busy} onClick={() => resolve(false)}>Reload theirs</Button>
-        <Button variant="contained" disabled={busy} onClick={() => resolve(true)}>Overwrite with mine</Button>
+        <Button variant="contained" color="primary" disabled={busy} onClick={() => resolve(true)}>Overwrite with mine</Button>
       </DialogActions>
     </ClosableDialog>
   );

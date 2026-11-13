@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Autocomplete, Avatar, Box, Button, Chip, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
-import MetricStrip from "src/components/metric-strip";
+import StatusBadge from "src/components/status-badge";
 import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
+import { dsSize } from "src/theme/ds-tokens";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import { LIMITS, SYSTEM_LABELS } from "src/sections/skills/constants";
@@ -44,13 +45,14 @@ export default function SkillsLibraryView() {
   const requestedPageSize = Number(params.get("page_size") || LIMITS.DEFAULT_PAGE_SIZE);
   const pageSize = [10, 25, 50, 100].includes(requestedPageSize) ? requestedPageSize : LIMITS.DEFAULT_PAGE_SIZE;
   const query = useSkillsList({ search, tag, label, sort, order, page, pageSize });
-  const previewState = usePreviewState();
+  const statePreview = usePreviewState();
+  const previewState = params.get("state") === "filtered-empty" ? "filtered-empty" : statePreview;
   const loading = previewState === "loading" || (!previewState && query.isPending);
   const failed = previewState === "error" || (!previewState && query.isError);
-  const rows = previewState === "empty" ? [] : query.data?.results || [];
-  const count = previewState === "empty" ? 0 : query.data?.count || 0;
+  const rows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
+  const count = ['empty', 'filtered-empty'].includes(previewState) ? 0 : query.data?.count || 0;
   const stats = previewState === "empty" ? { total: 0 } : query.data?.stats;
-  const filtered = Boolean(search || tag || label);
+  const filtered = previewState === 'filtered-empty' || Boolean(search || tag || label);
   const firstRun = !loading && !failed && stats?.total === 0 && !filtered;
   // This page supplies suggestions, not an exhaustive workspace tag inventory.
   const tagSuggestions = [...new Set([...(tag ? [tag] : []), ...rows.flatMap((skill) => skill.tags)])].sort();
@@ -71,13 +73,13 @@ export default function SkillsLibraryView() {
     { accessorKey: "name", header: "Name", minSize: 240, meta: { flex: 2 }, cell: ({ row: { original: skill } }) => (
       <Stack sx={{ minWidth: 0 }}>
         <Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} underline="hover" color="text.primary"
-          onClick={(event) => event.stopPropagation()} sx={{ typography: "s1", fontFamily: "monospace" }}>{skill.name}</Link>
+          onClick={(event) => event.stopPropagation()} sx={{ typography: "s1" }}>{skill.name}</Link>
         <Typography variant="s3" color="text.secondary" noWrap>{skill.description}</Typography>
       </Stack>
     ) },
     { id: "production", header: "Production", size: 108, cell: ({ row: { original: skill } }) => {
       const production = skill.labels.find((item) => item.name === "production");
-      return production ? <Chip size="small" variant="outlined" label={`v${production.version}`} /> : "—";
+      return production ? <StatusBadge status="released" label={`v${production.version}`} /> : "—";
     } },
     { accessorKey: "latestVersion", header: "Latest", size: 118, cell: ({ getValue }) => getValue() ? `v${getValue()}` : "Not published" },
     { accessorKey: "tags", header: "Tags", minSize: 150, meta: { flex: 1 }, cell: ({ getValue }) => <Typography variant="s3" noWrap>{getValue().join(", ") || "—"}</Typography> },
@@ -95,18 +97,14 @@ export default function SkillsLibraryView() {
   return (
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
-        actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
-      {!loading && !failed && stats?.total > 0 && <MetricStrip sx={{ mt: 2, gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", md: "repeat(4, minmax(0, 1fr))" } }} items={[
-        { key: "skills", label: "Skills", value: stats.total, hint: "In this workspace" },
-        { key: "production", label: "In production", value: stats.inProduction },
-        { key: "fetches", label: "Fetches (7d)", value: stats.fetches7d },
-        { key: "drafts", label: "Your drafts", value: stats.myDrafts },
-      ]} />}
+        actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
+      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
+      {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
-        <FormSearchField searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
+        <FormSearchField label="Search" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
         <Autocomplete freeSolo autoSelect selectOnFocus forcePopupIcon size="small" options={tagSuggestions} value={tag || null}
-          onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: 200, maxWidth: "100%" }}
-          renderInput={(inputParams) => <TextField {...inputParams} label="Tag" placeholder="Any tag" />} />
+          onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: 200, maxWidth: "100%", "& .MuiOutlinedInput-root": { height: dsSize.control.sm, py: 0 } }}
+          renderInput={(inputParams) => <TextField {...inputParams} size="small" label="Tag" placeholder="Any tag" />} />
         <TextField select label="Label" size="small" SelectProps={{ displayEmpty: true }} value={label} onChange={(event) => changeParams({ label: event.target.value })} sx={{ minWidth: 140 }}>
           <MenuItem value="">Any label</MenuItem>{SYSTEM_LABELS.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
           {label && !SYSTEM_LABELS.includes(label) && <MenuItem value={label}>{label}</MenuItem>}

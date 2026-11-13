@@ -10,13 +10,13 @@ import {
   Stack,
   Table,
   TableBody,
+  TableContainer,
   TableCell,
   TableHead,
   TableRow,
   TextField,
   Typography,
 } from "@mui/material";
-import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -144,7 +144,7 @@ export default function ContextPilotCredentials({
   const revoke = useRevokeContextCredential();
   const issued = issue.data;
   const rows = (list.data?.results ?? []).filter((row) =>
-    grantsContext(row, contextId),
+    grantsContext(row, contextId) && row.grants.some((grant) => grant.kind === "agent_context" && grant.resourceId === contextId && grant.versionIds?.includes(snapshot.versionId)),
   );
   const versionLabel = (credential) => {
     const ids = credential.grants.flatMap((grant) => grant.versionIds);
@@ -154,22 +154,28 @@ export default function ContextPilotCredentials({
   };
   if (!canIssue)
     return (
-      <Section title="Pilot credential">
-        <Alert severity="info">
-          A workspace admin issues the isolated consume credential for a pilot
-          install.
-        </Alert>
-      </Section>
+      <Stack spacing={1} alignItems="flex-start">
+        <Typography variant="s3">A workspace admin can issue a consume credential for this version.</Typography>
+        <Button variant="outlined" onClick={async () => {
+          try {
+            if (!navigator.clipboard?.writeText) throw new Error('Unavailable');
+            await navigator.clipboard.writeText(`Please issue a consume-only credential for ${snapshot.name || 'this agent context'} v${snapshot.version}. Send the secret through our approved secret manager, not chat. Context: ${window.location.href}`);
+            setCopyState('request-copied');
+          } catch { setCopyState('request-failed'); }
+        }}>Ask a workspace admin</Button>
+        {copyState === 'request-copied' && <Typography variant="s3" role="status">Request copied. Send it to your workspace admin.</Typography>}
+        {copyState === 'request-failed' && <Typography variant="s3" role="status">Copy this request: Please issue a consume-only credential for {snapshot.name || 'this context'} v{snapshot.version}, and share it through our approved secret manager.</Typography>}
+      </Stack>
     );
   return (
-    <Section title="Pilot credential">
+    <>
       <Stack spacing={1.5}>
         <Typography variant="s3">
           Consume only, bound to v{snapshot.version} of this context. It cannot
           read drafts, other versions or moving labels. The secret is shown
           once and is never placed in a command.
         </Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
           <TextField
             select
             size="small"
@@ -202,7 +208,7 @@ export default function ContextPilotCredentials({
               );
             }}
           >
-            Issue pilot credential
+            Create credential
           </Button>
         </Stack>
         {issue.isError && (
@@ -221,7 +227,7 @@ export default function ContextPilotCredentials({
                   : " This was a replay; the secret is no longer available. Issue a new credential."}
               </Typography>
               {issued.secretAvailable && (
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                   <Button
                     size="small"
                     variant="outlined"
@@ -262,7 +268,7 @@ export default function ContextPilotCredentials({
             </Button>
           </Alert>
         ) : rows.length > 0 ? (
-          <Table size="small" aria-label="Pilot credentials for this context">
+          <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
             <TableHead>
               <TableRow>
                 <TableCell>Credential</TableCell>
@@ -282,11 +288,11 @@ export default function ContextPilotCredentials({
                 />
               ))}
             </TableBody>
-          </Table>
+          </Table></TableContainer>
         ) : (
           !list.isLoading && (
             <Typography variant="s3">
-              No credentials for this context.
+              No credentials grant this version yet.
             </Typography>
           )
         )}
@@ -321,7 +327,7 @@ export default function ContextPilotCredentials({
           </Button>
         }
       />
-    </Section>
+    </>
   );
 }
 ContextPilotCredentials.propTypes = {

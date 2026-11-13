@@ -126,12 +126,12 @@ try {
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
         const acknowledge = page.getByRole('checkbox', { name: /I reviewed this exact candidate/ });
         await acknowledge.check();
-        await page.getByRole('button', { name: 'Approve exact packet' }).click();
+        await page.getByRole('button', { name: 'Approve release' }).click();
         // Approval changes the server request status and remounts acknowledgment;
         // wait for that transition rather than racing the previous checked box.
         await page.waitForFunction(() => document.querySelector('input[type="checkbox"]')?.checked === false);
         await acknowledge.check();
-        await page.getByRole('button', { name: 'Release approved packet' }).click();
+        await page.getByRole('button', { name: 'Release to production' }).click();
         await page.getByRole('button', { name: 'Move production', exact: true }).click();
         await page.waitForFunction(() => window.__reviewEvents.some((event) => event.url.endsWith('/execute/')));
         const events = await page.evaluate(() => window.__reviewEvents.filter((event) => /\/(decisions|execute)\/$/.test(event.url)));
@@ -145,7 +145,7 @@ try {
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
         await page.getByText(/Review is stale or unavailable/).waitFor();
         assert.equal(await page.getByRole('checkbox', { name: /I reviewed this exact candidate/ }).isDisabled(), true);
-        assert.equal(await page.getByRole('button', { name: 'Approve exact packet' }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: 'Approve release' }).isDisabled(), true);
       }
       await page.close();
     }

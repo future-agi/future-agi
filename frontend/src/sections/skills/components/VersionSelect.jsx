@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { MenuItem, TextField } from '@mui/material';
 import { useSkillLabels, useSkillVersions } from 'src/api/skills';
 
-export default function VersionSelect({ skillId, value, onChange, includeDraft = false, includeLabels = true }) {
+export default function VersionSelect({ skillId, value, onChange, includeDraft = false, includeLabels = true, label = "Version" }) {
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [skillId]);
   const versions = useSkillVersions(skillId, { page, pageSize: 100 });
@@ -17,7 +17,7 @@ export default function VersionSelect({ skillId, value, onChange, includeDraft =
   // Keep a controlled value visible even when paging through older versions.
   if (value != null && value !== '' && !options.some((option) => option.value === value)) options.unshift({ value, label: typeof value === 'number' ? `v${value}` : value === 'draft' ? 'Your draft' : value.replace(/^label:/, '') });
   const failed = versions.isError || (includeLabels && labels.isError);
-  return <TextField select fullWidth size="small" label="Version" value={value ?? ''} error={failed}
+  return <TextField select fullWidth size="small" label={label} value={value ?? ''} error={failed}
     helperText={failed ? 'Could not load versions. Open the menu to retry.' : versions.isPending ? 'Loading versions…' : undefined}
     onChange={(event) => {
       if (event.target.value === '__next') setPage((current) => current + 1);
@@ -32,4 +32,4 @@ export default function VersionSelect({ skillId, value, onChange, includeDraft =
     {failed && <MenuItem value="__retry">Retry loading versions</MenuItem>}
   </TextField>;
 }
-VersionSelect.propTypes = { skillId: PropTypes.string, value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]), onChange: PropTypes.func.isRequired, includeDraft: PropTypes.bool, includeLabels: PropTypes.bool };
+VersionSelect.propTypes = { label: PropTypes.string, skillId: PropTypes.string, value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]), onChange: PropTypes.func.isRequired, includeDraft: PropTypes.bool, includeLabels: PropTypes.bool };

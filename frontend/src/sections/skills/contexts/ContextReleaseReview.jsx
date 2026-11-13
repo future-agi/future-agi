@@ -10,7 +10,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import PageHeader from "src/components/page-header";
+import ObjectHeader from "../components/ObjectHeader";
+import IdentityChip from "../components/IdentityChip";
+import { paths } from "src/routes/paths";
 import Section from "src/components/section";
 import ChecksList from "../components/ChecksList";
 import ReleaseRequestPanel, {
@@ -360,11 +362,12 @@ export default function ContextReleaseReview({
   const [carried, setCarried] = useState(null);
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
-      <PageHeader
+      <ObjectHeader
+        crumbs={[{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
         title={name ? `Review ${name}` : "Review agent context"}
-        description="What was reviewed, what will change, and what remains unobserved."
+        purpose="Inspect the changes before making a release decision. Production stays unchanged until released."
       />
-      {scopeKey && state === "ready" && (
+      {scopeKey && state === "ready" && !props.receipt && (
         <Box
           component="nav"
           aria-label="Review sections"
@@ -383,10 +386,9 @@ export default function ContextReleaseReview({
             {draftReview
               ? `Saved draft r${draftReview.revision}`
               : `Candidate v${props.preview?.packet.transition.version ?? "unknown"}`}{" "}
-            ·{" "}
-            {draftReview?.candidateDigest ??
-              props.preview?.packet.candidateDigest}
+
           </Typography>
+          <IdentityChip label="Candidate digest" value={draftReview?.candidateDigest ?? props.preview?.packet.candidateDigest} />
           <Stack direction="row" flexWrap="wrap" gap={0.5}>
             <Button size="small" href="#review-files">
               Files
@@ -431,6 +433,7 @@ export default function ContextReleaseReview({
   );
 }
 ContextReleaseReview.propTypes = {
+  receipt: PropTypes.object,
   scopeKey: PropTypes.string,
   state: PropTypes.string,
   name: PropTypes.string,

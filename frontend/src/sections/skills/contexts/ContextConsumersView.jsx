@@ -1,284 +1,102 @@
-import { useState } from "react";
-import PropTypes from "prop-types";
-import {
-  Alert,
-  Box,
-  Button,
-  Drawer,
-  IconButton,
-  MenuItem,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
-import Section from "src/components/section";
-import EmptyState from "src/components/empty-state";
-import StatusBadge from "src/components/status-badge";
-import { DataTablePagination } from "src/components/data-table";
-import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
-import { IdentityValue, ReviewState } from "../review/ReleaseReviewBody";
+import { useState } from 'react';
+import PropTypes from 'prop-types';
+import { Alert, Box, Button, Drawer, IconButton, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { fDateTimeUTC, fObservationAge } from 'src/utils/format-time';
+import Iconify from 'src/components/iconify';
+import Section from 'src/components/section';
+import EmptyState from 'src/components/empty-state';
+import StatusBadge from 'src/components/status-badge';
+import ContentSkeleton from 'src/components/content-skeleton';
+import ErrorState from 'src/components/error-state';
+import ListToolbar from 'src/components/list-toolbar';
+import FormSearchField from 'src/components/FormSearchField/FormSearchField';
+import { DataTablePagination } from 'src/components/data-table';
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
+import { ReviewState } from '../review/ReleaseReviewBody';
+import IdentityChip from '../components/IdentityChip';
+import TechnicalDetails from '../components/TechnicalDetails';
+import CapabilityNotice from '../components/CapabilityNotice';
+import { consumerStateNames, consumerNextStep, needsDeliveryVerification } from './consumerPresentation';
 
-const stageNames = {
-  desired: "Desired",
-  resolved: "Resolved",
-  installed: "Installed",
-  discovered: "Discovered",
-  loaded: "Delivered",
-};
-const stateNames = {
-  matches_target: "Matches target",
-  pinned_as_intended: "Pinned as intended",
-  update_available: "Update available",
-  local_modifications: "Local modifications",
-  mixed_sessions: "Mixed sessions",
-  old_thread_pinned: "Old thread retained",
-  stale_observation: "Stale observation",
-  unknown: "Runtime loading not observed",
-  quarantined: "Quarantined",
-};
-// J3: show the release number beside the immutable ID so an operator need not
-// reconcile UUIDs by hand. Unknown IDs stay IDs; nothing is inferred.
+const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
+const stageNames = { desired: 'Desired', resolved: 'Resolved', installed: 'Installed', discovered: 'Discovered', loaded: 'Delivered' };
 function Stage({ stage, versionNumbers = {} }) {
-  const number = stage ? versionNumbers[stage.versionId] : undefined;
-  return stage ? (
-    <Stack spacing={0.25}>
-      {number !== undefined && (
-        <Typography variant="s1">{`v${number}`}</Typography>
-      )}
-      <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-        {stage.versionId}
-      </Typography>
-      {stage.sessionId && (
-        <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-          {`Session ${stage.sessionId}`}
-        </Typography>
-      )}
-      <Typography variant="s3">{stage.observedAt ?? "Time unknown"}</Typography>
-      <Typography variant="s3">
-        {stage.origin ?? "Provenance unknown"}
-      </Typography>
-    </Stack>
-  ) : (
-    <Typography variant="s3">Not observed</Typography>
-  );
+  if (!stage) return <StatusBadge status="draft" label="Not observed" />;
+  return versionNumbers[stage.versionId] !== undefined ? <Typography variant="s1">v{versionNumbers[stage.versionId]}</Typography> : <IdentityChip label="Release" kind="id" value={stage.versionId} />;
 }
 Stage.propTypes = { stage: PropTypes.object, versionNumbers: PropTypes.object };
-function ConsumerRows({
-  data,
-  windowDays,
-  onWindowChange,
-  onPageChange,
-  versionNumbers,
-}) {
+const emptyDescription = 'Register an application or repository so its deliveries can be checked.';
+function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionNumbers, previewState, registrationAction }) {
   const [selectedId, setSelectedId] = useState(null);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
   const selected = data.results.find((item) => item.binding.id === selectedId);
-  return (
-    <Stack spacing={1.5}>
-      <Alert severity="info">
-        Coverage: declared bindings only, as of {data.asOf}. An install or a
-        fetch does not prove delivery. Offline and unregistered consumers remain
-        unknown.
-      </Alert>
-      <TextField
-        select
-        size="small"
-        label="Observation window"
-        value={windowDays}
-        onChange={(event) => onWindowChange(Number(event.target.value))}
-      >
-        {[7, 30, 90].map((days) => (
-          <MenuItem key={days} value={days}>
-            {days} days
-          </MenuItem>
-        ))}
+  const rows = previewState === 'filtered-empty' ? [] : data.results.filter((row) => row.binding.name.toLowerCase().includes(search.trim().toLowerCase()) && (status === 'all' || row.states.includes(status)));
+  const clear = () => { setSearch(''); setStatus('all'); };
+  const missing = data.results.filter(needsDeliveryVerification).length;
+  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+    <Typography variant="s3" color="text.secondary"><Tooltip title={data.asOf || "Time not reported"}><Box component="span" tabIndex={0}>As of {fDateTimeUTC(data.asOf)}</Box></Tooltip>. Only declared consumers are shown. Installation and fetching do not prove delivery.</Typography>
+    {missing > 0 && <Alert severity="warning">{missing} of {data.results.length} consumers still need delivery verification.</Alert>}
+    {data.results.length > 0 && registrationAction}
+    <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
+      <FormSearchField label="Search consumers" placeholder="Search consumers" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
+      <TextField select size="small" label="Verification" value={status} onChange={(event) => setStatus(event.target.value)}>
+        <MenuItem value="all">All statuses</MenuItem>
+        {Object.entries(consumerStateNames).map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
       </TextField>
-      {!data.results.length ? (
-        <EmptyState
-          variant="no-results"
-          title="No declared consumers"
-          description="Register a supported repository or runtime binding explicitly. Fetch activity is not a consumer inventory."
-        />
-      ) : (
-        <>
-          <TableContainer sx={{ maxWidth: 1 }}>
-            <Table size="small" aria-label="Context delivery observations">
-              <TableHead>
-                <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                  <TableCell>Binding</TableCell>
-                  {Object.values(stageNames).map((name) => (
-                    <TableCell key={name}>{name}</TableCell>
-                  ))}
-                  <TableCell>Observations</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {data.results.map((row) => (
-                  <TableRow
-                    key={row.binding.id}
-                    hover
-                    sx={{ height: ROW_HEIGHT.default }}
-                  >
-                    <TableCell>
-                      <Button
-                        color="inherit"
-                        onClick={() => setSelectedId(row.binding.id)}
-                      >
-                        {row.binding.name}
-                      </Button>
-                      <Typography variant="s3">
-                        {row.binding.selector.version
-                          ? `Pinned v${row.binding.selector.version}`
-                          : `Follow ${row.binding.selector.label}`}
-                      </Typography>
-                    </TableCell>
-                    {Object.keys(stageNames).map((stage) => (
-                      <TableCell
-                        key={stage}
-                        sx={{ minWidth: "18ch", maxWidth: "24ch" }}
-                      >
-                        <Stage
-                          stage={row[stage]}
-                          versionNumbers={versionNumbers}
-                        />
-                      </TableCell>
-                    ))}
-                    <TableCell>
-                      <Stack spacing={0.5}>
-                        {row.states.map((state) => (
-                          <StatusBadge
-                            key={state}
-                            status={state}
-                            label={stateNames[state] ?? state}
-                          />
-                        ))}
-                        <Typography variant="s3">
-                          Age{" "}
-                          {row.observationAgeSeconds === null
-                            ? "unknown"
-                            : `${row.observationAgeSeconds}s`}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          <DataTablePagination
-            page={data.page - 1}
-            pageSize={data.pageSize}
-            total={data.count}
-            onPageChange={(page) => onPageChange(page + 1)}
-            pageSizeOptions={[data.pageSize]}
-          />
-        </>
-      )}
-      <Drawer
-        anchor="right"
-        open={Boolean(selected)}
-        onClose={() => setSelectedId(null)}
-        PaperProps={{ sx: { width: { xs: 1, sm: 560 }, maxWidth: 1 } }}
-      >
-        {selected && (
-          <Box sx={{ p: 2, minWidth: 0 }}>
-            <Stack
-              direction="row"
-              justifyContent="space-between"
-              alignItems="center"
-            >
-              <Typography variant="m1">Delivery receipts</Typography>
-              <IconButton
-                aria-label="Close delivery receipts"
-                onClick={() => setSelectedId(null)}
-              >
-                <Iconify icon="solar:close-linear" width={18} />
-              </IconButton>
-            </Stack>
-            <Stack spacing={2}>
-              <IdentityValue
-                label="Binding"
-                value={`${selected.binding.name} · ${selected.binding.id}`}
-              />
-              {Object.entries(stageNames).map(([key, label]) => (
-                <Section key={key} title={label}>
-                  <Stage
-                    stage={selected[key]}
-                    versionNumbers={versionNumbers}
-                  />
-                  {selected[key] && (
-                    <IdentityValue
-                      label="Digest"
-                      value={selected[key].digest}
-                    />
-                  )}
-                </Section>
-              ))}
-              <IdentityValue
-                label="Suggested next action"
-                value={
-                  selected.nextActionCode ?? "Inspect missing observations"
-                }
-              />
-              <Typography variant="s3">
-                Delivery is supplied content, not proven compliance or a
-                successful business action. Old threads remain pinned; a new
-                install does not erase older sessions. Version numbers do not
-                establish freshness.
-              </Typography>
-            </Stack>
-          </Box>
-        )}
-      </Drawer>
-    </Stack>
-  );
+      <TextField select size="small" label="Observation window" value={windowDays} onChange={(event) => onWindowChange(Number(event.target.value))} sx={{ minWidth: '16ch' }}>
+        {[7, 30, 90].map((days) => <MenuItem key={days} value={days}>{days} days</MenuItem>)}
+      </TextField>
+    </ListToolbar>
+    {data.count > data.pageSize && <Typography variant="s3" color="text.secondary">Search and filters apply to the consumers on this page.</Typography>}
+    {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
+      : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
+        : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
+          <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
+          <TableBody>{rows.map((row) => <TableRow key={row.binding.id} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
+            <TableCell sx={{ gridColumn: '1 / 3' }}><Button color="inherit" sx={{ px: 0, minWidth: 0, justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', whiteSpace: 'normal', maxWidth: 1 }} onClick={() => setSelectedId(row.binding.id)}>{row.binding.name}</Button><Typography component="div" variant="s3">{row.binding.selector.version ? `Pinned v${row.binding.selector.version}` : `Follow ${row.binding.selector.label}`}</Typography></TableCell>
+            <TableCell sx={{ ...mobileLabel('Target release'), gridRow: 2 }}><Stage stage={row.desired} versionNumbers={versionNumbers} /></TableCell>
+            <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}><Stage stage={row.loaded} versionNumbers={versionNumbers} /></TableCell>
+            <TableCell sx={{ gridColumn: '1 / 4', gridRow: 3 }}><Stack spacing={0.5} alignItems="flex-start">{row.states.map((state) => <StatusBadge key={state} status={state} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
+            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3">{fObservationAge(row.observationAgeSeconds)}</Typography></TableCell>
+            <TableCell sx={{ gridColumn: 3, gridRow: 1 }}><Button size="small" variant="outlined" aria-label={`Inspect ${row.binding.name}`} onClick={() => setSelectedId(row.binding.id)}>Inspect</Button></TableCell>
+          </TableRow>)}</TableBody>
+        </Table></TableContainer>}
+    {data.count > 0 && <DataTablePagination page={data.page - 1} pageSize={data.pageSize} total={data.count} onPageChange={(page) => onPageChange(page + 1)} pageSizeOptions={[data.pageSize]} />}
+    <Drawer anchor="right" open={Boolean(selected)} onClose={() => setSelectedId(null)} PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'consumer-receipts-title', sx: { width: { xs: 1, sm: 560 }, maxWidth: 1 } }}>
+      {selected && <Box sx={{ p: 2, minWidth: 0 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ position: 'sticky', top: 0, bgcolor: 'background.paper', py: 1, zIndex: 1 }}>
+          <Box><Typography component="h2" id="consumer-receipts-title" variant="m1">{selected.binding.name}</Typography><Typography variant="s3" color="text.secondary">Delivery receipts</Typography></Box>
+          <IconButton aria-label="Close delivery receipts" onClick={() => setSelectedId(null)}><Iconify icon="solar:close-linear" width={18} /></IconButton>
+        </Stack>
+        <Stack spacing={2}>
+          <Alert severity="info"><Typography variant="s3" component="div">Next step</Typography><Typography variant="s1" component="div">{consumerNextStep(selected.nextActionCode)}</Typography></Alert>
+          <Stack component="ol" spacing={0} sx={{ listStyle: 'none', m: 0, p: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+            {Object.entries(stageNames).map(([key, label]) => <Box component="li" key={key} sx={{ display: 'grid', gridTemplateColumns: '11ch minmax(0, 1fr)', gap: 1, p: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
+              <Typography variant="m3">{label}</Typography><Stack spacing={0.5} alignItems="flex-start"><Stage stage={selected[key]} versionNumbers={versionNumbers} />{selected[key] && <Typography variant="s3" color="text.secondary" title={selected[key].observedAt}>{fDateTimeUTC(selected[key].observedAt)}</Typography>}</Stack>
+            </Box>)}
+          </Stack>
+          <TechnicalDetails><Stack spacing={1}><IdentityChip label="Consumer ID" kind="id" value={selected.binding.id} /><Typography component="code" variant="s3">{selected.nextActionCode ?? 'Unknown'}</Typography>
+            {Object.entries(stageNames).filter(([key]) => selected[key]).map(([key, label]) => <Box key={key}><Typography variant="m3">{label}</Typography><IdentityChip label="Release ID" kind="id" value={selected[key].versionId} />{selected[key].sessionId && <IdentityChip label="Session" kind="id" value={selected[key].sessionId} />}<IdentityChip label="Digest" value={selected[key].digest} /><Typography variant="s3">{selected[key].origin || 'Provenance not reported'}</Typography><Typography variant="s3" component="div">{selected[key].observedAt}</Typography></Box>)}
+          </Stack></TechnicalDetails>
+          <Typography variant="s3" color="text.secondary">Delivered means the release was sent to this runtime. It doesn’t show whether it was used.</Typography>
+        </Stack>
+      </Box>}
+    </Drawer>
+  </Stack>;
 }
-ConsumerRows.propTypes = {
-  data: PropTypes.object.isRequired,
-  windowDays: PropTypes.number.isRequired,
-  onWindowChange: PropTypes.func.isRequired,
-  onPageChange: PropTypes.func.isRequired,
-  versionNumbers: PropTypes.object,
-};
-export default function ContextConsumersView({
-  scopeKey,
-  state = "unavailable",
-  data,
-  windowDays = 7,
-  onWindowChange,
-  onPageChange,
-  onRetry,
-  versionNumbers,
-}) {
-  return (
-    <Section title="Consumers">
-      {scopeKey && state === "ready" && data ? (
-        <ConsumerRows
-          key={scopeKey}
-          {...{ data, windowDays, onWindowChange, onPageChange, versionNumbers }}
-        />
-      ) : (
-        <ReviewState
-          state={!scopeKey ? "forbidden" : state}
-          onRetry={onRetry}
-        />
-      )}
-    </Section>
-  );
+ConsumerRows.propTypes = { data: PropTypes.object.isRequired, windowDays: PropTypes.number.isRequired, onWindowChange: PropTypes.func.isRequired, onPageChange: PropTypes.func.isRequired, versionNumbers: PropTypes.object, previewState: PropTypes.string, registrationAction: PropTypes.node };
+export default function ContextConsumersView({ scopeKey, state: resolvedState = 'unavailable', data, windowDays = 7, onWindowChange, onPageChange, onRetry, versionNumbers, registrationAction }) {
+  const preview = new URLSearchParams(window.location.search).get('state');
+  const state = resolvedState === 'ready' && ['loading', 'error', 'empty', 'filtered-empty', 'off', 'denied'].includes(preview) ? preview : resolvedState;
+  return <Section title="Consumers">
+    {!scopeKey || ['denied', 'forbidden'].includes(state) ? <ErrorState title="You cannot view these consumers" />
+      : state === 'loading' ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" />
+        : state === 'error' ? <ErrorState detail="Delivery status is unknown until this loads." title="Couldn't load consumers" onRetry={onRetry} />
+          : state === 'off' ? <CapabilityNotice title="Consumer observations are off" description="Delivery can only be verified when a registered runtime reports it." />
+            : state === 'empty' ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
+              : ['ready', 'filtered-empty'].includes(state) && data ? <ConsumerRows key={scopeKey} {...{ data, windowDays, onWindowChange, onPageChange, versionNumbers, registrationAction }} previewState={state} />
+                : <ReviewState state={state} onRetry={onRetry} />}
+  </Section>;
 }
-ContextConsumersView.propTypes = {
-  scopeKey: PropTypes.string,
-  state: PropTypes.string,
-  data: PropTypes.object,
-  windowDays: PropTypes.number,
-  onWindowChange: PropTypes.func,
-  onPageChange: PropTypes.func,
-  onRetry: PropTypes.func,
-  versionNumbers: PropTypes.object,
-};
+ContextConsumersView.propTypes = { scopeKey: PropTypes.string, state: PropTypes.string, data: PropTypes.object, windowDays: PropTypes.number, onWindowChange: PropTypes.func, onPageChange: PropTypes.func, onRetry: PropTypes.func, versionNumbers: PropTypes.object, registrationAction: PropTypes.node };

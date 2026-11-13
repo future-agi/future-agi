@@ -1,4 +1,11 @@
 // Pure helpers for the retained-migration batch review.
+export function importBlockerSummary(item) {
+  const reasons = (item.blockers || []).join('; ');
+  if (/file_not_text|binary_or_nonportable_text/.test(reasons)) return 'it contains a binary file or text that cannot be imported';
+  if (/file_too_large/.test(reasons)) return 'a file exceeds the size limit';
+  if (/path_invalid/.test(reasons)) return 'a file path is not supported';
+  return 'it contains unsupported content; open Details to see why';
+}
 
 const comparable = (item) => Array.isArray(item.sourceHubChanges) || (Array.isArray(item.sourceChanges) && Array.isArray(item.hubChanges));
 

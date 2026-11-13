@@ -2,9 +2,10 @@ import axios from 'src/utils/axios';
 import { apiPath, getContractedApiMethods } from 'src/api/contracts/api-surface';
 import { useSkillV11Query, useSkillV11Mutation, skillV11Result, idempotencyHeaders } from './testing';
 import { mapV11Page } from './v11-mappers';
-import { mapReleasePacket } from './r3-review';
+import { mapReleasePacket, mapPointerTransition } from './r3-review';
 import { loadContextReview } from './context-production';
 import { endpoints } from './endpoints';
+import { contextEndpoints } from './context-authoring';
 import { mapChecks, mapCompare } from './mappers';
 import { readSkillFile } from './index';
 import { operationStatus } from './operation-errors';
@@ -48,14 +49,26 @@ const preview = () => apiPath('/model-hub/skills/release-requests/preview/');
 const decisions = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/decisions/', { request_id });
 const execute = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/execute/', { request_id });
 export const reviewsReady = () => getContractedApiMethods('/model-hub/skills/review-inbox/').includes('get') && getContractedApiMethods('/model-hub/skills/release-requests/{request_id}/').includes('get');
-const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id, updatedAt: value.updated_at });
+export const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id, authorName: value.author_name, recipients: value.recipients, decision: value.decision, decidedByName: value.decided_by_name, createdAt: value.created_at, decidedAt: value.decided_at || (value.status === 'approved' ? value.updated_at : null), updatedAt: value.updated_at, transition: value.transition ? mapPointerTransition(value.transition) : value.packet?.transition ? mapPointerTransition(value.packet.transition) : undefined, packet: value.packet ? mapReleasePacket(value.packet) : undefined });
 export function useReviewInbox({ page = 1, status = '', authored = false } = {}) {
-  return useSkillV11Query({ parts: ['review-inbox', page, status, authored], url: authored ? () => apiPath('/model-hub/skills/release-requests/') : inbox, params: { page, ...(status ? { status } : {}) }, enabled: reviewsReady(), mapper: (value) => ({ ...mapV11Page(value, mapRequest), unreadCount: value.unread_count }) });
+  return useSkillV11Query({ parts: ['review-inbox', page, status, authored], enabled: reviewsReady(), load: async (config) => {
+    const value = skillV11Result(await axios.get(authored ? apiPath('/model-hub/skills/release-requests/') : inbox(), { ...config, params: { page, ...(status ? { status } : {}) } }));
+    // The list contract has no transition. Read only authorized detail for this
+    // page and keep metadata separate from evidence; an expired/denied detail
+    // must not remove the row or turn into fabricated version/actor values.
+    const results = await Promise.all(value.results.map(async (row) => {
+      try {
+        const item = skillV11Result(await axios.get(detail(row.id), config));
+        return item.revision === row.revision ? { ...row, author_id: item.author_id, author_name: item.author_name, transition: item.packet?.transition } : row;
+      } catch { return row; }
+    }));
+    return { ...mapV11Page({ ...value, results }, mapRequest), unreadCount: value.unread_count };
+  } });
 }
 export function useMarkReviewSeen() {
   return useSkillV11Mutation({ send: async ({ requestId, revision }, config) => { await axios.post(seen(requestId), { revision }, config); return { acknowledged: true }; }, invalidate: () => [['review-inbox']] });
 }
-export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
+export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, executedByName: result.executed_by_name, approvedByName: result.approved_by_name, recordedAt: result.executed_at, name: result.name, subjectId: result.subject_id, subjectKind: result.subject_kind, previousVersion: result.previous_version, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
 
 // Inspection reads only the reviewed immutable packet. The server revalidates
 // after reading capabilities, target configuration and annotation summaries.
@@ -119,7 +132,27 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
         }
         if (renewedMeanwhile && !rereadAfterRenewal) return loadReleaseRequest(requestId, contextId, config, true);
         if (renewal && (!contextId || renewal.subjectId === contextId)) {
-          return { request: { id: requestId, revision: renewal.revision, status: renewal.status, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, renewalRequired: error.code || 'evidence_expired', canExecute: false };
+          // The renewal endpoint authorizes this read separately. Show its
+          // candidate/transition read-only; never call it the expired packet.
+          let name;
+          try {
+            const url = renewal.packet.subjectKind === 'agent_context' ? contextEndpoints.detail(renewal.subjectId) : endpoints.detail(renewal.subjectId);
+            const resource = skillV11Result(await axios.get(url, config));
+            name = resource.context?.name || resource.name;
+          } catch { /* Metadata is optional; this never grants authority. */ }
+          let review = { complete: false };
+          try {
+            const next = renewal.packet;
+            const inspected = next.subjectKind === 'agent_context'
+              ? await loadContextReview(renewal.subjectId, null, config, { operation: 'move', target_version: next.transition.version, label: next.transition.label })
+              : await loadSkillReview(renewal.subjectId, { candidate_version_id: next.candidateVersionId, candidate_digest: next.candidateDigest, transition: { label: next.transition.label, version: next.transition.version, expected_version: next.transition.expectedVersion } }, config);
+            const label = inspected.releaseState?.labels.find((item) => item.name === next.transition.label);
+            // Context comparison uses the current pointer. Never present it as
+            // this renewal's diff if that pointer moved during the read.
+            const matchesBaseline = next.subjectKind === 'skill' || (label?.version ?? null) === next.transition.expectedVersion;
+            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { complete: false, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
+          } catch { /* Read-only detail is optional. Renewal remains explicit. */ }
+          return { request: { id: requestId, revision: renewal.revision, status: renewal.status, name, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, preview: { packet: renewal.packet, fingerprint: renewal.fingerprint, current: false }, review, renewalRequired: error.code || 'evidence_expired', canExecute: false };
         }
       }
       if (contextId || !unavailableEvidence) throw error;
@@ -163,7 +196,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
     return {
       request: mapRequest({ ...raw, subject_kind: packet.subject_kind }),
       preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(!staleCode && inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current?.fingerprint === raw.fingerprint) },
-      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
+      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } : undefined,
       canExecute, staleCode,
     };
 }

@@ -80,6 +80,10 @@ def test_independent_review_execute_and_receipt_over_http(
     assert inbox["results"][0]["id"] == request_id
     detail = result(client.get(BASE + f"release-requests/{request_id}/"))
     assert detail["packet"] == preview["packet"]
+    assert detail["name"] == hub_skill.name
+    assert detail["author_name"]
+    assert detail["recipients"][0]["id"] == str(reviewer.user_id)
+    assert detail["recipients"][0]["name"]
     assert (
         client.post(
             BASE + f"review-inbox/{request_id}/seen/",
@@ -118,6 +122,10 @@ def test_independent_review_execute_and_receipt_over_http(
         admin, f"release-requests/{request_id}/execute/", body, key=operation
     )
     assert executed["post_move_state"]["version"] == new.number
+    assert executed["previous_version"] == old.number
+    assert executed["executed_at"]
+    assert executed["executed_by_name"]
+    assert executed["approved_by_name"] == detail["recipients"][0]["name"]
     freshness = executed["currentness_at_action"]["evidence"][0]["currentness"]
     assert freshness["baseline"] is True
     assert freshness["suite"] is None

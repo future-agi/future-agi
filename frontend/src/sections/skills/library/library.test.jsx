@@ -90,26 +90,25 @@ describe("Skills library", () => {
     expect(screen.getByText("Not published")).toBeInTheDocument();
     expect(screen.getByText("v2")).toBeInTheDocument();
     expect(screen.getByText("v3")).toBeInTheDocument();
-    expect(screen.getByText("82")).toBeInTheDocument();
-    expect(screen.getByText("42")).toBeInTheDocument();
-    expect(screen.getByText("719")).toBeInTheDocument();
-    expect(screen.getByText("17")).toBeInTheDocument();
-    expect(screen.getByText("Your drafts")).toBeInTheDocument();
+    expect(screen.getByText(/82 skills/)).toBeInTheDocument();
+    expect(screen.getByText(/42 in production/)).toBeInTheDocument();
+    expect(screen.getByText(/719 fetches/)).toBeInTheDocument();
+    expect(screen.getByText(/17 drafts/)).toBeInTheDocument();
+    expect(screen.getByText(/drafts/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "support-policy" }));
     expect(window.location.pathname).toBe("/dashboard/skills/skill-1");
   });
 
-  it("shows all three first-run paths and a compact template gallery", () => {
+  it("opens template selection inside the first-run create dialog", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 0, stats: { total: 0, inProduction: 0, fetches7d: 0, myDrafts: 0 } }));
     renderLibrary();
-    expect(screen.getByRole("button", { name: "Start from a template" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create your first skill" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import a folder or ZIP" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Write from scratch" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Support policy/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New skill" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start from a template" }));
-    expect(screen.getByLabelText("Skill templates")).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: /Support policy/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create your first skill" }));
+    expect(screen.getByRole("combobox", { name: "Start from" })).toHaveTextContent("Blank");
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Start from" }));
+    fireEvent.click(screen.getByRole("option", { name: "Support policy" }));
     expect(screen.getByRole("combobox", { name: "Start from" })).toHaveTextContent("Support policy");
   });
 
@@ -117,7 +116,7 @@ describe("Skills library", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 0 }));
     renderLibrary("?search=missing&tag=support&label=production&page=3&sort=name&order=asc&keep=yes");
     expect(screen.getByText("No skills found")).toBeInTheDocument();
-    expect(screen.getByText("719")).toBeInTheDocument();
+    expect(screen.getByText(/719 fetches/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write from scratch" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Clear filters/i }));
     expect(new URLSearchParams(window.location.search).get("search")).toBeNull();
@@ -450,4 +449,12 @@ it('keeps the new-skill paid entry disabled when assistance is unavailable', asy
   fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
   expect(await screen.findByRole('button', { name: 'Draft with AI' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Open editor' })).toBeEnabled();
+});
+
+it('supports the filtered-empty state preview without presenting a first-run library', () => {
+  api.list.mockReturnValue(listResult());
+  renderLibrary('?state=filtered-empty');
+  expect(screen.getByText('No skills found')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New skill', exact: true })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Create your first skill' })).not.toBeInTheDocument();
 });

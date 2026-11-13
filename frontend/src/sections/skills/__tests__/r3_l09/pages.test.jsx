@@ -46,7 +46,7 @@ function mount(Page, url, props = {}) {
 describe("route wrappers and unavailable integration boundary", () => {
   it("fails closed without the API-owning controller rather than inventing a client or success state", () => {
     mount(SkillsReviewsPage, "/dashboard/skills/reviews", { Controller: null });
-    expect(screen.getByText(/capability is not available/)).toBeVisible();
+    expect(screen.getByText(/Release reviews are not available/)).toBeVisible();
     expect(screen.queryByText(/unread assigned/)).not.toBeInTheDocument();
   });
   it("supports inspectable loading/error state URLs through the real wrapper", () => {
@@ -54,7 +54,7 @@ describe("route wrappers and unavailable integration boundary", () => {
       Controller,
     });
     expect(
-      screen.getByRole("progressbar", { name: "Loading review" }),
+      screen.getByRole("progressbar", { name: "Loading reviews" }),
     ).toBeVisible();
   });
   it("does not let state preview bypass authenticated scope", () => {
@@ -62,7 +62,7 @@ describe("route wrappers and unavailable integration boundary", () => {
     mount(SkillsReviewsPage, "/dashboard/skills/reviews?state=empty", {
       Controller,
     });
-    expect(screen.getByText(/no longer have access/)).toBeVisible();
+    expect(screen.getByText(/don't have access to reviews in this workspace/)).toBeVisible();
     expect(screen.queryByText("Nothing to review")).not.toBeInTheDocument();
   });
   it("passes only exact context/request identities and no private text in route state", () => {

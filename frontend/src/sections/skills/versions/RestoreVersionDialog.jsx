@@ -42,7 +42,7 @@ export default function RestoreVersionDialog({ skill, number, onClose }) {
       closeDisabled={restore.isPending}
       action={
         <Button
-          variant="contained"
+          variant="contained" color="primary"
           disabled={restore.isPending}
           onClick={handleRestore}
         >

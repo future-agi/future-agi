@@ -181,12 +181,12 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByLabel('Candidate version').click(); await page.getByRole('option', { name: 'v7' }).click();
     await page.getByLabel('Production version').click(); await page.getByRole('option', { name: 'v6' }).click();
     for (const title of ['Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
-    await expect(page.getByText(/9 cells/)).toBeVisible();
+    await expect(page.getByText(/Up to 9 runs/)).toBeVisible();
     await shot('J2-native-preview');
     await page.getByRole('checkbox', { name: /I accept up to/ }).check();
     await page.getByRole('button', { name: 'Run on the application', exact: true }).click();
-    await expect(page.getByText(/Release-ready on the application|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
-    await expect(page.getByText('Release-ready on the application')).toBeVisible();
+    await expect(page.getByText(/Repair verified:|Repair not verified:|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
+    await expect(page.getByText(/Repair verified: v7 passed 3 of 3 cases/)).toBeVisible();
     await shot('J2-native-result');
 
     // Independent evidence.
@@ -219,11 +219,12 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(credentials[0].n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.
-    await page.getByRole('row', { name: /Original refund failure.*Recorded reference/ }).first().click();
+    await page.getByRole('row', { name: /Original refund failure.*Recorded v/ }).first().click();
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record review' }).click();
-    await expect(page.getByText(/disagree: The answer claims success/)).toBeVisible();
+    await expect(page.getByText('Disagrees', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('The answer claims success but the business ledger shows the refund was declined.', { exact: true })).toBeVisible();
     await shot('J2-native-annotation');
 
     // Controls (public API, as the acceptance matrix): text-pass/tool-fail and routing near-miss are held;

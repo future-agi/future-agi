@@ -1,9 +1,10 @@
+import { MemoryRouter } from "react-router-dom";
 import { useState } from "react";
 import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as rtlRender,
   screen,
   waitFor,
   within,
@@ -35,6 +36,8 @@ import {
   request,
   textEvidence,
 } from "./fixtures";
+
+const render = (element) => rtlRender(element, { wrapper: MemoryRouter });
 
 const media = vi.hoisted(() => ({ narrow: false }));
 vi.mock("@mui/material", async (load) => ({
@@ -91,19 +94,24 @@ describe("typed release evidence", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Text comparison")).toBeVisible();
-    expect(screen.getByText("Native application evidence")).toBeVisible();
+    expect(screen.getByText("Text comparison · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
+    // The evidence row itself names grading completeness; Inspect adds the full record.
     expect(
       screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
     ).toBeVisible();
-    expect(screen.getByText(/human disagreement/)).toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
+    expect(
+      screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
+    ).toHaveLength(2);
+    expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();
-    expect(screen.getAllByText(/Outcome details not loaded/)).toHaveLength(1);
+    expect(screen.getAllByText(/Result not recorded; inspect before relying on it/)).toHaveLength(1);
     expect(
       screen.getByRole("link", { name: "Open retained pipeline result" }),
     ).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.getAllByText(/AGENTS.md · modified/)[0]).toBeVisible();
-    expect(screen.getByText(/not a sandbox/)).toBeVisible();
+    expect(screen.getByText("Execution-related changes")).toBeVisible();
   });
   it.each([
     [{ visibility: "private" }, "Private"],
@@ -222,10 +230,10 @@ describe("exact decisions and retry safety", () => {
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
     expect(decide).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
     acknowledge();
-    click("Approve exact packet");
+    click("Approve release");
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
     expect(decide.mock.calls[0][0]).toEqual(
       expect.objectContaining({
@@ -245,12 +253,12 @@ describe("exact decisions and retry safety", () => {
       .mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
     acknowledge();
-    click("Approve exact packet");
-    await screen.findByText(/response was not confirmed/);
+    click("Approve release");
+    await screen.findByText(/couldn't confirm whether this went through/);
     expect(
       screen.getByRole("textbox", { name: "Review comment" }),
     ).toBeDisabled();
-    click("Retry original request");
+    click("Check status");
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     expect(decide.mock.calls[1][0]).toEqual(decide.mock.calls[0][0]);
   });
@@ -262,17 +270,17 @@ describe("exact decisions and retry safety", () => {
       .mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
     acknowledge();
-    click("Approve exact packet");
-    await screen.findByText(/response was not confirmed/);
-    click("Retry original request");
+    click("Approve release");
+    await screen.findByText(/couldn't confirm whether this went through/);
+    click("Check status");
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Retry original request" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Check status" })).toBeEnabled(),
     );
     expect(
       screen.getByRole("textbox", { name: "Review comment" }),
     ).toBeDisabled();
-    click("Retry original request");
+    click("Check status");
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(3));
     expect(decide.mock.calls[2][0]).toEqual(decide.mock.calls[0][0]);
   });
@@ -280,10 +288,10 @@ describe("exact decisions and retry safety", () => {
     const decide = vi.fn().mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
     acknowledge();
-    click("Approve exact packet");
+    click("Approve release");
     await screen.findByText(/Request recorded/);
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Request changes" }),
@@ -299,7 +307,7 @@ describe("exact decisions and retry safety", () => {
     );
     acknowledge();
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
     rerender(
       <ReleaseRequestPanel
@@ -309,8 +317,9 @@ describe("exact decisions and retry safety", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
+    click("Why this review is paused");
     expect(screen.getByText(/Evidence selection changed/)).toBeVisible();
   });
   it("preserves comment after a rejected CAS without refreshing the precondition", async () => {
@@ -320,7 +329,7 @@ describe("exact decisions and retry safety", () => {
       target: { value: "Inspect the new target." },
     });
     click("Request changes");
-    await screen.findByText(/Request rejected/);
+    await screen.findByText(/This changed since you opened it/);
     expect(screen.getByRole("textbox", { name: "Review comment" })).toHaveValue(
       "Inspect the new target.",
     );
@@ -351,7 +360,7 @@ describe("exact decisions and retry safety", () => {
         <ReleaseRequestPanel {...panelProps} {...patch} onDecide={decide} />,
       );
       expect(
-        screen.getByRole("button", { name: "Approve exact packet" }),
+        screen.getByRole("button", { name: "Approve release" }),
       ).toBeDisabled();
       expect(decide).not.toHaveBeenCalled();
     },
@@ -365,13 +374,11 @@ describe("exact decisions and retry safety", () => {
         onDecide={decide}
       />,
     );
-    expect(screen.getByText(/Review is stale or unavailable/)).toBeVisible();
+    expect(screen.getByText(/This changed since you opened it/)).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Release approved packet" }),
-    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Release to production" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
       target: { value: "Production moved while this was pending." },
     });
@@ -397,10 +404,11 @@ describe("exact decisions and retry safety", () => {
       />,
     );
     acknowledge();
-    click("Release approved packet");
+    click("Release to production");
     expect(execute).not.toHaveBeenCalled();
     click("Move production");
-    await screen.findByText("Durable release receipt");
+    await screen.findByText("Release receipt");
+    fireEvent.click(await screen.findByRole("button", { name: "Audit details" }));
     expect(screen.getByText("Currentness before the move")).toBeVisible();
     expect(screen.getByText("Pointer state after the move")).toBeVisible();
     expect(execute.mock.calls[0][0]).not.toHaveProperty("packet");
@@ -421,11 +429,12 @@ describe("exact decisions and retry safety", () => {
       target: { value: "Closing" },
     });
     for (const name of [
-      "Approve exact packet",
+      "Approve release",
       "Request changes",
-      "Release approved packet",
+      "Release to production",
     ]) {
-      expect(screen.getByRole("button", { name })).toBeDisabled();
+      const action = screen.queryByRole("button", { name });
+      if (action) expect(action).toBeDisabled();
     }
     expect(decide).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
@@ -437,7 +446,7 @@ describe("exact decisions and retry safety", () => {
       <ReleaseRequestPanel {...panelProps} onDecide={decide} />,
     );
     acknowledge();
-    click("Approve exact packet");
+    click("Approve release");
     rerender(
       <ReleaseRequestPanel
         {...panelProps}
@@ -472,11 +481,11 @@ function Arrival() {
 describe("reviewer arrival and annotation", () => {
   it("finds the exact review from a server-backed inbox without a supplied detail URL", () => {
     render(<Arrival />);
-    expect(screen.getByText("1 unread assigned request(s)")).toBeVisible();
+    expect(screen.getByText("1 request waiting for you")).toBeVisible();
     click("refund-context");
-    expect(screen.getByText("Exact release")).toBeVisible();
+    expect(screen.getByText("Release")).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Approve exact packet" }),
+      screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
   });
   it("removes inbox details and counts on role loss instead of rendering an empty success", () => {
@@ -493,7 +502,7 @@ describe("reviewer arrival and annotation", () => {
     rerender(<ReleaseInbox scopeKey="scope" state="forbidden" data={inbox} />);
     expect(screen.queryByText(/1 unread/)).not.toBeInTheDocument();
     expect(screen.queryByText("refund-context")).not.toBeInTheDocument();
-    expect(screen.getByText(/no longer have access/)).toBeVisible();
+    expect(screen.getByText(/don't have access to reviews in this workspace/)).toBeVisible();
   });
   it("marks only the observed revision seen, without pretending that it is approved", async () => {
     const seen = vi.fn().mockResolvedValue({});
@@ -514,7 +523,7 @@ describe("reviewer arrival and annotation", () => {
     );
     await waitFor(() => expect(seen).toHaveBeenCalledTimes(1));
     expect(seen.mock.calls[0][0]).toMatchObject({ requestId: ID, revision: 2 });
-    expect(screen.getByText("1 unread assigned request(s)")).toBeVisible();
+    expect(screen.getByText("1 request waiting for you")).toBeVisible();
   });
   it("preserves machine verdict and appends an attributed disagreement with revision CAS", async () => {
     const append = vi.fn().mockResolvedValue({ id: ID });

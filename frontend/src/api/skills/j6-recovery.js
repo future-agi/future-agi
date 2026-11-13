@@ -6,6 +6,7 @@ import { skillsKeys } from './keys';
 import { mapContextBinding } from './context-consumers';
 import { readContextText } from './context-production';
 import { lineDiff } from 'src/sections/skills/contexts/closureDiff';
+import { evidenceSelectionInput } from './r3-mappers';
 
 // J6 recovery: one read model over existing contracted endpoints. Eligibility is
 // derived from server facts (labels, quarantine, distribution blocks); the page
@@ -56,7 +57,7 @@ export async function loadRecovery(contextId, config) {
     axios.get(paths.versions(contextId), { ...config, params: { page: 1, page_size: 100 } }).then(skillV11Result),
     axios.get(paths.consumers(contextId), { ...config, params: { page: 1, page_size: 100, window_days: 30 } }).then(skillV11Result),
   ]);
-  if (versionPage.total_pages > 1 || consumerPage.total_pages > 1) throw new Error('This recovery view covers at most 100 releases and 100 declared consumers.');
+  if (versionPage.total_pages > 1 || consumerPage.total_pages > 1) throw Object.assign(new Error("This context has more than 100 releases or consumers, which recovery can't review completely here."), { code: 'recovery_inventory_limit' });
   const versions = versionPage.results.map((value) => ({ id: value.id, number: value.number, digest: value.digest })).sort((a, b) => b.number - a.number);
   const production = state.labels.find((label) => label.name === 'production') ?? null;
   const rows = {};
@@ -117,9 +118,9 @@ export function useRecoveryReviewers() {
 }
 
 export function usePreviewRecoveryRelease() {
-  return useSkillV11Mutation({ send: async ({ contextId, candidateVersionId }, config) => skillV11Result(await axios.post(paths.preview(), {
+  return useSkillV11Mutation({ send: async ({ contextId, candidateVersionId, evidence = [], external_pipeline = null }, config) => skillV11Result(await axios.post(paths.preview(), {
     resource_id: contextId, kind: 'agent_context', candidate_version_id: candidateVersionId,
-    label: 'production', target: null, evidence: [], external_pipeline: null,
+    label: 'production', target: null, evidence: evidence.map(evidenceSelectionInput), external_pipeline,
   }, config)) });
 }
 

@@ -7,7 +7,7 @@ import Iconify from "src/components/iconify";
 // a copy button top-right. `wrap` for prose (prompts), off for code.
 // `copyText` copies something other than what's shown — a snippet that
 // displays keys masked copies the real ones.
-export default function CodeBlock({ code, wrap = false, onCopy, copyText }) {
+export default function CodeBlock({ code, wrap = false, onCopy, copyText, action, label }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(copyText ?? code);
@@ -25,7 +25,7 @@ export default function CodeBlock({ code, wrap = false, onCopy, copyText }) {
         bgcolor: "background.muted",
       }}
     >
-      <Tooltip title={copied ? "Copied" : "Copy"}>
+      {action ? <Box sx={{ display: "flex", justifyContent: "flex-end", p: 1 }}>{action}</Box> : <Tooltip title={copied ? "Copied" : "Copy"}>
         <IconButton
           size="small"
           onClick={copy}
@@ -37,9 +37,11 @@ export default function CodeBlock({ code, wrap = false, onCopy, copyText }) {
             width={16}
           />
         </IconButton>
-      </Tooltip>
+      </Tooltip>}
       <Box
         component="pre"
+        aria-label={label}
+        tabIndex={0}
         sx={{
           m: 0,
           p: 1.5,
@@ -59,6 +61,8 @@ export default function CodeBlock({ code, wrap = false, onCopy, copyText }) {
 }
 
 CodeBlock.propTypes = {
+  action: PropTypes.node,
+  label: PropTypes.string,
   code: PropTypes.string.isRequired,
   wrap: PropTypes.bool,
   onCopy: PropTypes.func,

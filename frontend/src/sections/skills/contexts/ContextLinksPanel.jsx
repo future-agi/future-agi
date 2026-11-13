@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Link as RouterLink } from 'react-router-dom';
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography, useMediaQuery } from "@mui/material";
+import { useTheme } from '@mui/material/styles';
+import { paths } from 'src/routes/paths';
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
+import StatusBadge from 'src/components/status-badge';
+import { useLinkedSkillUpstream } from 'src/api/skills/context-skill-inventory';
+import IdentityChip from '../components/IdentityChip';
+import TechnicalDetails from '../components/TechnicalDetails';
 import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadReview";
 
 // Intent: accept a specific dependency plan without following moving upstream bytes.
@@ -8,15 +16,18 @@ import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadRevie
 // Palette/depth/surfaces: existing neutral/divider and uncertainty roles, flat groups.
 // Typography/spacing: m3/s1/s3 and compact 12px spacing; no dependency graph.
 const MAX_LINKS = 20;
-const selectorLabel = (selector) => selector?.version ? `Pin v${selector.version}` : `Follow ${selector?.label}`;
+const selectorLabel = (selector) => selector?.version ? `Pinned to v${selector.version}` : `Follows ${selector?.label}`;
 // Proposals only seed an empty draft's unaccepted set; nothing is applied until
 // the owner previews the exact resolution and explicitly accepts it.
 const seedLinks = (accepted, proposed) => (accepted.length || !Array.isArray(proposed) ? accepted
   : proposed.filter((link, index) => typeof link?.skillId === "string" && Number.isSafeInteger(link.version) && link.version > 0 && proposed.findIndex((other) => other.skillId === link.skillId) === index)
     .slice(0, 20).map((link) => ({ skillId: link.skillId, selector: { version: link.version } })));
 function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPreview, onApply, proposedLinks, readOnly = false }) {
+  const theme = useTheme();
+  const compact = useMediaQuery(theme.breakpoints.down('md'));
   const accepted = session.contextSpec?.links || [];
   const [links, setLinks] = useState(() => seedLinks(accepted, proposedLinks));
+  const upstreamQueries = useLinkedSkillUpstream(links);
   const proposed = !accepted.length && links.length > 0 && Array.isArray(proposedLinks);
   const autoPreviewed = useRef(false);
   const [refresh, setRefresh] = useState([]);
@@ -59,30 +70,60 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     autoPreviewed.current = true;
     prepare();
   });
+  const availableUpdates = links.flatMap((link) => {
+    const included = lock.find((entry) => entry.skillId === link.skillId);
+    const query = upstreamQueries[link.skillId];
+    const latest = query?.data?.labels?.find((label) => label.name === link.selector.label) || upstream[link.skillId];
+    return !link.selector.version && included && latest && !query?.isError && (latest.version !== included.version || (latest.versionId && included.versionId && latest.versionId !== included.versionId))
+      ? [`${query?.data?.name || included.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'A linked skill'} has v${latest.version} available`] : [];
+  });
+  const Container = compact ? Stack : TableContainer;
+  const Collection = compact ? Stack : Table;
+  const Rows = compact ? Stack : TableBody;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="m3" component="h2">Linked skills · {lock.length} accepted locks</Typography>
-    <Typography variant="s1">Following offers updates. Published contexts stay unchanged. Linked paths are read-only; edit their source skill separately.</Typography>
+    <Typography variant="m3" component="h2">Linked skills ({lock.length})</Typography>
+    <Typography variant="s1">{availableUpdates.length ? `${availableUpdates.join('; ')}. Review the update before changing this lock.` : 'Each skill is locked to one version.'}</Typography>
+    <Typography variant="s3" color="text.secondary">Each skill is locked to one version. Skills that follow production can be updated; pinned skills stay put.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
     {!links.length && <Typography variant="s3">No linked skills. AGENTS.md remains standing context.</Typography>}
     {proposed && !readOnly && <Alert severity="info">{links.length} skills from your migration are proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
-    {links.map((link) => {
-      const included = lock.find((entry) => entry.skillId === link.skillId);
-      const skill = availableSkills.find((entry) => entry.id === link.skillId);
-      const newer = upstream[link.skillId];
-      return <Box key={link.skillId} sx={{ borderBottom: 1, borderColor: "divider", py: 1, minWidth: 0 }}>
-        <Typography variant="m3" display="block" sx={{ overflowWrap: "anywhere" }}>{included?.mount || skill?.name || link.skillId}</Typography>
-        <Typography variant="s1" display="block">{selectorLabel(link.selector)} · {included ? `Included v${included.version}` : "Not yet accepted"}</Typography>
-        <Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>{included?.digest || "Preview required to resolve this link"}</Typography>
-        {newer && newer.version !== included?.version && <Typography variant="s3">v{newer.version} available; this draft still includes {included ? `v${included.version}` : "no version"}.</Typography>}
-        {!readOnly && <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+    {links.length > 0 && <Container sx={{ maxWidth: 1 }}><Collection {...(compact ? { spacing: 1.5, role: 'list' } : { size: 'small' })} aria-label="Linked skills">
+      {!compact && <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update policy', 'Locked version', 'Update status', 'Actions'].map((heading) => <TableCell key={heading} align={heading === 'Actions' ? 'right' : 'left'}>{heading}</TableCell>)}</TableRow></TableHead>}
+      <Rows>{links.map((link) => {
+        const included = lock.find((entry) => entry.skillId === link.skillId);
+        const query = upstreamQueries[link.skillId];
+        const skill = availableSkills.find((entry) => entry.id === link.skillId) || query?.data;
+        const newer = query?.data?.labels?.find((label) => label.name === link.selector.label) || upstream[link.skillId];
+        const pinned = Boolean(link.selector.version);
+        const checking = !pinned && (query?.isLoading || query?.isFetching);
+        const unavailable = !pinned && (query?.isError || !newer);
+        const changed = !pinned && !unavailable && included && (newer.version !== included.version || (newer.versionId && included.versionId && newer.versionId !== included.versionId));
+        const name = skill?.name || included?.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'Linked skill';
+        const status = <Stack direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}><StatusBadge status={pinned ? 'pinned' : checking ? 'checking' : unavailable ? 'unavailable' : changed ? 'update_available' : included ? 'up_to_date' : 'draft'} label={pinned ? 'Pinned intentionally' : checking ? 'Checking…' : unavailable ? "Couldn't check" : changed ? `v${newer.version} available` : included ? 'Up to date' : 'Preview required'} />
+          {unavailable && !checking && query?.refetch && <Button variant="outlined" size="small" onClick={() => query.refetch()}>Retry</Button>}
+        </Stack>;
+        const identity = <><Typography variant="s1" display="block">{name}</Typography><Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{included?.mount || 'Mount assigned on acceptance'}</Typography></>;
+        const details = <TechnicalDetails title="Lock details"><IdentityChip value={link.skillId} kind="id" label="Skill" />{included?.digest && <IdentityChip value={included.digest} label="Locked digest" />}{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Locked version" />}</TechnicalDetails>;
+        const actions = readOnly ? changed && <Button fullWidth={compact} variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Review update</Button> : <>
           {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
           <Button disabled={operation.pending || Boolean(session.mutationError)} onClick={() => { setLinks(links.filter((entry) => entry.skillId !== link.skillId)); setRefresh(refresh.filter((id) => id !== link.skillId)); invalidate(); }}>Remove from context</Button>
-        </Stack>}
-      </Box>;
-    })}
+        </>;
+        return compact ? <Stack key={link.skillId} role="listitem" spacing={1} sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+          {identity}
+          <Typography variant="s3" color="text.secondary">{selectorLabel(link.selector)} · {included ? `locked v${included.version}` : 'Not yet accepted'}</Typography>
+          {status}{actions}{details}
+        </Stack> : <TableRow hover key={link.skillId} sx={{ height: ROW_HEIGHT.default }}>
+          <TableCell>{identity}{details}</TableCell>
+          <TableCell>{selectorLabel(link.selector)}</TableCell>
+          <TableCell>{included ? `v${included.version}` : 'Not yet accepted'}</TableCell>
+          <TableCell>{status}</TableCell>
+          <TableCell align="right"><Stack spacing={0.5} alignItems="flex-end">{actions}</Stack></TableCell>
+        </TableRow>;
+      })}</Rows>
+    </Collection></Container>}
     {!readOnly && <>
-      <Typography variant="s3">Remove from this context; keep the shared skill. To change a selector, remove and re-add the skill before previewing.</Typography>
+      <TechnicalDetails title="Changing update policies"><Typography variant="s3">Remove from this context; keep the shared skill. To change a selector, remove and re-add the skill before previewing.</Typography></TechnicalDetails>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         <TextField select fullWidth size="small" label="Published leaf skill" value={selected} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => setSelected(event.target.value)}>
           <MenuItem value="">Choose a skill</MenuItem>
@@ -97,7 +138,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
       {remaining.length > 1 && links.length + remaining.length > MAX_LINKS && <Typography variant="s3">A context holds at most {MAX_LINKS} linked skills; add fewer at a time.</Typography>}
       <Button variant="outlined" disabled={!onPreview || operation.pending || Boolean(session.mutationError)} onClick={prepare}>Preview dependency changes</Button>
       {preview && <>
-        <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Compiled candidate {preview.candidateDigest}</Typography>
+        <IdentityChip value={preview.candidateDigest} label="Compiled candidate" />
         {(preview.changes || []).map((change) => <Typography key={change.skillId} variant="s1">{change.mount} · {change.change} · {change.before ? `v${change.before.version}` : "absent"} → {change.after ? `v${change.after.version}` : "removed"}</Typography>)}
         {preview.checks?.summary?.errors > 0 && <Alert severity="error">The compiled context has blocking checks. No partial dependency set can be applied.</Alert>}
         {!current && <Alert severity="warning">{session.mutationError ? "Recover the original dependency update with Retry dependency update before previewing or publishing." : "The draft changed. Preview again before applying."}</Alert>}

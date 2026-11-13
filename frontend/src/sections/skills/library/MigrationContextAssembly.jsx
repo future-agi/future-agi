@@ -48,7 +48,7 @@ export default function MigrationContextAssembly({ published, proposal, onBusyCh
     <TextField label="Immutable name" size="small" value={name} disabled={Boolean(prepared) || busy} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 64 }} error={Boolean(name) && !nameValid(name)} helperText="Lowercase letters, digits and single hyphens." />
     <TextField label="Purpose" size="small" fullWidth multiline minRows={2} value={description} disabled={Boolean(prepared) || busy} onChange={(event) => setDescription(event.target.value)} inputProps={{ maxLength: 1024 }} />
     <TextField label="AGENTS.md" size="small" fullWidth multiline minRows={4} value={agents} disabled={Boolean(prepared) || busy} onChange={(event) => setAgents(event.target.value)} helperText="Standing instructions. Linked skills load when needed." />
-    {!prepared && <Box><Button variant="contained" disabled={!canPrepare} onClick={() => run(prepare, { name, description, agents, links, keys: keys.current }, setPrepared)}>Preview agent context</Button></Box>}
+    {!prepared && <Box><Button variant="contained" color="primary" disabled={!canPrepare} onClick={() => run(prepare, { name, description, agents, links, keys: keys.current }, setPrepared)}>Preview agent context</Button></Box>}
     {error && <Alert severity="error">{error}</Alert>}
     {prepared && <>
       <Typography variant="s1">{`Compiled candidate ${prepared.preview.candidateDigest} · ${lock.length} pinned links · private draft of ${prepared.name}`}</Typography>
@@ -66,7 +66,7 @@ export default function MigrationContextAssembly({ published, proposal, onBusyCh
       {!result && <>
         <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these ${lock.length} exact pinned versions and this compiled candidate.`} />
         {warnings && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={busy || !accepted} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label="I acknowledge the static warnings for this exact candidate." />}
-        <Box><Button variant="contained" disabled={!ready} onClick={() => run(publish, { prepared, acknowledgeWarnings: warningsAcknowledged, keys: keys.current }, setResult)}>Publish agent context</Button></Box>
+        <Box><Button variant="contained" color="primary" disabled={!ready} onClick={() => run(publish, { prepared, acknowledgeWarnings: warningsAcknowledged, keys: keys.current }, setResult)}>Publish agent context</Button></Box>
       </>}
     </>}
     {result && <>

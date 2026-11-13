@@ -119,6 +119,12 @@ const chooseFile = (name) =>
   );
 
 describe("SkillCompareView", () => {
+  it('offers restoration only for the older version, not the current latest', () => {
+    renderCompare();
+    expect(screen.getByRole('button', { name: 'Back to versions' })).toHaveClass('MuiButton-containedPrimary');
+    expect(screen.getByRole('button', { name: 'Restore v1 as new version' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Restore v2 as new version' })).not.toBeInTheDocument();
+  });
   it("renders every file status and passes the correct texts to the shared diff", () => {
     renderCompare();
     const files = within(screen.getByRole("list", { name: "Compared files" }));

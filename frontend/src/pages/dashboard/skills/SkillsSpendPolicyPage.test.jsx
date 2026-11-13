@@ -30,7 +30,8 @@ beforeEach(() => {
 afterEach(cleanup);
 it('discovers the real allowance panel through production navigation and confirms an exact revision', async () => {
   mount();
-  fireEvent.click(screen.getByRole('tab', { name: 'Workspace allowance' }));
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
   expect(screen.getByLabelText('Period allowance (USD)')).toHaveValue('');
   expect(api.save).not.toHaveBeenCalled();
   fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '12.3400' } });
@@ -44,7 +45,8 @@ it('discovers the real allowance panel through production navigation and confirm
 it('allows members to discover the requirement but not authorize spending', () => {
   api.workspace.wsLevel = 3;
   mount();
-  fireEvent.click(screen.getByRole('tab', { name: 'Workspace allowance' }));
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
   expect(screen.getByLabelText('Period allowance (USD)')).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Review policy change' })).toBeDisabled();
   expect(api.save).not.toHaveBeenCalled();
@@ -52,12 +54,14 @@ it('allows members to discover the requirement but not authorize spending', () =
 it('does not enable navigation before the spend contract is ready', () => {
   api.ready = false;
   mount();
-  expect(screen.getByRole('tab', { name: 'Workspace allowance (unavailable)' })).toBeDisabled();
+  expect(screen.queryByRole('tab', { name: /Workspace allowance/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'More Skills pages' })).not.toBeInTheDocument();
 });
 it('fails closed when the selected role belongs to another workspace', () => {
   api.workspace.currentWorkspaceId = 'old-workspace';
   mount();
-  fireEvent.click(screen.getByRole('tab', { name: 'Workspace allowance' }));
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
   expect(screen.queryByLabelText('Period allowance (USD)')).not.toBeInTheDocument();
   expect(api.save).not.toHaveBeenCalled();
 });

@@ -1,3 +1,6 @@
+/** Semantic code, supporting both normalized bodies and raw Axios errors. */
+export const getSkillErrorCode = (error) => error?.response?.data?.code || error?.code;
+
 /** Axios' interceptor rejects normalized bodies, not raw AxiosError objects. */
 export function operationStatus(error) {
   return error?.statusCode ?? error?.response?.status ?? error?.status;

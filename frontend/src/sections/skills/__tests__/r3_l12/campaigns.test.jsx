@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import PropTypes from 'prop-types';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +19,7 @@ const target = {
 const observations = { data: { installed: null, discovered: null, delivered: null } };
 function Harness({ value = campaign, targets = [target], onAuthorize = vi.fn().mockResolvedValue({}), onStatus = vi.fn().mockResolvedValue({}) }) {
   const [selectedTarget, select] = useState(null);
-  return <ContextCampaignReview campaign={value} targets={targets} onAuthorize={onAuthorize} onStatus={onStatus} onRollback={vi.fn()} selectedTarget={selectedTarget} onSelectTarget={select} observations={observations} />;
+  return <MemoryRouter><ContextCampaignReview campaign={value} targets={targets} onAuthorize={onAuthorize} onStatus={onStatus} onRollback={vi.fn()} selectedTarget={selectedTarget} onSelectTarget={select} observations={observations} /></MemoryRouter>;
 }
 Harness.propTypes = { value: PropTypes.object, targets: PropTypes.array, onAuthorize: PropTypes.func, onStatus: PropTypes.func };
 afterEach(cleanup);
@@ -67,7 +68,7 @@ describe('exact repository review', () => {
     expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Review changed state' }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
-    expect(screen.getByText('pending', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Not decided', { exact: true })).toBeInTheDocument();
   });
   it('cannot include a deliberate pin that would change its version', async () => {
     render(<Harness targets={[{ ...target, selector: { version: 2 } }]} />);
@@ -94,13 +95,23 @@ describe('exact repository review', () => {
 describe('independent observations and availability', () => {
   it('does not turn merged into installed or delivered', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
+    // Observations stay visible without a disclosure: merged is never shown as delivered.
+    expect(screen.getByText('Independent delivery observations')).toBeVisible();
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
-    expect(screen.getByText(/Merged does not mean installed or delivered/)).toBeInTheDocument();
+    expect(screen.getByText(/A merged PR doesn't mean the app has the change/)).toBeInTheDocument();
   });
   it('retains the planned identity when a binding no longer names a repository', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: null }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
-    expect(screen.getByText(/binding no longer names a repository/)).toBeInTheDocument();
+    expect(screen.getByText(/target no longer names a repository/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
     expect(screen.getByText(/Planned repository ID 100/)).toBeInTheDocument();
+  });
+  it('keeps a zero repository identifier in technical details without exposing it in the summary', () => {
+    render(<ContextCampaignTargetDrawer target={{ ...target, repository: { ...target.repository, repositoryId: 0 } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
+    expect(screen.getByText('Branch: main · Root folder')).toBeVisible();
+    expect(screen.queryByText('Repository ID 0')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
+    expect(screen.getByText('Repository ID 0')).toBeVisible();
   });
   it('renders remote diff text literally', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, plan: { ...target.plan, changes: [{ ...target.plan.changes[0], diffPreview: '<img src=x onerror=alert(1)>' }] } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
@@ -108,8 +119,9 @@ describe('independent observations and availability', () => {
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
   it.each(['loading', 'empty', 'error', 'forbidden'])('has a reachable %s list state', (state) => {
-    render(<ContextCampaignList query={{ refetch: vi.fn() }} state={state} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
-    expect(screen.getByText(/Campaigns are unavailable/)).toBeInTheDocument();
+    render(<ContextCampaignList query={{ refetch: vi.fn() }} enabled state={state} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
+    const text = { loading: 'Checking rollout availability', empty: 'No repository rollouts yet', error: "Couldn't check rollout availability", forbidden: 'You cannot view these rollouts' };
+    expect(state === 'loading' ? screen.getByRole('progressbar', { name: text[state] }) : screen.getByText(text[state])).toBeInTheDocument();
   });
   it('labels a predecessor link as a follow-up and keeps same-named rollouts distinguishable', () => {
     // A parent is any predecessor: a replacement after base movement, a later update or a reverse plan.
@@ -123,4 +135,42 @@ describe('independent observations and availability', () => {
     expect(onOpen).toHaveBeenCalledWith('replacement');
     expect(screen.getByRole('button', { name: 'Review Synthetic policy rollout, revision 37' })).toBeInTheDocument();
   });
+});
+
+it('keeps retained rollout records readable when execution is off', () => {
+  render(<ContextCampaignList query={{ data: { count: 1, results: [campaign] } }} enabled={false} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} onCreate={vi.fn()} />);
+  expect(screen.getByText('Repository rollouts are off')).toBeVisible();
+  expect(screen.getByRole('table', { name: 'Repository rollouts' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'New rollout' })).toBeNull();
+});
+
+it('keeps hidden targets in authorization validation when filtering the inventory', async () => {
+  const second = { ...target, bindingId: 'second', name: 'another-repository' };
+  render(<Harness value={{ ...campaign, targetCount: 2 }} targets={[target, second]} />);
+  await reviewTarget();
+  fireEvent.change(screen.getByLabelText('Search repositories'), { target: { value: 'synthetic' } });
+  expect(screen.queryByRole('button', { name: 'Review target another-repository' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+  expect(screen.getByText('Reviewed 1 of 2')).toBeVisible();
+});
+
+
+it('links the blocked count to visible, labelled blockers without relaxing authorization', () => {
+  const blocked = { ...target, bindingId: 'blocked', name: 'blocked-repo', plan: { ...target.plan, blockers: ['Local modifications need review'] } };
+  render(<Harness value={{ ...campaign, targetCount: 2 }} targets={[target, blocked]} />);
+  fireEvent.click(screen.getByRole('button', { name: '1 blocked', exact: true }));
+  expect(screen.getByText('Blocked: local changes')).toBeVisible();
+  expect(screen.getByText('Local modifications need review')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Review target synthetic-repository' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+});
+
+it('renders unified excerpts with the shared diff while retaining hunk boundaries', () => {
+  const diffPreview = '--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old policy\n+new policy\n@@ -8 +8 @@\n-old ending\n+new ending';
+  const { container } = render(<ContextCampaignTargetDrawer target={{ ...target, plan: { ...target.plan, changes: [{ ...target.plan.changes[0], diffPreview }] } }} open onClose={vi.fn()} onDecision={vi.fn()} />);
+  expect(screen.getByText('@@ -1 +1 @@')).toBeVisible();
+  expect(screen.getByText('@@ -8 +8 @@')).toBeVisible();
+  expect(document.querySelectorAll('[data-status="added"]')).toHaveLength(2);
+  expect(document.querySelectorAll('[data-status="removed"]')).toHaveLength(2);
+  expect(container.querySelector('img')).toBeNull();
 });
