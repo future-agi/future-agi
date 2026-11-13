@@ -335,9 +335,10 @@ class _TraceRootReplayV2:
         query, params = super().build_filter_match_query(candidate_ids, **kwargs)
         from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 
-        if any(
-            isinstance(value, EffectiveTagRelation) for value in params.values()
-        ) and self._only_tag_leaves_read_children():
+        if (
+            any(isinstance(value, EffectiveTagRelation) for value in params.values())
+            and self._only_tag_leaves_read_children()
+        ):
             # Tag membership is explicitly scoped to the requested event-time
             # window inside its own relation. When no other leaf reads child
             # spans, replay full physical hours before mutable time/liveness
@@ -365,7 +366,10 @@ class _TraceRootReplayV2:
             self._FILTER_BUILDER_CLS, "is_effective_tag_filter", lambda _item: False
         )
         return all(is_tag_leaf(item) for item in residual_filters) and all(
-            any(isinstance(value, EffectiveTagRelation) for value in plan.params.values())
+            any(
+                isinstance(value, EffectiveTagRelation)
+                for value in plan.params.values()
+            )
             for plan in plans
             if plan.scope != "root"
         )
