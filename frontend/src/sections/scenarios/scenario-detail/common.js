@@ -1,5 +1,6 @@
 import isEqual from "lodash/isEqual";
 import { z } from "zod";
+import { ColumnNameValidationSchema } from "src/utils/validation";
 
 // helper to normalize graph (remove transient fields)
 // ⚠️ NOTE: nodes/edges are transformed in transformNode/transformEdge
@@ -53,10 +54,7 @@ export const addColumnSchema = z.object({
   columns: z
     .array(
       z.object({
-        name: z
-          .string()
-          .min(1, "Column name is required")
-          .max(50, "Column name must be less than 50 characters"),
+        name: ColumnNameValidationSchema,
 
         type: z.enum(
           ["text", "boolean", "integer", "float", "json", "array", "datetime"],
