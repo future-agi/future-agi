@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from model_hub.models.evals_metric import Feedback
+from model_hub.models.evals_metric import EvalTemplate, Feedback
 from model_hub.models.score import Score
 from model_hub.serializers.contracts import EvalApiLogRowResponseSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -534,14 +534,20 @@ def test_i11_soft_deleted_config_still_resolves_legacy_log(
     _nav(_get(auth_client, log))
 
 
-def test_i12_hard_deleted_config_is_unavailable(
-    auth_client, log_factory, custom_eval_config, fake_reader
+def test_i12_older_log_links_its_trace_after_its_config_is_gone(
+    auth_client, log_factory, collector_tree, custom_eval_config, project
 ):
-    log = log_factory(stamp=False)
+    # The config row is gone, but the trace the eval ran on is still in exactly
+    # one readable project: the older log keeps its link.
+    root, child = collector_tree
+    log = _tree_log(log_factory, collector_tree, stamp=False)
     CustomEvalConfig.all_objects.filter(id=custom_eval_config.id).delete()
-    fake_reader(log)
-    _nav(_get(auth_client, log), "unavailable")
-    fake_reader.reader.assert_not_called()
+    nav = _nav(_get(auth_client, log))
+    assert (nav["project_id"], nav["trace_id"], nav["span_id"]) == (
+        str(project.id),
+        str(root["trace_id"]),
+        child["id"],
+    )
 
 
 def test_i13_deleted_project(auth_client, log_factory, project, fake_reader):
@@ -643,12 +649,33 @@ def test_i18_log_project_workspace_consistency(
     fake_reader.reader.assert_not_called()
 
 
-def test_i19_eval_template_consistency(auth_client, log_factory, fake_reader):
-    log = log_factory(stamp=False)
-    APICallLog.no_workspace_objects.filter(pk=log.pk).update(source_id=str(uuid4()))
-    fake_reader(log)
-    _nav(_get(auth_client, log), "invalid_reference")
-    fake_reader.reader.assert_not_called()
+def test_i19_older_log_links_its_trace_after_a_template_swap(
+    auth_client,
+    log_factory,
+    collector_tree,
+    custom_eval_config,
+    eval_template,
+    project,
+):
+    # The config's eval template is writable. Swapping it says nothing about
+    # where an older log's trace lives, so the link still opens that trace.
+    root, child = collector_tree
+    log = _tree_log(log_factory, collector_tree, stamp=False)
+    swapped = EvalTemplate.objects.create(
+        name="Swapped template",
+        organization=eval_template.organization,
+        workspace=eval_template.workspace,
+        config=eval_template.config,
+    )
+    CustomEvalConfig.all_objects.filter(id=custom_eval_config.id).update(
+        eval_template=swapped
+    )
+    nav = _nav(_get(auth_client, log))
+    assert (nav["project_id"], nav["trace_id"], nav["span_id"]) == (
+        str(project.id),
+        str(root["trace_id"]),
+        child["id"],
+    )
 
 
 def test_i20_forged_other_org_log(auth_client, log_factory, fake_reader):
@@ -724,10 +751,11 @@ def test_i25_bounded_pg_and_ch_queries(
     log = _tree_log(log_factory, collector_tree, stamp=False)
     # Warm URL imports before measuring; the API fixture adds one workspace read.
     _get(auth_client, log, None)
-    with django_assert_num_queries(5), CaptureQueriesContext(connection) as pg:
+    with django_assert_num_queries(4), CaptureQueriesContext(connection) as pg:
         _nav(_get(auth_client, log))
-    # workspace injection + log + localizer + config template + project scope
-    assert len(pg) == 5
+    # workspace injection + log + localizer + project scope; no eval config read
+    assert len(pg) == 4
+    assert not any("tracer_custom_eval_config" in q["sql"] for q in pg.captured_queries)
     assert query.call_count == 2
     assert all(
         "tracer_eval_logger" not in call.args[0]

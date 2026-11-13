@@ -10,6 +10,7 @@ from structlog.testing import capture_logs
 
 from model_hub.services import eval_log_source_navigation as navigation
 from model_hub.utils.api_log_config import parse_api_log_config
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailNotFound,
     TraceDetailRead,
@@ -234,6 +235,11 @@ def test_ambiguous_ancestry(resolve, spans):
         ),
         (TraceDetailNotFound(), "unavailable", None),
         (
+            TraceDetailReadUnavailable("project_scope_too_large"),
+            "unavailable",
+            "project_scope_too_large",
+        ),
+        (
             TraceDetailReadUnavailable("deadline_exceeded"),
             "temporarily_unavailable",
             "deadline_exceeded",
@@ -250,7 +256,7 @@ def test_ambiguous_ancestry(resolve, spans):
         ),
         (RuntimeError("boom"), "temporarily_unavailable", None),
     ],
-    ids=["u22", "u22b", "u24", "u25", "u26", "u27", "u28"],
+    ids=["u22", "u22b", "u24", "u24b", "u25", "u26", "u27", "u28"],
 )
 def test_reader_error_mapping(resolve, exc, status, code):
     resolve.reader.side_effect = exc
@@ -311,7 +317,7 @@ def test_u30_wire_shape_and_null_untrusted_ids(status):
 
 def test_u32_stamp_does_not_require_config_row(resolve, monkeypatch):
     lookup = Mock(side_effect=AssertionError("stamped logs must not query config"))
-    monkeypatch.setattr(navigation.CustomEvalConfig.all_objects, "filter", lookup)
+    monkeypatch.setattr(CustomEvalConfig.all_objects, "filter", lookup)
     assert resolve().status == "ready"
     lookup.assert_not_called()
 
@@ -379,16 +385,13 @@ def test_invalid_span_string_is_not_repaired(resolve, span_id):
 
 @pytest.fixture
 def legacy(resolve, monkeypatch):
-    """An older log with no recorded project; the config only proves its template."""
+    """An older log with no recorded project; its eval config is never read."""
     scope = resolve.manager.filter.return_value
     scope.order_by.return_value.values_list.return_value = [PROJECT, ROOT]
-    config_lookup = Mock()
-    config_lookup.return_value.values.return_value.first.return_value = {
-        "eval_template_id": None
-    }
-    monkeypatch.setattr(
-        navigation.CustomEvalConfig.all_objects, "filter", config_lookup
+    config_lookup = Mock(
+        side_effect=AssertionError("older logs must not read the config")
     )
+    monkeypatch.setattr(CustomEvalConfig.all_objects, "filter", config_lookup)
     resolve.config_lookup = config_lookup
     return resolve
 
@@ -396,7 +399,7 @@ def legacy(resolve, monkeypatch):
 def test_u33_legacy_log_reads_the_scoped_projects_not_the_config(legacy):
     result = legacy(_config(project_id=None))
     assert result.as_dict()["project_id"] == PROJECT
-    legacy.config_lookup.return_value.values.assert_called_once_with("eval_template_id")
+    legacy.config_lookup.assert_not_called()
     assert legacy.reader.call_args.kwargs["project_ids"] == [PROJECT, ROOT]
     assert legacy.reader.call_args.kwargs["unique_project"] is True
 

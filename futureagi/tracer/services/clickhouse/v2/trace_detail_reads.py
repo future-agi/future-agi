@@ -481,6 +481,20 @@ def read_trace_detail(
         identity_params,
         max_result_rows=_MAX_PHYSICAL_SPANS + 1,
     )
+    # Live copies in several scoped projects are ambiguous whatever their size;
+    # decide that before the span limit, which retrying cannot fix either.
+    if (
+        unique_project
+        and len(
+            {
+                str(row["project_id"])
+                for row in identity_rows
+                if not row.get("latest_is_deleted") and row.get("project_id")
+            }
+        )
+        > 1
+    ):
+        raise TraceDetailReadUnavailable("ambiguous_project")
     if len(identity_rows) > _MAX_PHYSICAL_SPANS:
         raise TraceDetailReadUnavailable("span_limit_exceeded")
 

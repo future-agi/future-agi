@@ -6,7 +6,6 @@ from uuid import UUID
 import structlog
 from django.db.models import Q
 
-from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailNotFound,
@@ -117,21 +116,11 @@ def _resolve_project_scope(
             return [], SourceNavigation("invalid_reference")
         return [str(project.id)], None
 
-    # Older logs did not record their project. The eval config's project is
-    # writable, so it says nothing about where this log's trace lives: search
-    # the projects this user may read in the log's workspace instead, and let
-    # the read refuse a trace found in more than one of them.
-    config_row = (
-        CustomEvalConfig.all_objects.filter(id=candidate.config_id)
-        .values("eval_template_id")
-        .first()
-    )
-    if config_row is None:
-        return [], SourceNavigation("unavailable")
-    if log_row.source_id and str(config_row["eval_template_id"]) != str(
-        log_row.source_id
-    ):
-        return [], SourceNavigation("invalid_reference")
+    # Older logs did not record their project. The eval config is writable (its
+    # project and template can change after the eval ran), so it says nothing
+    # about where this log's trace lives and is never read here: search the
+    # projects this user may read in the log's workspace for the trace itself,
+    # and let the read refuse a trace found in more than one of them.
     if log_row.workspace_id:
         scope = scope.filter(
             Q(workspace_id=log_row.workspace_id) | Q(workspace_id__isnull=True)
@@ -148,6 +137,12 @@ def _resolve_project_scope(
 
 def _map_read_error(exc) -> SourceNavigation:
     if isinstance(exc, TraceDetailNotFound):
+        return SourceNavigation("unavailable")
+    # More readable projects than one read may bind: retrying cannot help.
+    if (
+        isinstance(exc, TraceDetailReadUnavailable)
+        and exc.code == "project_scope_too_large"
+    ):
         return SourceNavigation("unavailable")
     if isinstance(exc, TraceDetailReadUnavailable) and exc.code in (
         "ambiguous_span_identity",
