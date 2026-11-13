@@ -156,13 +156,18 @@ def _queued_within_window(
     return -EVAL_QUEUE_STAMP_SKEW <= elapsed < EVAL_QUEUE_STAMP_WINDOW
 
 
-def _dispatch_one(call_execution_id: str, eval_config_id: str) -> None:
-    """One grading job for one call, in the exact argument shape callers rely on::
+def _dispatch_one(call_execution_id: str, eval_config_ids: list[str]) -> None:
+    """One grading job for one call, carrying every config queued for it, in the
+    exact argument shape callers rely on::
 
         _run_simulate_evaluations_task.apply_async(
             args=(str(call_id),),
-            kwargs={"eval_config_ids": [str(config_id)], "skip_existing": True},
+            kwargs={"eval_config_ids": [str(config_id), ...], "skip_existing": True},
         )
+
+    One job per call, never one per config: the task grades a call's configs one
+    after another on one row, and two jobs grading the same call at once would
+    each save the call's whole ``eval_outputs`` and drop the other's verdict.
 
     Not the bulk task (``test_executor.py::run_new_evals_on_call_executions_task``),
     which hard-codes ``skip_existing: False``. ``skip_existing=True`` is what
@@ -177,7 +182,7 @@ def _dispatch_one(call_execution_id: str, eval_config_id: str) -> None:
     _run_simulate_evaluations_task.apply_async(
         args=(str(call_execution_id),),
         kwargs={
-            "eval_config_ids": [str(eval_config_id)],
+            "eval_config_ids": [str(config_id) for config_id in eval_config_ids],
             "skip_existing": True,
         },
     )
@@ -326,18 +331,21 @@ def _clear_queued_stamps(
 
 
 def _dispatch_batch_after_commit(
-    call_execution_ids: list[str],
-    eval_config_id: str,
+    batch: list[tuple[str, list[str]]],
     test_execution_id: str,
-    previous: dict[str, dict[str, Any]] | None = None,
+    previous: dict[str, dict[str, dict[str, Any]]] | None = None,
     run_reopened: bool = False,
 ) -> None:
     """The ``transaction.on_commit`` callback: dispatch the whole batch in
     order, stopping at the first hand-off failure.
 
-    Runs only once the transaction that stamped every call in
-    ``call_execution_ids`` has committed -- never before, and never while any
-    row lock from that transaction is still held.
+    ``batch`` holds each stamped call with the config ids stamped on it, and
+    each call gets one job for all of them (``_dispatch_one``). ``previous``
+    maps a config id to its calls' records from before the stamp.
+
+    Runs only once the transaction that stamped every call in ``batch`` has
+    committed -- never before, and never while any row lock from that
+    transaction is still held.
 
     One callback for the whole batch, not one per call, and the loop stops at
     the first failure instead of trying every remaining call: a broker that
@@ -369,28 +377,39 @@ def _dispatch_batch_after_commit(
     start together from producing two stored verdicts, so this function does
     not try to tell the two failure modes apart.
     """
-    for index, call_execution_id in enumerate(call_execution_ids):
+    for index, (call_execution_id, eval_config_ids) in enumerate(batch):
         try:
-            _dispatch_one(call_execution_id, eval_config_id)
+            _dispatch_one(call_execution_id, eval_config_ids)
         except Exception as exc:  # noqa: BLE001 - stop the batch, not the request
-            remaining = call_execution_ids[index:]
+            remaining = batch[index:]
             logger.exception(
                 "harness_run_eval_dispatch_failed",
                 call_execution_id=call_execution_id,
-                eval_config_id=eval_config_id,
+                eval_config_ids=eval_config_ids,
                 test_execution_id=test_execution_id,
                 remaining_count=len(remaining),
                 error=str(exc),
             )
-            _clear_queued_stamps(
-                remaining,
-                eval_config_id,
-                previous,
-                reopened_run_id=(
-                    test_execution_id if run_reopened and index == 0 else None
-                ),
-                test_execution_id=test_execution_id,
-            )
+            # Every config stamped on a call not reached is undone, config by
+            # config. The run goes back to `completed` (when nothing was
+            # dispatched) only with the last of them, once no stamp is left.
+            unreached: dict[str, list[str]] = {}
+            for call_id, config_ids in remaining:
+                for config_id in config_ids:
+                    unreached.setdefault(config_id, []).append(call_id)
+            for position, (config_id, call_ids) in enumerate(unreached.items()):
+                last = position == len(unreached) - 1
+                _clear_queued_stamps(
+                    call_ids,
+                    config_id,
+                    (previous or {}).get(config_id),
+                    reopened_run_id=(
+                        test_execution_id
+                        if run_reopened and index == 0 and last
+                        else None
+                    ),
+                    test_execution_id=test_execution_id,
+                )
             return
 
 
@@ -411,8 +430,9 @@ def queue_eval_for_finished_calls(
 def queue_evals_for_finished_calls(
     test_execution: TestExecution, eval_configs: list[SimulateEvalConfig]
 ) -> dict[str, dict[str, int]]:
-    """Queue one grading job per finished call of this run that is eligible, for
-    each of ``eval_configs`` in one pass, and return each config's counts by its id.
+    """Queue the eligible finished calls of this run for each of ``eval_configs``
+    in one pass, one grading job per call carrying every config queued for it,
+    and return each config's counts by its id.
 
     Several configs go through one pass because queueing one reopens a call's
     eval side: a second call of this function for another config would read the
@@ -482,6 +502,8 @@ def queue_evals_for_finished_calls(
     runnable_ids = runnable_eval_config_ids(test_execution.run_test_id)
     live_ids = live_eval_config_ids(test_execution.run_test_id)
     stamped: dict[str, list[str]] = {config_id: [] for config_id in config_ids}
+    # Each stamped call, in lock order, with the configs stamped on it: one job each.
+    per_call: dict[str, list[str]] = {}
     previous: dict[str, dict[str, dict[str, Any]]] = {
         config_id: {} for config_id in config_ids
     }
@@ -585,6 +607,7 @@ def queue_evals_for_finished_calls(
                 metadata[EVAL_COMPLETED_KEY] = False
                 outputs[config_id] = {"status": "pending"}
                 stamped[config_id].append(str(call_execution.id))
+                per_call.setdefault(str(call_execution.id), []).append(config_id)
                 queued_here = True
             if queued_here:
                 call_execution.eval_outputs = outputs
@@ -621,23 +644,21 @@ def queue_evals_for_finished_calls(
         # but not RUN here: `transaction.on_commit` defers this until the
         # outermost transaction actually commits, so no grading job can
         # start against a stamp that transaction could still roll back. One
-        # callback for each config's batch, not one per call.
-        execution_id = str(test_execution.id)
-        for config_id in config_ids:
-            if not stamped[config_id]:
-                continue
+        # callback for the whole batch, and one job per call carrying every
+        # config stamped on it: jobs for one call's configs running side by
+        # side each save the call's whole `eval_outputs` and drop each other's
+        # verdicts (4 configs, 12 Nov: 177 of 576 verdicts lost).
+        if per_call:
+            execution_id = str(test_execution.id)
+            batch = list(per_call.items())
 
             # `robust=True` so a raise here cannot drop other callbacks
             # queued behind it in the same commit. A closure, not
             # `functools.partial`: Django's robust handler formats its log
             # line with `func.__qualname__`, which a partial does not have.
-            def _dispatch_this_batch(
-                stamped_ids=stamped[config_id],
-                config_id=config_id,
-                previous=previous[config_id],
-            ):
+            def _dispatch_this_batch():
                 _dispatch_batch_after_commit(
-                    stamped_ids, config_id, execution_id, previous, run_reopened
+                    batch, execution_id, previous, run_reopened
                 )
 
             transaction.on_commit(_dispatch_this_batch, robust=True)
