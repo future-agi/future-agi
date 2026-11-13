@@ -1,4 +1,4 @@
-"""Real socket regressions; only DNS and the pinned destination are substituted."""
+"""URL fetch regressions with socket fixtures and mocked pool boundaries."""
 
 import asyncio
 import datetime
@@ -179,6 +179,22 @@ def test_request_host_header_matches_url_authority(monkeypatch, url, expected_ho
     assert captured == [expected_host]
 
 
+def test_stalled_tcp_connect_respects_total_budget(monkeypatch):
+    def stalled_connect(connection):
+        assert connection.host == "93.184.216.34"
+        # Model a connect that uses its timeout before returning no socket.
+        time.sleep(connection.timeout)
+        raise TimeoutError("TCP connect timed out")
+
+    monkeypatch.setattr(ssrf_guard, "_resolve_pinned_ip", lambda host: "93.184.216.34")
+    monkeypatch.setattr(urllib3.connection.HTTPConnection, "_new_conn", stalled_connect)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        safe_fetch("http://public.example/page", timeout=1.5, total_timeout=0.3)
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.8, elapsed
+
+
 def test_silent_tls_handshake_respects_total_budget(monkeypatch):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
@@ -201,6 +217,8 @@ def test_silent_tls_handshake_respects_total_budget(monkeypatch):
 
     def connect_to_fixture(connection):
         assert connection.host == "93.184.216.34"
+        # Spend part of the budget in TCP before the real TLS handshake stalls.
+        time.sleep(0.4)
         return real_connect(listener.getsockname(), connection.timeout)
 
     monkeypatch.setattr(ssrf_guard, "_resolve_pinned_ip", lambda host: "93.184.216.34")
@@ -210,7 +228,7 @@ def test_silent_tls_handshake_respects_total_budget(monkeypatch):
     try:
         started = time.monotonic()
         with pytest.raises(TimeoutError):
-            safe_fetch("https://public.example/page", timeout=1.5, total_timeout=0.3)
+            safe_fetch("https://public.example/page", timeout=1.5, total_timeout=0.6)
         elapsed = time.monotonic() - started
         assert accepted.wait(0.3)
         assert elapsed < 0.8, elapsed

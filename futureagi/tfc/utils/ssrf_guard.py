@@ -429,7 +429,7 @@ def safe_fetch(
                 if deadline is not None:
                     # Incomplete bodies/redirects must close their file/socket,
                     # not just return a still-reading connection to the pool.
-                    # Second guard before closing the pool on incomplete reads.
+                    # Close the response before releasing its connection.
                     response.close()
                 response.release_conn()
             pool.close()
