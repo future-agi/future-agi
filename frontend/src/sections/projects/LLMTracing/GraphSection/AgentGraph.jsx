@@ -982,7 +982,7 @@ const AgentGraphInner = ({
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13 }}
+          sx={{ fontSize: 12 }}
         >
           {GRAPH_LOADING_MESSAGE}
         </Typography>
@@ -1001,7 +1001,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           We couldn&apos;t load the agent graph. Please retry in a moment.
         </Typography>
       </Box>
@@ -1019,7 +1019,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+        <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
           {AGGREGATION_POLLING_PAUSED_MESSAGE}
         </Typography>
       </Box>
@@ -1037,7 +1037,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           No agent graph data available
         </Typography>
       </Box>

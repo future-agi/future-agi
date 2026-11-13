@@ -55,7 +55,7 @@ const SectionHeader = ({ title, subtitle, action }) => (
       <Typography
         variant="subtitle2"
         fontWeight={600}
-        sx={{ fontSize: "13px" }}
+        sx={{ fontSize: "12px" }}
       >
         {title}
       </Typography>
@@ -158,7 +158,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             variant="body2"
             fontWeight={500}
             noWrap
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             {name}
           </Typography>
@@ -690,7 +690,7 @@ const TaskConfigPanel = ({
                 <Typography
                   variant="body2"
                   color="text.disabled"
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   No evaluations added yet
                 </Typography>

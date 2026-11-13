@@ -1420,7 +1420,7 @@ const TraceDetailDrawerV2 = ({
                       width={40}
                       sx={{ mb: 1, opacity: 0.5 }}
                     />
-                    <Typography variant="body2" fontSize={13}>
+                    <Typography variant="body2" fontSize={12}>
                       Select a span to view details
                     </Typography>
                     {summary && (
@@ -1472,7 +1472,7 @@ const TraceDetailDrawerV2 = ({
               sx: {
                 minWidth: 240,
                 borderRadius: "8px",
-                "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+                "& .MuiMenuItem-root": { fontSize: 12, gap: 1, py: 0.75 },
               },
             },
           }}

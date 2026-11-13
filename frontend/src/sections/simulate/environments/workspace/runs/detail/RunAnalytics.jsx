@@ -4,7 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   LinearProgress,
   Stack,
   Table,
@@ -32,6 +31,7 @@ import DashboardControls, {
 } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const WIDGETS = [
   { id: "goal_outcome", title: "Goal outcome breakdown", section: "Outcomes" },
@@ -172,12 +172,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
   const printable = useRef(null);
   const [showDetails, setShowDetails] = useState(false);
-  if (isPending)
-    return (
-      <Stack alignItems="center" sx={{ py: 8 }}>
-        <CircularProgress size={26} />
-      </Stack>
-    );
+  if (isPending) return <LoadingScreen compact />;
   if (isError)
     return (
       <Stack alignItems="center">
@@ -624,7 +619,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 </Typography>
                 {["p50", "p99", "max"].map((p) => (
                   <Stack key={p} direction="row" justifyContent="space-between">
-                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       {p === "max" ? "Max" : p}
                     </Typography>
                     <Typography sx={{ typography: "s3" }}>
@@ -663,9 +660,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           labels
           multicolor
           angled
-          series={[
-            { key: "invocations", label: "Invocations", colorIndex: 1 },
-          ]}
+          series={[{ key: "invocations", label: "Invocations", colorIndex: 1 }]}
         />
       );
     if (id === "tools_failure")
@@ -784,7 +779,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                     {card.value}
                   </Typography>
                   {card.detail && (
-                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       {card.detail}
                     </Typography>
                   )}
@@ -818,7 +815,11 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           {findings.length ? (
             <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
               {findings.map((finding) => (
-                <Typography component="li" key={finding} sx={{ typography: "s1" }}>
+                <Typography
+                  component="li"
+                  key={finding}
+                  sx={{ typography: "s1" }}
+                >
                   {finding}
                 </Typography>
               ))}
