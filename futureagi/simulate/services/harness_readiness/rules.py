@@ -333,6 +333,13 @@ _CANCEL_BY_CONNECTION = {
 _CANCEL_CONFIRMED = (
     "A Stop ends the agent with its test sandbox, so a stopped run spends nothing more"
 )
+_CANCEL_PROVIDER_CONFIRMED = (
+    "A Stop ends the provider's call too, so a stopped run spends nothing more"
+)
+_CANCEL_CLEANUP_FAILED = (
+    "The last Stop could not confirm our test sandbox was removed; a stopped run may"
+    " keep running and spending until it is"
+)
 _UNMEASURED = (
     "No check measures this yet; results that depend on it are not verified either way"
 )
@@ -351,7 +358,11 @@ def consequence(row: RowView, where: str | None = None) -> str:
         return "The agent runs on its own side and its start checks passed, so every case can begin"
     if row["id"] == "cancel":
         if row["status"] == "supported":
-            return _CANCEL_CONFIRMED
+            return (
+                _CANCEL_CONFIRMED if where == "sandbox" else _CANCEL_PROVIDER_CONFIRMED
+            )
+        if row["reason_code"] == "cleanup_failed":
+            return _CANCEL_CLEANUP_FAILED
         return _CANCEL_BY_CONNECTION.get(where or "", _CANCEL_BY_CONNECTION["provider"])
     own = _CONSEQUENCES.get(row["id"], {})
     status = row["status"]

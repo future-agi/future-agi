@@ -27,6 +27,11 @@ class HostedHarnessJob(BaseModel):
         FAILED = "failed", "Failed"
         CANCELED = "canceled", "Canceled"
 
+    class CancelConfirmation(models.TextChoices):
+        SANDBOX_ABSENT = "sandbox_absent", "Sandbox absent"
+        PROVIDER_CALL_ENDED = "provider_call_ended", "Provider call ended"
+        CLEANUP_FAILED = "cleanup_failed", "Cleanup failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="hosted_harness_jobs"
@@ -70,6 +75,10 @@ class HostedHarnessJob(BaseModel):
     deadline_at = models.DateTimeField()
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
+    cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    cancel_confirmed_by = models.CharField(
+        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+    )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)

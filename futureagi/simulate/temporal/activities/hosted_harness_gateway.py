@@ -109,6 +109,7 @@ async def cancel_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt
+    from simulate.services.harness_cancel import record_overdue_cleanup_failure
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _cancel() -> str:
@@ -126,6 +127,13 @@ async def cancel_hosted_harness_attempt(
             "hosted harness cancellation cleanup is still pending; attempt_id=%s",
             input.attempt_id,
         )
+        try:
+            await _run_db(record_overdue_cleanup_failure, input.attempt_id)
+        except Exception:
+            activity.logger.exception(
+                "hosted harness cleanup failure not recorded; attempt_id=%s",
+                input.attempt_id,
+            )
         return HostedHarnessPollOutput(
             done=False,
             state="cleaning_up",
