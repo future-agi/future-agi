@@ -404,21 +404,42 @@ follow the header.
       refuses to delete an App's only key, then delete every old key,
       because any branch workflow could read it. Finish the credential and
       Apps checks;
-   4. dismiss bot approvals and flag bot-pushed heads, the baseline's first
-      two checks;
+   4. at least one hour after the last old key was deleted, dismiss bot
+      approvals and flag bot-pushed heads, the baseline's first two checks,
+      on the PRs listed after that hour, so that a PR opened inside it is
+      covered. A release-bot push is exempt from the flag only after step
+      6, so at this step none is. From step 3 to step 6 no release job can
+      mint a token, so a release-bot push in that span did not come from a
+      release job;
    5. the one-time read: a person who authored, pushed or approved none of
       the commits that touched them reads the key jobs' workflow files and
       scripts once, in full, at each branch they run from and at each `v*`
       tag that stays, and records each tip SHA. Here that includes `dev`'s
       `scripts/pr_risk.py` and `.github/pr-autopilot.yml`, which the
       approving job runs with the approver token; the header lists the
-      files;
+      files. Then the header's re-listing, in each key-holding repository.
+      Every `v*` tag is listed again and must point at a commit on `main`.
+      A tag that is new since step 2 stays if its `.github` and script
+      paths match main's recorded tip, or if a reader reads the differing
+      files at the tag; otherwise it is deleted with its runs. The runs of
+      the last 30 days on refs that a key or approver environment admits
+      must match what was read, or their versions are read, or the runs
+      are deleted. The run listing is sliced so that each slice returns
+      all its runs, because the endpoint stops at 1,000 without an error.
+      This repository had up to 712 runs in one hour of 12 Nov (read on
+      13 Nov), so its slices are an hour or less. It also keeps
+      `pull_request_target` runs, this workflow's PR-event runs among them,
+      because they run main's workflow file whatever branch they report;
    6. the new release-bot key goes into the environments.
 
-   Release jobs that use the key stop working from step 3 to step 6. The
-   dismissals come after the deletion because the old key can post a new
-   approval until it is deleted. Step 6 below (the approver key) waits for
-   the whole one-time baseline, not only for these six steps.
+   Release jobs that use the key stop working from step 3 to step 6, which
+   includes that hour. The dismissals come after the hour because the old
+   key can post a new approval until it is deleted, and an installation
+   token minted from it can for up to an hour after that (GitHub documents
+   a one-hour token lifetime and does not list key deletion among the ways
+   a token ends; documented by omission, not tested). Step 6 below (the
+   approver key) waits for the whole one-time baseline, not only for these
+   six steps.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
@@ -589,8 +610,9 @@ follow the header.
    its own approval (item 6). A missing stale-approval rule or inaccessible
    evidence stops automation. Check
    runs and legacy commit statuses are read with their separate permissions
-   (`checks` and `statuses`). The newest result for each
-   check must be `success` on the exact head SHA. The expected integration ID is
+   (`checks` and `statuses`). Skipped runs are ignored, and the newest
+   result for each check that did not skip must be `success` on the exact
+   head SHA. The expected integration ID is
    honored when supplied by a ruleset; otherwise a GitHub Actions check-run
    identity is required. Legacy status contexts with no verifiable App identity,
    unavailable API evidence, merge queues and required-workflow rules wait for
