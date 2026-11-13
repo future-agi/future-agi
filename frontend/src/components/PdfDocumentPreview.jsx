@@ -28,6 +28,9 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
   const container = useRef(null);
   const [width, setWidth] = useState(600);
   const [pages, setPages] = useState(0);
+  // react-pdf keeps the onItemClick from the first render, so it reads the
+  // page count from a ref rather than from state.
+  const pageCount = useRef(0);
   const [pageNumber, setPageNumber] = useState(1);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
         file={fileUrl}
         options={documentOptions}
         onLoadSuccess={({ numPages }) => {
+          pageCount.current = numPages;
           setPages(numPages);
           setPageNumber(1);
           onLoad();
@@ -54,7 +58,9 @@ export default function PdfDocumentPreview({ fileUrl, onLoad, onError }) {
         // Only the current page is rendered, so internal links (tables of
         // contents, cross references) move the preview to their page.
         onItemClick={({ pageNumber: target }) => {
-          if (target >= 1 && target <= pages) setPageNumber(target);
+          if (target >= 1 && target <= pageCount.current) {
+            setPageNumber(target);
+          }
         }}
         externalLinkTarget="_blank"
         externalLinkRel="noopener noreferrer nofollow"

@@ -21,7 +21,10 @@ vi.mock("react-pdf", async () => {
     viewer.onItemClick ??= props.onItemClick;
     return <div data-testid="pdf-rendered">PDF preview{props.children}</div>;
   };
-  Document.propTypes = { children: PropTypes.node };
+  Document.propTypes = {
+    children: PropTypes.node,
+    onItemClick: PropTypes.func,
+  };
   const Page = (props) => {
     page.props = props;
     return <div>Rendered page {props.pageNumber}</div>;
