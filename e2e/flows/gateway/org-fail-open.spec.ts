@@ -65,7 +65,7 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
   const name = `e2e-optin-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   // gateway.e2e.yaml's `openai` entry is the managed mock. An org provider with that
   // ID and no base_url inherits its upstream (OrgProviderCache.baseConfig), so the
-  // stack keeps refusing private provider URLs.
+  // flow reaches the mock without setting a provider URL of its own.
   const provider = 'openai';
   const check = `${name}-check`;
   // Bodies pinned from the provider credential, key and org-config serializers.
