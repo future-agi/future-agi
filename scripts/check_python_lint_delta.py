@@ -12,15 +12,24 @@ previously hidden violation.
 
 Three passes run on the changed files under futureagi/:
 
-- the repo's own ruff configuration (futureagi/pyproject.toml);
+- the trusted base-branch tip's Ruff configuration (root and nested configs);
 - the banned-pattern rules that configuration does not select yet, on app code
   only (tests and migrations are left out, as in the standard);
 - `ruff format --check`, which fails only for a file that was formatted at the
   base, or is new, and is not formatted at the head.
 
+Only config-named entries in futureagi/ or at the repository root are read:
+these are the paths Ruff can discover for backend files. Both comparison trees
+use the committed configuration from the trusted tip, including [project]
+metadata. A config-only change has no changed Python files to compare. Changing
+formatter settings and reformatting in one PR is judged against the trusted
+tip's formatter. An in-scope config using `extend`, or one at the trusted tip
+that cannot be parsed as TOML, stops the check rather than following settings
+outside the committed overlay.
+
 Usage, from the repo root:
 
-    python3 -I scripts/check_python_lint_delta.py --base <commit>
+    python3 -I scripts/check_python_lint_delta.py --base <commit> --config-ref <trusted-tip>
 
 Exit codes: 0 nothing new, 1 new violations (printed as GitHub annotations),
 2 the check itself could not run.
@@ -35,6 +44,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -127,7 +137,12 @@ def run(
     cmd: list[str], cwd: Path, ok_codes: tuple[int, ...] = (0,)
 ) -> subprocess.CompletedProcess:
     """Run a command and raise GateError on an unexpected exit code."""
-    proc = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
+    except UnicodeDecodeError as exc:
+        raise GateError(
+            f"{' '.join(cmd[:2])}: output contains a path that is not UTF-8"
+        ) from exc
     if proc.returncode not in ok_codes:
         raise GateError(
             f"{' '.join(cmd)} exited {proc.returncode}: {proc.stderr.strip()[:2000]}"
@@ -187,6 +202,147 @@ def changed_files(repo: Path, base: str) -> dict[str, str | None]:
             continue
         result[new] = base_path
     return result
+
+
+CONFIG_NAMES = frozenset({"pyproject.toml", "ruff.toml", ".ruff.toml"})
+REGULAR_MODES = frozenset({"100644", "100755"})
+
+
+def committed_configs(repo: Path, ref: str) -> dict[str, bytes | None]:
+    """Collect backend and root config entries from Git objects, not checkout files.
+
+    None marks a non-regular entry. Other directories cannot provide Ruff
+    settings to files in futureagi/, so their entries are not inspected.
+    """
+    listing = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "--full-tree", ref],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+    if listing.returncode:
+        raise GateError(
+            f"cannot list committed tree {ref}: "
+            + listing.stderr.decode("utf-8", errors="replace")[:2000]
+        )
+    configs = {}
+    for entry in listing.stdout.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split(" ")
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if PurePosixPath(path).name not in CONFIG_NAMES or not (
+            path.startswith(f"{BACKEND_DIR}/") or "/" not in path
+        ):
+            continue
+        if any("\udc80" <= char <= "\udcff" for char in path):
+            raise GateError("committed config path is not UTF-8")
+        if mode not in REGULAR_MODES or kind != "blob":
+            configs[path] = None
+            continue
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", oid], cwd=repo, check=False, capture_output=True
+        )
+        if blob.returncode:
+            raise GateError(
+                f"cannot read committed config {path}: "
+                + blob.stderr.decode("utf-8", errors="replace")[:2000]
+            )
+        configs[path] = blob.stdout
+    return configs
+
+
+def ruff_section(path: str, data: bytes | None) -> object:
+    """Return a committed pyproject's Ruff table, None if absent, or the raw
+    bytes when the file is not parseable TOML."""
+    if data is None:
+        return None
+    try:
+        tool = tomllib.loads(data.decode("utf-8-sig")).get("tool", {})
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        # Returned as raw bytes; reject_extended_configs stops on them.
+        return data
+    if not isinstance(tool, dict):
+        raise GateError(f"{path}: tool must be a table")
+    ruff = tool.get("ruff")
+    if ruff is not None and not isinstance(ruff, dict):
+        raise GateError(f"{path}: tool.ruff must be a table")
+    return ruff
+
+
+def reject_extended_configs(
+    configs: dict[str, bytes | None], *, trusted: bool = False
+) -> None:
+    """Stop on extend, and on any in-scope config that is not parseable TOML."""
+    for path, content in configs.items():
+        if content is None:
+            continue
+        name = PurePosixPath(path).name
+        # A config this check cannot read stops it on both sides, so the PR
+        # that adds one fails its own check instead of every later PR.
+        side = "trusted" if trusted else "head"
+        if name == "pyproject.toml":
+            section = ruff_section(path, content)
+            if isinstance(section, bytes):
+                raise GateError(f"{path}: {side} config is not parseable TOML")
+        else:
+            try:
+                section = tomllib.loads(content.decode("utf-8-sig"))
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                raise GateError(f"{path}: {side} config is not parseable TOML") from exc
+        if isinstance(section, dict) and "extend" in section:
+            raise GateError(
+                f"{path}: Ruff config uses extend; cannot compare referenced settings"
+            )
+
+
+def trusted_head_tree(
+    head_tree: Path,
+    base_configs: dict[str, bytes | None],
+    head_configs: dict[str, bytes | None],
+) -> None:
+    """Replace checkout settings with committed trusted settings, retaining source.
+
+    Both worktrees are full commits: Ruff uses sibling packages and __init__.py
+    files to resolve imports. A global --config would flatten nested settings
+    and per-file path rules, so overlay the trusted tip's config layout instead.
+    """
+    root = head_tree.resolve()
+
+    def destination(path: str) -> Path | None:
+        relative = PurePosixPath(path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise GateError(f"{path}: config path is outside the head tree")
+        dest = head_tree
+        for index, part in enumerate(relative.parts):
+            dest /= part
+            if dest.is_symlink():
+                raise GateError(f"{path}: config path is a symlink in the head tree")
+            if index < len(relative.parts) - 1 and dest.is_file():
+                return None  # A replaced directory cannot contain a config.
+        if not dest.resolve().is_relative_to(root):
+            raise GateError(f"{path}: config path resolves outside the head tree")
+        return dest
+
+    # Check all paths before changing the tree. A tracked directory may have
+    # become a symlink even when no head config is tracked under that directory.
+    for path in base_configs.keys() | head_configs.keys():
+        destination(path)
+    for path, content in base_configs.items():
+        if content is None:
+            raise GateError(f"{path}: base config is not a regular file")
+
+    for path in head_configs:
+        dest = destination(path)
+        if dest is None:
+            raise GateError(f"{path}: committed head config has no directory")
+        dest.unlink()
+    for path, content in base_configs.items():
+        dest = destination(path)
+        if dest is not None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
 
 
 def line_ranks(diff: str) -> dict[int, int]:
@@ -295,7 +451,12 @@ def ruff_check(
     root = (tree / BACKEND_DIR).resolve()
     violations = []
     for f in findings:
-        rel_path = Path(f["filename"]).resolve().relative_to(root).as_posix()
+        try:
+            rel_path = Path(f["filename"]).resolve().relative_to(root).as_posix()
+        except ValueError as exc:
+            raise GateError(
+                f"{', '.join(paths)}: Ruff reported a path outside {BACKEND_DIR}: {f['filename']}"
+            ) from exc
         path = f"{BACKEND_DIR}/{rel_path}"
         line = f["location"]["row"]
         violations.append(
@@ -333,10 +494,16 @@ def ruff_unformatted(ruff: str, tree: Path, paths: list[str]) -> set[str]:
             f"ruff format check of {', '.join(paths)} failed: {exc}"
         ) from exc
     root = (tree / BACKEND_DIR).resolve()
-    return {
-        f"{BACKEND_DIR}/{Path(f['filename']).resolve().relative_to(root).as_posix()}"
-        for f in json.loads(proc.stdout or "[]")
-    }
+    result = set()
+    for finding in json.loads(proc.stdout or "[]"):
+        try:
+            path = Path(finding["filename"]).resolve().relative_to(root)
+        except ValueError as exc:
+            raise GateError(
+                f"{', '.join(paths)}: Ruff reported a path outside {BACKEND_DIR}: {finding['filename']}"
+            ) from exc
+        result.add(f"{BACKEND_DIR}/{path.as_posix()}")
+    return result
 
 
 def ruff_discovered(ruff: str, tree: Path, paths: list[str]) -> set[str]:
@@ -382,11 +549,11 @@ def formatting_only_files(
 ) -> set[str]:
     """Prove exact formatter output, using raw base bytes and base-side config.
 
-    Only a file at an unchanged path qualifies: a moved file can fall under other
-    lint settings (per-file ignores, excludes, the test and migration rules), so
-    identical bytes do not make its findings comparable by count. A file that
-    Ruff's configuration excludes in either tree is skipped before anything is
-    read; the format pass fails closed for an included unreadable file.
+    Only a file at an unchanged path qualifies: a moved file can fall under
+    other per-file rules. Both trees use the same base lint settings even when
+    the change also edits a config.
+    A file excluded in either tree is skipped before reading; the format pass
+    fails closed for an included unreadable file.
 
     Stdin keeps the baseline worktree untouched. Byte I/O deliberately preserves
     line endings: text-mode newline normalization would weaken the equality test.
@@ -509,9 +676,21 @@ def annotation(v: Violation) -> str:
     return f"::{level} file={escape_property(v.path)},line={v.line},col={v.column},title={title}::{escape_data(text)}"
 
 
-def check(repo: Path, base: str, ruff: str) -> list[Violation]:
-    """Run all three passes and return the violations the change adds."""
+def check(
+    repo: Path, base: str, ruff: str, config_ref: str | None = None
+) -> list[Violation]:
+    """Run all three passes with trusted-tip settings in both comparison trees."""
     files = changed_files(repo, base)
+    base_configs = committed_configs(repo, config_ref or base)
+    merge_base_configs = committed_configs(repo, base)
+    head_configs = committed_configs(repo, "HEAD")
+    for path, content in head_configs.items():
+        if content is None:
+            raise GateError(f"{path}: head config is not a regular file")
+    reject_extended_configs(base_configs, trusted=True)
+    reject_extended_configs(head_configs)
+    # Overlay every committed in-scope config, including unchanged ones:
+    # checkout filters must not substitute different settings in either tree.
     if not files:
         return []
     head_paths = sorted(files)
@@ -526,10 +705,29 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             ["git", "worktree", "add", "--detach", "--quiet", str(base_tree), base],
             repo,
         )
+        head_tree = repo
         try:
+            # Lint committed source in both trees with the same trusted configs.
+            # Checkout rules can materialize even unchanged blobs differently.
+            full_head = Path(tmp) / "head"
+            run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "--detach",
+                    "--quiet",
+                    str(full_head),
+                    "HEAD",
+                ],
+                repo,
+            )
+            head_tree = full_head
+            trusted_head_tree(head_tree, base_configs, head_configs)
+            trusted_head_tree(base_tree, base_configs, merge_base_configs)
             head = dedupe(
-                ruff_check(ruff, repo, head_paths, None)
-                + ruff_check(ruff, repo, app_head, BANNED_RULES)
+                ruff_check(ruff, head_tree, head_paths, None)
+                + ruff_check(ruff, head_tree, app_head, BANNED_RULES)
             )
             old = dedupe(
                 ruff_check(ruff, base_tree, base_paths, None)
@@ -541,20 +739,20 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             head_broken = {v.path for v in head if v.code == SYNTAX_ERROR}
             base_broken = {v.path for v in old if v.code == SYNTAX_ERROR}
             formatting_only = formatting_only_files(
-                ruff, repo, base_tree, files, base_broken
+                ruff, head_tree, base_tree, files, base_broken
             )
             head_dirty = ruff_unformatted(
-                ruff, repo, [p for p in head_paths if p not in head_broken]
+                ruff, head_tree, [p for p in head_paths if p not in head_broken]
             )
             base_dirty = base_broken | ruff_unformatted(
                 ruff, base_tree, [p for p in base_paths if p not in base_broken]
             )
         finally:
-            run(
-                ["git", "worktree", "remove", "--force", str(base_tree)],
-                repo,
-                ok_codes=(0, 128),
-            )
+            try:
+                if head_tree != repo:
+                    run(["git", "worktree", "remove", "--force", str(head_tree)], repo)
+            finally:
+                run(["git", "worktree", "remove", "--force", str(base_tree)], repo)
 
     found = new_violations(head, old, files, ranks, formatting_only)
     for path in sorted(head_dirty):
@@ -568,6 +766,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--base", required=True, help="the merge-base commit to compare with"
+    )
+    parser.add_argument(
+        "--config-ref",
+        help="trusted base-branch tip supplying Ruff settings (defaults to --base)",
     )
     parser.add_argument("--ruff", default="ruff", help="the ruff executable")
     parser.add_argument(
@@ -589,7 +791,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"formatting-aware comparison requires ruff {RUFF_VERSION}; "
                 f"found {version}, requested {args.expect_ruff_version!r}"
             )
-        found = check(repo, args.base, args.ruff)
+        found = check(repo, args.base, args.ruff, args.config_ref)
     except (GateError, OSError, json.JSONDecodeError) as exc:
         print(f"::error title=Python lint gate::{escape_data(str(exc))}")
         return 2

@@ -1220,10 +1220,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, All sampling preset, custom property and value on the task create page
+2. select the project, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create task button
+5. click the final Create Task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1236,7 +1236,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
 
 **Tags:** —
 
@@ -1438,32 +1438,32 @@
 - one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
 - the picker stays within the viewport at both heights
 
-### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
 
-**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
 
-**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed two sessions with two traces and two spans per trace
-2. choose the project, set a past live start and preview incoming conversation shares
-3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
-4. verify the independently hash-ranked contact is the exact evaluated set
-5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
-6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
-7. verify one new cohort with probability one and the exact expanded span set
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
 
 **Backend state verified:**
 
-- all eight initial spans have two canonical session identities in ClickHouse
-- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
-- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
-- created task evaluates exactly the independently hash-ranked contact with probability one half
-- historical append rerun admits late rows only for the frozen contact without reranking
-- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
 
 ## gateway
 
@@ -1519,7 +1519,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
 
 **Tags:** —
 
@@ -2486,7 +2486,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
 
 **Tags:** —
 
