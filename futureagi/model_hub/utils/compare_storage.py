@@ -127,24 +127,25 @@ def _is_compare_id(value: str) -> bool:
         return False
 
 
-def _expired_compare_ids(client, bucket: str, now: datetime) -> list[str]:
-    """Ids under compare/ in the bucket whose newest object is older than the
-    age limit, oldest first. An object without a modification time counts as
-    new, so its comparison is kept."""
-    newest: dict[str, datetime] = {}
+def _listed_compare_ids(client, bucket: str, now: datetime):
+    """(id, newest modification time) for each comparison under compare/ in
+    the bucket, yielded as the listing reaches the next id. Listings return
+    keys in order, so one comparison's objects arrive together. An object
+    without a modification time counts as new, so its comparison is kept."""
+    current, newest = None, None
     for obj in client.list_objects(bucket, prefix=COMPARE_PREFIX, recursive=True):
         compare_id, _, name = obj.object_name[len(COMPARE_PREFIX) :].partition("/")
         if not name or not _is_compare_id(compare_id):
             continue
         modified = getattr(obj, "last_modified", None) or now
-        newest[compare_id] = max(newest.get(compare_id, modified), modified)
-    cutoff = now - timedelta(seconds=COMPARE_MAX_AGE_SECONDS)
-    expired = sorted(
-        (modified, compare_id)
-        for compare_id, modified in newest.items()
-        if modified < cutoff
-    )
-    return [compare_id for _, compare_id in expired]
+        if compare_id != current:
+            if current is not None:
+                yield current, newest
+            current, newest = compare_id, modified
+        else:
+            newest = max(newest, modified)
+    if current is not None:
+        yield current, newest
 
 
 def _remove_prefix(client, bucket: str, compare_id) -> None:
@@ -186,45 +187,43 @@ def sweep_local_compare_root(now: float | None = None) -> None:
             logger.exception("compare_folder_delete_failed", folder=folder)
 
 
-def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> bool:
-    """Remove the expired comparisons in one bucket; False once the deadline
-    stops it."""
+def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> None:
+    """Remove the expired comparisons in one bucket while listing it, so that
+    a slow listing still removes what it reached. Stops at the deadline
+    (``time.monotonic()``); the next run lists the bucket again."""
+    cutoff = now - timedelta(seconds=COMPARE_MAX_AGE_SECONDS)
     try:
-        expired = _expired_compare_ids(client, bucket, now)
+        for compare_id, modified in _listed_compare_ids(client, bucket, now):
+            if time.monotonic() >= deadline:
+                logger.warning("compare_objects_sweep_deferred", bucket=bucket)
+                return
+            if modified >= cutoff:
+                continue
+            try:
+                _remove_prefix(client, bucket, compare_id)
+                logger.info("compare_objects_deleted", compare_id=compare_id)
+            except Exception:
+                # Still listed, so the next run retries it.
+                logger.exception("compare_objects_delete_failed", compare_id=compare_id)
     except Exception:
         logger.exception("compare_objects_list_failed", bucket=bucket)
-        return True
-    for position, compare_id in enumerate(expired):
-        if time.monotonic() >= deadline:
-            logger.warning(
-                "compare_objects_sweep_deferred",
-                bucket=bucket,
-                remaining=len(expired) - position,
-            )
-            return False
-        try:
-            _remove_prefix(client, bucket, compare_id)
-            logger.info("compare_objects_deleted", compare_id=compare_id)
-        except Exception:
-            # Still listed, so the next run retries it.
-            logger.exception("compare_objects_delete_failed", compare_id=compare_id)
-    return True
 
 
 def sweep_remote_compare_objects(deadline: float, now: datetime | None = None):
     """Remove expired comparisons' objects from the private bucket, including
     those whose local folder lives on another replica or was lost with it,
     then those an earlier release left under compare/ in the upload bucket.
-    Stops starting deletions at ``deadline`` (``time.monotonic()``); what is
-    left is listed again by the next run."""
+    Each bucket gets its share of the time left before ``deadline``
+    (``time.monotonic()``), so the upload bucket is swept on every run; what
+    is left is listed again by the next run."""
     now = now or datetime.now(UTC)
+    private_deadline = time.monotonic() + (deadline - time.monotonic()) / 2
     try:
         client, bucket = _client_and_bucket()
     except Exception:
         logger.exception("compare_bucket_unavailable")
     else:
-        if not _sweep_bucket(client, bucket, deadline, now):
-            return
+        _sweep_bucket(client, bucket, private_deadline, now)
     upload_bucket = str(getattr(settings, "UPLOAD_BUCKET_NAME", "") or "").strip()
     if not upload_bucket:
         return

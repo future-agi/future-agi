@@ -343,26 +343,36 @@ _checked_private_buckets: set[str] = set()
 
 
 def policy_allows_anyone(policy: str) -> bool:
-    """Whether a bucket policy allows anyone at all to do anything."""
+    """Whether a bucket policy may allow anyone at all to do anything. A policy
+    that cannot be read as a list of statements counts as allowing anyone, as
+    does an Allow for everyone but some principals (NotPrincipal)."""
     try:
-        statements = json.loads(policy).get("Statement") or []
-    except (TypeError, ValueError, AttributeError):
-        return False
+        document = json.loads(policy)
+    except (TypeError, ValueError):
+        return True
+    if not isinstance(document, dict):
+        return True
+    statements = document.get("Statement") or []
     if isinstance(statements, dict):
         statements = [statements]
-    return any(
-        isinstance(statement, dict)
-        and statement.get("Effect") == "Allow"
-        and _is_anonymous(statement.get("Principal"))
-        for statement in statements
-    )
+    if not isinstance(statements, list):
+        return True
+    for statement in statements:
+        if not isinstance(statement, dict):
+            return True
+        if statement.get("Effect") == "Allow" and (
+            "NotPrincipal" in statement or _is_anonymous(statement.get("Principal"))
+        ):
+            return True
+    return False
 
 
 def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     """Create the bucket if needed, with no bucket policy, so only the
-    backend's own credentials reach its objects. An existing bucket whose
-    policy lets anyone in, or whose policy these credentials may not read,
-    raises PrivateBucketRefused and is asked again on the next call. GCS buckets are pre-created with IAM, as for ensure_bucket.
+    backend's own credentials reach its objects. A bucket whose policy may let
+    anyone in, or whose policy these credentials may not read, raises
+    PrivateBucketRefused and is asked again on the next call. GCS buckets are
+    pre-created with IAM, as for ensure_bucket.
     """
     if bucket_name in _checked_private_buckets:
         return
@@ -373,12 +383,11 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         try:
             client.make_bucket(bucket_name)
         except Exception as exc:
-            # Another process created it first: check it like any other.
             if getattr(exc, "code", None) not in _BUCKET_ALREADY_CREATED_CODES:
                 raise
-        else:
-            _checked_private_buckets.add(bucket_name)
-            return
+    # Checked even right after creating it: another process may have created
+    # the bucket first with a policy of its own, and some services answer a
+    # repeated creation with success.
     try:
         policy = client.get_bucket_policy(bucket_name)
     except Exception as exc:

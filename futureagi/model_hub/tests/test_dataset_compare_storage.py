@@ -4,6 +4,7 @@ The storage tests run against the MinIO of docker-compose.test.yml (published
 on localhost:19005, or MINIO_ENDPOINT) and skip when it is not reachable.
 """
 
+import json
 import os
 import time
 import urllib.error
@@ -167,6 +168,44 @@ def test_a_public_or_upload_bucket_is_refused_for_comparison_data(
     assert _compare_objects(minio_storage, compare_id) == {}
 
 
+class _CreatedFirstWithPolicy:
+    """Storage where another process creates the bucket, with a policy that
+    lets anyone read it, just before this one's creation, which still
+    answers success."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def make_bucket(self, bucket):
+        self._client.make_bucket(bucket)
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [storage_client._anonymous_read_statement(bucket)],
+        }
+        self._client.set_bucket_policy(bucket, json.dumps(policy))
+
+
+def test_a_bucket_given_a_policy_while_it_was_created_is_refused(
+    minio_storage, monkeypatch
+):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    monkeypatch.setattr(
+        storage_client, "_client", _CreatedFirstWithPolicy(minio_storage.client)
+    )
+    compare_id = str(uuid.uuid4())
+    with pytest.raises(PrivateBucketRefused):
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert _compare_objects(minio_storage, compare_id) == {}
+    # Refused, not remembered as private: the next write is checked again.
+    with pytest.raises(PrivateBucketRefused):
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+
+
 class _PolicyClient:
     """An existing bucket whose policy read gives the error code."""
 
@@ -198,6 +237,86 @@ def test_a_bucket_whose_policy_cannot_be_read_is_not_used(
     settings.UPLOAD_BUCKET_NAME = "test-upload"
     settings.COMPARE_BUCKET_NAME = f"test-upload-compare-{uuid.uuid4().hex[:8]}"
     client = _PolicyClient(code)
+    monkeypatch.setattr(storage_client, "_client", client)
+    monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "s3")
+    compare_id = str(uuid.uuid4())
+    if accepted:
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert client.written == [f"compare/{compare_id}/metadata.json"]
+    else:
+        with pytest.raises(PrivateBucketRefused):
+            write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert client.written == []
+
+
+class _PolicyTextClient:
+    """An existing bucket whose policy read returns the given text."""
+
+    def __init__(self, policy):
+        self.policy = policy
+        self.written = []
+
+    def bucket_exists(self, bucket):
+        return True
+
+    def get_bucket_policy(self, bucket):
+        return self.policy
+
+    def put_object(self, **kwargs):
+        self.written.append(kwargs["object_name"])
+
+
+_NAMED_READER = {
+    "Effect": "Allow",
+    "Principal": {"AWS": ["arn:aws:iam::000000000000:role/reader"]},
+    "Action": ["s3:GetObject"],
+    "Resource": ["arn:aws:s3:::bucket/*"],
+}
+
+
+@pytest.mark.parametrize(
+    "policy, accepted",
+    [
+        ("{not json", False),
+        ("[]", False),
+        ('"text"', False),
+        (json.dumps({"Statement": "Allow"}), False),
+        (json.dumps({"Statement": ["Allow"]}), False),
+        (
+            json.dumps(
+                {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "NotPrincipal": {"AWS": ["arn:aws:iam::0:root"]},
+                            "Action": ["s3:GetObject"],
+                        }
+                    ]
+                }
+            ),
+            False,
+        ),
+        (json.dumps({"Version": "2012-10-17", "Statement": [_NAMED_READER]}), True),
+    ],
+    ids=[
+        "not-json",
+        "not-an-object",
+        "a-string",
+        "statement-text",
+        "statement-list-of-text",
+        "allow-not-principal",
+        "named-principal",
+    ],
+)
+def test_a_policy_that_cannot_be_read_as_private_is_refused(
+    monkeypatch, settings, policy, accepted
+):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    settings.UPLOAD_BUCKET_NAME = "test-upload"
+    settings.COMPARE_BUCKET_NAME = f"test-upload-compare-{uuid.uuid4().hex[:8]}"
+    client = _PolicyTextClient(policy)
     monkeypatch.setattr(storage_client, "_client", client)
     monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "s3")
     compare_id = str(uuid.uuid4())
@@ -289,5 +408,62 @@ def test_scheduled_cleanup_removes_expired_comparisons_and_keeps_fresh_ones(
             # Remote deletion failed, so its local folder stays for a retry.
             f"test-upload-compare/compare/{stuck_id}/page_1.json",
             "test-upload/images/kept.png",
+        ]
+    )
+
+
+class _SlowListingClient(_FakeBucketClient):
+    """Storage whose listing advances the clock for every object it returns."""
+
+    def __init__(self, objects, clock, seconds_per_object):
+        super().__init__(objects)
+        self.clock = clock
+        self.seconds_per_object = seconds_per_object
+
+    def list_objects(self, bucket, prefix="", recursive=False):
+        for obj in super().list_objects(bucket, prefix, recursive):
+            self.clock[0] += self.seconds_per_object
+            yield obj
+
+
+def test_a_slow_listing_still_removes_the_expired_comparisons_it_reached(
+    monkeypatch, settings
+):
+    from model_hub.utils import compare_storage
+
+    settings.UPLOAD_BUCKET_NAME = "test-upload"
+    settings.COMPARE_BUCKET_NAME = "test-upload-compare"
+    now = datetime.now(UTC)
+    old, recent = now - timedelta(hours=3), now - timedelta(minutes=10)
+    # Listings return keys in order: two expired comparisons come first, then
+    # more fresh ones than the sweep can list before its deadline.
+    first, second, legacy = (str(uuid.UUID(int=number)) for number in (1, 2, 3))
+    fresh = [str(uuid.UUID(int=100 + number)) for number in range(20)]
+    objects = {
+        f"test-upload-compare/compare/{first}/page_1.json": old,
+        f"test-upload-compare/compare/{second}/page_1.json": old,
+        f"test-upload/compare/{legacy}/page_1.json": old,
+        "test-upload/images/kept.png": old,
+    }
+    objects.update(
+        {f"test-upload-compare/compare/{key}/page_1.json": recent for key in fresh}
+    )
+    clock = [0.0]
+    client = _SlowListingClient(objects, clock, seconds_per_object=30)
+    monkeypatch.setattr(storage_client, "_client", client)
+    monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "minio")
+    monkeypatch.setattr(
+        compare_storage,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0], time=time.time),
+    )
+
+    # Listing every object would take 11 minutes; the sweep has 8.
+    compare_storage.sweep_remote_compare_objects(deadline=8 * 60, now=now)
+
+    assert sorted(client.objects) == sorted(
+        [
+            "test-upload/images/kept.png",
+            *(f"test-upload-compare/compare/{key}/page_1.json" for key in fresh),
         ]
     )
