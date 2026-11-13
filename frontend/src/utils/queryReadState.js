@@ -34,7 +34,10 @@ export const QUERY_FAILED_RETRY_MESSAGE =
 const NON_RETRYABLE_QUERY_ERROR_CODES = new Set(["tag_filter_too_broad"]);
 
 export const nonRetryableQueryErrorMessage = (error) => {
-  const data = error?.response?.data;
+  // The shared Axios interceptor (src/utils/axios) rejects with the flattened
+  // response body ({...data, statusCode, transportCode}). Accept that shape
+  // and a raw Axios error ({response: {data}}).
+  const data = error?.response?.data ?? error;
   if (!NON_RETRYABLE_QUERY_ERROR_CODES.has(data?.code)) return null;
   return typeof data?.message === "string" && data.message
     ? data.message
