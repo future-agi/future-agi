@@ -22,11 +22,13 @@ from typing import Any
 
 import structlog
 from asgiref.sync import sync_to_async
+from mcp.server.streamable_http import MCP_PROTOCOL_VERSION_HEADER
 
 # The function starlette.requests uses to decide how to parse a form body.
 from python_multipart.multipart import parse_options_header
 from rest_framework.exceptions import Throttled
 from starlette.datastructures import FormData, Headers
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import ClientDisconnect, Request
 
 from mcp_server.exceptions import RateLimitBackendUnavailableError
@@ -97,8 +99,16 @@ async def _parse_form(scope: Scope, messages: list[Message]) -> FormData:
     return await Request(scope, receive).form()
 
 
+async def _no_body() -> Message:
+    return {"type": "http.disconnect"}
+
+
 async def _send_json(
-    send: Send, status: int, payload: dict, headers: dict[str, str] | None = None
+    scope: Scope,
+    send: Send,
+    status: int,
+    payload: dict,
+    headers: dict[str, str] | None = None,
 ) -> None:
     body = json.dumps(payload).encode()
     raw_headers = [
@@ -108,20 +118,37 @@ async def _send_json(
     ]
     for name, value in (headers or {}).items():
         raw_headers.append((name.lower().encode(), value.encode()))
-    await send(
-        {"type": "http.response.start", "status": status, "headers": raw_headers}
+
+    async def respond(scope: Scope, receive: Receive, send: Send) -> None:
+        await send(
+            {"type": "http.response.start", "status": status, "headers": raw_headers}
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    # Responses sent here never reach the SDK routes, so they get the CORS
+    # policy those routes use (mcp.server.auth.routes), and browser clients
+    # can read Retry-After.
+    app = CORSMiddleware(
+        respond,
+        allow_origins=["*"],
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=[MCP_PROTOCOL_VERSION_HEADER],
+        expose_headers=["Retry-After"],
     )
-    await send({"type": "http.response.body", "body": body})
+    await app(scope, _no_body, send)
 
 
-async def _send_invalid_request(send: Send, detail: str) -> None:
+async def _send_invalid_request(scope: Scope, send: Send, detail: str) -> None:
     await _send_json(
-        send, 400, {"error": "invalid_request", "error_description": detail}
+        scope, send, 400, {"error": "invalid_request", "error_description": detail}
     )
 
 
-async def _send_throttled(send: Send, wait: float | int | None, detail: str) -> None:
+async def _send_throttled(
+    scope: Scope, send: Send, wait: float | int | None, detail: str
+) -> None:
     await _send_json(
+        scope,
         send,
         429,
         {"error": "slow_down", "error_description": detail},
@@ -229,13 +256,14 @@ class MCPSDKOAuthThrottleMiddleware:
         is_token_path = path in TOKEN_PATHS
         if is_token_path and not _is_urlencoded(scope):
             await _send_invalid_request(
-                send, "Content-Type must be application/x-www-form-urlencoded"
+                scope, send, "Content-Type must be application/x-www-form-urlencoded"
             )
             return
 
         body, messages = await _read_body(receive)
         if body is None:
             await _send_json(
+                scope,
                 send,
                 413,
                 {
@@ -251,7 +279,9 @@ class MCPSDKOAuthThrottleMiddleware:
             except ClientDisconnect:
                 return
             if len(form.getlist("client_id")) > 1:
-                await _send_invalid_request(send, "client_id must not be repeated")
+                await _send_invalid_request(
+                    scope, send, "client_id must not be repeated"
+                )
                 return
             # dict() keeps the last value of each field, as the SDK's
             # dict(form_data) does. Only text fields can carry client_id.
@@ -269,10 +299,10 @@ class MCPSDKOAuthThrottleMiddleware:
             refused = await sync_to_async(admit)(request)
         except RateLimitBackendUnavailableError as exc:
             await sync_to_async(release_token_attempt_reservation)(request)
-            await _send_throttled(send, exc.retry_after, outage_detail)
+            await _send_throttled(scope, send, exc.retry_after, outage_detail)
             return
         if refused is not None:
-            await _send_throttled(send, *refused)
+            await _send_throttled(scope, send, *refused)
             return
 
         pending = list(messages)
