@@ -123,7 +123,7 @@ test('skills walkthrough', async ({ browser, request }) => {
     const hits = await page.evaluate(() => (document.body.innerText.match(/.{0,40}(localhost|127\.0\.0\.1|e2e|fixture|ctxhub|playwright).{0,40}/gi) ?? []).slice(0, 5)).catch(() => []);
     if (hits.length) mark('audit', { label: `${at} :: ${hits.join(' | ')}` });
   };
-  const caption = async (text: string, ms = 1800) => { if (Date.now() - lastGlide > 5000) await setCaptionTop(page, false); await setCaption(page, chip, text); mark('caption', { label: text }); await audit(text); await dwell(Math.max(1000, ms * 0.6)); await shot(text.slice(0, 40).replace(/[^a-z0-9]+/gi, '-')); };
+  const caption = async (text: string, ms = 1800) => { if (Date.now() - lastGlide > 5000) await setCaptionTop(page, false); await setCaption(page, chip, text); mark('caption', { label: text }); await audit(text); await dwell(Math.max(1000, ms * 0.5)); await shot(text.slice(0, 40).replace(/[^a-z0-9]+/gi, '-')); };
   const chapter = async (n: number, title: string, first: string) => { chip = `${n} · ${title}`; mark('chapter', { chapter: n, title }); await caption(first, 2200); };
   const center = async (l: Locator) => {
     await l.waitFor({ state: 'visible' });
@@ -169,7 +169,7 @@ test('skills walkthrough', async ({ browser, request }) => {
     // ---------------- Title card
     await page.goto('/__demo/card/title');
     mark('title');
-    await page.waitForTimeout(FAST ? 300 : 3200);
+    await page.waitForTimeout(FAST ? 300 : 2800);
 
     // ---------------- 1. Skills library and a skill in the editor
     if (ONLY.includes(1)) {
@@ -209,7 +209,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await expect(warnings.getByText(/possible .* was found/)).toBeVisible();
       await glide(warnings.getByText(/possible .* was found/));
       await caption('A possible secret is flagged before anything is published (the value is fake).', 2400);
-      await dwell(2200); // the rendered Warning row stays on screen for well over 3 s
+      await dwell(1800); // the rendered Warning row stays on screen for over 3 s
       await editor.press('Shift+Home'); await editor.press('Backspace'); await editor.press('Backspace');
       await expect(warnings).not.toBeVisible();
       await expect(page.getByText('Saved', { exact: true })).toBeVisible();
@@ -225,7 +225,9 @@ test('skills walkthrough', async ({ browser, request }) => {
       await click(page.getByRole('button', { name: 'Publish', exact: true }), 900);
       const dialog = page.getByRole('dialog');
       await typeInto(dialog.getByRole('textbox', { name: 'Version note' }), 'Refund item price only; cap at 25 USD');
-      await click(dialog.getByRole('button', { name: 'Publish', exact: true }), 1500);
+      const publishButton = dialog.getByRole('button', { name: 'Publish', exact: true });
+      await glide(publishButton);
+      await loading(page.getByRole('tabpanel', { name: 'Files' }).getByRole('treeitem', { name: 'SKILL.md', exact: true }), () => publishButton.click());
       await expect(page).toHaveURL(new RegExp(`/dashboard/skills/${ids.refund}(\\?.*)?$`));
       await caption('v2 is published. The production label still points at v1.', 1800);
       await click(page.getByRole('tab', { name: 'Versions', exact: true }), 1200);
@@ -234,7 +236,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await loading(page.getByRole('list', { name: 'Compared files' }), () => page.getByRole('menuitem', { name: 'Compare with previous', exact: true }).click());
       await expect(page.getByRole('list', { name: 'Compared files' })).toBeVisible();
       await caption('Compare shows exactly which files changed between v1 and v2.', 1400);
-      await click(page.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: /SKILL\.md/ }), 2600);
+      await click(page.getByRole('list', { name: 'Compared files' }).getByRole('button', { name: /SKILL\.md/ }), 2000);
       await goto(`/dashboard/skills/${ids.refund}?tab=versions`, page.getByRole('button', { name: 'Actions for production', exact: true }));
       await caption('Promotion is a separate, explicit step.', 1000);
       await click(page.getByRole('button', { name: 'Actions for production', exact: true }), 600);
@@ -252,7 +254,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await click(page.getByRole('menuitem', { name: 'History', exact: true }), 600);
       await expect(page.getByText('Approved by support ops').first()).toBeVisible({ timeout: 30_000 });
       await caption('Label history records every move, who made it and why.', 2600);
-      await dwell(1200);
+      await dwell(600);
       await click(page.getByRole('button', { name: 'Close label history' }), 800);
     }
 
@@ -270,12 +272,12 @@ test('skills walkthrough', async ({ browser, request }) => {
       await click(page.getByRole('tab', { name: 'Linked skills', exact: true }), 1400);
       await caption('Four skills follow production; escalation-tone is pinned to v1 on purpose.', 3600);
       await glide(page.getByText('skills/escalation-tone/', { exact: true }));
-      await dwell(2400);
+      await dwell(1400);
       const refundLock = page.getByRole('row').filter({ hasText: 'skills/refund-policy/' }).getByRole('button', { name: 'Lock details', exact: true });
       await click(refundLock, 1200);
       await glide(page.getByRole('row').filter({ hasText: 'skills/refund-policy/' }).getByText(/^[0-9a-f]{12}…$/).first());
       await caption('The resolved lock records the exact version and digest of every skill.', 3600);
-      await dwell(1600);
+      await dwell(800);
       await glide(page.getByRole('row').filter({ hasText: 'skills/refund-policy/' }).getByText('v2 available'));
       await caption('refund-policy v2 is available, but the context stays on v1 until someone accepts the change.', 3600);
     }
@@ -520,11 +522,10 @@ test('skills walkthrough', async ({ browser, request }) => {
       mark('note', { label: `context v2 lock refund-policy digest prefix ${contextDigest}` });
       await glide(lockRow.getByText(/^[0-9a-f]{12}…$/).first());
       await caption('Note the refund-policy v2 digest in the context lock.', 2600);
-      await goto(`/dashboard/skills/contexts/${ids.support}?version=2&tab=use`, page.getByRole('tab', { name: 'Claude Code', exact: true }), 'The context Use tab plans an install pinned to v2, against the workspace\'s public API.');
+      await goto(`/dashboard/skills/contexts/${ids.support}?version=2&tab=use`, page.getByRole('tab', { name: 'Claude Code', exact: true }), 'The context Use tab plans a v2-pinned install against the public API (a preview installer in this build).');
       await click(page.getByRole('tab', { name: 'Claude Code', exact: true }), 900);
       await glide(page.getByText(/^API: /));
-      await caption('The context Use tab plans an install pinned to v2, against the workspace\'s public API.', 2600);
-      await caption('This build marks the context installer as a preview; skills install directly today.', 2200);
+      await caption('The context Use tab plans a v2-pinned install against the public API (a preview installer in this build).', 3000);
       await goto(`/dashboard/skills/${ids.refund}?tab=use`, page.getByRole('combobox', { name: /^Coding client/ }), 'The skill Use tab gives a copyable Claude Code install command.');
       await expect(page.getByRole('combobox', { name: /^Coding client/ })).toHaveText(/Claude Code/);
       await glide(page.getByRole('combobox', { name: /^Coding client/ }));
@@ -549,7 +550,7 @@ test('skills walkthrough', async ({ browser, request }) => {
     await setCaption(page, '', '');
     await page.goto('/__demo/card/end');
     mark('end');
-    await page.waitForTimeout(FAST ? 300 : 3200);
+    await page.waitForTimeout(FAST ? 300 : 2800);
     mark('stop');
   } finally {
     if (test.info().status !== test.info().expectedStatus) {

@@ -14,7 +14,7 @@ from pathlib import Path
 
 LEAD, TAIL = 1.5, 2.0  # seconds kept at each end of a trimmed wait
 WHITE_YAVG = 233  # signalstats mean luma at or above this is a blank white page-transition frame
-WHITE_MAX_RUN = 0.5  # transition flashes are short; longer bright runs are real (light) page content and are kept
+WHITE_MAX_RUN = 1.5  # transition flashes last well under 1.5 s; longer bright runs would be real page content and are kept
 
 CHAPTER_NOTES = {
     1: 'Library of five skills; refund-policy opened in the editor (files, references); the live check flags a fake api_key line, it is removed, the draft autosaves.',
