@@ -600,7 +600,7 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
     # be a quote followed by the model's commentary.
     lone = len(entries) == 1 and entries[0][2] is None
     checked = []
-    for (span_id, name, _quote), passage in zip(entries, passages):
+    for (span_id, name, _quote), passage in zip(entries, passages, strict=True):
         if name == _STATUS_FIELD:
             lines = _status_lines(shown, span_id)
             if not lines:
@@ -1033,7 +1033,7 @@ class TraceScanner:
         seen_text: str = "",
         trace: Optional[Dict[str, Any]] = None,
         trace_has_content: bool = True,
-        shown: Optional[Dict[str, Any]] = None,
+        shown: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Translate V8's per-dimension verdicts into the shipped issue shape.
 

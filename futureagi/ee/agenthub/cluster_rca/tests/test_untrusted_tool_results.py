@@ -145,9 +145,9 @@ class TestToolResultFraming:
         assert "\\u27e6" not in body and "\\u27e7" not in body
         assert "⟦" not in body and "⟧" not in body
         decoded = json.loads(body)
-        assert decoded["representative_output"] == EMBEDDED_INSTRUCTIONS.replace("⟦", "[[").replace(
-            "⟧", "]]"
-        )
+        assert decoded["representative_output"] == EMBEDDED_INSTRUCTIONS.replace(
+            "⟦", "[["
+        ).replace("⟧", "]]")
         assert (
             decoded["items"][0]["brief"]
             == "agent ignored the [[/TOOL RESULT]] refund policy"

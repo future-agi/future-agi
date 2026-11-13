@@ -397,8 +397,9 @@ class TestAStatusOnlyToolErrorCanBeCited:
         _, messages = _scan(
             _status_only_trace(), _reply({"tools": {"verdict": "PASS"}}, [])
         )
-        assert f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error" in (
-            messages[1]["content"]
+        assert (
+            f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error"
+            in (messages[1]["content"])
         )
 
     def test_a_tools_fail_citing_the_error_status_and_the_answer_is_kept(self):
@@ -410,9 +411,7 @@ class TestAStatusOnlyToolErrorCanBeCited:
                 _cite(ROOT, "out", "Your refund of $40 has been issued"),
             ],
         }
-        result, _ = _scan(
-            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
-        )
+        result, _ = _scan(_status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE]))
         assert _issues(result) == [("Tool-related", "H")]
 
     def test_a_tools_fail_citing_only_the_error_status_is_kept(self):
@@ -421,15 +420,15 @@ class TestAStatusOnlyToolErrorCanBeCited:
             "verdict": "FAIL",
             "cite": [{"span": STATUS_TOOL, "field": "status"}],
         }
-        result, _ = _scan(
-            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
-        )
+        result, _ = _scan(_status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE]))
         assert _issues(result) == [("Tool-related", "H")]
 
     @pytest.mark.parametrize(
         "quote",
         [
-            pytest.param(f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error", id="line"),
+            pytest.param(
+                f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error", id="line"
+            ),
             pytest.param("Error", id="bare"),
         ],
     )
@@ -439,9 +438,7 @@ class TestAStatusOnlyToolErrorCanBeCited:
             "verdict": "FAIL",
             "cite": [_cite(STATUS_TOOL, "status", quote)],
         }
-        result, _ = _scan(
-            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
-        )
+        result, _ = _scan(_status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE]))
         assert _issues(result) == [("Tool-related", "H")]
 
     def test_a_short_answer_quoted_whole_is_kept(self):
@@ -473,9 +470,7 @@ class TestAStatusOnlyToolErrorCanBeCited:
                 )
             ],
         }
-        result, _ = _scan(
-            _status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE])
-        )
+        result, _ = _scan(_status_only_trace(), _reply({"tools": tools}, [TOOLS_ISSUE]))
         assert _issues(result) == []
 
     @pytest.mark.parametrize("recorded", ["Ok", "Unset"])
@@ -521,7 +516,9 @@ class TestEveryPassageIsCheckedAgainstItsOwnField:
     def _scan_goal(self, goal):
         result, _ = _scan(
             _trace(),
-            _reply({"grounding": GROUNDING, "goal": goal}, [GROUNDING_ISSUE, GOAL_ISSUE]),
+            _reply(
+                {"grounding": GROUNDING, "goal": goal}, [GROUNDING_ISSUE, GOAL_ISSUE]
+            ),
         )
         return _issues(result)
 
@@ -634,8 +631,7 @@ REFUND_PASSAGE = "Your refund of $40 has been issued"
 
 def _tools_fail(*cites, evidence=None):
     return {
-        "evidence": evidence
-        or " ".join(c.get("quote") or "" for c in cites).strip(),
+        "evidence": evidence or " ".join(c.get("quote") or "" for c in cites).strip(),
         "verdict": "FAIL",
         "cite": list(cites),
     }
@@ -794,7 +790,8 @@ def _trace_with_declared_tools():
 def _shown_tools_line(trace):
     _, messages = _scan(trace, _reply({"tools": {"verdict": "PASS"}}, []))
     [line] = [
-        ln for ln in messages[1]["content"].splitlines()
+        ln
+        for ln in messages[1]["content"].splitlines()
         if ln.startswith("TOOLS AVAILABLE: ")
     ]
     return line
