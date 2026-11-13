@@ -29,6 +29,7 @@ import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
   NO_MODELS_NOTE,
+  UNMEASURED_NOTE,
   UNTRACED_NOTE,
   blockedByDraft,
   blockedReason as blockedReasonOf,
@@ -36,6 +37,7 @@ import {
   costLimitOf,
   countsLine,
   isTraced,
+  callsUnmeasured,
   seesModels,
   tracesUnreadable,
   launchError,
@@ -406,9 +408,11 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
                 {tracesUnreadable(options)
                   ? options.blocked.message
-                  : isTraced(options)
-                    ? NO_MODELS_NOTE
-                    : UNTRACED_NOTE}
+                  : callsUnmeasured(options)
+                    ? UNMEASURED_NOTE
+                    : isTraced(options)
+                      ? NO_MODELS_NOTE
+                      : UNTRACED_NOTE}
               </Typography>
             )}
           </Row>

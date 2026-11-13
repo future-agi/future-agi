@@ -459,6 +459,23 @@ describe("LaunchFixDialog", () => {
     expect("allowed_models" in axios.post.mock.calls.at(-1)[1]).toBe(false);
   });
 
+  it("says an agent whose every model call went unmeasured has an unknown cost", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.agent_cost_metered = true;
+    options.defaults.agent_calls_unmeasured = true;
+    pinOptions(options);
+    renderDialog();
+
+    expect(
+      await screen.findByText(
+        /This agent calls its model in a way Epoch can't measure, such as another SDK or a direct HTTP request\. The model lock and the cost limit will show “Unknown”\./,
+      ),
+    ).toBeInTheDocument();
+    // The cost is not checked: no line says it is.
+    expect(screen.queryByText(/Its cost is still checked/)).toBeNull();
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+  });
+
   it("locks a traced agent to the models its run called, and sends the user's limits", async () => {
     const options = fixtureLaunchOptions("te-run-6");
     options.defaults.allowed_models = [

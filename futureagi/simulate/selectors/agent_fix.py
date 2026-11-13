@@ -1358,6 +1358,8 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             max_minutes=default_max_minutes(len(scenarios) + variations),
             allowed_models=models_called(usage),
             agent_cost_metered=bool(usage),
+            agent_calls_unmeasured=bool(usage)
+            and all(one.partial for one in usage.values()),
             reply_latency_margin_pct=MARGIN_PCT_DEFAULT,
             cost_margin_pct=MARGIN_PCT_DEFAULT,
         ),

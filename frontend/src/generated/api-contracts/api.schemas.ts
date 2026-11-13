@@ -18388,6 +18388,7 @@ export interface AgentFixLaunchDefaultsApi {
   max_minutes: number;
   allowed_models: string[];
   agent_cost_metered: boolean;
+  agent_calls_unmeasured: boolean;
   reply_latency_margin_pct: number;
   cost_margin_pct: number;
 }
