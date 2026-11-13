@@ -1543,6 +1543,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.clickhouse.trace_project_scope": {
         "latest_live_project_traces_sql": _TRACE_PROJECT_SCOPE,
         "latest_live_trace_projects_sql": _TRACE_PROJECT_SCOPE,
+        "live_trace_project_sets_sql": _TRACE_PROJECT_SCOPE,
     },
     "tracer.services.clickhouse.v2.backfill": {
         "_process_window": filed(

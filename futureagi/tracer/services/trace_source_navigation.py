@@ -59,7 +59,7 @@ def classify_trace_source(
     if str(detail.project_id) != project_id:
         return SourceNavigation("invalid_reference")
     spans = list(detail.spans)
-    by_id = {}
+    by_id: dict[str, list[dict]] = {}
     for row in spans:
         if (
             str(row.get("trace_id") or "") != trace_id
