@@ -334,11 +334,15 @@ def graph_tag_overlay_params(
         execute=reader,
     )
     if overlay.unmatched_trace_assignments:
+        # Only window-live traces can be in the graph: older curated tags
+        # their assignments hide must not spend the suppression budget.
         overlay.assigned |= legacy_suppressions(
             reader or graph_overlay_executor(),
             project_ids=project_ids,
             values=values,
             deadline=deadline,
+            window_start=window_start,
+            window_end=window_end,
         )
     trace_keys, span_keys, assigned = overlay.keys(values)
     params = {

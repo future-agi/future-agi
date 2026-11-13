@@ -905,3 +905,44 @@ def test_agent_graph_tag_window_leaves_other_leaves_unbounded(stores):
     ).build()
     explain = stores.execute("EXPLAIN PLAN " + remote.rsplit(")", 1)[0], params)
     assert "attributes_extra" not in "\n".join(row["explain"] for row in explain)
+
+
+@pytest.mark.parametrize("graph", ["agent", "primary"])
+def test_graph_suppressions_ignore_curated_traces_outside_the_window(
+    stores, monkeypatch, graph
+):
+    """Curated tags hidden by an assignment matter only for window-live traces.
+
+    Old traces whose only roots started before the window carry a curated
+    ``wanted`` that their saved assignments replaced. They can never be in the
+    graph, so they must not consume the suppression budget either.
+    """
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    seed(
+        stores,
+        "alpha",
+        span="child",
+        parent_span_id="root",
+        total_tokens=_tokens("alpha", "child"),
+    )
+    manual("alpha", ["wanted"])
+    for trace in ("delta", "epsilon"):
+        seed(
+            stores,
+            trace,
+            start_time=BEGIN - timedelta(hours=3),
+            total_tokens=_tokens(trace, "root"),
+        )
+        stores.execute(
+            "INSERT INTO traces VALUES (%(project)s, %(trace)s, '[\"wanted\"]', 1, 0)",
+            {"project": PROJECT, "trace": trace},
+        )
+        manual(trace, ["kept"])
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    item = leaf("tag", "wanted")
+    if graph == "agent":
+        assert agent_graph_traces(stores, item, ("alpha", "delta", "epsilon")) == {
+            "alpha"
+        }
+    else:
+        assert counted(stores, "trace", item) == {"alpha"}
