@@ -283,11 +283,12 @@ def test_persistent_login_rejection_is_infrastructure(evaluation_case, path, tab
 
 
 @contextlib.contextmanager
-def reconnects_rejected(fault, server, count):
+def reconnects_rejected(fault, server, count, **overrides):
     """Send the next `count` reconnects after the metadata fault to `server`.
 
     Entry points call close_old_connections and may reconnect before the
     metadata read, so only reconnects made by the retry itself are redirected.
+    `overrides` are extra libpq parameters for the redirected reconnects.
     """
     database = connections["default"]
     connect = database.get_new_connection
@@ -296,7 +297,12 @@ def reconnects_rejected(fault, server, count):
     def get_new_connection(conn_params):
         if fault.calls >= 1 and state.redirected < count:
             state.redirected += 1
-            conn_params = {**conn_params, "host": "127.0.0.1", "port": server.port}
+            conn_params = {
+                **conn_params,
+                **overrides,
+                "host": "127.0.0.1",
+                "port": server.port,
+            }
         return connect(conn_params)
 
     with patch.object(database, "get_new_connection", get_new_connection):

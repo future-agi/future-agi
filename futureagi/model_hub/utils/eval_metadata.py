@@ -1,5 +1,6 @@
 """Bounded recovery for evaluation metadata reads, never evaluation side effects."""
 
+import re
 import time
 from collections.abc import Callable, Iterable
 from typing import TypeVar
@@ -22,7 +23,9 @@ _RETRY_DELAYS = (0.25, 0.5)
 _RETRYABLE_SQLSTATES = frozenset({"57P01", "57P02", "57P03", "53300"})
 
 # Configuration or statement faults. Retrying cannot help, so they escape even
-# when another marker below also appears in the message.
+# when another marker below also appears in the message. The one exception is a
+# pg_hba.conf refusal of one login attempt next to another attempt's capacity
+# refusal; see _capacity_outranks_hba_refusal.
 _DETERMINISTIC_MARKERS = (
     "authentication failed",
     "no password supplied",
@@ -65,6 +68,10 @@ _TRANSPORT_MARKERS = (
     "the connection is lost",
 )
 
+# libpq starts each attempt's report with "connection to server ...", and
+# sslmode=prefer joins a refused TLS attempt and its plaintext retry this way.
+_LOGIN_ATTEMPT_BOUNDARY = re.compile(r"\n(?=connection to server )")
+
 
 class EvaluationMetadataUnavailable(RuntimeError):
     """No evaluator or billing call started; metadata could not be loaded."""
@@ -76,6 +83,29 @@ class EvaluationMetadataUnavailable(RuntimeError):
             "Evaluation not started: database temporarily unavailable while loading "
             "evaluation metadata. Please retry the evaluation."
         )
+
+
+def _capacity_outranks_hba_refusal(message: str) -> bool:
+    # PostgreSQL says "sorry, too many clients already" before it reads
+    # pg_hba.conf, so libpq retries that refusal in plaintext. If a slot frees
+    # in between, an SSL-only server refuses the plaintext attempt in
+    # pg_hba.conf. Its rules are per encryption method, so that refusal does not
+    # show that the login refused at capacity is misconfigured. Retry only when
+    # every attempt is a capacity/unavailable refusal or a pg_hba.conf one, and
+    # at least one is the former; any other deterministic text still escapes.
+    attempts = _LOGIN_ATTEMPT_BOUNDARY.split(message)
+    if len(attempts) < 2:
+        return False
+    unavailable = False
+    for attempt in attempts:
+        if "pg_hba.conf" in attempt:
+            continue
+        if any(marker in attempt for marker in _DETERMINISTIC_MARKERS):
+            return False
+        if not any(marker in attempt for marker in _LOGIN_UNAVAILABLE_MARKERS):
+            return False
+        unavailable = True
+    return unavailable
 
 
 def _is_connection_failure(error: Exception, connection: BaseDatabaseWrapper) -> bool:
@@ -94,6 +124,8 @@ def _is_connection_failure(error: Exception, connection: BaseDatabaseWrapper) ->
     # In particular a refused connection has no installed driver connection to
     # inspect. Keep these signatures narrow; unknown OperationalErrors escape.
     message = str(cause).lower()
+    if _capacity_outranks_hba_refusal(message):
+        return True
     if any(marker in message for marker in _DETERMINISTIC_MARKERS):
         return False
     if any(marker in message for marker in _LOGIN_UNAVAILABLE_MARKERS):
