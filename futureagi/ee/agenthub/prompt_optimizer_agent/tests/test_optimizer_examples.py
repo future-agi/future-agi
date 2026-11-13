@@ -172,7 +172,22 @@ def test_feedback_recalculation_uses_optimizer_dataset(
 
     dataset, column = create_dataset_with_column(organization, workspace, user)
     metric = make_metric(dataset, column)
-    optimization = create_optimization(dataset, column, metric)
+    metric.template.config.update(
+        eval_type_id="CustomPromptEvaluator",
+        required_keys=["input"],
+        model="turing_small",
+        rule_prompt="Check {{input}}",
+    )
+    metric.template.save()
+    metric.config = {"mapping": {"input": str(column.id)}, "config": {}}
+    metric.save()
+    prompt_column = Column.no_workspace_objects.create(
+        dataset=dataset,
+        name="Prompt output",
+        data_type="text",
+        source=SourceChoices.OTHERS.value,
+    )
+    optimization = create_optimization(dataset, prompt_column, metric)
     eval_column = Column.no_workspace_objects.create(
         dataset=dataset,
         name="Optimizer score",
@@ -183,17 +198,18 @@ def test_feedback_recalculation_uses_optimizer_dataset(
     feedback = make_feedback(metric, column, user)
     feedback.source_id = str(eval_column.id)
     feedback.save()
-    seen = []
-
-    def evaluate_result(runner, row, mappings):
-        assert runner.optimize.id == optimization.id
-        examples = runner.get_few_shot_examples(["question"], [str(column.id)])
-        seen.append(examples)
-        return {}, "pass", "Passed"
+    evaluator = Mock()
+    evaluator.return_value.run.return_value = SimpleNamespace(
+        eval_results=[
+            {"data": "question", "reason": "Useful", "metrics": [{"value": 0.8}]}
+        ]
+    )
+    evaluator.return_value.format_result.return_value = "Passed"
 
     def retrieve(**kwargs):
         assert kwargs["feedback_ids"] == [str(feedback.id)]
         assert kwargs["organization_id"] == dataset.organization_id
+        assert kwargs["input_cols"] == [str(column.id)]
         return [
             [
                 {
@@ -236,10 +252,12 @@ def test_feedback_recalculation_uses_optimizer_dataset(
             "ee.usage.services.metering.check_usage",
             return_value=SimpleNamespace(allowed=True),
         ),
+        patch("evaluations.engine.registry.get_eval_class", return_value=evaluator),
         patch(
-            "model_hub.views.eval_runner.EvaluationRunner._process_eval_result",
-            evaluate_result,
+            "model_hub.views.eval_runner.EvaluationRunner._handle_api_call",
+            return_value=None,
         ),
+        patch("model_hub.views.eval_runner.EvaluationRunner._emit_cell_usage"),
         patch("model_hub.views.eval_runner.EmbeddingManager") as reader,
     ):
         reader.return_value.retrieve_avg_rag_based_examples.side_effect = retrieve
@@ -247,8 +265,11 @@ def test_feedback_recalculation_uses_optimizer_dataset(
             examples
         )
         run_evaluation_task(payload)
-    assert len(seen) == 1
-    assert "updated correction" in str(seen[0])
+    evaluator.assert_called_once()
+    evaluator.return_value.run.assert_called_once()
+    assert "updated correction" in str(
+        evaluator.return_value.run.call_args.kwargs["few_shots"]
+    )
     assert (
         Cell.no_workspace_objects.get(column=eval_column, row_id=feedback.row_id).value
         == "Passed"

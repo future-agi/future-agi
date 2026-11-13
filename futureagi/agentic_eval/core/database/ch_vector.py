@@ -752,8 +752,6 @@ class ClickHouseVectorDB:
         )
 
     def _execute_feedback_search(self, query, feedback_ids, top_k):
-        if feedback_ids is None:
-            return self.execute_read(query)
         # Keep each bound identity list below the query-size limit. Each batch
         # contributes its nearest rows; rank those together before returning.
         results = []
@@ -841,7 +839,11 @@ class ClickHouseVectorDB:
         """
         # Execute the query
         try:
-            results = self._execute_feedback_search(query, feedback_ids, top_k)
+            results = (
+                self.execute_read(query)
+                if feedback_ids is None
+                else self._execute_feedback_search(query, feedback_ids, top_k)
+            )
         except clickhouse_driver.errors.PartiallyConsumedQueryError as e:
             logger.error(f"PartiallyConsumedQueryError: {e}")
             self.close()
@@ -933,7 +935,11 @@ class ClickHouseVectorDB:
         results = None
         # Execute the query
         try:
-            results = self._execute_feedback_search(query, feedback_ids, top_k)
+            results = (
+                self.execute_read(query)
+                if feedback_ids is None
+                else self._execute_feedback_search(query, feedback_ids, top_k)
+            )
         except Exception:
             import traceback
 

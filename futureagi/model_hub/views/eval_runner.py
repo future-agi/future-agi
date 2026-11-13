@@ -903,6 +903,8 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
+        if self.eval_template is None:
+            return []
         retrieval_scope = {}
         organization_id = self.organization_id
         workspace_id = None
