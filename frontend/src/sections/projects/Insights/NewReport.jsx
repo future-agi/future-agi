@@ -1035,9 +1035,13 @@ export default function NewReport({
                     message={blocker}
                     billing={blocker === creditBlocker && !credits.unavailable}
                   />
-                ) : sentence ? (
-                  // The whole sentence once the scope is counted; while it is,
-                  // a sentence of its own rather than its tail.
+                ) : !sentence && (counting || costing) ? (
+                  // While the scope is counted, a sentence of its own rather
+                  // than the tail of one.
+                  `Counting the ${UNITS[draft.unit].plural}…`
+                ) : (
+                  // Without a count (it failed), the estimate and the note
+                  // that it keeps running still show.
                   [
                     sentence,
                     estimate,
@@ -1046,9 +1050,7 @@ export default function NewReport({
                   ]
                     .filter(Boolean)
                     .join(" · ")
-                ) : counting || costing ? (
-                  `Counting the ${UNITS[draft.unit].plural}…`
-                ) : null}
+                )}
               </Typography>
             )}
           </Box>

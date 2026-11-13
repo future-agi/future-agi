@@ -437,7 +437,7 @@ export default function AskPanel({ run, lens }) {
             mb: 1.25,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1,
+            borderRadius: "8px",
             bgcolor: "background.paper",
           }}
         >
@@ -524,7 +524,7 @@ export default function AskPanel({ run, lens }) {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 1,
+          borderRadius: "8px",
           bgcolor: "background.paper",
           "&:focus-within": { borderColor: "primary.main" },
         }}
