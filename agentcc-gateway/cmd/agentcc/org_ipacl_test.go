@@ -170,7 +170,9 @@ func TestOrgIPACLUpdateAppliesToNextRequest(t *testing.T) {
 	for pluginsName, extra := range plugins {
 		for _, via := range []string{"admin API", "control plane sync"} {
 			t.Run(pluginsName+" via "+via, func(t *testing.T) {
-				g := startOrgIPACLGateway(t, extra, `{"org-local":`+remoteOnly+`}`)
+				// The admin API cases load the settings once at startup: a
+				// periodic sync would put the control plane's copy back.
+				g := startOrgIPACLGateway(t, extra, `{"org-local":`+remoteOnly+`}`, via != "admin API")
 				update := func(cfgJSON string) {
 					if via == "admin API" {
 						setOrgIPACL(t, g.url, "org-local", cfgJSON)
@@ -230,9 +232,9 @@ func (g *orgIPACLGateway) syncOrgs(t *testing.T, orgsJSON string) {
 
 // startOrgIPACLGateway runs the gateway's main in a child process with one
 // org key (org-local), extraYAML appended to its config, and orgsJSON served
-// as the control plane's org settings, synced every 100ms. It returns once
-// the settings were fetched.
-func startOrgIPACLGateway(t *testing.T, extraYAML, orgsJSON string) *orgIPACLGateway {
+// as the control plane's org settings, loaded at startup and, with
+// periodicSync, again every 100ms. It returns once the settings were fetched.
+func startOrgIPACLGateway(t *testing.T, extraYAML, orgsJSON string, periodicSync bool) *orgIPACLGateway {
 	t.Helper()
 	g := &orgIPACLGateway{}
 	g.orgs.Store(orgsJSON)
@@ -285,8 +287,11 @@ auth:
 control_plane:
   url: %s
   sync_on_startup: true
-  sync_interval: 100ms
-`, port, provider.URL, orgIPACLAdminToken, backend.URL) + extraYAML
+`, port, provider.URL, orgIPACLAdminToken, backend.URL)
+	if periodicSync {
+		cfg += "  sync_interval: 100ms\n"
+	}
+	cfg += extraYAML
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
