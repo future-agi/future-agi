@@ -219,6 +219,24 @@ def test_dry_run_reconcile_and_second_run_do_not_duplicate(stores):
     assert {trace: version(trace) for trace in before} == after
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_final_summary_reports_zero_changed_during_scan(stores, dry_run):
+    seed, _, _, _ = stores
+    seed(PROJECT, ["pg"], ["ch"])
+    output = StringIO()
+    call_command(
+        "reconcile_legacy_trace_tags",
+        *(["--dry-run"] if dry_run else []),
+        stdout=output,
+    )
+    lines = output.getvalue().splitlines()
+    assert "changed during scan 0" in lines[-1]
+    assert ("would mirror 1 trace(s)" if dry_run else "mirrored 1 trace(s)") in lines[
+        -1
+    ]
+    assert "rerun" not in output.getvalue().lower()
+
+
 def test_organization_scope_and_newest_ch_tags_replaced(stores):
     seed, latest, version, _ = stores
     trace = seed(PROJECT, ["pg"], ["ch-only"], ch_version=2**63)
@@ -297,7 +315,10 @@ def test_dual_write_between_ch_candidate_and_pg_tag_reads_is_not_reverted(
         ch.close()
 
 
-def test_dual_write_between_pg_tags_and_full_ch_read_is_skipped(stores, monkeypatch):
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_dual_write_between_pg_tags_and_full_ch_read_is_skipped(
+    stores, monkeypatch, dry_run
+):
     seed, latest, version, _ = stores
     trace = seed(PROJECT, ["old-pg"], ["stale-ch"])
     cfg = reconcile.get_v2_config()
@@ -343,12 +364,20 @@ def test_dual_write_between_pg_tags_and_full_ch_read_is_skipped(stores, monkeypa
     )
     try:
         output = StringIO()
-        call_command("reconcile_legacy_trace_tags", stdout=output)
+        call_command(
+            "reconcile_legacy_trace_tags",
+            *(["--dry-run"] if dry_run else []),
+            stdout=output,
+        )
         assert raced
         assert latest(trace) == ["fresh"]
         assert version(trace) == 2
-        assert "changed during scan 1" in output.getvalue()
-        assert "mirrored 0 trace(s)" in output.getvalue()
+        lines = output.getvalue().splitlines()
+        assert "changed during scan 1" in lines[-2]
+        assert "rerun" in lines[-1].lower()
+        assert (
+            "would mirror 0 trace(s)" if dry_run else "mirrored 0 trace(s)"
+        ) in lines[-2]
     finally:
         ch.close()
 

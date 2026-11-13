@@ -170,12 +170,19 @@ class Command(BaseCommand):
         if opts["dry_run"]:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"DRY RUN — scanned {scanned} trace(s); would mirror {different} trace(s)."
+                    f"DRY RUN — scanned {scanned} trace(s); would mirror {different} trace(s); "
+                    f"changed during scan {changed}."
                 )
             )
         else:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"scanned {scanned} trace(s); mirrored {written} trace(s)."
+                    f"scanned {scanned} trace(s); mirrored {written} trace(s); "
+                    f"changed during scan {changed}."
                 )
+            )
+        if changed:
+            self.stdout.write(
+                "Rerun reconcile_legacy_trace_tags from the start: traces changed "
+                "during the scan and were skipped."
             )

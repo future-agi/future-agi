@@ -120,6 +120,12 @@ reconcile_tags --dry-run  # review the number of differing traces before applyin
 reconcile_tags            # first apply while the old backend is still serving
 ```
 
+Inspect the final `changed during scan` count in each Job's logs (including the
+second apply below). If nonzero, its rerun instruction means repeat that pass
+from the beginning, without `--after-id`, before advancing or exposing the
+editor. The Job completes successfully despite concurrent edits so it does not
+block the scripted two-pass rollout; operators must act on the logged count.
+
 If the Job fails, inspect its logs and stop; do not advance or delete failed
 Job evidence until you have diagnosed it. The reconciler is idempotent, so a
 retry after repair is safe. Use the verified local chart, the intended

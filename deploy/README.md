@@ -529,6 +529,12 @@ $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MOD
 # Release the new editor only now.
 ```
 
+Check the final `changed during scan` count after each dry-run/apply. If it is
+nonzero, the command prints a rerun instruction: repeat that pass from the
+beginning (without `--after-id`) before advancing the rollout or releasing the
+editor. The command still exits successfully so the scripted two-pass rollout
+and Helm Job completion are not interrupted by a concurrent edit.
+
 The new trace/span tag PATCH stores manual assignments, **not**
 `tracer_trace.tags`. Langfuse ingestion (`tracer/utils/langfuse_upsert.py`)
 still writes that PG column from incoming trace tags, then best-effort mirrors
