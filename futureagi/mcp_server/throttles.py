@@ -1,10 +1,12 @@
 """Throttle and lockout helpers for MCP public authentication endpoints."""
 
 import hashlib
+import ipaddress
 import math
 import time
 import uuid
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import TypeVar
 
 import structlog
@@ -53,14 +55,62 @@ def request_data_value(request: Request, key: str) -> str:
     return str(value).strip() if value is not None else ""
 
 
+@lru_cache(maxsize=8)
+def _parse_trusted_proxies(
+    entries: tuple[str, ...],
+) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    networks = []
+    for entry in entries:
+        try:
+            networks.append(ipaddress.ip_network(entry.strip(), strict=False))
+        except ValueError:
+            logger.warning("mcp_oauth_trusted_proxy_entry_ignored", entry=entry)
+    return tuple(networks)
+
+
+def _trusted_proxies() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    entries = _setting("MCP_OAUTH_TRUSTED_PROXIES", ())
+    if isinstance(entries, str):
+        entries = entries.split(",")
+    return _parse_trusted_proxies(tuple(e.strip() for e in entries if e.strip()))
+
+
+def _is_trusted_proxy(
+    address: str, networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in network for network in networks)
+
+
 def client_ident(request: Request) -> str:
     """Return a consistent client IP identifier across throttles, lockouts, and logs."""
     # DRF trusts the full X-Forwarded-For header when NUM_PROXIES is unset.
     # Use forwarded addresses only when deployment config explicitly declares
-    # the trusted proxy depth; otherwise callers could choose their identity.
+    # the trusted proxy depth or the trusted proxy addresses.
     if api_settings.NUM_PROXIES is not None:
         return _base_throttle.get_ident(request) or "unknown"
-    return request.META.get("REMOTE_ADDR", "") or "unknown"
+    remote_addr = request.META.get("REMOTE_ADDR", "") or ""
+    networks = _trusted_proxies()
+    if networks and _is_trusted_proxy(remote_addr, networks):
+        # MCP_OAUTH_TRUSTED_PROXIES lists the ingress and proxy addresses.
+        # Each proxy appends the address it received the request from, so the
+        # nearest entry that is not a trusted proxy is the client.
+        hops = [
+            hop.strip()
+            for hop in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")
+            if hop.strip()
+        ]
+        for hop in reversed(hops):
+            if not _is_trusted_proxy(hop, networks):
+                return hop
+        if hops:
+            return hops[0]
+    return remote_addr or "unknown"
 
 
 def oauth_token_context(request: Request) -> dict[str, str | None]:

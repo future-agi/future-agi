@@ -1817,6 +1817,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "Same, as regular expressions."
 
     [[part.section.row]]
+    keys = ["MCP_OAUTH_TRUSTED_PROXIES"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Addresses or networks of the reverse proxies in front of the API, comma-separated (e.g. `10.42.0.0/16`, the ingress controller's pod network). The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) then count each client by the address these proxies forward in `X-Forwarded-For`; requests from any other peer count by the peer address. Empty: every request counts by the peer address, so clients behind one proxy share its limits. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
     keys = ["EXTRA_CSRF_ORIGINS"]
     default = "empty"
     setups = ["S", "D", "H"]

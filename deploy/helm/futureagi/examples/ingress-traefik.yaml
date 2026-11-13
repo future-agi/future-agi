@@ -34,3 +34,9 @@ ingress:
     host: api.futureagi.example.com
   otlp:
     enabled: true
+# The MCP OAuth request limits count each client by its own address once the
+# API trusts the ingress controller's X-Forwarded-For. Set the controller's pod
+# network (k3s's default is 10.42.0.0/16):
+#   config:
+#     extraEnv:
+#       MCP_OAUTH_TRUSTED_PROXIES: "10.42.0.0/16"

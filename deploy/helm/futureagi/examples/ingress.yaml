@@ -41,3 +41,8 @@ ingress:
 config:
   allowedHosts: api.futureagi.example.com
   corsAllowedOrigins: https://futureagi.example.com
+  # The MCP OAuth request limits count each client by its own address once
+  # the API trusts the ingress controller's X-Forwarded-For. Set the
+  # controller's pod network, e.g.:
+  # extraEnv:
+  #   MCP_OAUTH_TRUSTED_PROXIES: "10.244.0.0/16"
