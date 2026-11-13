@@ -273,13 +273,25 @@ def working_hours(value, now):
     return start < end and utc.weekday() < 5 and start <= utc.hour < end
 
 
-def trusted_authors(policy, override):
-    names = override.split(",") if override else policy["trusted_authors"]
+def login_set(names):
     if not isinstance(names, list) or any(
         not isinstance(n, str) or not LOGIN.fullmatch(n.strip()) for n in names
     ):
         raise PolicyError("invalid trusted-author list")
     return {name.strip().lower() for name in names}
+
+
+def trusted_authors(policy, override):
+    """The policy file's reviewed list, narrowed by PR_AUTOPILOT_TRUSTED_AUTHORS.
+
+    Any member with the Write role can change a repository variable, so the
+    variable can only remove logins: a login that only the variable names is
+    not trusted, and a variable that names no policy login trusts nobody.
+    Adding an author is a reviewed change to .github/pr-autopilot.yml."""
+    allowed = login_set(policy["trusted_authors"])
+    if not override:
+        return allowed
+    return allowed & login_set(override.split(","))
 
 
 def merge_decision(pr, risk, policy, settings, *, checks_passed, review_passed, now):

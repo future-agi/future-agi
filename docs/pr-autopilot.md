@@ -68,7 +68,8 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Variable, secret, label or setting | Default | Administrative action |
 | --- | --- | --- |
 | Repository variable `PR_AUTOPILOT` | Unset/off; only exact `on` enables automation | Set to `on` only after the rollout checks below; unset or use `off` to stop new runs |
-| Repository variable `PR_AUTOPILOT_TRUSTED_AUTHORS` | Unset: use the policy's empty list | Set an explicit comma-separated list of GitHub logins, or review a policy change to populate `trusted_authors`; no wildcards |
+| Policy list `trusted_authors` in `.github/pr-autopilot.yml` | Empty: nobody is trusted | A person adds a login through a reviewed PR into `dev` that changes this list. The file is HIGH, so the autopilot never merges such a PR, and only `dev`'s copy is used. Exact GitHub logins; no wildcards |
+| Repository variable `PR_AUTOPILOT_TRUSTED_AUTHORS` | Unset: use the policy list as it is | Optional. A comma-separated list of logins that can only narrow the policy list: a login that is not in the policy list is not trusted, and a list that names no policy login trusts nobody. It cannot add an author |
 | Repository variable `AUTOPILOT_HOURS_UTC` | Unset: any day/time, but only when the feature is on | Optionally set `04-15` or another zero-padded `HH-HH` window; Monday–Friday, UTC, inclusive start/exclusive end; `00-24` means all weekday hours |
 | Repository secret `ANTHROPIC_API_KEY` | Absent: skip the AI job and never auto-merge, even if an older review passed | Provision an API key for the approved Anthropic account, with budget/usage monitoring; do not put it in the policy or PR |
 | Existing repository variable `DEV_CDN_AUTO_DEPLOY` | Unset: preserve the existing enabled-on-push behavior | Exact `false` prevents the post-merge dev CDN dispatch; all other values preserve its existing behavior |
@@ -85,10 +86,25 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
 
 **Trusted authors at installation: none.** Repository membership, write access,
-CODEOWNERS, PR text and earlier bot approvals do not confer trust. A nonempty
-variable **replaces**, rather than extends, the config list. Login comparison is
-case-insensitive; malformed entries stop automation. Start with a small,
-explicitly approved list. A fork, even from a trusted author, is never eligible.
+CODEOWNERS, PR text and earlier bot approvals do not confer trust. The only
+source of trust is the `trusted_authors` list in `.github/pr-autopilot.yml` on
+`dev`. A person adds an author by reviewing a PR into `dev` that adds the
+login there. The file is HIGH, so the autopilot never merges that PR. Login
+comparison is case-insensitive; a malformed entry in the list or the variable
+stops automation. Start with a small, explicitly approved list. A fork, even
+from a trusted author, is never eligible.
+
+Any member with the Write role can create, change or delete repository
+variables, in the UI or by REST (GitHub's documentation, not tested). So no
+repository variable is an owner-only control. `PR_AUTOPILOT_TRUSTED_AUTHORS`
+can therefore only narrow the policy list; it never adds a login. Deleting the
+variable restores the whole policy list, so a lasting removal of an author is
+a reviewed policy PR, and `autopilot-hold` stops one PR. Any writer can also
+set `PR_AUTOPILOT` to `on` or widen `AUTOPILOT_HOURS_UTC`. Neither is an
+owner-only gate; they decide when the autopilot runs, not whose PRs it takes.
+Moving the list to a secret would not help, because the Write role can
+change Actions secrets too. GitHub's pages disagree on whether it can change
+an environment variable.
 
 Trust covers **who pushed**, not only who opened the PR. Before it reserves a
 review, before it posts a behind-dev note, and again before approval and
@@ -1085,9 +1101,12 @@ stop, also cancel active autopilot runs; their variable snapshot may still be
 `on`. With the switch off no sweep runs, so a merge whose run ended before its
 merged record is not recovered until the switch is on again; the reconciliation
 query in [Guardrail: revert rate](#guardrail-revert-rate) lists such PRs.
-Add `autopilot-hold` to affected open PRs. A missing review key or empty
-trust list also prevents new automatic approvals/merges, but explicit off plus
-cancellation is the clearest emergency procedure. Removing the approver App's
+Add `autopilot-hold` to affected open PRs. A missing review key also prevents
+new automatic approvals/merges, and so does a `PR_AUTOPILOT_TRUSTED_AUTHORS`
+value that names no login in the policy list. Explicit off plus cancellation
+is the clearest emergency procedure. Any writer can change these variables
+back, so a stop that only a reviewed change can undo is a policy PR into
+`dev` that empties `trusted_authors`. Removing the approver App's
 key from the `pr-autopilot` environment also stops every approval; each PR
 that passes review then gets one note per head saying so. Do not
 remove normal required checks to make a stopped PR mergeable. An App approval
@@ -1189,9 +1208,10 @@ Suggested rollout:
    run and one tier comment per open same-repository, non-draft PR without a
    tier label: about 280 on 11 Nov 2026. At 25 per sweep it takes about 12
    sweeps, about three hours. After that, sweeps dispatch only PRs pushed since
-   their last tier audit until the trust list is set.
-4. Provision the review key, set a weekday window and a very small approved trust
-   list. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
+   their last tier audit until the policy file lists a trusted author.
+4. Provision the review key, set a weekday window, and add a very small
+   approved list to `trusted_authors` through a reviewed PR into `dev`. Do not
+   use the variable for this: it cannot add a login. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
    pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
    diff, a branch behind `dev` (one behind-dev note naming the head, the
    sweep dispatching the PR about hourly, and the note marked "No longer
@@ -1210,7 +1230,9 @@ Development validation is synthetic and uses a fake GitHub transport. It covers
 classification (including compound credentials and nested non-test filenames),
 size/deletion/rename boundaries, metadata completeness, author and fork restrictions,
 missing switches/key, hours, non-admin protection queries, declared evidence scopes,
-required-check provenance, stale/rerun checks, structured verdicts, immutable completed
+required-check provenance, the trusted-author list (the variable only narrows the
+policy list, and a login only the variable names is denied as author and as
+pusher), stale/rerun checks, structured verdicts, immutable completed
 verdicts, the three review outcomes and their marker steps, attempt-1 evidence
 after reruns, trusted-run rules (a `pull_request_target` run or a run on another
 commit never vouches), attempt history built from comments, reservation

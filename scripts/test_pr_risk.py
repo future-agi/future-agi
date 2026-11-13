@@ -21,7 +21,9 @@ from unittest.mock import patch
 
 import pr_risk as risk
 
-POLICY = risk.load_policy()
+# The shipped list may name real logins (or none). The tests trust exactly
+# "trusted-author", which settings() keeps through the variable.
+POLICY = {**risk.load_policy(), "trusted_authors": ["trusted-author"]}
 HEAD = "a" * 40
 BASE = "b" * 40
 OTHER = "d" * 40
@@ -746,7 +748,6 @@ class DecisionTests(unittest.TestCase):
             {"enabled": "ON"},
             {"key_present": False},
             {"authors": "someone-else"},
-            {"authors": ""},
             {"hours": "bad"},
             {"repository": "different/repository"},
         ):
@@ -792,15 +793,49 @@ class DecisionTests(unittest.TestCase):
                 )["allow"]
             )
 
-    def test_author_override_replaces_config(self):
-        policy = {**POLICY, "trusted_authors": ["old-author"]}
-        self.assertEqual(
-            risk.trusted_authors(policy, " New-Author,other "), {"new-author", "other"}
-        )
-        self.assertEqual(risk.trusted_authors(policy, ""), {"old-author"})
-        for value in ("*", "trusted-author,", "trust\ned", "a/b"):
-            with self.assertRaises(risk.PolicyError):
+    def test_the_variable_only_narrows_the_policy_list(self):
+        # Any member with the Write role can set the repository variable, so it
+        # never adds a login the reviewed policy file does not list.
+        policy = {**POLICY, "trusted_authors": ["Old-Author", "other"]}
+        self.assertEqual(risk.trusted_authors(policy, ""), {"old-author", "other"})
+        self.assertEqual(risk.trusted_authors(policy, " OTHER "), {"other"})
+        self.assertEqual(risk.trusted_authors(policy, "other, New-Author"), {"other"})
+        # A variable that names no policy login trusts nobody.
+        self.assertEqual(risk.trusted_authors(policy, "new-author"), set())
+        # An empty policy list trusts nobody, whatever the variable says.
+        empty = {**POLICY, "trusted_authors": []}
+        self.assertEqual(risk.trusted_authors(empty, ""), set())
+        self.assertEqual(risk.trusted_authors(empty, "trusted-author"), set())
+        for value in ("*", "trusted-author,", "trust\ned", "a/b", " "):
+            with self.subTest(variable=value), self.assertRaises(risk.PolicyError):
                 risk.trusted_authors(policy, value)
+        # A malformed policy list stops automation even when the variable is valid.
+        for names in (["*"], ["a/b"], [""], [None], "trusted-author", None):
+            with self.subTest(policy=names), self.assertRaises(risk.PolicyError):
+                risk.trusted_authors({**POLICY, "trusted_authors": names}, "trusted-author")
+
+    def test_a_login_only_the_variable_names_cannot_merge(self):
+        # The finding's first case: a writer adds their own login to the
+        # variable and opens a LOW PR. Only the policy file's list counts.
+        config = settings(authors="trusted-author,intruder")
+        self.assertTrue(self.decide(config=config))
+        intruder = pr()
+        intruder["user"] = {"login": "intruder"}
+        self.assertFalse(self.decide(intruder, config=config))
+        self.assertFalse(self.decide(intruder, config=settings(authors="intruder")))
+        # Once a reviewed policy change lists the login, it is trusted.
+        listed = {**POLICY, "trusted_authors": ["trusted-author", "intruder"]}
+        self.assertTrue(
+            risk.merge_decision(intruder, {"tier": "low"}, listed, config, checks_passed=True,
+                                review_passed=True, now=NOW)["allow"]
+        )
+
+    def test_the_shipped_policy_list_is_well_formed(self):
+        # A login is added by a reviewed PR to .github/pr-autopilot.yml, which
+        # this job tests; a malformed or repeated entry fails here first.
+        shipped = risk.load_policy()["trusted_authors"]
+        self.assertIsInstance(shipped, list)
+        self.assertEqual(len(risk.trusted_authors(risk.load_policy(), "")), len(shipped))
 
     def test_working_hours_strict_utc_weekdays(self):
         self.assertTrue(risk.working_hours("04-15", NOW))
@@ -1250,7 +1285,7 @@ class ControllerTests(unittest.TestCase):
             item.start()
             self.addCleanup(item.stop)
 
-    def prepare(self, config=None, event_name="workflow_dispatch"):
+    def prepare(self, config=None, event_name="workflow_dispatch", policy=None):
         """One fresh workflow run: a dispatch on dev unless the event says otherwise."""
         self.run_id += 1
         os.environ["GITHUB_RUN_ID"] = str(self.run_id)
@@ -1267,7 +1302,7 @@ class ControllerTests(unittest.TestCase):
             event = {"pull_request": {"number": 42}}
         self.outputs.clear()
         try:
-            risk.prepare(self.api, POLICY, config or settings(), event, event_name)
+            risk.prepare(self.api, policy or POLICY, config or settings(), event, event_name)
         finally:
             # The workflow's "Review reserved" step runs whenever the policy
             # step emitted a reservation, even if the step failed afterwards;
@@ -2780,6 +2815,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.outputs["context"], "")
         self.assertTrue(any("not a trusted author" in body for body in self.escalations()))
 
+    def test_a_push_by_a_login_only_the_variable_names_goes_to_a_person(self):
+        # The finding's second case: a writer adds their own login to the
+        # variable and pushes onto a trusted author's LOW PR.
+        self.api.push("1" * 40, actor="intruder")
+        for required in self.api.checks[:3]:
+            required["head_sha"] = "1" * 40
+        self.prepare(settings(authors="trusted-author,intruder"))
+        self.assertFalse(self.reservations())
+        self.assertEqual(self.outputs["context"], "")
+        [escalation] = self.escalations()
+        self.assertIn("not a trusted author", escalation)
+        # The same push by a login the policy file lists continues to a review.
+        self.api = FakeGitHub()
+        self.api.push("1" * 40, actor="co-author")
+        for required in self.api.checks[:3]:
+            required["head_sha"] = "1" * 40
+        listed = {**POLICY, "trusted_authors": ["trusted-author", "co-author"]}
+        self.prepare(settings(authors=""), policy=listed)
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertFalse(self.escalations())
+
     def test_push_history_that_has_not_recorded_the_head_waits(self):
         self.api.activity = [{"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "trusted-author"},
                               "activity_type": "branch_creation"}]
@@ -3600,6 +3656,8 @@ class ControllerTests(unittest.TestCase):
         with (
             patch.dict(os.environ, environment),
             patch.object(risk, "GitHub", side_effect=client),
+            # The shipped list trusts nobody yet; the variable cannot add a login.
+            patch.object(risk, "load_policy", return_value=POLICY),
             patch("sys.argv", ["pr_risk.py", "merge"]),
         ):
             self.assertEqual(risk.main(), 1)
@@ -3818,7 +3876,8 @@ class ControllerTests(unittest.TestCase):
             self.tier_comment(number, HEAD)
         # Trusted LOW first, then the PR to classify.
         self.assertEqual(self.sweep(), ["2", "1"])
-        self.assertEqual(self.sweep(settings(authors="")), ["1"])
+        # A variable that names no policy login trusts nobody.
+        self.assertEqual(self.sweep(settings(authors="someone-else")), ["1"])
         self.assertFalse(any(r[1].startswith(("issues/7/", "issues/8/", "issues/9/")) for r in self.api.requests))
 
     def test_sweep_re_tiers_a_labelled_pr_whose_head_moved_since_its_tier_audit(self):
@@ -3850,7 +3909,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_sweep_reads_the_head_that_the_real_tier_audit_recorded(self):
         # Round trip: the tier comment tier_audit writes is the one the sweep parses.
-        untrusted = settings(authors="")
+        untrusted = settings(authors="someone-else")
         self.prepare(untrusted, event_name="pull_request_target")
         self.assertEqual({label["name"] for label in self.api.pr["labels"]}, {"autopilot-low"})
         self.assertEqual(self.sweep(untrusted), [])

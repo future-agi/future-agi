@@ -6,7 +6,7 @@
   "merge_method": "merge",
   "_merge_reason": "Nine of the ten most recent first-parent dev commits at a75af77f6 are merge commits; keep that practice.",
   "trusted_authors": [],
-  "_trust_reason": "No trust is inferred from organization membership, CODEOWNERS, or prior authorship. An admin must explicitly set PR_AUTOPILOT_TRUSTED_AUTHORS or review a policy change adding logins here.",
+  "_trust_reason": "No trust is inferred from organization membership, CODEOWNERS, or prior authorship. This list is the only way to add a trusted author: a person reviews the PR into dev that adds the login here. Any member with the Write role can change repository variables, so PR_AUTOPILOT_TRUSTED_AUTHORS can only narrow this list: a login it names that is not here is not trusted, and when it names none of these logins nobody is trusted.",
   "max_changed_lines": 200,
   "max_files": 10,
   "max_review_rounds": 3,
