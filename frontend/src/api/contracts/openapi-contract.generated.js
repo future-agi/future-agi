@@ -110983,8 +110983,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "updated_at",
         "backfill_days_done",
         "backfill_days_total",
-        "history_mode",
-        "coverage_start",
       ],
       type: "object",
       properties: {

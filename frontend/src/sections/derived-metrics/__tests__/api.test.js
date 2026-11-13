@@ -448,6 +448,40 @@ describe("nullable comparison in the generated contract", () => {
     expect(adapter).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["forward", "2026-11-05T09:12:00Z"],
+    [null, null],
+  ])(
+    "accepts a %s history mode and its coverage start under strict validation",
+    async (historyMode, coverageStart) => {
+      const data = {
+        ...kpi,
+        provenance: {
+          ...provenance,
+          history_mode: historyMode,
+          coverage_start: coverageStart,
+        },
+      };
+      serve(data);
+      const hook = mount(() => useMetricKpi({ ...args, params: range }));
+      await waitFor(() => expect(hook.result.current.readState).toBe("ready"));
+      expect(hook.result.current.error).toBeNull();
+      expect(hook.result.current.data.provenance).toMatchObject({
+        history_mode: historyMode,
+        coverage_start: coverageStart,
+      });
+    },
+  );
+
+  it("rejects an unknown history mode under strict validation", async () => {
+    serve({ ...kpi, provenance: { ...provenance, history_mode: "backfill" } });
+    const hook = mount(() => useMetricKpi({ ...args, params: range }));
+    await waitFor(() => expect(hook.result.current.readState).toBe("error"));
+    expect(hook.result.current.error).toMatchObject({
+      name: "ApiContractValidationError",
+    });
+  });
+
   it("still rejects a previous point of the wrong shape under strict validation", async () => {
     serve({ ...kpi, previous: "not-a-point" });
     const hook = mount(() => useMetricKpi({ ...args, params: range }));

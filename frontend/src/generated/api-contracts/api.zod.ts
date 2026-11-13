@@ -64681,10 +64681,11 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
       .min(tracerDerivedMetricsDriversResponseProvenanceBackfillDaysTotalMin),
     history_mode: zod
       .enum(["history", "forward"])
+      .optional()
       .describe(
         "forward: started with no history; values exist from coverage_start",
       ),
-    coverage_start: zod.string().datetime({ offset: true }),
+    coverage_start: zod.string().datetime({ offset: true }).optional(),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -65713,10 +65714,11 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       .min(tracerDerivedMetricsKpiResponseProvenanceBackfillDaysTotalMin),
     history_mode: zod
       .enum(["history", "forward"])
+      .optional()
       .describe(
         "forward: started with no history; values exist from coverage_start",
       ),
-    coverage_start: zod.string().datetime({ offset: true }),
+    coverage_start: zod.string().datetime({ offset: true }).optional(),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -67293,10 +67295,11 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
       .min(tracerDerivedMetricsTrendResponseProvenanceBackfillDaysTotalMin),
     history_mode: zod
       .enum(["history", "forward"])
+      .optional()
       .describe(
         "forward: started with no history; values exist from coverage_start",
       ),
-    coverage_start: zod.string().datetime({ offset: true }),
+    coverage_start: zod.string().datetime({ offset: true }).optional(),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -67460,10 +67463,11 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
       ),
     history_mode: zod
       .enum(["history", "forward"])
+      .optional()
       .describe(
         "forward: started with no history; values exist from coverage_start",
       ),
-    coverage_start: zod.string().datetime({ offset: true }),
+    coverage_start: zod.string().datetime({ offset: true }).optional(),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),

@@ -164803,9 +164803,7 @@
                 "definition_hash",
                 "updated_at",
                 "backfill_days_done",
-                "backfill_days_total",
-                "history_mode",
-                "coverage_start"
+                "backfill_days_total"
             ],
             "type": "object",
             "properties": {

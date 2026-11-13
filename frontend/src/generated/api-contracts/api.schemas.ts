@@ -28912,8 +28912,8 @@ export interface MetricReadProvenanceApi {
   /** @minimum 0 */
   backfill_days_total: number;
   /** forward: started with no history; values exist from coverage_start */
-  history_mode: MetricReadProvenanceApiHistoryMode;
-  coverage_start: string;
+  history_mode?: MetricReadProvenanceApiHistoryMode;
+  coverage_start?: string;
 }
 
 export interface MetricEffectiveWindowApi {

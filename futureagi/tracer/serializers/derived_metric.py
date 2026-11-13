@@ -775,12 +775,14 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(allow_null=True)
     backfill_days_done = serializers.IntegerField(min_value=0)
     backfill_days_total = serializers.IntegerField(min_value=0)
+    # Optional on the wire so a client never rejects a server that predates them.
     history_mode = serializers.ChoiceField(
         choices=["history", "forward"],
         allow_null=True,
+        required=False,
         help_text="forward: started with no history; values exist from coverage_start",
     )
-    coverage_start = serializers.DateTimeField(allow_null=True)
+    coverage_start = serializers.DateTimeField(allow_null=True, required=False)
 
 
 class MetricEffectiveWindowSerializer(serializers.Serializer):
