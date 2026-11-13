@@ -15,10 +15,10 @@ export function useReviewCandidates(kind, resourceId, page) {
     url: () => kind === 'agent_context' ? contextEndpoints.versions(resourceId) : endpoints.versions(resourceId),
     params: { page, page_size: 25 }, mapper: (value) => value });
 }
-export function useReviewSubjects(kind, page) {
-  return useSkillV11Query({ parts: ['review-subjects', kind, page],
+export function useReviewSubjects(kind, page, search = '') {
+  return useSkillV11Query({ parts: ['review-subjects', kind, page, search],
     url: () => kind === 'agent_context' ? contextEndpoints.list() : endpoints.list(),
-    params: { page, page_size: 25 }, mapper: (value) => value });
+    params: { page, page_size: 25, search }, mapper: (value) => value });
 }
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),

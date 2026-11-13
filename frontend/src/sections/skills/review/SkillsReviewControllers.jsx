@@ -5,10 +5,9 @@ import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
 import { Alert, Button, Stack } from '@mui/material';
-import { reviewsReady, isStaleReview, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
+import { reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
-import StatusBadge from 'src/components/status-badge';
 import { reviewComposerUrl } from '../utils/review-links';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -34,7 +33,10 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const request = query.data?.request;
   const author = Boolean(request?.authorId && request.authorId === access.scope.userId);
   const revise = () => navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`);
-  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: request?.name || 'Release review' }]} title={request?.name || 'Release review'} purpose={`Revision ${request?.revision ?? '—'} · ${query.data?.preview ? `Move ${query.data.preview.packet.transition.label} to v${query.data.preview.packet.transition.version}` : 'Review the recorded release decision.'}`} badge={request && <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status === 'changes_requested' ? 'needs_changes' : request.status} />} actions={author && request.status !== 'released' ? <Button variant="contained" color="primary" onClick={revise}>Revise request</Button> : undefined} />;
+  const transition = query.data?.preview?.packet.transition;
+  const resourceName = request?.name || query.data?.receipt?.name || 'Release review';
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} title={transition ? `${resourceName}: ${transition.label} ${transition.expectedVersion == null ? 'unassigned' : `v${transition.expectedVersion}`} → v${transition.version}` : resourceName} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps
   // the dialog mounted while the page switches between stale and renewed.
@@ -52,17 +54,9 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   return <Stack spacing={1.5} sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}>
     {header}
     <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
-      permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
+      renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
       onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })}
-      onExecute={async (input, options) => {
-        try { return await execute.mutateAsync({ ...input, ...options }); } catch (error) {
-          // A server refusal for changed preconditions opens the renewal
-          // inspection directly for the assigned reviewer; nothing is renewed
-          // or approved until they inspect and decide.
-          if (canDecide && isStaleReview(error)) setRenewing(true);
-          throw error;
-        }
-      }} />
+      onExecute={(input, options) => execute.mutateAsync({ ...input, ...options })} />
     {renewal}
   </Stack>;
 }

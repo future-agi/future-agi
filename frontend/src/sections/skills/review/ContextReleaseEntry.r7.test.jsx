@@ -27,12 +27,12 @@ it('does not carry a stored reviewer across logins or auto-submit for a sole eli
   const props = { scopeKey: 'new-login', state: 'ready', preview: { packet, fingerprint: 'fp', current: true }, review: { complete: true, dependencyChanges: [] }, onSubmit: submit };
   const { rerender } = render(<ReleaseRequestPanel {...props} recipients={[{ id: 'eligible', name: 'Independent reviewer' }]} permissions={{ canSubmit: true }} />);
   expect(screen.getByRole('combobox', { name: 'Assigned reviewer' })).toHaveTextContent('Independent reviewer');
-  expect(screen.getByRole('button', { name: 'Send review request' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send for review' })).toBeDisabled();
   expect(submit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('checkbox'));
-  expect(screen.getByRole('button', { name: 'Send review request' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Send for review' })).toBeEnabled();
   rerender(<ReleaseRequestPanel {...props} scopeKey="another-login" recipients={[]} permissions={{ canSubmit: true }} />);
-  expect(screen.getByRole('button', { name: 'Send review request' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send for review' })).toBeDisabled();
   expect(screen.getByRole('checkbox')).not.toBeChecked();
 });
 it('resolves carried refs against fresh options, never URL annotation revisions', () => {
@@ -48,6 +48,6 @@ it('suggests the sole eligible shared completed result, not a failed or ambiguou
 });
 it('only permits approval of pending requests while preserving release of an approved revision', () => {
   render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true, dependencyChanges: [] }} request={{ id: 'request', status: 'approved', revision: 1 }} permissions={{ canDecide: true, canExecute: true }} reviewedIdentity="1:fp" onDecide={vi.fn()} onExecute={vi.fn()} />);
-  expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
 });

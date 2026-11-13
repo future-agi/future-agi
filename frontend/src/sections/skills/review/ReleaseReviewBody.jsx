@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
-  Box,
   Button,
   Checkbox,
   FormControlLabel,
   Link,
   Stack,
   Typography,
+  Tooltip,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
 } from "@mui/material";
+import { relativeReviewTime, outcomeLabel } from '../utils/review-display';
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
@@ -181,11 +182,6 @@ export function TypedEvidenceList({
   );
   return (
     <Stack spacing={1.5}>
-      <Typography variant="s3" color="text.secondary">
-        Tests are advisory. Exact content is an identity match, not approval.
-        Text and native evidence are separate; neither requires a second paid
-        run.
-      </Typography>
       {missing.map((item) => (
         <Alert
           key={evidenceKey(item)}
@@ -246,10 +242,7 @@ export function TypedEvidenceList({
                 label="Execution fingerprint"
                 value={ref.executionFingerprint}
               />
-              <IdentityValue
-                label="Payload expires"
-                value={ref.payloadExpiresAt}
-              />
+              <Tooltip title={ref.payloadExpiresAt || ''}><Typography variant="s3" color="text.secondary">Expires {relativeReviewTime(ref.payloadExpiresAt) || 'at an unknown time'}</Typography></Tooltip>
               {summary ? (
                 <Stack spacing={0.5}>
                   <Typography variant="s1">
@@ -261,7 +254,7 @@ export function TypedEvidenceList({
                     <IdentityValue
                       key={key}
                       label={`${key[0].toUpperCase()}${key.slice(1)} outcome`}
-                      value={summary[key] ?? "Not observed"}
+                      value={outcomeLabel(summary[key]) ?? "Not observed"}
                     />
                   ))}
                   {summary.availability === 'unavailable' && <Alert severity="warning">Verified outcome details are unavailable. A completed run is not a passing result.</Alert>}
@@ -279,10 +272,7 @@ export function TypedEvidenceList({
                   terminal status.
                 </Typography>
               )}
-              <Box component="details">
-                <Typography component="summary" variant="s1">
-                  Frozen execution configuration
-                </Typography>
+              <TechnicalDetails title="Frozen execution configuration">
                 <Typography
                   component="pre"
                   variant="s3"
@@ -290,7 +280,7 @@ export function TypedEvidenceList({
                 >
                   {JSON.stringify(ref.configuration, null, 2)}
                 </Typography>
-              </Box>
+              </TechnicalDetails>
               {reasons.map((reason) => (
                 <Alert severity="warning" key={reason}>
                   {reason}
@@ -486,10 +476,9 @@ export default function ReleaseReviewBody({
                 label={`Target configuration r${packet.target.revision}`}
                 value={packet.target.configurationDigest}
               />
-              {targetConfiguration ? <Box component="details">
-                <Typography component="summary" variant="s1">Reviewed application configuration</Typography>
+              {targetConfiguration ? <TechnicalDetails title="Reviewed application configuration">
                 <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(targetConfiguration, null, 2)}</Typography>
-              </Box> : <Alert severity="warning">The application configuration has not loaded. A digest alone does not establish applicability.</Alert>}
+              </TechnicalDetails> : <Alert severity="warning">The application configuration has not loaded. A digest alone does not establish applicability.</Alert>}
             </>
           ) : (
             <Typography variant="s3">
@@ -498,7 +487,7 @@ export default function ReleaseReviewBody({
             </Typography>
           )}
           </TechnicalDetails>
-<Typography variant="s3" color="text.secondary">Production stays unchanged until this release is approved and executed. Existing threads and locked versions may keep using earlier content.</Typography>
+
         </Stack>
       </Section>
       <Section id="review-files" title="File changes">
@@ -507,25 +496,14 @@ export default function ReleaseReviewBody({
             <Typography variant="s3">No file changes loaded.</Typography>
           )}
           {ordered.filter((file) => file.path !== ".futureagi/context.json").map((file) => (
-            <Box
-              component="details"
-              key={file.path}
-              open={file.path === "AGENTS.md" || file.path === "SKILL.md"}
-            >
-              <Typography
-                component="summary"
-                variant="m3"
-                sx={{ overflowWrap: "anywhere" }}
-              >
-                {file.path} · {file.status}
-              </Typography>
+            <TechnicalDetails key={file.path} title={`${file.path} · ${file.status}`} defaultOpen={file.path === 'AGENTS.md' || file.path === 'SKILL.md'}>
               {onOpenFile && (
                 <Button onClick={() => onOpenFile(file.path)}>
                   Load complete diff
                 </Button>
               )}
               <ReviewFileDiff file={file} />
-            </Box>
+            </TechnicalDetails>
           ))}
           {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Generated files">
             {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} /></Stack>)}
@@ -607,7 +585,7 @@ export default function ReleaseReviewBody({
           </Stack>
         ) : (
           <Typography variant="s3">
-            Impact not loaded. No fleet coverage claim.
+            Application impact has not been measured.
           </Typography>
         )}
       </Section>

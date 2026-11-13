@@ -17,7 +17,11 @@ import {
   TextField,
   Typography,
   Tooltip,
+  useMediaQuery,
 } from "@mui/material";
+import ContentSkeleton from 'src/components/content-skeleton';
+import ErrorState from 'src/components/error-state';
+import { relativeReviewTime } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
 import EmptyState from "src/components/empty-state";
@@ -37,13 +41,14 @@ function InboxRows({
   onSeen,
   authored,
 }) {
+  const mobile = useMediaQuery((theme) => theme.breakpoints.down('sm'));
   const [menu, setMenu] = useState(null);
   const operation = useReviewedOperation();
   const row = data.results.find((item) => item.id === menu?.id);
   return (
     <Stack spacing={1}>
       <Typography variant="s1" role="status">
-        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : `${data.unreadCount} unread assigned request(s)`}
+        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : `${data.unreadCount} ${data.unreadCount === 1 ? 'request' : 'requests'} waiting for you`}
       </Typography>
       <ListToolbar>
         <TextField
@@ -73,12 +78,20 @@ function InboxRows({
       {!data.results.length ? (
         <EmptyState
           variant="no-results"
-          title={authored ? 'No authored requests' : 'No assigned reviews'}
-          description={authored ? 'Create a review request for a published candidate. Your requests remain here for explicit renewal.' : 'Requests appear here when an author explicitly assigns an immutable release packet to you. Unavailable private evidence is excluded by the server.'}
+          title={authored ? 'No requests sent yet' : 'No reviews waiting for you'}
+          description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'}
         />
       ) : (
         <>
-          <TableContainer sx={{ maxWidth: 1 }}>
+          {mobile ? <Stack aria-label="Assigned release reviews">{data.results.map((item) => <Stack key={item.id} direction="row" gap={1} alignItems="center" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+            <Button color="inherit" onClick={() => onOpen(item)} sx={{ p: 0, minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start' }}>
+              <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                <Stack direction="row" gap={1} alignItems="center">{item.unread && <Box aria-hidden="true" sx={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', bgcolor: 'text.primary' }} />}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                <Typography variant="s3" color="text.secondary">{item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · {relativeReviewTime(item.updatedAt) || 'Update time unavailable'}</Typography>
+              </Stack>
+            </Button>
+            <Stack alignItems="flex-end" spacing={0.5}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} /><IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton></Stack>
+          </Stack>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>
             <Table size="small" aria-label="Assigned release reviews">
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
@@ -86,7 +99,6 @@ function InboxRows({
                   <TableCell>Status</TableCell>
                   <TableCell>Revision</TableCell>
                   <TableCell>Updated</TableCell>
-                  <TableCell>Review</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -95,14 +107,15 @@ function InboxRows({
                   <TableRow
                     key={item.id}
                     hover
-                    sx={{ height: ROW_HEIGHT.default }}
+                    sx={{ minHeight: ROW_HEIGHT.default }}
                   >
-                    <TableCell>
+                    <TableCell sx={{ width: { xs: '70%', sm: 'auto' } }}>
                       <Button
                         color="inherit"
                         onClick={() => onOpen(item)}
-                        sx={{ maxWidth: 1 }}
+                        sx={{ maxWidth: 1, p: 0, justifyContent: 'flex-start' }}
                       >
+                        {item.unread && <Box component="span" aria-hidden="true" sx={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', bgcolor: 'text.primary', mr: 1 }} />}
                         <Typography
                           variant="s1"
                           noWrap
@@ -124,14 +137,8 @@ function InboxRows({
                     <TableCell>
                       <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
                     </TableCell>
-                    <TableCell>{item.revision}</TableCell>
-                    <TableCell><Tooltip title={item.updatedAt || 'Not reported'}><Typography component="span" variant="s3">{item.updatedAt && Number.isFinite(Date.parse(item.updatedAt)) ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(Math.round((Date.parse(item.updatedAt) - Date.now()) / 60000), 'minute') : 'Not reported'}</Typography></Tooltip></TableCell>
-                    <TableCell>
-                      {item.unread && <Box component="span" aria-label="Unread" sx={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', bgcolor: 'text.primary', mr: 1 }} />}
-                      <Typography variant="s3">
-                        {authored ? 'Authored by you' : item.unread ? "Unread" : "Seen — not approval"}
-                      </Typography>
-                    </TableCell>
+                    <TableCell sx={{ display: { xs: 'none !important', sm: 'table-cell !important' } }}>{item.revision}</TableCell>
+                    <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><Tooltip title={item.updatedAt || ''}><Typography component="span" variant="s3">{relativeReviewTime(item.updatedAt) || 'Update time unavailable'}</Typography></Tooltip></TableCell>
                     <TableCell align="right">
                       <IconButton
                         size="small"
@@ -147,7 +154,7 @@ function InboxRows({
                 ))}
               </TableBody>
             </Table>
-          </TableContainer>
+          </TableContainer>}
           <DataTablePagination
             page={data.page - 1}
             pageSize={data.pageSize}
@@ -222,15 +229,15 @@ export default function ReleaseInbox({
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
       <PageHeader
-        title="Skills reviews"
-        description="Assigned release decisions for this workspace. Reading a request never approves it."
-        sx={{ mb: 0 }}
-        actions={scopeKey && <>
+        title="Reviews"
+        description="Review candidates before they reach production."
+        sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
+        actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
           {onToggleAuthored && <Button variant="outlined" onClick={onToggleAuthored}>{authored ? 'Assigned to me' : 'My requests'}</Button>}
           {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request review</Button>}
         </>}
       />
-      {scopeKey && state === "ready" && data ? (
+      {state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
           {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored }}

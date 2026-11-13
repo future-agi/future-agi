@@ -35,7 +35,7 @@ import { useNavigate } from "react-router";
 export default function NavVertical({ openNav, onCloseNav }) {
   const { user } = useAuthContext();
   const pathname = usePathname();
-  const lgUp = useResponsive("up", "xs");
+  const lgUp = useResponsive("up", "md");
   const navigate = useNavigate();
   const navData = useNavData();
   const navUpgradeData = useNavUpgradeData();
@@ -52,10 +52,8 @@ export default function NavVertical({ openNav, onCloseNav }) {
   const { gatewayOpen, setGatewayOpen } = useGatewayOpen();
 
   useEffect(() => {
-    if (openNav) {
-      onCloseNav();
-    }
-  }, [onCloseNav, openNav, pathname]);
+    onCloseNav();
+  }, [onCloseNav, pathname]);
 
   // Sync settings sidebar visibility with URL on page reload
   useEffect(() => {
@@ -281,7 +279,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
     <Box
       sx={{
         flexShrink: { xs: 0 },
-        width: { xs: NAV.W_VERTICAL - 40 },
+        width: { xs: 0, md: NAV.W_VERTICAL - 40 },
         position: "relative",
         backgroundColor: "background.default",
         height: "100vh",

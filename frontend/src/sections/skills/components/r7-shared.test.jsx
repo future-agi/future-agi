@@ -210,7 +210,9 @@ describe('EvidenceSummary', () => {
   });
   it('never substitutes zero or a pass for unreported fields', () => {
     render(<EvidenceSummary items={[{ id: 'run-2' }]} />);
-    expect(screen.getAllByText('Not reported').length).toBeGreaterThanOrEqual(5);
+    expect(screen.getByText('Details not reported')).toBeVisible();
+    expect(screen.getByText('Outcome not reported')).toBeVisible();
+    expect(screen.getByText('Visibility not reported')).toBeVisible();
     expect(screen.queryByText('Passed')).not.toBeInTheDocument();
     expect(screen.queryByText(/0 of 0/)).not.toBeInTheDocument();
   });

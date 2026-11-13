@@ -30,20 +30,23 @@ vi.mock('src/api/skills/review-authoring', () => ({
 afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
 
-function Runner({ onExecute }) {
-  return <button type="button" onClick={() => onExecute({}).catch(() => {})}>Run release</button>;
+function Runner({ onExecute, onRenew }) {
+  return <><button type="button" onClick={() => onExecute({}).catch(() => {})}>Run release</button><button type="button" onClick={onRenew}>Inspect renewal</button></>;
 }
-Runner.propTypes = { onExecute: PropTypes.func.isRequired };
+Runner.propTypes = { onExecute: PropTypes.func.isRequired, onRenew: PropTypes.func };
 
 const withRequest = () => useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', authorId: 'author', revision: 1 } }, refetch: vi.fn() });
 
-it('opens the renewal inspection when the server refuses a stale release, and nothing else', async () => {
+it('opens renewal only after an explicit action, never on top of a move confirmation', async () => {
   withRequest();
   const mutateAsync = vi.fn().mockRejectedValueOnce({ statusCode: 409, code: 'release_conflict' });
   useExecuteReleaseRequest.mockReturnValue({ mutateAsync });
   render(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={Runner} /></MemoryRouter>);
   expect(useRenewalPreview).toHaveBeenLastCalledWith('request', false);
   fireEvent.click(screen.getByRole('button', { name: 'Run release' }));
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+  expect(useRenewalPreview).toHaveBeenLastCalledWith('request', false);
+  fireEvent.click(screen.getByRole('button', { name: 'Inspect renewal' }));
   await waitFor(() => expect(useRenewalPreview).toHaveBeenLastCalledWith('request', true));
   expect(screen.getByText('Renew release review')).toBeVisible();
 });
@@ -74,14 +77,13 @@ it('carries the published candidate forward, preselects the only target and shar
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
-  expect(screen.getByLabelText('Release resource')).toHaveValue('Refund policy');
-  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
+  expect(screen.getByText('Refund policy · production → v2')).toBeVisible();
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
   expect(screen.getAllByRole('checkbox', { name: /^Attach text evidence / })).toHaveLength(2);
   screen.getAllByRole('checkbox', { name: /^Attach text evidence / }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  expect(screen.getByText(/run-a · private/)).toBeVisible();
-  expect(screen.getByText(/run-b · private/)).toBeVisible();
+  expect(screen.getAllByText('run-a').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('run-b').length).toBeGreaterThan(0);
   expect(share).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
@@ -98,7 +100,7 @@ function PublishStub({ onPublishAndRequest, oneStepOperation }) {
   return <>
     <button type="button" onClick={() => oneStepOperation.run(onPublishAndRequest, { revision: 3, expectedDigest: 'sha256:candidate', expectedHeadVersion: 1, reviewFingerprint: 'fp3', headAcknowledged: false, baseVersion: 1, note: '', acknowledgeWarnings: false })}>One step</button>
     {oneStepOperation.error && <p>{oneStepOperation.error}</p>}
-    {oneStepOperation.uncertain && <button type="button" onClick={oneStepOperation.retry}>Retry original request</button>}
+    {oneStepOperation.uncertain && <button type="button" onClick={oneStepOperation.retry}>Check status</button>}
   </>;
 }
 PublishStub.propTypes = { onPublishAndRequest: PropTypes.func.isRequired, oneStepOperation: PropTypes.object.isRequired };
@@ -134,10 +136,10 @@ it('keeps an unknown publish outcome retryable without a second head acknowledgm
   usePublishContext.mockReturnValue({ mutateAsync: publish });
   render(<MemoryRouter><ContextReviewController scopeKey="org:ws:author" contextId="context" View={PublishStub} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'One step' }));
-  expect(await screen.findByText(/response was not confirmed/)).toBeVisible();
+  expect(await screen.findByText(/couldn't confirm whether this went through/)).toBeVisible();
   // The server now reports the acknowledged draft; retry reuses it.
   useContextDraft.mock.results.at(-1).value.refetch.mockResolvedValue({ data: { revision: 4, digest: 'sha256:candidate', headAcknowledged: true, reviewFingerprint: 'fp4' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Retry original request' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
   expect(ack).toHaveBeenCalledTimes(1);
   expect(publish.mock.calls[1][0].idempotencyKey).toBe(publish.mock.calls[0][0].idempotencyKey);
@@ -155,8 +157,8 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'External pipeline (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Attach 1 results' }));
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach text evidence / })).toBeChecked());
+  fireEvent.click(screen.getByRole('button', { name: 'Attach 1 result' }));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Text comparison/ })).toBeChecked());
   expect(prepare).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Prepare exact review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
 });

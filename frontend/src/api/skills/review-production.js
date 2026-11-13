@@ -48,14 +48,14 @@ const preview = () => apiPath('/model-hub/skills/release-requests/preview/');
 const decisions = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/decisions/', { request_id });
 const execute = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/execute/', { request_id });
 export const reviewsReady = () => getContractedApiMethods('/model-hub/skills/review-inbox/').includes('get') && getContractedApiMethods('/model-hub/skills/release-requests/{request_id}/').includes('get');
-const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id, updatedAt: value.updated_at });
+export const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id, authorName: value.author_name, recipients: value.recipients, decision: value.decision, decidedByName: value.decided_by_name, updatedAt: value.updated_at });
 export function useReviewInbox({ page = 1, status = '', authored = false } = {}) {
   return useSkillV11Query({ parts: ['review-inbox', page, status, authored], url: authored ? () => apiPath('/model-hub/skills/release-requests/') : inbox, params: { page, ...(status ? { status } : {}) }, enabled: reviewsReady(), mapper: (value) => ({ ...mapV11Page(value, mapRequest), unreadCount: value.unread_count }) });
 }
 export function useMarkReviewSeen() {
   return useSkillV11Mutation({ send: async ({ requestId, revision }, config) => { await axios.post(seen(requestId), { revision }, config); return { acknowledged: true }; }, invalidate: () => [['review-inbox']] });
 }
-export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
+export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, executedByName: result.executed_by_name, approvedByName: result.approved_by_name, recordedAt: result.executed_at, name: result.name, subjectId: result.subject_id, subjectKind: result.subject_kind, previousVersion: result.previous_version, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
 
 // Inspection reads only the reviewed immutable packet. The server revalidates
 // after reading capabilities, target configuration and annotation summaries.

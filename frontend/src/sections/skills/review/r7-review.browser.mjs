@@ -10,8 +10,12 @@ const output = path.resolve(process.argv[2] || '/tmp/r7-review-shots');
 await fs.mkdir(output, { recursive: true });
 const fixture = `
 import { packet, preview, textEvidence } from 'src/sections/skills/__tests__/r3_l09/fixtures';
-const options = { recipients: [{ id: 'reviewer', name: 'Independent reviewer', email: 'reviewer@example.invalid' }], targets: [], evidence: [textEvidence] };
-export const useSkillV11Scope = () => ({ scope: { userId: 'author' } });
+const options = { recipients: [{ id: 'reviewer', name: 'Independent reviewer', email: 'reviewer@example.invalid' }], targets: [], evidence: [{ ...textEvidence, payloadExpiresAt: new Date(Date.now()+3*86400000).toISOString() }] };
+export const useSkillV11Scope = () => ({ enabled: true, identity: 'fixture', scope: { userId: 'author' } });
+export const spendPolicyReady = () => false;
+export const campaignsContractReady = () => false;
+export const useContextCampaignAvailability = () => ({ data: { enabled: false } });
+export const useContextAuthoring = () => ({ bindings: { library: {}, detail: {}, editor: {}, reviews: {} } });
 export const useReviewSubjects = () => ({ data: { results: [], total_pages: 1 } });
 export const useReviewCandidates = useReviewSubjects;
 export const useReviewOptions = () => ({ data: new URLSearchParams(location.search).get('screen') === 'composer-no-evidence' ? { ...options, evidence: [] } : options, refetch() {} });
@@ -20,15 +24,18 @@ export const useSubmitReleaseReview = usePrepareReleaseReview;
 export const useShareReleaseEvidence = usePrepareReleaseReview;
 export const useDecideReleaseRequest = usePrepareReleaseReview;
 export const useRenewReleaseRequest = usePrepareReleaseReview;
-export const useRenewalPreview = () => ({ data: { revision: 2, fingerprint: 'renewed', packet, changes: [{ item: 'transition.expected_security_revision', before: 1, after: 3 }, { item: 'target.configuration_digest', before: 'Earlier configuration', after: 'Current configuration' }], removedEvidence: [{ source: 'skills_text', sourceId: 'expired-comparison', reason: 'evidence_expired' }] } });
+export const useRenewalPreview = () => ({ data: { revision: 2, fingerprint: 'renewed', packet, changes: [{ item: 'transition.expected_security_revision', before: 1, after: 3 }, { item: 'target.configuration_digest', before: 'sha256:' + 'a'.repeat(64), after: 'sha256:' + 'b'.repeat(64) }], removedEvidence: [{ source: 'skills_text', sourceId: 'expired-comparison', reason: 'evidence_expired' }] } });
 `;
 const entry = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Box, Typography } from '@mui/material';
 import ThemeProvider from 'src/theme';
 import { SettingsProvider } from 'src/components/settings/context/settings-provider';
+import SkillsWorkspaceLayout from 'src/sections/skills/components/SkillsWorkspaceLayout';
+import ObjectHeader from 'src/sections/skills/components/ObjectHeader';
+import { paths } from 'src/routes/paths';
 import ReleaseInbox from 'src/sections/skills/review/ReleaseInbox';
 import ReleaseReceipt from 'src/sections/skills/review/ReleaseReceipt';
 import ReleaseRequestPanel from 'src/sections/skills/review/ReleaseRequestPanel';
@@ -40,25 +47,25 @@ const params = new URLSearchParams(location.search);
 const screen = params.get('screen') || 'inbox';
 const state = params.get('state') || 'ready';
 try { localStorage.removeItem('settings'); } catch {}
-const receipt = { requestId: ID, decisionId: ID, executedBy: ID, currentnessAtAction: { release_revision: 2 }, postMoveState: { label: 'production', version: 2, releaseRevision: 3, eventId: ID } };
-const req = { ...request, name: 'Support agent', subjectKind: 'agent_context', subjectId: ID };
+const receipt = { executedByName: 'Erin Releaser', approvedByName: 'Robin Reviewer', recordedAt: new Date(Date.now() - 3600000).toISOString(), previousVersion: 1, requestId: ID, decisionId: ID, executedBy: ID, currentnessAtAction: { release_revision: 2 }, postMoveState: { label: 'production', version: 2, releaseRevision: 3, eventId: ID } };
+const req = { ...request, authorName: 'Alex Author', recipients: [{id:'reviewer',name:'Robin Reviewer'}], name: 'Support agent', subjectKind: 'agent_context', subjectId: ID };
 const body = { complete: true, changes, dependencyChanges: [], checks: { errors: [], warnings: [] } };
-function App() { return <MemoryRouter><Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
-  <Typography variant="s3" component="p" color="text.secondary" sx={{ mb: 2 }}>Synthetic visual fixture · no backend release</Typography>
-  {screen === 'inbox' && <ReleaseInbox scopeKey="fixture" state={state} data={inbox} onStatusChange={() => {}} onPageChange={() => {}} onOpen={() => {}} onRetry={() => {}} onCompose={() => {}} />}
-  {screen === 'receipt' && <ReleaseReceipt receipt={receipt} request={req} />}
+function Scene() { return <Box sx={{ minWidth: 0 }}>
+  {screen === 'inbox' && <ReleaseInbox scopeKey="fixture" state={state} data={{ ...inbox, results: inbox.results.map(row => ({ ...row, updatedAt: new Date(Date.now() - 3 * 86400000).toISOString() })) }} onStatusChange={() => {}} onPageChange={() => {}} onOpen={() => {}} onRetry={() => {}} onCompose={() => {}} onToggleAuthored={() => {}} />}
+  {screen === 'receipt' && <Box sx={{ px: {xs:2, sm:3}, py:2 }}><ObjectHeader title={req.name} crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, {label:req.name}]} /><ReleaseReceipt receipt={receipt} request={req} /></Box>}
   {screen.startsWith('composer') && <ReleaseRequestComposer scopeKey="fixture" state={state} prefill={{ kind: packet.subjectKind, subjectId: packet.subjectId, name: 'Support agent', candidate: { id: packet.candidateVersionId, number: packet.transition.version, digest: packet.candidateDigest } }} />}
-  {screen.startsWith('review') && <ReleaseRequestPanel scopeKey="fixture" state={state} preview={preview} request={{ ...req, status: screen === 'review-approved' ? 'approved' : 'pending' }} permissions={{ canDecide: true, canExecute: true }} review={body} onDecide={async () => ({})} onExecute={async () => receipt} />}
+  {screen.startsWith('review') && <Box sx={{px:{xs:2,sm:3},py:2}}><ObjectHeader title={req.name + ': production v' + packet.transition.expectedVersion + ' → v' + packet.transition.version} crumbs={[{label:'Reviews',to:paths.dashboard.skills.reviews},{label:req.name+' v7'}]} /><ReleaseRequestPanel scopeKey="fixture" state={state} preview={preview} request={{ ...req, status: screen === 'review-approved' ? 'approved' : 'pending' }} permissions={{ canDecide: true, canExecute: true }} review={body} onDecide={async () => ({})} onExecute={async () => receipt} /></Box>}
   {screen === 'renewal' && <ReleaseRenewalDialog open requestId={ID} onClose={() => {}} />}
-</Box></MemoryRouter>; }
+</Box>; }
+function App() { return <MemoryRouter initialEntries={[paths.dashboard.skills.reviews]}><Routes><Route element={<SkillsWorkspaceLayout />}><Route path="*" element={<Scene />} /></Route></Routes></MemoryRouter>; }
 createRoot(document.getElementById('root')).render(<SettingsProvider defaultSettings={{ themeMode: params.get('theme') || 'light', themeDirection: 'ltr', themeContrast: 'default', themeColorPresets: 'default' }}><ThemeProvider><App /></ThemeProvider></SettingsProvider>);
 `;
-const mocked = new Set(['src/api/skills/review-production', 'src/api/skills/review-authoring', 'src/api/skills/testing']);
+const mocked = new Set(['src/api/skills/review-production', 'src/api/skills/review-authoring', 'src/api/skills/testing', 'src/api/skills/r3-spend', 'src/api/skills/context-campaigns', 'src/sections/skills/contexts/ContextLibraryView']);
 const server = await createServer({
   configFile: false, root: process.cwd(),
   plugins: [react(), { name: 'review-visual-fixture', enforce: 'pre',
-    resolveId(id) { if (mocked.has(id) || [...mocked].some((name) => id.endsWith('/' + name) || id.endsWith('/' + name + '.js'))) return '\0review-fixture-api'; if (id === '/__review.jsx') return id; return null; },
-    load(id) { if (id === '\0review-fixture-api') return fixture; if (id === '/__review.jsx') return entry; return null; },
+    resolveId(id) { if (id.endsWith('/ContextLibraryView') || id.endsWith('/ContextLibraryView.jsx')) return '\0review-fixture-api'; if (id.endsWith('SkillsProductionProvider') || id.endsWith('SkillsProductionProvider.jsx')) return '\0review-provider'; if (mocked.has(id) || [...mocked].some((name) => id.endsWith('/' + name) || id.endsWith('/' + name + '.js'))) return '\0review-fixture-api'; if (id === '/__review.jsx') return id; return null; },
+    load(id) { if (id === '\0review-provider') return 'export default function Provider({children}) { return children; }'; if (id === '\0review-fixture-api') return fixture; if (id === '/__review.jsx') return entry; return null; },
     configureServer(vite) { vite.middlewares.use((req, res, next) => {
       if (!req.url.startsWith('/r7-review')) { next(); return; }
       res.setHeader('Content-Type', 'text/html');
@@ -75,12 +82,14 @@ const errors = [];
 try {
   browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage'] });
   const page = await browser.newPage();
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => { errors.push(error.message); console.error(error.message); });
+  page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
   await page.route('**/*', (route) => route.request().url().startsWith(origin) ? route.continue() : route.abort());
   const capture = async (screen, theme, width, state = '') => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/r7-review?${new URLSearchParams({ screen, theme, state })}`);
-    await page.getByText('Synthetic visual fixture · no backend release').waitFor();
+    await page.locator('nav[aria-label="Skills navigation"]').waitFor();
+    await page.waitForTimeout(250);
     await page.evaluate(() => document.fonts.ready);
     if (screen === 'renewal') await page.getByRole('dialog').waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Page overflow: ${screen} ${width}`);
