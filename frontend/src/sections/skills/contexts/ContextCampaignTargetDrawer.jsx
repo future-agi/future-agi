@@ -2,13 +2,15 @@ import { useId } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Drawer, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import Section from 'src/components/section';
+import IdentityChip from '../components/IdentityChip';
+import TechnicalDetails from '../components/TechnicalDetails';
 import StatusBadge from 'src/components/status-badge';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import { coveredDrawerSx, useDrawerCovered } from 'src/hooks/use-drawer-stack';
 
 const source = { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', m: 0 };
-export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, observations }) {
+export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, observations, onNext }) {
   const title = useId();
   const covered = useDrawerCovered(open);
   return <Drawer anchor="right" open={open} onClose={onClose} sx={coveredDrawerSx(covered)}
@@ -21,19 +23,18 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
       <Alert severity="info">Git plans and PR receipts are client-reported. Merged does not mean installed or delivered.</Alert>
       <Section title="Exact target">
         <Typography component="p" variant="s1">Release v{target.desiredVersion} · {target.selector.version ? `Pinned v${target.selector.version}` : `Follows ${target.selector.label}`}</Typography>
-        <Typography component="p" variant="s3" sx={source}>{target.desiredVersionId}{'\n'}{target.desiredDigest}</Typography>
+        <IdentityChip value={target.desiredDigest} label="Release digest" />
         {target.repository ? <Typography component="p" variant="s3" sx={source}>Current binding repository ID {target.repository.repositoryId} · {target.repository.defaultBranch} · Scope {target.repository.projectScope || 'project root'}</Typography> : <Alert severity="warning">This binding no longer names a repository. The old plan cannot authorize new writes.</Alert>}
       </Section>
       {!target.plan ? <Alert severity="warning">No local plan has been submitted. Inspect this repository with the qualified local executor before including it.</Alert> : <>
-        <Section title="Reviewed repository preimages">
-          <Typography component="p" variant="s3" sx={source}>Planned repository ID {target.plan.repositoryId}{'\n'}Base commit {target.plan.baseCommit}{'\n'}Plan {target.planDigest}{'\n'}Previous lock {target.plan.previousLockDigest || 'None — cold adoption'}{'\n'}Materialization {target.plan.materializationDigest}</Typography>
+        {(target.plan.localReviewRequired || target.plan.blockers.length > 0) && <Section title="Needs attention">
           {target.plan.localReviewRequired && <Alert severity="warning">Review and preserve existing local instructions. Record that decision below; this is not a semantic merge.</Alert>}
           {target.plan.blockers.map((blocker) => <Alert severity="warning" key={blocker}>{blocker}</Alert>)}
-        </Section>
+        </Section>}
         <Section title="Exact planned changes" description="These are review excerpts. The local executor must verify all full-file preimages and output hashes before writing.">
           {target.plan.changes.map((change) => <Box key={change.path} sx={{ borderBottom: 1, borderColor: 'divider', py: 1 }}>
             <Typography component="h3" variant="m3" sx={source}>{change.path} · {change.action} · {change.ownership}</Typography>
-            <Typography component="p" variant="s3" color="text.secondary" sx={source}>Before {change.beforeSha256 || 'absent'}{'\n'}After {change.afterSha256 || 'absent'}</Typography>
+            <TechnicalDetails title="File fingerprints"><IdentityChip label="Before" value={change.beforeSha256 || 'absent'} /><IdentityChip label="After" value={change.afterSha256 || 'absent'} /></TechnicalDetails>
             <Typography component="pre" variant="s1" sx={source}>{change.diffPreview}</Typography>
           </Box>)}
         </Section>
@@ -44,13 +45,18 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         </TextField>
         <TextField fullWidth multiline minRows={2} size="small" label="Review or exclusion reason" value={decision.reason} disabled={!editable} onChange={(event) => onDecision({ ...decision, reason: event.target.value })} inputProps={{ maxLength: 500 }} sx={{ mt: 1 }} />
       </Section>}
+      {onNext && <Button variant="outlined" onClick={onNext}>Next target needing review</Button>}
+      <TechnicalDetails title="Repository fingerprints">
+        <IdentityChip kind="id" label="Release ID" value={target.desiredVersionId} />
+        {target.plan && <Stack spacing={1}><Typography variant="s3">Planned repository ID {target.plan.repositoryId}</Typography><IdentityChip label="Base commit" value={target.plan.baseCommit} /><IdentityChip label="Plan" value={target.planDigest} /><IdentityChip label="Previous lock" value={target.plan.previousLockDigest || 'None — cold adoption'} /><IdentityChip label="Materialization" value={target.plan.materializationDigest} /></Stack>}
+      </TechnicalDetails>
       <Section title="Git observation">
         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap"><StatusBadge status={target.prState} /><StatusBadge status={target.mergeState} label={`Merge: ${target.mergeState}`} /></Stack>
-        {target.attempt && <Typography component="p" variant="s3" sx={source}>Branch {target.attempt.branch}{'\n'}Claim {target.attempt.id} · generation {target.attempt.generation}{'\n'}Mode {target.attempt.mode}{'\n'}{target.attempt.receipt?.pullRequestNumber ? `PR #${target.attempt.receipt.pullRequestNumber}` : 'No PR number observed'}</Typography>}
+        {target.attempt && <><Typography variant="s3">{target.attempt.receipt?.pullRequestNumber ? `PR #${target.attempt.receipt.pullRequestNumber}` : 'No PR number observed'}</Typography><TechnicalDetails title="Pull request details"><Typography component="p" variant="s3" sx={source}>Branch {target.attempt.branch} · generation {target.attempt.generation} · Mode {target.attempt.mode}</Typography><IdentityChip label="Claim" kind="id" value={target.attempt.id} /></TechnicalDetails></>}
         {target.prState === 'unknown' && <Alert severity="warning">Reconcile the existing branch and PR marker before retrying. Do not issue another create request.</Alert>}
       </Section>
       <Section title="Independent delivery observations" description="Only observations for this exact release are shown. Missing or stale reports are not recovery proof.">
-        {observations?.isLoading ? <ContentSkeleton variant="rows" rows={3} label="Loading delivery observations" /> : observations?.isError ? <ErrorState title="Could not load observations" onRetry={observations.refetch} /> : ['installed', 'discovered', 'delivered'].map((stage) => {
+        {observations?.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={3} label="Loading delivery observations" /> : observations?.isError ? <ErrorState title="Could not load observations" onRetry={observations.refetch} /> : ['installed', 'discovered', 'delivered'].map((stage) => {
           const fact = observations?.data?.[stage];
           return <Box key={stage} sx={{ py: 1 }}><Typography component="h3" variant="m3">{stage}</Typography><StatusBadge status={fact ? (fact.stale ? 'expired' : 'acknowledged') : 'unknown'} label={fact ? (fact.stale ? 'Stale observation' : 'Observed exact release') : 'Not observed'} />{fact && <Typography component="p" variant="s3" sx={source}>{fact.observedAt} · {fact.origin}</Typography>}</Box>;
         })}
@@ -61,5 +67,5 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
 ContextCampaignTargetDrawer.propTypes = {
   target: PropTypes.object, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired,
   decision: PropTypes.object, onDecision: PropTypes.func.isRequired, editable: PropTypes.bool,
-  observations: PropTypes.object,
+  observations: PropTypes.object, onNext: PropTypes.func,
 };

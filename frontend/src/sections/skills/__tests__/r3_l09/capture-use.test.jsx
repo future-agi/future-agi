@@ -409,9 +409,11 @@ describe("independent consumer observations", () => {
     );
     expect(screen.getByText("Pinned as intended")).toBeVisible();
     expect(screen.getByText("Runtime loading not observed")).toBeVisible();
-    expect(screen.getAllByText("Not observed")).toHaveLength(3);
+    expect(screen.getAllByText("Not observed")).toHaveLength(1);
     click("Pilot application");
     expect(screen.getByText("Delivery receipts")).toBeVisible();
+    // The drawer retains all five independent stages; the queue shows delivery only.
+    expect(screen.getAllByText("Not observed").filter((node) => node.closest('[role="dialog"]'))).toHaveLength(3);
     expect(
       screen.getByText(/Version numbers do not establish freshness/),
     ).toBeVisible();

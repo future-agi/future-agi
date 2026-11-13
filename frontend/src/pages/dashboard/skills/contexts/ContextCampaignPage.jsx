@@ -14,6 +14,8 @@ import {
   useContextCampaignObservations, usePreviewContextCampaignRollback,
   useContextCampaignAvailability, useCreateContextCampaign,
 } from 'src/api/skills/context-campaigns';
+import CapabilityNotice from 'src/sections/skills/components/CapabilityNotice';
+import IdentityChip from 'src/sections/skills/components/IdentityChip';
 import ContextCampaignList from 'src/sections/skills/contexts/ContextCampaignList';
 import ContextCampaignReview from 'src/sections/skills/contexts/ContextCampaignReview';
 
@@ -30,7 +32,7 @@ function CreateInventory({ inventory, submission, onSubmission, onClose, onCreat
   return <ModalWrapper open onClose={onClose} title="Review fixed repository inventory" actionBtnTitle={submission ? 'Recover original submission' : 'Create draft campaign'} onSubmit={submit} isValid={valid && Boolean(name.trim())} isLoading={create.isPending}>
     <TextField label="Campaign name" value={name} disabled={Boolean(submission)} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 120 }} size="small" />
     <Alert severity="info">This creates a draft with exactly {inventory.targets.length} targets. Each repository still needs a local plan and explicit authorization before a PR can be created.</Alert>
-    <Stack spacing={1} sx={{ maxHeight: 320, overflow: 'auto' }}>{inventory.targets.map((target) => <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }} key={target.bindingId}>{target.bindingId} · v{target.version}</Typography>)}</Stack>
+    <Stack spacing={1} sx={{ maxHeight: 320, overflow: 'auto' }}>{inventory.targets.map((target) => <Stack key={target.bindingId} direction="row" spacing={1} alignItems="center"><Typography variant="s3">v{target.version}</Typography><IdentityChip label="Target ID" kind="id" value={target.bindingId} /></Stack>)}</Stack>
     {create.isError && <Alert severity="error">Creation was not confirmed. Retry this original submission to recover its receipt; do not create a new campaign with a fresh key.</Alert>}
   </ModalWrapper>;
 }
@@ -59,12 +61,12 @@ function CampaignRoute() {
   const rollback = usePreviewContextCampaignRollback(campaignId);
   const back = (id) => navigate(`/dashboard/skills/contexts/rollouts/${id}`);
   if (!campaignId) return <>
-    <ContextCampaignList query={list} enabled={availability.data?.enabled === true} state={state} onOpen={back} page={page} onPageChange={setPage} onCreate={inventory ? () => setCreating(true) : undefined} />
-    {creating && inventory && <CreateInventory inventory={inventory} submission={location.state?.campaignSubmission}
+    <ContextCampaignList query={list} availability={availability} enabled={availability.data?.enabled === true} state={state} onOpen={back} page={page} onPageChange={setPage} onCreate={inventory ? () => setCreating(true) : undefined} />
+    {creating && inventory && availability.data?.enabled === true && !availability.isError && <CreateInventory inventory={inventory} submission={location.state?.campaignSubmission}
       onSubmission={(input) => navigate(location.pathname, { replace: true, state: { ...location.state, campaignSubmission: input } })}
       onClose={() => setCreating(false)} onCreated={back} />}
   </>;
-  if (state === 'loading' || detail.isLoading || targets.isLoading) return <ContentSkeleton variant="rows" rows={6} label="Loading exact campaign review" />;
+  if (state === 'loading' || detail.isLoading || targets.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={6} label="Loading exact campaign review" />;
   if (state === 'error' || state === 'forbidden' || detail.isError || targets.isError) return <ErrorState title={state === 'forbidden' ? 'This rollout is not available to you' : 'Could not load the complete rollout'} onRetry={() => { detail.refetch(); targets.refetch(); }} />;
   if (!detail.data || !targets.data) return <Alert severity="info">Select an authenticated workspace to inspect this campaign.</Alert>;
   return <ContextCampaignReview campaign={detail.data} targets={targets.data.results}
@@ -75,10 +77,10 @@ function CampaignRoute() {
 
 export default function ContextCampaignPage() {
   const access = useSkillV11Scope();
-  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={{ minWidth: 0 }}>
+  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={{ minWidth: 0, px: { xs: 2, md: 3 }, py: 1.5 }}>
     {campaignsContractReady() ? <CampaignRoute key={access.identity} /> : <>
       <PageHeader title="Repository rollouts" description="Fixed repository plans with separate delivery observations." />
-      <Alert severity="info">Campaigns are unavailable. The campaign persistence, generated HTTP contract and qualified local executor must be integrated before this capability can be enabled.</Alert>
+      <CapabilityNotice title="Repository rollouts are off" description="New repository changes can't be started in this workspace. Existing rollout records stay readable." />
     </>}
   </Stack></>;
 }

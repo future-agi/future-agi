@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   FormControlLabel,
@@ -30,7 +31,16 @@ import {
   useRefreshContextFacts,
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
-import { IdentityValue } from "../review/ReleaseReviewBody";
+import EmptyState from 'src/components/empty-state';
+import { useReviewOptions } from 'src/api/skills/review-authoring';
+import IdentityChip from '../components/IdentityChip';
+import PeoplePicker from '../components/PeoplePicker';
+import EvidenceSummary from '../components/EvidenceSummary';
+import TechnicalDetails from '../components/TechnicalDetails';
+import OperationFeedback from '../components/OperationFeedback';
+import CapabilityNotice from '../components/CapabilityNotice';
+import TextDiff from '../components/TextDiff';
+import { consumerNextStep } from './consumerPresentation';
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
 import { suggestRelease, suggestReviewer } from "./recoverySuggestion";
@@ -60,25 +70,22 @@ const reasonNames = {
 };
 const uuid = () => crypto.randomUUID();
 
-function Cohort({ cohort, numbers }) {
+function Cohort({ cohort, numbers, asOf }) {
   return (
-    <Section title="Incident and declared cohort">
+    <Section title="Verify consumers">
       <Stack spacing={1.5}>
-        <Alert severity="info">
-          Declared bindings only. A label move is not recovery: consumers stay
-          unknown until each runtime reports delivery of the recovered release,
-          and threads under expired authority or a lost mapping are never shown
-          as recovered.
-        </Alert>
+        <Typography variant="s3" color="text.secondary">As of {asOf || 'time not reported'}. A label move is not recovery: each runtime must report delivery. Threads with expired authority or lost mappings are not recovered.</Typography>
+        {cohort.some((row) => row.observationsComplete === false) && <Typography variant="s3">Some observations are missing.</Typography>}
+        {!cohort.length && <EmptyState title="No declared consumers" description="No runtime delivery can be verified until consumers are registered and report it." />}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery cohort">
             <TableHead>
               <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
                 <TableCell>Consumer</TableCell>
-                <TableCell>Kind</TableCell>
-                <TableCell>Loaded</TableCell>
-                <TableCell>Retained incident</TableCell>
-                <TableCell>State</TableCell>
+                <TableCell>Last delivered release</TableCell>
+                <TableCell>Report</TableCell>
+                <TableCell>Recovery verification</TableCell>
+                <TableCell>Next step</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -89,14 +96,13 @@ function Cohort({ cohort, numbers }) {
                   sx={{ height: ROW_HEIGHT.default }}
                 >
                   <TableCell>
-                    <Typography variant="s1">{row.binding.name}</Typography>
+                    <Typography component="div" variant="s1">{row.binding.name}</Typography>
                     <Typography variant="s3">
                       {row.binding.selector.version
                         ? `Pinned v${row.binding.selector.version}`
                         : `Follow ${row.binding.selector.label}`}
                     </Typography>
                   </TableCell>
-                  <TableCell>{row.binding.kind}</TableCell>
                   <TableCell>
                     {row.loaded
                       ? `v${numbers[row.loaded.versionId] ?? "?"}`
@@ -111,13 +117,7 @@ function Cohort({ cohort, numbers }) {
                           {row.latestFailure.diagnosticCodes.join(", ") ||
                             "no code"}
                         </Typography>
-                        <Typography
-                          variant="s3"
-                          sx={{ overflowWrap: "anywhere" }}
-                        >
-                          Trace{" "}
-                          {row.latestFailure.traceRef?.trace_id ?? "not linked"}
-                        </Typography>
+                        {row.latestFailure.traceRef?.trace_id ? <IdentityChip kind="id" label="Trace" value={row.latestFailure.traceRef.trace_id} /> : <Typography variant="s3">Trace not linked</Typography>}
                       </Stack>
                     ) : (
                       "None retained"
@@ -134,6 +134,7 @@ function Cohort({ cohort, numbers }) {
                       ))}
                     </Stack>
                   </TableCell>
+                  <TableCell><Typography variant="s3">{consumerNextStep(row.nextActionCode)}</Typography>{consumerNextStep(row.nextActionCode) === 'Unknown' && row.nextActionCode && <TechnicalDetails><Typography variant="s3" component="code">{row.nextActionCode}</Typography></TechnicalDetails>}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -146,13 +147,14 @@ function Cohort({ cohort, numbers }) {
 Cohort.propTypes = {
   cohort: PropTypes.array.isRequired,
   numbers: PropTypes.object.isRequired,
+  asOf: PropTypes.string,
 };
 
 function Candidates({ candidates, chosen, onChoose }) {
   return (
     <Section title="Choose a recovery release">
       <TableContainer sx={{ maxWidth: 1 }}>
-        <Table size="small" aria-label="Recovery releases">
+        <Table size="small" aria-label="Recovery releases" sx={{ minWidth: 620 }}>
           <TableHead>
             <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
               <TableCell>Release</TableCell>
@@ -171,9 +173,7 @@ function Candidates({ candidates, chosen, onChoose }) {
               >
                 <TableCell>
                   <Typography variant="s1">v{row.number}</Typography>
-                  <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-                    {row.digest}
-                  </Typography>
+                  <IdentityChip label="Release digest" value={row.digest} />
                 </TableCell>
                 <TableCell>
                   <Stack spacing={0.5}>
@@ -219,7 +219,7 @@ function Candidates({ candidates, chosen, onChoose }) {
                 <TableCell>
                   <Button
                     size="small"
-                    variant={chosen === row.id ? "contained" : "outlined"}
+                    variant="outlined"
                     disabled={!row.selectable}
                     onClick={() => onChoose(row.id)}
                   >
@@ -247,10 +247,9 @@ const changeNames = {
   unchanged: "Unchanged",
 };
 const changeStatus = { added: "current_only", changed: "current_only", removed: "failed", unchanged: "completed" };
-const shortDigest = (value) => String(value).slice(0, 12);
 
 function ClosureReview({ candidate, production, closure }) {
-  if (closure.isLoading) return <ContentSkeleton />;
+  if (closure.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />;
   if (closure.error || !closure.data) {
     return (
       <ErrorState
@@ -270,8 +269,15 @@ function ClosureReview({ candidate, production, closure }) {
           {counts.removed ?? 0} removed, {counts.unchanged ?? 0} unchanged. {candidate.children.length} linked skills keep their pinned versions;{" "}
           {candidate.unavailableChildren.length} source{candidate.unavailableChildren.length === 1 ? "" : "s"} retired.
         </Typography>
+        {changes.map((change) => <Stack key={change.path} spacing={0.5}>
+          <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
+          <Box aria-label={`${change.path} change from production`} tabIndex={0}>
+            <TextDiff fromText={change.lines.filter((line) => line.kind !== 'added').map((line) => line.text).join('\n')} toText={change.lines.filter((line) => line.kind !== 'removed').map((line) => line.text).join('\n')} fromTitle={`Production v${production?.number ?? '?'}`} toTitle={`Recovery v${candidate.number}`} />
+          </Box>
+        </Stack>)}
+        {/* Every unchanged row stays visible: the measured J6 review inspects the full closure. */}
         <TableContainer sx={{ maxWidth: 1 }}>
-          <Table size="small" aria-label="Recovery closure files">
+          <Table size="small" aria-label="Recovery closure files" sx={{ minWidth: 620 }}>
             <TableHead>
               <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
                 <TableCell>File</TableCell>
@@ -288,40 +294,12 @@ function ClosureReview({ candidate, production, closure }) {
                     <StatusBadge status={changeStatus[row.status]} label={changeNames[row.status]} />
                   </TableCell>
                   <TableCell>{row.sizeBytes} B</TableCell>
-                  <TableCell>{shortDigest(row.sha256)}</TableCell>
+                  <TableCell><IdentityChip value={row.sha256} label="File digest" /></TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
-        {changes.map((change) => (
-          <Stack key={change.path} spacing={0.5}>
-            <Typography variant="m3">
-              {changeNames[change.status]}: {change.path}
-            </Typography>
-            <Typography
-              component="pre"
-              variant="s1"
-              aria-label={`${change.path} change from production`}
-              tabIndex={0}
-              sx={{ m: 0, p: 1.5, border: 1, borderColor: "divider", borderRadius: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-            >
-              {change.lines.map((line, index) => (
-                // The sign is text, not color, so the change reads in both themes.
-                <Typography
-                  // eslint-disable-next-line react/no-array-index-key
-                  key={index}
-                  component="span"
-                  variant="s1"
-                  sx={{ display: "block", bgcolor: line.kind === "same" ? "transparent" : "action.selected" }}
-                >
-                  {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}
-                  {line.text}
-                </Typography>
-              ))}
-            </Typography>
-          </Stack>
-        ))}
       </Stack>
     </Section>
   );
@@ -341,34 +319,56 @@ function RollbackRequest({
   releaseRevision,
   reviewerId,
   onReviewer,
+  onRefresh,
 }) {
   const reviewers = useRecoveryReviewers();
+  const options = useReviewOptions('agent_context', contextId, candidate.id);
+  const [selectedEvidence, setSelectedEvidence] = useState([]);
+  const matchingEvidence = (options.data?.evidence ?? []).filter((item) => item.subjectId === contextId && item.candidateDigest === candidate.digest);
+  const evidence = matchingEvidence.filter((item) => item.visibility === 'workspace' && selectedEvidence.includes(`${item.source}:${item.sourceId}`));
+  const evidenceRows = (items) => items.map((item) => ({ id: item.sourceId, source: item.source, kind: item.source === 'simulation_native' ? 'application_verification' : 'text_comparison', title: item.source === 'simulation_native' ? 'Application verification' : 'Text comparison', candidateNumber: candidate.number, status: item.status, visibility: item.visibility, expiresAt: item.payloadExpiresAt }));
   const preview = usePreviewRecoveryRelease();
   const submit = useSubmitRecoveryRequest(contextId);
   const [reviewed, setReviewed] = useState(false);
   const [key] = useState(uuid);
   const [copy, setCopy] = useState({ busy: false, done: false, error: "" });
   const packet = preview.data;
+  const originalSubmission = useRef(null);
+  const sendRequest = () => {
+    // A lost response is reconciled with the same recipient, packet and operation key.
+    originalSubmission.current ??= { preview: packet, reviewerId, idempotencyKey: key };
+    submit.mutate(originalSubmission.current);
+  };
   // The packet is computed from the reviewed closure the moment the review is
   // acknowledged; there is nothing further to decide before choosing a reviewer.
   const requested = useRef(false);
+  const originalPreview = useRef(null);
   const startPreview = preview.mutate;
   useEffect(() => {
     if (!reviewed || requested.current) return;
     requested.current = true;
-    startPreview({ contextId, candidateVersionId: candidate.id });
-  }, [reviewed, contextId, candidate.id, startPreview]);
-  const listed = (reviewers.data ?? []).some((item) => item.id === reviewerId);
+    originalPreview.current = { contextId, candidateVersionId: candidate.id, evidence, external_pipeline: null };
+    startPreview(originalPreview.current);
+  }, [reviewed, contextId, candidate.id, startPreview, evidence]);
+  const recipient = originalSubmission.current?.reviewerId ?? reviewerId;
+  const listed = (reviewers.data ?? []).some((item) => item.id === recipient);
   const link = submit.data?.id
     ? `${window.location.origin}${paths.dashboard.skills.contextReview(contextId)}?request=${submit.data.id}`
     : "";
   return (
-    <Section title={`Request rollback to v${candidate.number}`}>
+    <Section title={submit.data ? "Await approval" : `Request rollback to v${candidate.number}`}>
       <Stack spacing={1.5}>
-        <IdentityValue
-          label={`Production v${production?.number ?? "?"} → v${candidate.number}`}
-          value={`${candidate.id} · ${candidate.digest}`}
-        />
+        <Typography variant="m3">Production v{production?.number ?? "?"} → v{candidate.number}</Typography>
+        <IdentityChip label="Recovery release" value={candidate.digest} />
+        <Section title="Test evidence">
+          {options.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" /> : options.isError ? <ErrorState title="Couldn't load test evidence" onRetry={options.refetch} /> : <>
+            <EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'workspace'))} selectable selected={selectedEvidence}
+              onToggle={reviewed || packet ? undefined : (item) => { const id = `${item.source}:${item.id}`; setSelectedEvidence((old) => old.includes(id) ? old.filter((value) => value !== id) : [...old, id]); }}
+              emptyText="No matching test evidence attached. Not tested is not a pass." />
+            {matchingEvidence.some((item) => item.visibility === 'private') && <><Typography variant="s3">Private evidence is not attached. Share it from Tests before including it in a workspace review.</Typography><EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'private'))} /></>}
+          </>}
+          <Button href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
+        </Section>
         <Typography variant="s3">
           Reviewed against release revision {releaseRevision}. A change to the
           release restarts this review.
@@ -377,11 +377,12 @@ function RollbackRequest({
           control={
             <Checkbox
               checked={reviewed}
-              disabled={Boolean(packet) || preview.isPending || !closureReady}
+              disabled={Boolean(packet) || preview.isPending || !closureReady || options.isLoading || options.isError}
               onChange={(_, checked) => {
                 // Unchecking after a refused packet starts the review again.
                 if (!checked) {
                   requested.current = false;
+                  originalPreview.current = null;
                   preview.reset?.();
                 }
                 setReviewed(checked);
@@ -395,30 +396,11 @@ function RollbackRequest({
             Preparing the rollback packet.
           </Typography>
         )}
-        {preview.error && (
-          <Alert severity="error">
-            The release service refused this packet. Recheck eligibility; no
-            request was created.
-          </Alert>
-        )}
+        <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
         {packet && (
           <Stack spacing={1}>
-            <IdentityValue label="Packet fingerprint" value={packet.fingerprint} />
-            <TextField
-              select
-              size="small"
-              label="Reviewer"
-              value={listed ? reviewerId : ""}
-              disabled={submit.isPending || Boolean(submit.data)}
-              onChange={(event) => onReviewer(event.target.value)}
-              helperText="Suggested: whoever last moved production. The server checks the reviewer's authority on submit."
-            >
-              {(reviewers.data ?? []).map((item) => (
-                <MenuItem key={item.id} value={item.id}>
-                  {item.name}
-                </MenuItem>
-              ))}
-            </TextField>
+            <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />
+            <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The server checks review authority on submit." />
             <Button
               variant="contained"
               disabled={
@@ -427,9 +409,7 @@ function RollbackRequest({
                 submit.isPending ||
                 Boolean(submit.data)
               }
-              onClick={() =>
-                submit.mutate({ preview: packet, reviewerId, idempotencyKey: key })
-              }
+              onClick={sendRequest}
             >
               Submit rollback for review
             </Button>
@@ -438,17 +418,10 @@ function RollbackRequest({
                 You cannot request production changes for this context.
               </Typography>
             )}
-            {submit.error && (
-              <Alert severity="error">
-                Submission failed. Submit again; the same request key prevents
-                a duplicate.
-              </Alert>
-            )}
+            <OperationFeedback error={submit.error} action="request a recovery release" onRefresh={onRefresh} onRetry={sendRequest} onReconcile={sendRequest} />
             {submit.data && (
               <Alert severity="success" role="status">
-                Rollback request submitted. The reviewer approves and moves
-                production from Skills Reviews; production is unchanged until
-                then.
+                Rollback request submitted. Production has not moved. The reviewer approves and releases it from Skills Reviews.
               </Alert>
             )}
             {link && (
@@ -504,6 +477,7 @@ RollbackRequest.propTypes = {
   releaseRevision: PropTypes.number,
   reviewerId: PropTypes.string.isRequired,
   onReviewer: PropTypes.func.isRequired,
+  onRefresh: PropTypes.func,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
@@ -511,6 +485,8 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
   const [key] = useState(uuid);
   const [hours, setHours] = useState(24);
   const [commit, setCommit] = useState("");
+  const validCommit = /^[a-f0-9]{40}$/.test(commit.trim());
+  const [copyStatus, setCopyStatus] = useState("");
   const commands = restoreCommands({
     name: contextName,
     version: candidate.number,
@@ -519,7 +495,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
   return (
     <Section title="Recover locks and applications">
       <Stack spacing={1.5}>
-        <Typography variant="m3">Replacement application credential</Typography>
+        <Section title="Replace credential"><Stack spacing={1.5}><Typography variant="m3">Replacement application credential</Typography>
         <Typography variant="s3">
           Expired or revoked credentials are never extended. A new consume
           credential follows production and is pinned to v{candidate.number};
@@ -570,13 +546,14 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
             helperText="Store it in the application's secret manager now. It is not shown again."
           />
         )}
-        <Typography variant="m3">Restore the checked-in lock</Typography>
+        </Stack></Section><Section title="Restore repository lock"><Stack spacing={1.5}><Typography variant="m3">Restore the checked-in lock</Typography>
         <TextField
           size="small"
           label="Last reviewed commit"
           value={commit}
           onChange={(event) => setCommit(event.target.value)}
-          helperText="The full commit id whose lock was reviewed. The restore reads that lock, refuses one whose identity differs and verifies the result."
+          error={Boolean(commit) && !validCommit}
+          helperText={validCommit ? "The restore verifies this reviewed lock and preserves local work." : "Enter the reviewed 40-character commit"}
         />
         <Typography
           component="pre"
@@ -594,7 +571,9 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
         >
           {commands}
         </Typography>
-        <Typography variant="m3">Application threads</Typography>
+        <Button disabled={!validCommit} onClick={async () => { try { await navigator.clipboard.writeText(commands); setCopyStatus('Copied restore commands.'); } catch { setCopyStatus("Couldn't copy. Select the commands above."); } }}>Copy restore commands</Button>
+        {copyStatus && <Typography role="status" variant="s3">{copyStatus}</Typography>}
+        </Stack></Section><Section title="Review application threads"><Typography variant="m3">Application threads</Typography>
         <Typography variant="s1" component="div">
           Resume a paused thread only under its original session and
           checkpoint. Reconcile persisted business receipts before the next
@@ -604,7 +583,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
           recovered. Plan every registered thread once, review that plan, and
           apply exactly the reviewed plan: an applied plan is refused if its
           digest differs or any thread moved after the review.
-        </Typography>
+        </Typography></Section>
       </Stack>
     </Section>
   );
@@ -619,6 +598,7 @@ LocalRecovery.propTypes = {
 const RECOVERY_FACTS_REFRESH_MS = 5000;
 
 export default function J6RecoveryPanel({ contextId, contextName }) {
+  const previewState = new URLSearchParams(window.location.search).get("state");
   const query = useContextRecovery(contextId);
   const refreshFacts = useRefreshContextFacts(contextId);
   // The recovery facts follow a release or consumer change made elsewhere (a
@@ -669,8 +649,12 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       ),
     [data],
   );
-  if (query.isLoading) return <ContentSkeleton />;
-  if (query.error || !data)
+  if (previewState === 'loading' || (query.isLoading && !data)) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="panel" />;
+  if (query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description={query.error.message} />;
+  if (previewState === 'denied') return <ErrorState title="You cannot review recovery for this context" />;
+  if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
+  if (previewState === 'empty') return <EmptyState title="No eligible recovery release" description="Publish and review a recovery candidate before requesting a production change." />;
+  if (previewState === 'error' || query.error || !data)
     return (
       <ErrorState
         title="Recovery view unavailable"
@@ -682,7 +666,10 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const production = data.candidates.find((row) => row.isProduction);
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
-      <Cohort cohort={data.cohort} numbers={numbers} />
+      <Typography variant="m3">Incident {contextName} · Production {production ? `v${production.number}` : 'not set'}{suggestion ? ` · Suggested recovery: v${suggestion.number} (a suggestion, not a safety verdict)` : ''}</Typography>
+      {query.isFetching && <StatusBadge status="checking" label="Updating…" />}
+      {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
+      <Section title="Review release"><Stack spacing={3}>
       {suggestion && (
         <Alert severity="info">
           Suggested: v{suggestion.number}, the newest eligible release older than
@@ -691,11 +678,6 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           needs one.
         </Alert>
       )}
-      <Candidates
-        candidates={data.candidates}
-        chosen={chosen}
-        onChoose={setChosen}
-      />
       {candidate?.isProduction && (
         <Alert severity="info">
           v{candidate.number} is in production. Nothing is left to roll back;
@@ -705,6 +687,11 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       {candidate && !candidate.isProduction && (
         <ClosureReview candidate={candidate} production={production} closure={closure} />
       )}
+      <Candidates
+        candidates={data.candidates}
+        chosen={chosen}
+        onChoose={setChosen}
+      />
       {candidate && !candidate.isProduction && (
         <RollbackRequest
           // A moved release revision makes an earlier packet stale: start a fresh review.
@@ -717,17 +704,12 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           releaseRevision={data.releaseRevision}
           reviewerId={reviewerId || suggestedReviewer}
           onReviewer={setReviewerId}
+          onRefresh={() => refreshFacts()}
         />
       )}
-      {candidate && (
-        <LocalRecovery
-          key={`local-${candidate.id}`}
-          contextId={contextId}
-          contextName={contextName}
-          candidate={candidate}
-          canIssue={data.canIssueCredentials}
-        />
-      )}
+      </Stack></Section>
+      <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} />
+      {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare local recovery in advance"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
       <Button variant="text" onClick={() => refreshFacts()}>
         Refresh recovery facts
       </Button>

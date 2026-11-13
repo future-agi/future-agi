@@ -127,10 +127,11 @@ it('labels delivered sessions with their exact release number, never a guessed o
   const data = { results: [row('known', fact('parent-v2', 'fresh-session')), row('unknown', fact('foreign-version', null))], page: 1, pageSize: 25, count: 2, asOf: 'now' };
   mount(<ContextConsumersView scopeKey="scope" state="ready" data={data} versionNumbers={{ 'parent-v2': 2 }} onPageChange={() => {}} onWindowChange={() => {}} />);
   expect(screen.getByText('v2')).toBeVisible();
-  expect(screen.getByText('Session fresh-session')).toBeVisible();
-  expect(screen.getByText('foreign-version')).toBeVisible();
+  expect(screen.getByTitle('foreign-version')).toBeVisible();
   expect(screen.queryByText('v1')).not.toBeInTheDocument();
   expect(screen.getAllByText('Old thread retained')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Inspect runtime-known' }));
+  expect(screen.getByTitle('fresh-session')).toBeVisible();
 });
 
 it.each([['versions', 'Label request'], ['consumers', 'Consumer rows'], ['unknown-tab', null]])('opens the shared %s tab link without guessing', (tab, body) => {

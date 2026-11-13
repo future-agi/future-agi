@@ -8,6 +8,8 @@ const submitMutate = vi.fn();
 let previewState = {};
 let submitState = {};
 let reviewers = [];
+let evidenceOptions = { data: { evidence: [] } };
+vi.mock("src/api/skills/review-authoring", () => ({ useReviewOptions: () => evidenceOptions }));
 let recovery = { candidates: [], cohort: [], releaseRevision: 1 };
 vi.mock("src/api/skills/j6-recovery", () => ({
   useContextRecovery: () => ({ isLoading: false, error: null, data: recovery }),
@@ -27,6 +29,8 @@ beforeEach(() => {
   previewState = {};
   submitState = {};
   reviewers = [];
+  evidenceOptions = { data: { evidence: [] } };
+  recovery = { candidates: [], cohort: [], releaseRevision: 1 };
 });
 afterEach(() => vi.useRealTimers());
 
@@ -93,7 +97,7 @@ it("prepares the rollback packet when the review is acknowledged, with no separa
   expect(previewMutate).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
   expect(previewMutate).toHaveBeenCalledTimes(1);
-  expect(previewMutate).toHaveBeenCalledWith({ contextId: "ctx", candidateVersionId: "v1-id" });
+  expect(previewMutate).toHaveBeenCalledWith({ contextId: "ctx", candidateVersionId: "v1-id", evidence: [], external_pipeline: null });
 });
 
 it("submits to the only reviewer and offers the exact request link afterwards", () => {
@@ -144,4 +148,57 @@ it("preselects whoever last moved production as the reviewer", () => {
   expect(screen.getByRole("combobox", { name: "Reviewer" })).toHaveTextContent("Releaser");
   fireEvent.click(screen.getByRole("button", { name: "Submit rollback for review" }));
   expect(submitMutate).toHaveBeenCalledWith(expect.objectContaining({ reviewerId: "u3" }));
+});
+
+it("attaches only explicitly selected workspace evidence for the exact recovery candidate", () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  const evidence = { source: 'skills_text', sourceId: 'run-1', subjectId: 'ctx', candidateDigest: rollbackCandidate.digest, visibility: 'workspace', status: 'passed', annotationRevision: 4 };
+  evidenceOptions = { data: { evidence: [evidence, { ...evidence, sourceId: 'other', candidateDigest: 'different' }, { ...evidence, sourceId: 'private', visibility: 'private' }] } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getAllByRole('checkbox', { name: 'Attach Text comparison' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }));
+  expect(previewMutate).toHaveBeenCalledWith({ contextId: 'ctx', candidateVersionId: 'v1-id', evidence: [evidence], external_pipeline: null });
+  expect(screen.getByRole('checkbox', { name: 'Attach Text comparison' })).toBeDisabled();
+});
+
+it("keeps evidence errors distinct from an empty test history and blocks incomplete review", () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  evidenceOptions = { isError: true, refetch: vi.fn() };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText("Couldn't load test evidence")).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ })).toBeDisabled();
+  expect(previewMutate).not.toHaveBeenCalled();
+});
+
+it('reconciles an uncertain submission with its original reviewer, packet and idempotency key', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, lastReleaserId: 'u2', candidates: suggestedCandidates };
+  reviewers = [{ id: 'u2', name: 'First reviewer' }, { id: 'u3', name: 'Second reviewer' }];
+  previewState = { data: { fingerprint: 'fp', packet: { candidate: 'v1-id' } } };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Submit rollback for review' }));
+  const original = submitMutate.mock.calls[0][0];
+  submitState = { error: { code: 'uncertain_outcome' } };
+  recovery = { ...recovery, lastReleaserId: 'u3' };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByRole('combobox', { name: 'Reviewer' })).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
+  expect(submitMutate.mock.calls[1][0]).toEqual(original);
+  expect(original.reviewerId).toBe('u2');
+});
+
+it('retries the preview with the acknowledged annotation revision, not refreshed evidence', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  const evidence = { source: 'skills_text', sourceId: 'run-1', subjectId: 'ctx', candidateDigest: rollbackCandidate.digest, visibility: 'workspace', status: 'passed', annotationRevision: 4 };
+  evidenceOptions = { data: { evidence: [evidence] } };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }));
+  const original = previewMutate.mock.calls[0][0];
+  previewState = { error: { requestSent: false } };
+  evidenceOptions = { data: { evidence: [{ ...evidence, annotationRevision: 5 }] } };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
+  expect(previewMutate.mock.calls[1][0]).toEqual(original);
+  expect(previewMutate.mock.calls[1][0].evidence[0].annotationRevision).toBe(4);
 });
