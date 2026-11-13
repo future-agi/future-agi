@@ -17,7 +17,11 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from tracer.models.derived_metric import DerivedMetricVersion, MetricRefreshAttempt
+from tracer.models.derived_metric import (
+    DerivedMetricVersion,
+    MetricProjectRefresh,
+    MetricRefreshAttempt,
+)
 from tracer.services.derived_metrics.bounded_reads import KeyRange, committed_branches
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
@@ -161,6 +165,14 @@ def metric_read(metric, *, store=None):
             "metric_recalculating", "No completed active definition is available yet."
         )
     require_materialized(metric.active_version)
+    if not MetricProjectRefresh.objects.filter(
+        project_id=metric.project_id, head_manifest__isnull=False
+    ).exists():
+        # A forward-only version activates before its project's first
+        # publication: nothing is calculated yet, which is not a read failure.
+        raise MetricUnavailableError(
+            "metric_recalculating", "No committed refresh is available yet."
+        )
     with nullcontext(store) if store is not None else read_store() as connection:
         with pinned_read(connection, metric.project_id, metric_id=metric.id) as (
             manifest,

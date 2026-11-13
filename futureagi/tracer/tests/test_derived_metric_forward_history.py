@@ -10,12 +10,17 @@ against ClickHouse in test_derived_metric_forward_history_clickhouse.py.
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from clickhouse_driver.errors import ServerException
 
-from tracer.models.derived_metric import DerivedMetricVersion, MetricProjectRefresh
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricVersion,
+    MetricProjectRefresh,
+)
 from tracer.selectors.eval_tasks import continuous_candidates as arrivals
 from tracer.serializers.derived_metric import (
     DerivedMetricVersionSerializer,
@@ -24,6 +29,11 @@ from tracer.serializers.derived_metric import (
 from tracer.services.derived_metrics import admission, backfill, changes, reads
 from tracer.services.derived_metrics.backfill import (
     incremental_changes as real_incremental_changes,
+)
+from tracer.tests.test_derived_metric_api import (  # noqa: F401
+    ROOT,
+    run_body,
+    saved,
 )
 from tracer.tests.test_derived_metric_backfill import (  # noqa: F401
     EMPTY,
@@ -412,3 +422,28 @@ def test_serializers_and_read_window_expose_forward_coverage(
     assert legacy_wire["history_mode"] is None
     assert legacy_wire["coverage_start"] is None
     assert MetricReadProvenanceSerializer(data=legacy_wire).is_valid()
+
+
+@pytest.mark.django_db
+def test_forward_metric_before_its_first_publication_reads_as_not_calculated_yet(
+    auth_client, saved
+):
+    """Forward versions activate before a fresh project's first head exists."""
+    version = DerivedMetricVersion.objects.get(metric_id=saved["id"], version=1)
+    DerivedMetricVersion.objects.filter(id=version.id).update(
+        history_mode="forward", coverage_start=NOW, backfill_status="complete"
+    )
+    DerivedMetric.activate_version(
+        version.metric_id, version.id, expected_active_id=None, now=NOW
+    )
+    state = MetricProjectRefresh.for_project(version.metric.project_id)
+    assert state.head_manifest_id is None
+    query = {k: v for k, v in run_body().items() if k.startswith("window_")}
+    with patch("tracer.services.derived_metrics.reads.read_store") as store:
+        for action in ("kpi", "trend", "drivers"):
+            result = auth_client.get(f"{ROOT}{saved['id']}/{action}/", query)
+            assert result.status_code == 503, (action, result.data)
+            assert result.data["code"] == "metric_recalculating", action
+            assert result.data["retryable"] is True and "value" not in result.data
+        store.assert_not_called()
+
