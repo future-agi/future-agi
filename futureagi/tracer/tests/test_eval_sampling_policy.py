@@ -1228,9 +1228,56 @@ def test_live_row_watermark_includes_children_and_tombstones(row_type):
         assert "FROM sampling_source" in sql
         assert "sampling_source FINAL" not in sql
         assert "FROM sampling_source PREWHERE" not in sql
-        assert "sum(cost) AS total_cost" in sql
+        # No usage filter: no member roll-up, and no root-only stand-in.
+        assert "total_cost" not in sql
         assert "member_trace_usage" not in sql
     assert "r.arrival >= %(sp_floor)s" in sql
+
+
+@pytest.mark.parametrize("column", ["total_tokens", "total_cost"])
+def test_session_usage_filters_roll_up_members_over_the_snapshot(column):
+    """Usage filters keep the list's child-aware roll-up, read once more."""
+    clean = validate_policy(policy(default={"rate": 100}), now=NOW)
+    task = _spans_task("sessions")
+    task.filters = {
+        "filters": [
+            {
+                "column_id": column,
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 10,
+                },
+            }
+        ]
+    }
+    sql, _ = SamplingQuery(task, clean, "v", NOW).members()
+    eligible = sql.split("eligible AS (", 1)[1].split("), projected AS (", 1)[0]
+    # One extra snapshot read: the member roll-up. Never a physical replay,
+    # FINAL or a semi-join back to the roots.
+    assert eligible.count("FROM sampling_source") == 2
+    assert "sampling_source FINAL" not in sql
+    assert "candidate_member_identities" not in sql
+    assert "ARRAY JOIN trace_usage_metrics AS usage_metrics" in eligible
+    assert "max(session_usage_tokens) AS total_tokens" in eligible
+    assert "max(session_usage_cost) AS total_cost" in eligible
+    assert "sum(total_tokens) AS total_tokens" not in eligible
+    # Every in-window member trace is replayed, including rootless traces and
+    # traces whose root precedes the window's first hour.
+    scope = sql.split("sampling_touched AS (", 1)[0]
+    assert "WHERE parent_span_id = ''" not in scope
+
+
+def test_session_rows_without_usage_filters_skip_the_usage_roll_up():
+    clean = validate_policy(policy(default={"rate": 100}), now=NOW)
+    sql, _ = SamplingQuery(_spans_task("sessions"), clean, "v", NOW).members()
+    eligible = sql.split("eligible AS (", 1)[1].split("), projected AS (", 1)[0]
+    assert eligible.count("FROM sampling_source") == 1
+    assert "session_usage" not in eligible
+    assert "total_cost" not in eligible
+    assert "sum(total_tokens)" not in eligible
+    scope = sql.split("sampling_touched AS (", 1)[0]
+    assert "WHERE parent_span_id = ''" in scope
 
 
 def test_session_candidate_resolution_is_full_window_bounded_and_watermarked():

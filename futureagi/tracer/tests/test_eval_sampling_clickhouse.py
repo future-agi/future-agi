@@ -1819,3 +1819,261 @@ def test_live_two_day_session_uses_earliest_root_unit_once(
     assert (
         EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False).count() == 1
     )
+
+
+def _usage_span(project, trace, *, start, parent=None, span_id=None, **fields):
+    prompt, completion = fields.pop("tokens", (0, 0))
+    return ObservationSpan.objects.create(
+        id=span_id or uuid.uuid4().hex[:16],
+        project=project,
+        trace=trace,
+        parent_span_id=parent,
+        name=fields.pop("name", "request" if parent else "root"),
+        observation_type=fields.pop("observation_type", "llm" if parent else "agent"),
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=prompt + completion,
+        cost=fields.pop("cost", 0.0),
+        span_attributes=fields.pop("attributes", {}),
+        start_time=start,
+        **fields,
+    )
+
+
+def _seed_session_usage(project):
+    """Sessions whose usage lives on children, summaries and other traces.
+
+    Totals under the ordinary session list's child-aware roll-up (tokens,
+    cost): child 12/0.25, summary 12/0.25 (a Pydantic root equal to its
+    child is not counted twice; a naive sum gives 24/0.5), small 5/0.125,
+    unknown 12/NULL, two-traces 20/0.5, straddle and rootless 20/0.5 from an
+    in-window child whose trace root is before the window or absent, and
+    remapped 12/0.25 from a child filed under the session's renamed id.
+    Every root carries no usage except the summary's, so a root-only sum
+    sees 12 tokens for summary and 0 for every other session.
+    """
+    at = timezone.now() - timedelta(minutes=5)
+    sessions, spans = {}, []
+
+    def trace(session, *, root=None, children=(), root_at=at):
+        current = Trace.objects.create(
+            project=project, session=session, name=f"usage-{uuid.uuid4()}"
+        )
+        root_id = uuid.uuid4().hex[:16]
+        if root is not None:
+            spans.append(
+                _usage_span(project, current, start=root_at, span_id=root_id, **root)
+            )
+        for child in children:
+            spans.append(
+                _usage_span(project, current, start=at, parent=root_id, **child)
+            )
+
+    def session(name):
+        sessions[name] = TraceSession.objects.create(project=project, name=name)
+        return sessions[name]
+
+    call = {"tokens": (10, 2), "cost": 0.25}
+    trace(session("child"), root={}, children=[call])
+    trace(
+        session("summary"),
+        root={"name": "pydantic_ai.agent.run", **call},
+        children=[call],
+    )
+    trace(session("small"), root={}, children=[{"tokens": (4, 1), "cost": 0.125}])
+    trace(
+        session("unknown"),
+        root={},
+        children=[
+            {"tokens": (10, 2), "attributes": {"fi.cost.kind": "unknown"}},
+        ],
+    )
+    two = session("two-traces")
+    for _index in range(2):
+        trace(two, root={}, children=[{"tokens": (8, 2), "cost": 0.25}])
+    heavy = {"tokens": (16, 4), "cost": 0.5}
+    straddle = session("straddle")
+    trace(straddle, root={})
+    trace(straddle, root={}, children=[heavy], root_at=at - timedelta(hours=3))
+    rootless = session("rootless")
+    trace(rootless, root={})
+    trace(rootless, children=[heavy])
+    # A renamed session: its root is filed under the old id, the 12-token
+    # child under the new one. Sampling and the list canonicalise ids through
+    # different code and must agree on the one surviving session.
+    old = session("remapped")
+    new = TraceSession.objects.create(project=project, name="remapped-new")
+    trace(old, root={})
+    trace(new, root={}, children=[call])
+    client = _get_ch_client()
+    try:
+        client.insert(
+            "trace_session_id_remap",
+            [[old.id, new.id]],
+            column_names=["old_id", "new_id"],
+        )
+    finally:
+        client.close()
+    seed_ch_spans(spans)
+    return {name: str(value.id) for name, value in sessions.items()}
+
+
+def _usage_filter(column, op, value):
+    return {
+        "column_id": column,
+        "filter_config": {
+            "filter_type": "number",
+            "filter_op": op,
+            "filter_value": value,
+        },
+    }
+
+
+def _ordinary_session_ids(project, task_filters, window):
+    """The ids a non-sampled session task selects over the same event window."""
+    from tracer.selectors.eval_tasks.row_resolver import _build_sample_query
+
+    filters = {
+        **task_filters,
+        "filters": [
+            *task_filters.get("filters", []),
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [window["start"], window["end"]],
+                },
+            },
+        ],
+    }
+    sql, params = _build_sample_query(
+        project_id=str(project.id),
+        row_type="sessions",
+        salt="ordinary-list-oracle",
+        sampling_rate=100,
+        filters=filters,
+        limit=None,
+    )
+    return {str(row[0]) for block in stream_query(sql, params) for row in block}
+
+
+@pytest.mark.parametrize(
+    "column,op,value,expected",
+    [
+        (
+            "total_tokens",
+            "greater_than",
+            12,
+            {"two-traces", "straddle", "rootless"},
+        ),
+        (
+            "total_tokens",
+            "greater_than",
+            10,
+            {
+                "child",
+                "summary",
+                "unknown",
+                "two-traces",
+                "straddle",
+                "rootless",
+                "remapped",
+            },
+        ),
+        ("total_tokens", "less_than", 10, {"small"}),
+        (
+            "total_cost",
+            "greater_than",
+            0.2,
+            {"child", "summary", "two-traces", "straddle", "rootless", "remapped"},
+        ),
+        ("total_cost", "is_null", None, {"unknown"}),
+    ],
+)
+def test_session_usage_filters_select_the_ordinary_child_aware_population(
+    project, custom_eval_config, ch_seed, column, op, value, expected
+):
+    sessions = _seed_session_usage(project)
+    task_filters = {"filters": [_usage_filter(column, op, value)]}
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="sessions",
+        run_type=RunType.CONTINUOUS,
+        filters=task_filters,
+        sampling_policy=make_policy(default={"rate": 100}),
+    )
+    task.evals.add(custom_eval_config)
+    wanted = {sessions[name] for name in expected}
+    policy, version = task_policy(task, now=timezone.now())
+    # The oracle: the ordinary list's id query over the same window.
+    assert _ordinary_session_ids(project, task_filters, policy["window"]) == wanted
+    preview = preview_policy(task)
+    assert sum(cell["eligible_units"] for cell in preview["strata"]) == len(wanted)
+    assert sum(cell["selected_units"] for cell in preview["strata"]) == len(wanted)
+    members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
+    assert {row[0] for row in members} == {f"session:{sid}" for sid in wanted}
+    reconcile(task)
+    assert set(
+        EvalSamplingMember.objects.filter(cohort__task=task).values_list(
+            "unit_id", flat=True
+        )
+    ) == {f"session:{sid}" for sid in wanted}
+    assert {
+        str(entry.trace_session_id)
+        for entry in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+    } == wanted
+
+
+def test_session_usage_filter_adds_one_snapshot_read(project, ch_seed):
+    """The usage roll-up reads the frozen snapshot once more, never per join."""
+    payload = "u" * 8192
+    spans = []
+    for index in range(6):
+        session = TraceSession.objects.create(project=project, name=f"usage-{index}")
+        trace = Trace.objects.create(project=project, session=session, name="t")
+        root = _usage_span(
+            project,
+            trace,
+            start=timezone.now() - timedelta(minutes=5),
+            attributes={"payload": payload},
+        )
+        spans += [
+            root,
+            _usage_span(
+                project,
+                trace,
+                start=root.start_time,
+                parent=root.id,
+                tokens=(10, 2),
+                attributes={"payload": payload},
+            ),
+        ]
+    seed_ch_spans(spans)
+    read = {}
+    for label, filters in (
+        ("plain", {}),
+        ("usage", {"filters": [_usage_filter("total_tokens", "greater_than", 10)]}),
+    ):
+        task = EvalTask(
+            project=project,
+            row_type="sessions",
+            filters=filters,
+            sampling_policy=make_policy(default={"rate": 100}),
+        )
+        policy, version = task_policy(task, now=timezone.now())
+        tag = f"sampling-usage-{label}-{uuid.uuid4().hex}"
+        cells = _rows(
+            SamplingQuery(task, policy, version, sampling_clock()).preview(),
+            log_comment=tag,
+        )
+        assert sum(cell[1] for cell in cells) == 6
+        client = _get_ch_client()
+        try:
+            read[label] = _read_stats(client, tag)[1]
+        finally:
+            client.close()
+    one_replay = len(spans) * len(payload)
+    measured = (read, one_replay)
+    assert read["usage"] > read["plain"], measured
+    assert read["usage"] - read["plain"] < 1.5 * one_replay, measured

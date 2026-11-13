@@ -1342,6 +1342,34 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "scoped by the list view's project ids; shared by filtering and hydration"
             ),
         ),
+        "SessionListQueryBuilder._member_trace_usage_select": filed(
+            PROJECT_SET,
+            why=(
+                "per-trace usage reducer over the latest live member rows a caller "
+                "supplies (the list's physical replay or the sampling snapshot); "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._session_usage_rollup_select": filed(
+            PROJECT_SET,
+            why=(
+                "session roll-up over per-trace usage rows a caller supplies; "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._snapshot_session_usage_select": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            why=(
+                "child-aware session usage over the sampling snapshot; only "
+                "SamplingQuery._source reaches it, through the session builder it "
+                "creates for the previewed or stored EvalTask's project. Task "
+                "creation resolves Project.objects, which excludes hidden projects, "
+                "and simulation creates no EvalTask. The read is fenced by the "
+                "builder's project_where like every list read"
+            ),
+            row="tracer.EvalTask",
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,

@@ -172,6 +172,25 @@ class SamplingQuery:
                 cases.append(f"({key} >= {begin} OR {key} < {wrapped})")
         return self._rule_case(cases)
 
+    @staticmethod
+    def _session_usage_filtered(filters: dict) -> bool:
+        """Whether the row filters read session usage totals (as the list does)."""
+        from tracer.selectors.eval_tasks.row_resolver import (
+            _validated_task_filter_items,
+            _validated_task_filters,
+        )
+        from tracer.services.clickhouse.query_builders.session_list import (
+            SessionListQueryBuilder,
+        )
+
+        validated = _validated_task_filters(filters)
+        return SessionListQueryBuilder.filters_need_session_usage(
+            [
+                *_validated_task_filter_items(validated, "filters"),
+                *_validated_task_filter_items(validated, "span_attributes_filters"),
+            ]
+        )
+
     def _source(self) -> str:
         from tracer.selectors.eval_tasks.row_resolver import _build_sample_query
         from tracer.services.clickhouse.v2.id_remap_sql import resolved_id_expr
@@ -262,7 +281,13 @@ class SamplingQuery:
 
         hour_scope = """toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(sp_start)s, 6, 'UTC'))
             AND toStartOfHour(start_time) <= toStartOfHour(toDateTime64(%(sp_end)s, 6, 'UTC') - INTERVAL 1 MICROSECOND)"""
-        root_traces = f"trace_id IN (SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s AND {hour_scope} WHERE parent_span_id = '')"
+        root_only = " WHERE parent_span_id = ''"
+        if row_type == "sessions" and self._session_usage_filtered(filters):
+            # Session usage counts every in-window member span, including the
+            # children of a trace whose root precedes the window's first hour
+            # or has not arrived. Replay every trace with a span in the window.
+            root_only = ""
+        root_traces = f"trace_id IN (SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s AND {hour_scope}{root_only})"
         scope = f"project_id = %(sp_project)s AND {hour_scope}"
         if row_type != "spans":
             # Row filters can match a child outside the root's event interval.
