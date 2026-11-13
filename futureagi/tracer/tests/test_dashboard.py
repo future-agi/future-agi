@@ -7362,12 +7362,21 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.integration
     @pytest.mark.django_db
-    @pytest.mark.parametrize("query_mode", ["time_series", "distribution"])
+    @pytest.mark.parametrize(
+        ("query_mode", "scores"),
+        [
+            ("time_series", []),
+            ("distribution", []),
+            ("distribution", [0.1, 0.9]),
+            ("distribution", [0.5, 0.5]),
+        ],
+    )
     def test_query_action_eval_metric_runs_against_real_ch(
         self,
         observe_project,
         isolated_eval_usage_analytics,
         query_mode,
+        scores,
     ):
         """Eval metrics read usage_apicalllog (a non-migrated legacy table).
 
@@ -7392,6 +7401,25 @@ class TestDashboardQueryExecution:
                 }
             ],
         }
+        workspace = observe_project.workspace
+        template_id = query_config["metrics"][0]["config_id"]
+        for row_id, score in enumerate(scores, start=1):
+            config = json.dumps({"output": {"output": score}})
+            isolated_eval_usage_analytics.ch_client.execute(
+                f"INSERT INTO {isolated_eval_usage_analytics.usage_table} "
+                "(id, log_id, organization_id, workspace_id, status, config, source, source_id, "
+                "created_at, updated_at, _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version) "
+                "SELECT %(id)s, generateUUIDv4(), toUUID(%(org)s), toUUID(%(workspace)s), "
+                "'success', toJSONString(%(config)s), 'tracer', %(template)s, "
+                "now64(6) - INTERVAL 1 MINUTE, now64(6), now64(6), 0, 1",
+                {
+                    "id": row_id,
+                    "org": str(workspace.organization_id),
+                    "workspace": str(workspace.id),
+                    "config": config,
+                    "template": template_id,
+                },
+            )
         with (
             patch(
                 "tracer.views.dashboard.V2AnalyticsQueryService",
@@ -7417,7 +7445,15 @@ class TestDashboardQueryExecution:
         # Query parsed + executed cleanly; no per-widget error attached.
         assert "error" not in metrics[0]
         if query_mode == "distribution":
-            assert metrics[0]["series"][0]["data"] == []
+            points = metrics[0]["series"][0]["data"]
+            if not scores:
+                assert points == []
+            else:
+                assert len(points) == 10
+                assert sum(point["value"] for point in points) == len(scores)
+                assert points[0]["bucket_start"] == min(scores)
+                assert points[-1]["bucket_end"] == max(scores)
+                assert sum(point["value"] == 0 for point in points) >= 8
 
     @pytest.mark.integration
     @pytest.mark.django_db
