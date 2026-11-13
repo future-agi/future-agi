@@ -1,4 +1,4 @@
-"""Tenant isolation through the real background agent and registered tools."""
+"""Project scoping through the real background agent and registered tools."""
 
 import json
 import uuid

@@ -153,8 +153,8 @@ def test_falcon_analysis_scopes_reused_trace_id_to_project(
         model_type=project.model_type,
         trace_type=project.trace_type,
     )
-    # The foreign row is newer, so a trace-only lookup would select it even
-    # when the requested project already has an unscored analysis.
+    # The other project's row is newer; the worker must still use the
+    # requested project's unscored analysis.
     other_analysis = TraceErrorAnalysis.objects.create(
         trace_id=trace_id,
         project=other_project,
