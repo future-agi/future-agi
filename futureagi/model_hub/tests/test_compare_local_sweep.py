@@ -119,6 +119,28 @@ def test_an_unreadable_local_root_does_not_stop_the_remote_sweep(monkeypatch, st
     assert storage.objects == {}
 
 
+def test_an_unreadable_local_root_is_logged(monkeypatch, storage):
+    from structlog.testing import capture_logs
+
+    real_listdir = os.listdir
+    root = compare_storage.get_compare_local_root()
+
+    def listdir(path):
+        if os.fspath(path) == root:
+            raise PermissionError("denied")
+        return real_listdir(path)
+
+    monkeypatch.setattr(compare_storage.os, "listdir", listdir)
+    with capture_logs() as logs:
+        compare_storage.sweep_local_compare_root()
+
+    unreadable = [log for log in logs if log["event"] == "compare_root_unreadable"]
+    assert len(unreadable) == 1
+    assert unreadable[0]["log_level"] == "error"
+    assert unreadable[0]["root"] == root
+    assert unreadable[0]["exc_info"] is True
+
+
 def test_building_a_comparison_starts_the_sweeper(monkeypatch):
     from model_hub.views import develop_dataset
 
