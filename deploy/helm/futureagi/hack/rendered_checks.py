@@ -844,8 +844,14 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
 # ingress.trustedProxies and gatewayApi.trustedProxies by default: the private
 # and shared address ranges pod networks use.
 OAUTH_TRUSTED_PROXIES = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"
-# Renders whose values narrow them (examples/ingress-traefik.yaml: k3s).
-OAUTH_TRUSTED_PROXIES_BY_RENDER = {"ingress-traefik": "10.42.0.0/16"}
+# Renders whose values set them: (MCP_OAUTH_TRUSTED_PROXIES,
+# MCP_OAUTH_TRUSTED_PROXY_HOPS). examples/ingress-traefik.yaml narrows them to
+# k3s's pod network; examples/cloud/gke.yaml trusts GKE's load balancer
+# ranges and its address for the two entries the load balancer adds.
+OAUTH_TRUSTED_PROXIES_BY_RENDER = {
+    "ingress-traefik": ("10.42.0.0/16", "1"),
+    "cloud-gke": ("35.191.0.0/16,130.211.0.0/22,203.0.113.10/32", "2"),
+}
 
 
 def check_oauth_client_address(name: str, docs: list[dict]) -> list[str]:
@@ -854,12 +860,13 @@ def check_oauth_client_address(name: str, docs: list[dict]) -> list[str]:
     address; without those routes they set neither variable, so every request
     counts by its peer address."""
     routed = any(d["kind"] in ("Ingress", "HTTPRoute") for d in docs)
+    proxies, hops = OAUTH_TRUSTED_PROXIES_BY_RENDER.get(
+        name, (OAUTH_TRUSTED_PROXIES, "1")
+    )
     expected = (
         {
-            "MCP_OAUTH_TRUSTED_PROXIES": OAUTH_TRUSTED_PROXIES_BY_RENDER.get(
-                name, OAUTH_TRUSTED_PROXIES
-            ),
-            "MCP_OAUTH_TRUSTED_PROXY_HOPS": "1",
+            "MCP_OAUTH_TRUSTED_PROXIES": proxies,
+            "MCP_OAUTH_TRUSTED_PROXY_HOPS": hops,
         }
         if routed
         else {"MCP_OAUTH_TRUSTED_PROXIES": None, "MCP_OAUTH_TRUSTED_PROXY_HOPS": None}

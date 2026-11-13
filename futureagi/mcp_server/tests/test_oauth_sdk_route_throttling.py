@@ -665,6 +665,42 @@ async def test_sdk_register_window_with_the_chart_route_settings():
         assert (await _register_status(http)).status_code == 201
 
 
+@override_settings(
+    **{
+        **LOCKOUT_SETTINGS,
+        "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE": "2/hour",
+        "MCP_OAUTH_TOKEN_IP_THROTTLE_RATE": "2/min",
+    },
+    # examples/cloud/gke.yaml, as the chart renders it.
+    MCP_OAUTH_TRUSTED_PROXIES="35.191.0.0/16,130.211.0.0/22,203.0.113.10/32",
+    MCP_OAUTH_TRUSTED_PROXY_HOPS="2",
+)
+async def test_sdk_windows_are_per_client_behind_the_gke_load_balancer():
+    # GKE's load balancer connects from 35.191.0.0/16 and appends
+    # "<client>, <load balancer address>".
+    def through_gke(client):
+        return _forwarded_client(f"{client}, 203.0.113.10", peer="35.191.3.4")
+
+    register = []
+    for _ in range(3):
+        async with through_gke("198.51.100.61") as http:
+            register.append((await _register_status(http)).status_code)
+    assert register == [201, 201, 429]
+    async with through_gke("198.51.100.62") as http:
+        assert (await _register_status(http)).status_code == 201
+
+    token = []
+    for i in range(3):
+        async with through_gke("198.51.100.63") as http:
+            response = await http.post("/token", data=_code_form(f"gke-{i}", "x"))
+        token.append(response.status_code)
+    assert token[:2] == [401, 401]
+    assert token[2] == 429
+    async with through_gke("198.51.100.64") as http:
+        response = await http.post("/token", data=_code_form("gke-9", "x"))
+    assert response.status_code == 401
+
+
 ORIGIN = "http://localhost:3031"
 
 

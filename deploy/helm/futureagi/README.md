@@ -682,6 +682,8 @@ address counts by that address. `config.extraEnv` wins over both.
   balancer address>`: add those ranges and the load balancer's address to
   `gatewayApi.trustedProxies` and set
   `config.extraEnv.MCP_OAUTH_TRUSTED_PROXY_HOPS: "2"`.
+  [`examples/cloud/gke.yaml`](examples/cloud/gke.yaml) sets both; replace
+  its example address `203.0.113.10` with the Gateway's.
 - Each further proxy in front of the controller that adds to
   `X-Forwarded-For` (a load balancer, a CDN): add its addresses and one hop.
 - Empty `trustedProxies`: neither variable is set, and every request through

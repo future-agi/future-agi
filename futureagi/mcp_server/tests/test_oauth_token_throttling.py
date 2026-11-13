@@ -1364,6 +1364,31 @@ def test_trusted_hop_count_limits_how_far_forwarded_entries_are_read(
     assert _client_ident_for(remote_addr, forwarded_for) == expected
 
 
+# examples/cloud/gke.yaml: GKE's load balancer connects from its proxy ranges
+# and appends "<client>, <load balancer address>" to X-Forwarded-For.
+GKE_GATEWAY_PROXIES = "35.191.0.0/16,130.211.0.0/22,203.0.113.10/32"
+
+
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=GKE_GATEWAY_PROXIES, MCP_OAUTH_TRUSTED_PROXY_HOPS="2"
+)
+@pytest.mark.parametrize(
+    "remote_addr, forwarded_for, expected",
+    [
+        ("35.191.3.4", "198.51.100.10, 203.0.113.10", "198.51.100.10"),
+        ("130.211.1.2", "198.51.100.11, 203.0.113.10", "198.51.100.11"),
+        # Whatever the client sends before the load balancer's two entries.
+        ("35.191.3.4", "192.0.2.7, 198.51.100.10, 203.0.113.10", "198.51.100.10"),
+        # A peer outside the load balancer's ranges keeps its own address.
+        ("192.0.2.50", "198.51.100.10, 203.0.113.10", "192.0.2.50"),
+    ],
+)
+def test_gke_load_balancer_entries_give_the_client_address(
+    remote_addr, forwarded_for, expected
+):
+    assert _client_ident_for(remote_addr, forwarded_for) == expected
+
+
 @pytest.mark.parametrize(
     "trusted, remote_addr",
     [

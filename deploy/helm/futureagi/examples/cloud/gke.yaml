@@ -53,10 +53,16 @@ objectStorage:
 # a Google-managed certificate on the Gateway (created separately).
 gatewayApi:
   enabled: true
-  # The MCP OAuth request limits count requests from GKE's load balancer by
-  # its own address until gatewayApi.trustedProxies lists its ranges and the
-  # load balancer's address, with MCP_OAUTH_TRUSTED_PROXY_HOPS "2" in
-  # config.extraEnv: README "Client addresses behind the Ingress or Gateway".
+  # Client addresses for the MCP OAuth request limits (README "Client
+  # addresses behind the Ingress or Gateway"). The load balancer's proxies
+  # connect from 35.191.0.0/16 and 130.211.0.0/22, and it appends two
+  # X-Forwarded-For entries, "<client>, <load balancer address>":
+  # https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header
+  # Trust those ranges and the Gateway's own address (replace 203.0.113.10
+  # with it: kubectl get gateway futureagi-external -n futureagi
+  # -o jsonpath='{.status.addresses[0].value}'), and read both entries with
+  # MCP_OAUTH_TRUSTED_PROXY_HOPS "2" under config.extraEnv below.
+  trustedProxies: "35.191.0.0/16,130.211.0.0/22,203.0.113.10/32"
   parentRefs:
     - name: futureagi-external
       namespace: futureagi
@@ -74,3 +80,8 @@ gatewayApi:
   gke:
     healthChecks:
       enabled: true
+config:
+  extraEnv:
+    # The two X-Forwarded-For entries GKE's load balancer adds (gatewayApi
+    # above).
+    MCP_OAUTH_TRUSTED_PROXY_HOPS: "2"
