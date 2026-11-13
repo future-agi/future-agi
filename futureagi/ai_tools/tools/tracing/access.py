@@ -1,4 +1,4 @@
-"""Resolve CH-only traces within the tool caller's trusted tenant scope."""
+"""Resolve traces for projects in the tool context."""
 
 from django.db.models import Q
 
@@ -7,7 +7,7 @@ from tracer.models.project import Project
 
 
 def get_analysis_projects(context: ToolContext):
-    """Authorized project set, including legacy projects in the default workspace."""
+    """Projects in the caller's organization and workspace."""
     if context.organization is None or context.workspace is None:
         return Project.objects.none()
     if context.workspace.organization_id != context.organization.id:
@@ -28,7 +28,7 @@ def get_trace_project(trace_id, context: ToolContext) -> Project | None:
     from tracer.services.clickhouse.v2 import get_reader
 
     allowed = {str(project.pk): project for project in get_analysis_projects(context)}
-    # CH treats an empty project_ids list as unscoped: never send one.
+    # An empty project list matches nothing.
     if not allowed:
         return None
     with get_reader() as reader:

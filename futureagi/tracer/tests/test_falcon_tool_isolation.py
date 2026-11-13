@@ -80,7 +80,6 @@ def install_reader(monkeypatch, project, trace_id, *, foreign=None):
     reader = MagicMock()
 
     def roots(trace_ids, project_ids=None):
-        # Reproduce CH's first-root-wins behavior when the project is omitted.
         selected = foreign if foreign is not None and project_ids is None else project
         if project_ids is not None and str(selected.id) not in project_ids:
             return {}
@@ -149,7 +148,7 @@ def test_background_scoring_never_updates_foreign_analysis(
     if existing_analysis:
         own = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=project)
     foreign = TraceErrorAnalysis.objects.create(
-        trace_id=trace_id, project=other_project, insights="Private foreign analysis"
+        trace_id=trace_id, project=other_project, insights="Other project analysis"
     )
     before = TraceErrorAnalysis.objects.filter(pk=foreign.pk).values().get()
     install_reader(monkeypatch, project, trace_id)

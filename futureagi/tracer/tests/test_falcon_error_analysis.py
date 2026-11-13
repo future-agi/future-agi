@@ -153,8 +153,7 @@ def test_falcon_analysis_scopes_reused_trace_id_to_project(
         model_type=project.model_type,
         trace_type=project.trace_type,
     )
-    # The other project's row is newer; the worker must still use the
-    # requested project's unscored analysis.
+    # Check that the worker selects the requesting project's analysis.
     other_analysis = TraceErrorAnalysis.objects.create(
         trace_id=trace_id,
         project=other_project,
