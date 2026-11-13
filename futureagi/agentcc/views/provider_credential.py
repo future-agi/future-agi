@@ -367,6 +367,13 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         ``provider_name`` first; falls back to ``api_format`` for custom /
         unknown providers.
         """
+        # Azure inference addresses deployment names, not catalogue model IDs.
+        # Listing deployments requires management-plane credentials this API
+        # does not accept. Require explicit deployment names instead of probing
+        # a different protocol or presenting unusable catalogue IDs.
+        if api_format == "azure":
+            return []
+
         timeout = 15
 
         # Validate user-supplied base_url and use safe session to prevent SSRF
@@ -467,7 +474,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(m["name"] for m in data.get("models", []) if m.get("name"))
 
         # Default: OpenAI-compatible (OpenAI, Groq, Together, Fireworks, Mistral,
-        # Azure OpenAI-compat, custom/self-hosted). The version segment is the
+        # custom/self-hosted). The version segment is the
         # provider's own, so discovery probes the URL the proxy will really use.
         url = _join_api_endpoint(
             base_url or "https://api.openai.com/v1", api_path_prefix, "/models"

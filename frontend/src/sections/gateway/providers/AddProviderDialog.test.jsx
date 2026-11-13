@@ -1103,10 +1103,8 @@ describe("AddProviderDialog System One presets", () => {
 
   it("does not offer System One for a chat preset", async () => {
     renderCreateDialog();
-    await userEvent.click(apiFormatField());
-
-    const formats = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(formats).toEqual(["openai", "anthropic"]);
+    expect(apiFormatField()).toHaveTextContent("openai");
+    expect(apiFormatField()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("opens a saved TypeSafe provider without listing models", async () => {
