@@ -408,7 +408,9 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
     counts = lifecycle.drain_outbox(storage=store)
     # Both rows are erased in one tick: the attachment-keyed one by its own key.
     assert counts["erase_done"] == 2
-    assert sorted(map(str, store.erased)) == sorted([str(upload.id), str(orphan.client_id)])
+    assert sorted(map(str, store.erased)) == sorted(
+        [str(upload.id), str(orphan.client_id)]
+    )
     erase.refresh_from_db()
     orphan.refresh_from_db()
     # Repeated once after the horizon (a derivative may still be in flight).

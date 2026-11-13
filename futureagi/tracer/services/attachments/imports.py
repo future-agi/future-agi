@@ -659,7 +659,9 @@ def _reserve_segment(job, size, token=None):
         _apply(rows, amounts, +1)
         locked.reserved_bytes += size
         locked.reserved_segments += 1
-        locked.save(update_fields=["reserved_bytes", "reserved_segments", "lease_until"])
+        locked.save(
+            update_fields=["reserved_bytes", "reserved_segments", "lease_until"]
+        )
         job.reserved_bytes = locked.reserved_bytes
         job.reserved_segments = locked.reserved_segments
 
@@ -703,9 +705,7 @@ def _finish(job, *, state, reason, storage, token=None):
             locked.state, locked.reason = state, reason
             locked.finished_at = timezone.now()
             locked.lease_until = None
-            locked.save(
-                update_fields=["state", "reason", "finished_at", "lease_until"]
-            )
+            locked.save(update_fields=["state", "reason", "finished_at", "lease_until"])
             if state != RecordingState.READY:
                 AttachmentRecording.objects.filter(pk=job.recording_id).exclude(
                     state__in=TERMINAL_RECORDING_STATES

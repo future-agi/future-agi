@@ -105,7 +105,9 @@ def imported(rec, *, seconds=35, channels=2, generate=True):
     )  # fmt: skip
     if generate:
         for segment in segments:
-            derivatives.generate(segment.pk, scope_id=segment.scope_id, storage=rec.store)
+            derivatives.generate(
+                segment.pk, scope_id=segment.scope_id, storage=rec.store
+            )
     return job, segments
 
 
@@ -195,7 +197,9 @@ def test_view_delete_of_a_bound_imported_segment_erases_it_and_its_derivatives(
     # died before its own cleanup is still erased.
     erase.refresh_from_db()
     assert erase.processed_at is None
-    assert erase.available_at == attachment.deleted_at + retention.ATTACHMENT_ERASE_HORIZON
+    assert (
+        erase.available_at == attachment.deleted_at + retention.ATTACHMENT_ERASE_HORIZON
+    )
     late = f"original/{derivatives.derivative_id(first, 'peaks')}"
     rec.store.objects[late] = b"late"
     monkeypatch.setattr(retention, "ATTACHMENT_ERASE_HORIZON", timedelta(0))

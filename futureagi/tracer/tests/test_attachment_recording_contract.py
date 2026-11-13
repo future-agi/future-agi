@@ -182,8 +182,12 @@ def test_single_direction_mono_is_one_isolated_track():
             occurrence_id=m["segments"][0]["occurrence_id"]
         ),  # duplicate
         lambda m: m["segments"][0].update(duration_ms=30001),  # over duration
-        lambda m: m.update(capture_complete=True)
-        or m["gaps"].append({"start_ms": 0, "duration_ms": 1, "reason": "truncated"}),
+        lambda m: (
+            m.update(capture_complete=True)
+            or m["gaps"].append(
+                {"start_ms": 0, "duration_ms": 1, "reason": "truncated"}
+            )
+        ),
         lambda m: m["tracks"][1].update(channels=[0]),  # channel twice
         lambda m: m.update(duration_ms=m["duration_ms"] + 1),  # coverage short
         lambda m: m.update(extra=1),  # unknown member
@@ -358,7 +362,5 @@ def test_two_hour_stereo_fixture_derives_isolated_channels_and_peaks(tmp_path):
     print(f"two-hour fixture: 240 segments, peaks {peak_bytes} bytes, {elapsed:.1f}s")
     # Linear in duration with a fixed per-segment ceiling (~26 KiB per 30 s of
     # 24 kHz stereo); never a whole-recording decode.
-    per_segment = derivatives.peaks_bytes(
-        frame_count=rate * 30, rate=rate, channels=2
-    )
+    per_segment = derivatives.peaks_bytes(frame_count=rate * 30, rate=rate, channels=2)
     assert peak_bytes == 240 * per_segment == 6_393_600
