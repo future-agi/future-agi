@@ -186,8 +186,9 @@ export default function ReadyToRun({
   const voiceReplies = (report.rows || []).find(
     (r) => r.id === "message" && r.status === "unavailable",
   );
+  /* A row keeps its group while a check runs; only its actions wait. */
   const kindOf = (a) =>
-    a.fixRow && !checking ? fixKindOf(a.fixRow, fixKit) || "link" : null;
+    a.fixRow ? fixKindOf(a.fixRow, fixKit) || "link" : null;
   const blockers = areas.filter((a) => a.status === "blocked");
   const fixing = new Set((chatJobs || []).map((j) => j.id));
   const builderRows = blockers.filter(
@@ -399,7 +400,7 @@ export default function ReadyToRun({
                     <Button
                       size="small"
                       variant="outlined"
-                      disabled={!String(value).trim()}
+                      disabled={!String(value).trim() || checking}
                       onClick={() => {
                         fixKit.applyRepair(a.fixRow.fixId, String(value));
                         setOpenId(null);
@@ -465,7 +466,7 @@ export default function ReadyToRun({
                 <Button
                   size="small"
                   variant="outlined"
-                  disabled={!picked.length || !!chatJobs}
+                  disabled={!picked.length || !!chatJobs || checking}
                   onClick={() => startBuilder(picked)}
                   sx={{ py: 0, flexShrink: 0 }}
                 >
@@ -521,7 +522,7 @@ export default function ReadyToRun({
               <Button
                 size="small"
                 variant="outlined"
-                disabled={!!chatJobs}
+                disabled={!!chatJobs || checking}
                 onClick={() => startBuilder([a])}
                 sx={{ alignSelf: "flex-start" }}
               >
