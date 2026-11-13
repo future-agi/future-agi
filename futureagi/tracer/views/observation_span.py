@@ -11,7 +11,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.core.cache import cache as django_cache
-from django.db import close_old_connections
+from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -62,7 +62,11 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EvalEntryStatus,
+    EvalLogger,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
@@ -693,6 +697,90 @@ def allowed_root_spans_for_request(
 class _RecalculateLeftNoResult(Exception):
     """A recalculate's recompute saved no live result; the retired previous
     result has been put back."""
+
+
+def _recompute_task_result(previous, feedback_id):
+    """Recompute one eval-task result (Recalculate on an Observe result).
+
+    The result is an entry of the task's engine: at most one live entry per
+    (task, row, config), written by ``run_entry``. In one transaction the
+    previous result is retired and a new entry for the same row and config
+    takes its place, so the row never has two live results nor none. The new
+    entry is then run synchronously through ``run_entry``, the same eval core
+    the engine's workers use. Only a completed run keeps it. Otherwise (the
+    eval errored or was skipped, the run raised, or the entry was taken from
+    this run) the new entry is retired and the previous result is put back,
+    and ``_RecalculateLeftNoResult`` is raised. An exception from the run is
+    re-raised after the same restore.
+    """
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    selection = (
+        previous.output_metadata.get("_task_selection")
+        if isinstance(previous.output_metadata, dict)
+        else None
+    )
+    with transaction.atomic(using="default"):
+        if not soft_delete_eval_results(
+            EvalLogger.objects.using("default").filter(pk=previous.pk)
+        ):
+            # Retired since it was read: nothing left to recalculate.
+            raise Exception("No eval associated with this span")
+        (entry,) = EvalLogger.objects.bulk_create(
+            [
+                EvalLogger(
+                    target_type=previous.target_type,
+                    observation_span_id=previous.observation_span_id,
+                    trace_id=previous.trace_id,
+                    trace_session_id=previous.trace_session_id,
+                    custom_eval_config_id=previous.custom_eval_config_id,
+                    eval_task_id=previous.eval_task_id,
+                    output_metadata=(
+                        {"_task_selection": selection}
+                        if isinstance(selection, dict)
+                        else None
+                    ),
+                    status=EvalEntryStatus.RUNNING,
+                    config_hash=previous.config_hash,
+                )
+            ]
+        )
+
+    def restore_previous():
+        with transaction.atomic(using="default"):
+            soft_delete_eval_results(
+                EvalLogger.objects.using("default").filter(pk=entry.pk)
+            )
+            try:
+                # A savepoint: if a newer entry holds the row's live slot (a
+                # Delete & rerun landed while this ran), it stays, and so
+                # does the retirement.
+                with transaction.atomic(using="default"):
+                    EvalLogger.all_objects.using("default").filter(
+                        pk=previous.pk
+                    ).update(deleted=False, deleted_at=None)
+            except IntegrityError:
+                logger.warning(
+                    "recalculate_previous_result_not_restored",
+                    eval_logger_id=str(previous.pk),
+                    eval_task_id=str(previous.eval_task_id),
+                )
+
+    try:
+        status = run_entry(entry, feedback_id=feedback_id)
+    except Exception:
+        restore_previous()
+        raise
+    if status != EvalEntryStatus.COMPLETED:
+        logger.info(
+            "recalculate_task_result_not_completed",
+            eval_logger_id=str(previous.pk),
+            eval_task_id=str(previous.eval_task_id),
+            status=str(status),
+        )
+        restore_previous()
+        raise _RecalculateLeftNoResult()
+    return True
 
 
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
@@ -1837,11 +1925,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 custom_eval_config=custom_eval_config,
                 deleted=False,
             )
-            task_id = eval_logger.eval_task_id
-
-            soft_delete_eval_results(EvalLogger.objects.filter(pk=eval_logger.pk))
         except EvalLogger.DoesNotExist:
             raise Exception("No eval associated with this span")  # noqa: B904
+        task_id = eval_logger.eval_task_id
 
         properties = get_mixpanel_properties(
             user=request.user,
@@ -1851,6 +1937,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             type=MixpanelTypes.FEEDBACK.value,
         )
         track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
+
+        if task_id and not observation_span.project_version:
+            # A result an eval task produced is an entry of that task's
+            # engine. The per-span activity refuses task work (it only
+            # re-wakes the task), so recompute the entry the way the engine
+            # does.
+            return _recompute_task_result(eval_logger, feedback_id)
+
+        soft_delete_eval_results(EvalLogger.objects.filter(pk=eval_logger.pk))
 
         def put_back():
             EvalLogger.all_objects.using("default").filter(pk=eval_logger.pk).update(
