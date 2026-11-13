@@ -103,6 +103,22 @@ def test_publish_returns_within_socket_timeouts_when_redis_does_not_reply(
     )
 
 
+def test_publish_keeps_its_timeouts_when_the_redis_url_sets_longer_ones(silent_redis):
+    url = f"{silent_redis.url}?socket_timeout=30&socket_connect_timeout=30"
+    with override_settings(
+        REDIS_URL=url,
+        REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS=TEST_SOCKET_TIMEOUT_SECONDS,
+        REDIS_CACHE_SOCKET_TIMEOUT_SECONDS=TEST_SOCKET_TIMEOUT_SECONDS,
+    ):
+        started = time.monotonic()
+        publish_key_revocation("api-key-synthetic", "secret-key-synthetic")
+        elapsed = time.monotonic() - started
+    assert elapsed < PUBLISH_DEADLINE_SECONDS, (
+        f"publish took {elapsed:.1f}s with Redis not replying and URL timeouts "
+        f"of 30s, want under {PUBLISH_DEADLINE_SECONDS}s"
+    )
+
+
 @pytest.mark.django_db
 def test_key_creation_returns_credentials_when_redis_does_not_reply(
     auth_client, short_redis_timeouts, django_capture_on_commit_callbacks
