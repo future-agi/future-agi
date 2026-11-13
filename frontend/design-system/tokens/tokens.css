@@ -371,8 +371,8 @@
 .ds-text-title-lg { font-family: var(--ds-font-sans); font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em; }
 .ds-text-title-md { font-family: var(--ds-font-sans); font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
 .ds-text-title-sm { font-family: var(--ds-font-sans); font-size: 15px; line-height: 22px; font-weight: 600; letter-spacing: 0; }
-.ds-text-title-xs { font-family: var(--ds-font-sans); font-size: 13px; line-height: 20px; font-weight: 500; letter-spacing: 0; }
-.ds-text-body-md { font-family: var(--ds-font-sans); font-size: 13px; line-height: 20px; font-weight: 400; letter-spacing: 0; }
+.ds-text-title-xs { font-family: var(--ds-font-sans); font-size: 12px; line-height: 18px; font-weight: 500; letter-spacing: 0; }
+.ds-text-body-md { font-family: var(--ds-font-sans); font-size: 12px; line-height: 18px; font-weight: 400; letter-spacing: 0; }
 .ds-text-body-sm { font-family: var(--ds-font-sans); font-size: 12px; line-height: 18px; font-weight: 400; letter-spacing: 0; }
 .ds-text-label-md { font-family: var(--ds-font-sans); font-size: 12px; line-height: 18px; font-weight: 500; letter-spacing: 0; }
 .ds-text-label-sm { font-family: var(--ds-font-sans); font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: 0; }

@@ -44,7 +44,7 @@ const GeneratePrompt = ({ onGenerate }) => {
       <Typography
         color="text.secondary"
         fontFamily="IBM Plex Sans, sans-serif"
-        fontSize="13px"
+        fontSize="12px"
       >
         or enter instructions or prompt..
       </Typography>

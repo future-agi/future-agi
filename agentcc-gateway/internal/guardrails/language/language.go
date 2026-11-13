@@ -36,6 +36,9 @@ func New(cfg map[string]interface{}) *LanguageGuardrail {
 func (g *LanguageGuardrail) Name() string           { return "language-detection" }
 func (g *LanguageGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// ChecksRequestTextOnly marks that Check reads only request messages.
+func (g *LanguageGuardrail) ChecksRequestTextOnly() {}
+
 // Check detects non-Latin/non-allowed scripts that might indicate language mismatch attacks.
 func (g *LanguageGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || input.Request == nil || len(g.allowedScripts) == 0 {

@@ -213,7 +213,7 @@ export default function ConnectorSettingsPage() {
               color: "text.primary",
             }}
           >
-            Falcon AI Connectors
+            Connectors
           </Typography>
           <Typography
             sx={{
@@ -223,8 +223,8 @@ export default function ConnectorSettingsPage() {
               mt: 0.5,
             }}
           >
-            Connect external MCP servers to extend Falcon AI with additional
-            tools and capabilities.
+            Connect external MCP servers to give Chat additional tools and
+            capabilities.
           </Typography>
         </Box>
         <Button
@@ -288,7 +288,7 @@ export default function ConnectorSettingsPage() {
               }}
               sx={{
                 "& .MuiInputBase-root": {
-                  fontSize: 13,
+                  fontSize: 12,
                   height: 34,
                   borderRadius: "8px",
                 },
@@ -304,7 +304,7 @@ export default function ConnectorSettingsPage() {
                   textAlign: "center",
                   py: 4,
                   color: "text.disabled",
-                  fontSize: 13,
+                  fontSize: 12,
                 }}
               >
                 {search ? "No matching connectors" : "No connectors yet"}
@@ -338,7 +338,7 @@ export default function ConnectorSettingsPage() {
                     primary={conn.name}
                     primaryTypographyProps={{
                       noWrap: true,
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: isActive ? 500 : 400,
                     }}
                   />
@@ -390,7 +390,7 @@ export default function ConnectorSettingsPage() {
               }
               description={
                 connectors.length === 0
-                  ? "Add an external MCP server to give Falcon AI access to additional tools."
+                  ? "Add an external MCP server to give Chat access to additional tools."
                   : "Choose a connector from the list to view its details and tools."
               }
               action={
@@ -596,7 +596,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             </Box>
             {connector.description && (
               <Typography
-                sx={{ fontSize: 13, color: "text.secondary", mt: 0.25 }}
+                sx={{ fontSize: 12, color: "text.secondary", mt: 0.25 }}
               >
                 {connector.description}
               </Typography>
@@ -627,7 +627,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Server URL
             </Typography>
-            <Typography sx={{ fontSize: 13, fontFamily: "monospace" }}>
+            <Typography sx={{ fontSize: 12, fontFamily: "monospace" }}>
               {connector.server_url}
             </Typography>
           </Box>
@@ -642,7 +642,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Authentication
             </Typography>
-            <Typography sx={{ fontSize: 13 }}>
+            <Typography sx={{ fontSize: 12 }}>
               {connector.auth_type || "none"}
             </Typography>
           </Box>
@@ -657,7 +657,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Transport
             </Typography>
-            <Typography sx={{ fontSize: 13 }}>
+            <Typography sx={{ fontSize: 12 }}>
               {connector.transport || "sse"}
             </Typography>
           </Box>
@@ -743,7 +743,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
 
       {/* Tools */}
       <Divider sx={{ mb: 2 }} />
-      <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1.5 }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1.5 }}>
         Discovered Tools{" "}
         {tools.length > 0 && (
           <Chip
@@ -958,7 +958,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         onChange={handleChange("name")}
         sx={{
           mb: 2,
-          "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+          "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
         }}
       />
 
@@ -976,7 +976,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         sx={{
           mb: 2,
           "& .MuiInputBase-root": {
-            fontSize: 13,
+            fontSize: 12,
             borderRadius: "8px",
             fontFamily: "monospace",
           },
@@ -992,7 +992,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         <Select
           value={form.transport}
           onChange={handleChange("transport")}
-          sx={{ fontSize: 13, borderRadius: "8px" }}
+          sx={{ fontSize: 12, borderRadius: "8px" }}
         >
           <MenuItem value="streamable_http">Streamable HTTP</MenuItem>
           <MenuItem value="sse">SSE (Legacy)</MenuItem>
@@ -1008,7 +1008,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         <Select
           value={form.auth_type}
           onChange={handleChange("auth_type")}
-          sx={{ fontSize: 13, borderRadius: "8px" }}
+          sx={{ fontSize: 12, borderRadius: "8px" }}
         >
           <MenuItem value="none">None</MenuItem>
           <MenuItem value="oauth">OAuth 2.0</MenuItem>
@@ -1037,7 +1037,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_name")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
           <Typography
@@ -1059,7 +1059,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_value")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
         </>
@@ -1086,7 +1086,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_value")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
         </>

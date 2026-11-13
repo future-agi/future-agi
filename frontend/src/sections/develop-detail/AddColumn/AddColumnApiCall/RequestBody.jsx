@@ -311,7 +311,7 @@ const RequestBody = ({
 
   const sharedTextStyle = {
     fontFamily: "inherit",
-    fontSize: "13px",
+    fontSize: "12px",
     lineHeight: "1.5",
     letterSpacing: "normal",
     boxSizing: "border-box",

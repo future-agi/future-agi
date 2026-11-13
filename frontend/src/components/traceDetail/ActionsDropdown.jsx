@@ -75,7 +75,7 @@ const ActionsDropdown = ({ onAction }) => {
               <Iconify icon={action.icon} width={16} />
             </ListItemIcon>
             <ListItemText
-              primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+              primaryTypographyProps={{ variant: "body2", fontSize: 12 }}
             >
               {action.label}
             </ListItemText>
