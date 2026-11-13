@@ -165,11 +165,15 @@ def metric_read(metric, *, store=None):
             "metric_recalculating", "No completed active definition is available yet."
         )
     require_materialized(metric.active_version)
-    if not MetricProjectRefresh.objects.filter(
-        project_id=metric.project_id, head_manifest__isnull=False
-    ).exists():
+    if (
+        metric.active_version.history_mode == DerivedMetricVersion.HistoryMode.FORWARD
+        and not MetricProjectRefresh.objects.filter(
+            project_id=metric.project_id, head_manifest__isnull=False
+        ).exists()
+    ):
         # A forward-only version activates before its project's first
         # publication: nothing is calculated yet, which is not a read failure.
+        # Any other active version without a head stays metric_unavailable.
         raise MetricUnavailableError(
             "metric_recalculating", "No committed refresh is available yet."
         )
