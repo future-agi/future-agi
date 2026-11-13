@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { Box, Stack, Typography, Collapse } from "@mui/material";
+import { Box, Button, Stack, Typography, Collapse } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -90,6 +90,14 @@ export function Turn({ turn }) {
         </Typography>
       )}
       {(turn.steps || []).map((step, i) => <Step key={step.id ?? i} step={step} />)}
+      {turn.card && (
+        <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, px: 1.5, py: 1.25 }}>
+          <Typography sx={{ typography: "s3", color: "text.primary" }}>{turn.card.text}</Typography>
+          <Button size="small" variant="contained" onClick={turn.card.onAction} sx={{ mt: 1 }}>
+            {turn.card.action}
+          </Button>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -102,6 +110,12 @@ Turn.propTypes = {
     steps: PropTypes.arrayOf(STEP_SHAPE),
     // A user line still waiting for the builder.
     queued: PropTypes.bool,
+    // A short note with one button, e.g. how a fix ended.
+    card: PropTypes.shape({
+      text: PropTypes.string,
+      action: PropTypes.string,
+      onAction: PropTypes.func,
+    }),
   }),
 };
 

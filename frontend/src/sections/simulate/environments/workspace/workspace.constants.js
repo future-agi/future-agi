@@ -426,11 +426,6 @@ export const AGENT_VERSIONS_COPY = {
 
 export const RUN_DIALOG_COPY = {
   title: "Run simulation",
-  pieces: {
-    agent: "Agent version",
-    environment: "Environment version",
-    suite: "Scenario version",
-  },
   default: "default",
   none: "None yet",
   unlabelled: "Unnumbered version",

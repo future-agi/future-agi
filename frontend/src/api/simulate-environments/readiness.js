@@ -93,11 +93,23 @@ export const useRecheck = (envId) => {
   });
 };
 
+// The cases route reads at most this many scenario keys.
+export const MAX_CASE_KEYS = 200;
+
 // The first page (50) of the scenarios in one bucket (eligible, blocked,
-// stale, untested) with their names as the server gives them. `keys` narrows
-// it to the scenarios a run would send; none means the whole suite.
-export const getReadinessCases = async (envId, picks, bucket, keys = null) => {
-  const params = { ...versionPickFields(picks), bucket };
+// stale, untested), or held back by one row, with their names as the server
+// gives them. `keys` narrows it to the scenarios a run would send; none means
+// the whole suite.
+export const getReadinessCases = async (
+  envId,
+  picks,
+  bucket,
+  keys = null,
+  row = null,
+) => {
+  const params = { ...versionPickFields(picks) };
+  if (bucket) params.bucket = bucket;
+  if (row) params.row = row;
   if (keys) params.keys = keys;
   const page = (
     await axios.get(casesPath(envId), {
@@ -111,14 +123,27 @@ export const getReadinessCases = async (envId, picks, bucket, keys = null) => {
 
 export function useReadinessCases(
   envId,
-  { picks = {}, bucket, keys = null, report = null, enabled = true } = {},
+  {
+    picks = {},
+    bucket = null,
+    row = null,
+    keys = null,
+    report = null,
+    enabled = true,
+  } = {},
 ) {
   return useQuery({
     // `report` (when the report was worked out) ties the names to the counts
     // beside them: a new report asks for them again.
-    queryKey: [...readinessKey(envId, picks, keys), "cases", bucket, report],
-    queryFn: () => getReadinessCases(envId, picks, bucket, keys),
-    enabled: Boolean(envId) && Boolean(bucket) && enabled,
+    queryKey: [
+      ...readinessKey(envId, picks, keys),
+      "cases",
+      bucket,
+      row,
+      report,
+    ],
+    queryFn: () => getReadinessCases(envId, picks, bucket, keys, row),
+    enabled: Boolean(envId) && Boolean(bucket || row) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },
   });

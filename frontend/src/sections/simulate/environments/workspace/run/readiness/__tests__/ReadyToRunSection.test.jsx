@@ -19,6 +19,7 @@ let drafts;
 const startFix = vi.fn();
 
 vi.mock("src/api/simulate-environments/readiness", () => ({
+  MAX_CASE_KEYS: 200,
   useReadiness: () =>
     loading
       ? { data: undefined, isLoading: true, isError: false }
@@ -30,8 +31,8 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
   }),
   useRereadWhenDone: () => {},
   useRereadWhenDefaultsMove: () => {},
-  useReadinessCases: (envId, { bucket, enabled }) => {
-    const asked = enabled && bucket === "blocked";
+  useReadinessCases: (envId, { bucket, row, enabled }) => {
+    const asked = enabled && (bucket === "blocked" || Boolean(row));
     return {
       data:
         asked && !cases.isError
@@ -180,10 +181,9 @@ describe("ReadyToRunSection", () => {
     expect(onView).toHaveBeenLastCalledWith(null);
   });
 
-  it("lets keyboard users reach the counts and the fixes", async () => {
+  it("lets keyboard users open a fix", async () => {
     report = blockedReport("pair");
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(screen.getByText("4 blocked")).toHaveAttribute("tabindex", "0");
     const fix = screen.getByRole("button", { name: /^Details for/ });
     expect(fix).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(fix);
@@ -194,28 +194,10 @@ describe("ReadyToRunSection", () => {
     report = blockedReport("pair");
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(
-      screen.getByText(/Checking these versions together/),
-    ).toHaveAttribute("aria-live", "polite");
-  });
-
-  it("lists the first names and counts the rest from the header", async () => {
-    report = blockedReport("pair");
-    cases.names = Array.from({ length: 12 }, (_, at) => `Scenario ${at + 1}`);
-    report.selection.blocked = 14;
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    await userEvent.hover(screen.getByText("14 blocked"));
-    expect(await screen.findByText("and 4 more")).toBeVisible();
-  });
-
-  it("says when the names can't load", async () => {
-    report = blockedReport("pair");
-    cases.isError = true;
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    await userEvent.hover(screen.getByText("4 blocked"));
-    expect(
-      await screen.findByText("Couldn't load these scenarios."),
-    ).toBeVisible();
+    expect(screen.getByText(/Checking these versions/)).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
   });
 
   it("explains a refused re-check with the server's words", () => {
@@ -261,13 +243,6 @@ describe("ReadyToRunSection", () => {
     expect(onView).toHaveBeenLastCalledWith(
       expect.objectContaining({ canRun: true }),
     );
-  });
-
-  it("names the scenarios behind a count on hover", async () => {
-    report = blockedReport("pair");
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    await userEvent.hover(screen.getByText("4 blocked"));
-    expect(await screen.findByText("Refund over limit")).toBeVisible();
   });
 
   it("keeps one fix open at a time", async () => {
@@ -318,7 +293,7 @@ describe("ReadyToRunSection", () => {
     };
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByText(/Not checked yet/)).toBeVisible();
-    expect(screen.queryByText(/ready:/)).toBeNull();
+    expect(screen.queryByText(/ready: /i)).toBeNull();
   });
 
   it("opens a re-check-only line on Fix with its reason and Re-check inside", async () => {
@@ -330,9 +305,11 @@ describe("ReadyToRunSection", () => {
       recheck: { scope: "pair", method: "POST", path: "/x/" },
     };
     report.rows[0].consequence = "Check again before trusting these cases";
+    report.rows[0].checked_at = new Date().toISOString();
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
+    expect(screen.getByText("Last check")).toBeVisible();
     expect(
       screen.getByText("Check again before trusting these cases"),
     ).toBeVisible();
@@ -347,7 +324,7 @@ describe("ReadyToRunSection", () => {
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
-    expect(screen.getByText(/Checking these versions together/)).toBeVisible();
+    expect(screen.getByText(/Checking these versions/)).toBeVisible();
     // The lines are the last results until the check ends: no Fix on them.
     expect(screen.queryByRole("button", { name: /^Details for/ })).toBeNull();
   });
@@ -373,14 +350,16 @@ describe("ReadyToRunSection", () => {
 
   it("opens a fix with the server's instruction and re-checks the pair", async () => {
     report = blockedReport("pair");
+    cases.names = ["A", "B", "C", "D"];
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByText("· 1 blocker to fix")).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
     expect(
-      screen.getByText("Point issue_refund at the test world", {
-        exact: false,
-      }),
-    ).toBeInTheDocument();
+      screen.getByText("Point issue_refund at the test world"),
+    ).toBeVisible();
+    // The scenarios this line holds back: the first few, then the rest counted.
+    expect(screen.getByText("A, B, C and 1 more")).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Re-check this pair" }),
     );
@@ -429,7 +408,9 @@ describe("ReadyToRunSection", () => {
       screen.queryByRole("button", { name: "Retry the agent's start" }),
     ).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Value 1"), "secret");
-    await userEvent.click(screen.getByRole("button", { name: "Save values" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save and re-check" }),
+    );
     expect(saveCredentials).toHaveBeenCalledWith(
       { values: { RETELL_API_KEY: "secret" }, files: undefined },
       expect.anything(),
@@ -477,6 +458,7 @@ describe("ReadyToRunSection", () => {
     report = groupedReport();
     fixRun = { state: "fixing", rows: [] };
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByRole("button", { name: "Fixing…" })).toBeDisabled();
     await userEvent.click(
       screen.getByRole("checkbox", {
         name: "Select every line the builder chat can fix",

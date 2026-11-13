@@ -77,6 +77,8 @@ export default function CredentialsForm({
   onSaved,
   onCancel,
   extras = true,
+  saveLabel = COPY.save,
+  note = null,
 }) {
   const change = useChangeCredentials(envId);
   // Dropped from the cache on reset, so the picked File doesn't linger.
@@ -158,9 +160,12 @@ export default function CredentialsForm({
 
   return (
     <Box component="form" noValidate onSubmit={submit}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.5 }}>
-        {COPY.formHint}
-      </Typography>
+      {/* A note above the buttons says the same thing in fewer words. */}
+      {!note && (
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.5 }}>
+          {COPY.formHint}
+        </Typography>
+      )}
       {addsName && (
         <Typography
           data-testid="credentials-new-name-hint"
@@ -295,11 +300,16 @@ export default function CredentialsForm({
           {formError}
         </Typography>
       )}
+      {note && (
+        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 2 }}>
+          {note}
+        </Typography>
+      )}
       <Stack
         direction="row"
         spacing={1}
         justifyContent="flex-end"
-        sx={{ mt: 2 }}
+        sx={{ mt: note ? 1 : 2 }}
       >
         <Button
           size="small"
@@ -315,7 +325,7 @@ export default function CredentialsForm({
           type="submit"
           disabled={change.isPending || upload.isPending}
         >
-          {change.isPending ? COPY.saving : COPY.save}
+          {change.isPending ? COPY.saving : saveLabel}
         </Button>
       </Stack>
     </Box>
@@ -332,4 +342,7 @@ CredentialsForm.propTypes = {
   // Off where only the missing values are asked for: those names alone, fixed,
   // with no add, remove or file upload.
   extras: PropTypes.bool,
+  saveLabel: PropTypes.string,
+  // A line above the buttons, e.g. what saving does next.
+  note: PropTypes.string,
 };

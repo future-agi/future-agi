@@ -433,6 +433,8 @@ export const augmentReport = (envId, picks, report) => {
 
   return {
     ...report,
+    // The backend's re-check after a saved fix gives a fresh report.
+    ...(matches && fix.finished_at && { computed_at: fix.finished_at }),
     rows,
     areas,
     fix_groups: {

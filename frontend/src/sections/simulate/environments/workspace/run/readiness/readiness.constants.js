@@ -2,8 +2,10 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export const READY_TO_RUN_COPY = {
   title: "Ready to run",
-  // The header's parts; a part with a bucket names its scenarios on hover.
-  summary: ({ eligible, requested, blocked, stale }, blockers) =>
+  blockers: (n) =>
+    n ? `${plural(n, "blocker", "blockers")} to fix` : "No blocker",
+  // The plan's count line; a part with a bucket names its scenarios on hover.
+  counts: ({ eligible, requested, blocked, stale }) =>
     [
       {
         bucket: "eligible",
@@ -14,11 +16,6 @@ export const READY_TO_RUN_COPY = {
       stale
         ? { bucket: "stale", count: stale, text: `${stale} not proved here` }
         : null,
-      {
-        text: blockers
-          ? `${plural(blockers, "blocker", "blockers")} to fix`
-          : "no blocker",
-      },
     ].filter(Boolean),
   namesLoading: "Loading the scenarios…",
   namesMore: (n) => `and ${n} more`,
@@ -35,26 +32,47 @@ export const READY_TO_RUN_COPY = {
     grading: "Grading coverage",
   },
   states: {
-    unchecked: "Not checked yet for these versions. Re-check to check them.",
-    checking: "Checking these versions together. Runs wait until it finishes.",
+    unchecked: "Not checked yet for these versions · re-check",
+    checking: "Checking these versions · runs wait until it finishes",
     failed: (reason) =>
-      `The last check failed${reason ? `: ${reason}` : ""}. Runs of these versions are refused until a check passes.`,
+      `Last check failed${reason ? `: ${reason}` : ""} · runs wait until a check passes`,
     ours: (reason) =>
-      `Check unavailable${reason ? `: ${reason}` : " on our side"}. Runs aren't held.`,
-    retry: "The last check didn't finish. Re-check to try again.",
-    unavailable: "These versions can't be checked right now.",
+      `Check unavailable${reason ? `: ${reason}` : " on our side"} · runs aren't held`,
+    retry: "The last check didn't finish · re-check",
+    unavailable: "These versions can't be checked right now",
     refused: (reason) =>
-      `The check couldn't start${reason ? `: ${reason}` : ""}.`,
+      `The check couldn't start${reason ? `: ${reason}` : ""}`,
   },
   affected: (n) => `${n} affected`,
+  blockedCount: (n) => `${n} blocked`,
   details: (label) => `Details for ${label}`,
-  after: (would) => `After the fix: ${would}`,
+  // The labels of an opened line's rows.
+  grid: {
+    saw: "What we saw",
+    fix: "Fix",
+    would: "Once fixed",
+    waits: "Waits on it",
+    checks: "What it checks",
+    lastCheck: "Last check",
+    why: "Why again",
+  },
+  // What each area's check looks at, for an opened re-check line.
+  checks: {
+    start_and_message:
+      "The agent starts in the test world and answers a first message.",
+    tool_binding: "Each tool call lands in the test world, not production.",
+    reset: "The world goes back to its seeded state between scenarios.",
+    cancellation: "A run can be stopped part way through.",
+    evidence: "The run records what the scenario checks need to read.",
+    grading: "Each scenario has a check that can grade it.",
+  },
+  saveAndRecheck: "Save and re-check",
+  credentialsNote:
+    "Only these values change; everything else on the agent keeps its value. Saving checks the pair again.",
   recheckPair: "Re-check this pair",
   retryAgent: "Retry the agent's start",
   moreReady: (labels, all) =>
-    `${all ? "All ready" : "Also ready"}: ${labels
-      .map((label) => label.toLowerCase())
-      .join(", ")}`,
+    `${all ? "All ready" : "Also ready"}: ${labels.join(", ")}`,
   notGradable: (n) =>
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
@@ -72,8 +90,8 @@ export const READY_TO_RUN_COPY = {
   selectLine: (label) => `Fix ${label.toLowerCase()} with the builder chat`,
   sendSelected: (count) =>
     count ? `Fix ${count} with builder chat` : "Tick lines to send",
-  addSelected: (count) =>
-    count ? `Add ${count} to this fix` : "Tick lines to add",
+  // With nothing new ticked, the button says the fix is under way.
+  addSelected: (count) => (count ? `Add ${count} to this fix` : "Fixing…"),
   fixOne: "Fix just this one",
   addOne: "Add just this one to the fix",
   fixesUnsaved:
@@ -86,7 +104,7 @@ export const READY_TO_RUN_COPY = {
       "Nothing left for the chat to fix here. Re-check to see the latest.",
     default: "Couldn't start the fix. Try again in a moment.",
   },
-  sendsToChat: "Sends this to the builder chat:",
+  sendsToChat: "Sends this to the builder chat",
   chatFixing: (labels) =>
     labels.length ? `Fixing: ${labels.join(", ")}` : "Fixing",
   chatFollow: "follow it in the builder chat",
@@ -111,11 +129,27 @@ export const RUN_PLAN_COPY = {
     [envName, envLabel && `environment ${envLabel}`]
       .filter(Boolean)
       .join(" · "),
+  // The version pickers' labels.
+  pickers: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
+  // Beside the scenario picker; null is "every current scenario".
+  scenarioCount: (n, all) => {
+    if (!all) return plural(n, "selected scenario", "selected scenarios");
+    if (n === null) return "All scenarios";
+    return `All ${plural(n, "scenario", "scenarios")}`;
+  },
   heldBack: ({ requested, blocked }, label) =>
     `${requested} selected · ${requested - blocked} will run · ${blocked} held back${
       label ? ` (${label.toLowerCase()})` : ""
     }, recorded as not run`,
   allHeld: (label) =>
-    `No run: every selected scenario is held back${label ? ` (${label})` : ""}. Fix it, or pick scenarios it doesn't hold back.`,
+    `Every selected scenario waits on a fix${label ? `: ${label.toLowerCase()}` : ""}`,
   runOf: (will, requested) => `Run ${will} of ${requested}`,
+  // The builder chat's card when a fix ends.
+  fixEnd: {
+    open: (labels) =>
+      `Fixed. ${labels.length} still to fix in the run plan: ${labels.join(", ")}.`,
+    clear: "The pair passed its check. Nothing left to fix before the run.",
+    openPlan: "Open run plan",
+    review: "Review and start run",
+  },
 };
