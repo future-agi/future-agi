@@ -1041,7 +1041,8 @@ def test_slow_reachable_clickhouse_is_connected_and_costs_few_round_trips(
 
 @pytest.mark.unit
 def test_lag_sample_plan_charges_a_prefix_its_whole_granules(configure, monkeypatch):
-    """A prefix reads whole granules, so the parts beside it fit what is left."""
+    """A prefix may read up to a granule past its rows, so the parts beside it
+    fit what is left."""
     from tracer.services.clickhouse import consistency
 
     monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 20_000)
@@ -1049,7 +1050,8 @@ def test_lag_sample_plan_charges_a_prefix_its_whole_granules(configure, monkeypa
     now = datetime(2026, 1, 1, 12, 0, 30)
     earlier = datetime(2026, 1, 1, 12, 0, 0)
     prefix = consistency._SampleRead((("202611", 9, 9),), rows=2_000, prefix=True)
-    # An older part fits beside the planned 2,000 rows, not the 8,192 read.
+    # An older part fits beside the planned 2,000 rows, not the 10,191 that
+    # may be read for them.
     assert checker._plan(
         [
             ("202611_10_10_0", 1, now),
@@ -1060,11 +1062,90 @@ def test_lag_sample_plan_charges_a_prefix_its_whole_granules(configure, monkeypa
     ) == [
         prefix,
         consistency._SampleRead(
-            (("202611", 10, 10), ("202609", 1, 1)), rows=20_000 - 8_192
+            (("202611", 10, 10), ("202609", 1, 1)), rows=20_000 - 10_191
         ),
     ]
-    # A part of the same second taken before the prefix is dropped once the
-    # prefix's granules leave no room for it.
+    # A part of the same second taken before the prefix is kept: it may hold
+    # the latest sync. With no room left for a granule, there is no prefix.
     assert checker._plan(
         [("202611_5_5_0", 15_000, now), ("202611_9_9_0", 50_000, now)]
-    ) == [prefix]
+    ) == [consistency._SampleRead((("202611", 5, 5),), rows=20_000)]
+
+
+def _planned_cost(checker, reads):
+    return sum(
+        checker._prefix_cost(read.rows) if read.prefix else read.rows for read in reads
+    )
+
+
+@pytest.mark.unit
+def test_lag_sample_plan_never_drops_a_current_part_for_a_prefix(configure):
+    """The default budget, a current part and a larger merged part written in
+    the same second (ties are listed by rows, smallest first): the current
+    part stays in the sample and the prefix gets what it leaves."""
+    from tracer.services.clickhouse import consistency
+
+    checker = configure(health_tests.fake_client({}))
+    budget = consistency.ConsistencyChecker.LAG_SAMPLE_MAX_ROWS
+    granule = consistency.ConsistencyChecker.LAG_SAMPLE_GRANULE_ROWS
+    assert (budget, granule) == (10_000_000, 8192)
+    now = datetime(2026, 11, 13, 12, 0, 0)
+
+    reads = checker._plan(
+        [("202611_1_1_0", 9_000_000, now), ("202610_2_2_1", 12_000_000, now)]
+    )
+
+    assert reads == [
+        consistency._SampleRead(
+            (("202610", 2, 2),), rows=1_000_000 - (granule - 1), prefix=True
+        ),
+        consistency._SampleRead((("202611", 1, 1),), rows=budget - 1_000_000),
+    ]
+    assert _planned_cost(checker, reads) == budget
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "taken, prefix_rows",
+    [
+        # Less than one granule left: no prefix.
+        (10_000_000 - 8_190, None),
+        # Exactly one granule left: one row.
+        (10_000_000 - 8_192, 1),
+        # One granule and a row left: two rows.
+        (10_000_000 - 8_193, 2),
+        # Plenty left: a tenth of the budget.
+        (1_000, 1_000_000),
+        # Nothing taken, the oversized part alone: a tenth of the budget.
+        (0, 1_000_000),
+    ],
+    ids=["below-a-granule", "one-granule", "granule-and-a-row", "room", "alone"],
+)
+def test_lag_sample_prefix_fits_what_the_current_parts_leave(
+    configure, taken, prefix_rows
+):
+    from tracer.services.clickhouse import consistency
+
+    checker = configure(health_tests.fake_client({}))
+    budget = consistency.ConsistencyChecker.LAG_SAMPLE_MAX_ROWS
+    now = datetime(2026, 11, 13, 12, 0, 0)
+    parts = [("202611_1_1_0", taken, now)] if taken else []
+    parts += [
+        ("202610_2_2_1", 12_000_000, now),
+        ("202609_3_3_0", 50_000, datetime(2026, 11, 13, 11, 0, 0)),
+    ]
+
+    reads = checker._plan(parts)
+
+    prefixes = [read for read in reads if read.prefix]
+    full = [read for read in reads if not read.prefix]
+    if prefix_rows is None:
+        assert prefixes == []
+    else:
+        assert prefixes == [
+            consistency._SampleRead((("202610", 2, 2),), rows=prefix_rows, prefix=True)
+        ]
+    if taken:
+        # The current part is always read in full.
+        assert ("202611", 1, 1) in full[0].ranges
+    assert _planned_cost(checker, reads) <= budget

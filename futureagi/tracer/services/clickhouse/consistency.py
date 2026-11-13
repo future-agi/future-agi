@@ -531,9 +531,11 @@ class ConsistencyChecker:
         remaining ``LAG_SAMPLE_MAX_ROWS`` are read in full; a larger part is
         skipped, not a stop. A newest part too large to read in full (a bulk
         batch, or a merge that absorbed the newest small parts) contributes its
-        first rows instead, a tenth of the budget. ``modification_time`` has
-        one-second resolution, so that is the smallest oversized part written
-        in the newest second. The sample's max never exceeds the table's, so the
+        first rows instead: a tenth of the budget at most, and only what the
+        parts of the newest second already taken leave, so a current part is
+        never dropped for it; none when not even one granule fits.
+        ``modification_time`` has one-second resolution, so that is the
+        smallest oversized part written in the newest second. The sample's max never exceeds the table's, so the
         sampled lag is never smaller than the true lag, and it is exact while
         the newest sync sits in parts that fit.
 
@@ -558,14 +560,13 @@ class ConsistencyChecker:
                 full.append((blocks, part_rows))
                 remaining -= part_rows
             elif not reads and modified == newest:
-                prefix = max(1, min(remaining, budget // 10))
-                reads.append(_SampleRead((blocks,), rows=prefix, prefix=True))
-                prefix_cost = self._prefix_cost(prefix)
-                remaining -= prefix_cost
-        # Parts of the newest second taken before the prefix may not fit beside
-        # its whole granules: drop the last taken, the oldest, until they do.
-        while full and prefix_cost + sum(rows for _, rows in full) > budget:
-            full.pop()
+                # The parts already taken are of the newest second and may
+                # hold the latest sync: the prefix gets only what they leave.
+                prefix = self._prefix_rows(remaining)
+                if prefix:
+                    reads.append(_SampleRead((blocks,), rows=prefix, prefix=True))
+                    prefix_cost = self._prefix_cost(prefix)
+                    remaining -= prefix_cost
         if full:
             reads.append(
                 _SampleRead(
@@ -574,12 +575,22 @@ class ConsistencyChecker:
             )
         return reads
 
+    def _prefix_rows(self, remaining: int) -> int:
+        """Rows of a prefix whose cost fits ``remaining``: a tenth of the
+        budget at most, fewer when less is left, none when not even one row's
+        granule fits."""
+        rows = min(remaining, self.LAG_SAMPLE_MAX_ROWS // 10)
+        if self.LAG_SAMPLE_GRANULE_ROWS <= self.LAG_SAMPLE_MAX_ROWS:
+            rows = min(rows, remaining - (self.LAG_SAMPLE_GRANULE_ROWS - 1))
+        return max(rows, 0)
+
     def _prefix_cost(self, rows: int) -> int:
-        """Rows a prefix read costs: whole granules, as ClickHouse reads them.
-        A budget smaller than those granules cannot hold any prefix, so its
-        planned rows are charged instead."""
-        granule = self.LAG_SAMPLE_GRANULE_ROWS
-        cost = -(-rows // granule) * granule
+        """Rows a prefix read may cost: ClickHouse reads whole granules, and
+        with adaptive granularity the granule holding the last row may start
+        anywhere before it, so at most ``LAG_SAMPLE_GRANULE_ROWS - 1`` rows
+        past the prefix. A budget smaller than one granule cannot hold any
+        prefix, so its planned rows are charged instead."""
+        cost = rows + self.LAG_SAMPLE_GRANULE_ROWS - 1
         return cost if cost <= self.LAG_SAMPLE_MAX_ROWS else rows
 
     @staticmethod
