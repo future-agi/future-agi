@@ -103,6 +103,16 @@ def delete_compare_objects(compare_id) -> None:
     _remove_prefix(client, bucket, compare_id)
 
 
+def delete_compare_metadata(compare_id) -> None:
+    """Remove a comparison's metadata, after which every read of the
+    comparison answers as not found. Raises when the bucket did not remove
+    it."""
+    client, bucket = _client_and_bucket()
+    client.remove_object(
+        bucket, compare_object_key(compare_id, COMPARE_METADATA_OBJECT)
+    )
+
+
 def created_at_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -132,7 +142,8 @@ def _listed_compare_ids(client, bucket: str, now: datetime):
     the bucket, yielded as the listing reaches the next id. Listings return
     keys in order, so one comparison's objects arrive together. An object
     without a modification time counts as new, so its comparison is kept."""
-    current, newest = None, None
+    current: str | None = None
+    newest: datetime = now
     for obj in client.list_objects(bucket, prefix=COMPARE_PREFIX, recursive=True):
         compare_id, _, name = obj.object_name[len(COMPARE_PREFIX) :].partition("/")
         if not name or not _is_compare_id(compare_id):

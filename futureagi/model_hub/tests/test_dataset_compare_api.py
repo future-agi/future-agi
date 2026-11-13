@@ -283,6 +283,10 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
         "model_hub.utils.compare_storage.delete_compare_objects",
         lambda compare_id: shared.clear(),
     )
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata",
+        lambda compare_id: shared.pop(f"compare/{compare_id}/metadata.json"),
+    )
 
     response = auth_client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
 

@@ -266,6 +266,7 @@ from model_hub.utils.compare_storage import (
     COMPARE_METADATA_OBJECT,
     CompareObjectUnavailable,
     created_at_now,
+    delete_compare_metadata,
     is_expired,
     read_compare_json,
     remove_compare,
@@ -677,7 +678,7 @@ def _client_rows_belong_to_datasets(dataset_info, datasets):
     these datasets is a row of that dataset."""
     if not isinstance(dataset_info, dict):
         return False
-    listed = {str(dataset.id): set() for dataset in datasets}
+    listed: dict[str, set[uuid.UUID]] = {str(dataset.id): set() for dataset in datasets}
     for row_ids in dataset_info.values():
         if not isinstance(row_ids, dict):
             return False
@@ -13639,7 +13640,9 @@ class GetCompareDatasetRow(APIView):
                                 if current_cell.value_infos
                                 else {}
                             )
-                            current_cell_metadata = value_infos.get("metadata") or {}
+                            current_cell_metadata: Any = (
+                                value_infos.get("metadata") or {}
+                            )
                             if isinstance(metadata, str):
                                 current_cell_metadata = json.loads(
                                     current_cell_metadata
@@ -13691,6 +13694,21 @@ class GetCompareDatasetRow(APIView):
         try:
             if _resolve_request_compare(request, compare_id) is None:
                 return _compare_not_found_response(self._gm)
+
+            # Every read of a comparison starts from its metadata, so removing
+            # it now stops the comparison being served at once. The pages are
+            # left to the cleanup below, which retries.
+            try:
+                delete_compare_metadata(compare_id)
+            except Exception:
+                logger.warning(
+                    "compare_metadata_delete_failed",
+                    compare_id=str(compare_id),
+                    exc_info=True,
+                )
+                return self._gm.internal_server_error_response(
+                    get_error_message("FAILED_TO_DELETE_COMPARE_DATASET_FILE")
+                )
 
             # The activity may run on another machine, so remove this
             # replica's local copy here; the activity removes the shared files.

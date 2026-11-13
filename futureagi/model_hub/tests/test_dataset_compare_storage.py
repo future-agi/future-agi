@@ -19,6 +19,7 @@ from rest_framework import status
 from model_hub.tests.test_dataset_compare_paging import (
     DELETE_URL,
     ROW_URL,
+    _download,
     _make_dataset,
     _post,
     _replica,
@@ -473,3 +474,83 @@ def test_a_slow_listing_still_removes_the_expired_comparisons_it_reached(
             *(f"test-upload-compare/compare/{key}/page_1.json" for key in fresh),
         ]
     )
+
+
+def _private_comparison(auth_client, organization, workspace, monkeypatch, tmp_path):
+    shared = [f"deleted-{index:02d}" for index in range(12)]
+    left, _, _ = _make_dataset(organization, workspace, "Deleted left", shared, "l")
+    right, _, _ = _make_dataset(organization, workspace, "Deleted right", shared, "r")
+    _replica(monkeypatch, tmp_path, "replica-a")
+    first = _result(_post(auth_client, left.id, [right.id], 0, None))
+    return left, right, first["metadata"]["compare_id"], _row_ids(first)[0]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_deleted_comparison_is_not_served_before_its_cleanup_runs(
+    auth_client, organization, workspace, minio_storage, monkeypatch, tmp_path
+):
+    left, right, compare_id, row_id = _private_comparison(
+        auth_client, organization, workspace, monkeypatch, tmp_path
+    )
+    requested = []
+    # The cleanup activity is queued but has not run yet.
+    monkeypatch.setattr(
+        "tfc.temporal.drop_in.start_activity",
+        lambda *args, **kwargs: requested.append(kwargs.get("args")),
+    )
+
+    deleted = auth_client.delete(DELETE_URL.format(compare_id=compare_id))
+    assert deleted.status_code == status.HTTP_200_OK, deleted.content[:500]
+    assert requested == [(compare_id,)]
+
+    # Another replica, without the local copy, answers as for an unknown id.
+    _replica(monkeypatch, tmp_path, "replica-b")
+    unknown = auth_client.get(ROW_URL.format(compare_id=uuid.uuid4(), row_id=row_id))
+    for response in (
+        auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=row_id)),
+        _post(auth_client, left.id, [right.id], 1, compare_id),
+        _download(auth_client, left.id, [right.id], compare_id),
+    ):
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
+        assert response.json() == unknown.json()
+    # The pages are left to the cleanup activity.
+    found = _compare_objects(minio_storage, compare_id)
+    assert sorted(found[minio_storage.compare_bucket]) == [
+        f"compare/{compare_id}/page_1.json",
+        f"compare/{compare_id}/page_2.json",
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_comparison_whose_metadata_was_not_removed_is_not_reported_deleted(
+    auth_client, organization, workspace, minio_storage, monkeypatch, tmp_path
+):
+    left, right, compare_id, row_id = _private_comparison(
+        auth_client, organization, workspace, monkeypatch, tmp_path
+    )
+    requested = []
+    monkeypatch.setattr(
+        "tfc.temporal.drop_in.start_activity",
+        lambda *args, **kwargs: requested.append(kwargs.get("args")),
+    )
+
+    def storage_unavailable(compare_id):
+        raise RuntimeError("synthetic storage outage")
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata",
+        storage_unavailable,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "model_hub.utils.compare_storage.delete_compare_metadata",
+        storage_unavailable,
+    )
+
+    deleted = auth_client.delete(DELETE_URL.format(compare_id=compare_id))
+    assert deleted.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, (
+        deleted.content[:500]
+    )
+    assert requested == []
+    found = _compare_objects(minio_storage, compare_id)
+    assert f"compare/{compare_id}/metadata.json" in found[minio_storage.compare_bucket]
