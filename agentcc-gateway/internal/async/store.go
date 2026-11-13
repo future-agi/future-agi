@@ -35,20 +35,24 @@ type Job struct {
 	TTL          time.Duration                  `json:"-"`
 	ExpiresAt    time.Time                      `json:"expires_at"`
 
+	// Principal is derived from verified key metadata at submission, never a client org header.
+	// Empty identifies jobs in explicitly unauthenticated deployments.
+	Principal string `json:"-"`
+
 	// CancelFn is set when the job is submitted for processing.
 	CancelFn func() `json:"-"`
 }
 
 // JobResponse is the serialized form returned to clients.
 type JobResponse struct {
-	ID           string          `json:"id"`
-	Status       JobStatus       `json:"status"`
-	EndpointType string          `json:"endpoint_type"`
-	CreatedAt    time.Time       `json:"created_at"`
-	StartedAt    *time.Time      `json:"started_at,omitempty"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	ExpiresAt    time.Time       `json:"expires_at"`
-	Response     json.RawMessage `json:"response,omitempty"`
+	ID           string           `json:"id"`
+	Status       JobStatus        `json:"status"`
+	EndpointType string           `json:"endpoint_type"`
+	CreatedAt    time.Time        `json:"created_at"`
+	StartedAt    *time.Time       `json:"started_at,omitempty"`
+	CompletedAt  *time.Time       `json:"completed_at,omitempty"`
+	ExpiresAt    time.Time        `json:"expires_at"`
+	Response     json.RawMessage  `json:"response,omitempty"`
 	Error        *models.APIError `json:"error,omitempty"`
 }
 
@@ -120,6 +124,17 @@ func (s *Store) GetForOrg(id, orgID string) *Job {
 	return job.snapshot()
 }
 
+// GetForPrincipal returns the same absence result for missing and non-owned jobs.
+func (s *Store) GetForPrincipal(id, principal string) *Job {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	job := s.jobs[id]
+	if job == nil || job.Principal != principal {
+		return nil
+	}
+	return job.snapshot()
+}
+
 // snapshot returns a shallow copy of the Job safe for reading outside the lock.
 func (j *Job) snapshot() *Job {
 	cp := *j
@@ -137,6 +152,59 @@ func (s *Store) Update(id string, fn func(job *Job)) bool {
 		return false
 	}
 	fn(job)
+	return true
+}
+
+// start registers cancellation and claims a queued job atomically. A worker
+// holding an earlier snapshot must not dispatch after the job has been removed.
+func (s *Store) start(id string, cancel func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job := s.jobs[id]
+	if job == nil || job.Status != StatusQueued {
+		return false
+	}
+	now := time.Now()
+	job.Status = StatusProcessing
+	job.StartedAt = &now
+	job.CancelFn = cancel
+	return true
+}
+
+// Cancel invokes the live job's CancelFn (if any), marks it cancelled when
+// it is still queued or processing, and removes it from the store.
+// The cancel function is called after releasing the lock so a cancel
+// callback cannot deadlock on s.mu. Returns false if the job was not found.
+func (s *Store) Cancel(id string) bool {
+	return s.cancel(id, nil)
+}
+
+// CancelForPrincipal checks ownership and removes the live job in the same critical section.
+// A missing job and a job belonging to another principal are indistinguishable.
+func (s *Store) CancelForPrincipal(id, principal string) bool {
+	return s.cancel(id, &principal)
+}
+
+func (s *Store) cancel(id string, principal *string) bool {
+	s.mu.Lock()
+	job := s.jobs[id]
+	if job == nil || (principal != nil && job.Principal != *principal) {
+		s.mu.Unlock()
+		return false
+	}
+	cancel := job.CancelFn
+	if job.Status == StatusQueued || job.Status == StatusProcessing {
+		now := time.Now()
+		job.Status = StatusCancelled
+		job.CompletedAt = &now
+	}
+	job.CancelFn = nil
+	delete(s.jobs, id)
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 	return true
 }
 
