@@ -19,7 +19,8 @@ import { periodLabel, usd } from "../utils/conclusions";
 function PolicyForm({ policy, canManage, onSave, onRefresh }) {
   const [revision, setRevision] = useState(policy.revision);
   const [amount, setAmount] = useState(policy.periodLimitUsd ?? "");
-  const [enabled, setEnabled] = useState(policy.enabled);
+  // A workspace with no saved policy (revision 0) authorizes nothing: the switch starts off.
+  const [enabled, setEnabled] = useState(policy.revision > 0 ? policy.enabled : false);
   const [confirm, setConfirm] = useState(false);
   const operation = useReviewedOperation();
   const stale = revision !== policy.revision;
@@ -38,7 +39,7 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
       <Stack spacing={1.5}>
         {/* Conclusion first: what is allowed now and what has been used this period. */}
         <Typography variant="m3" role="status">
-          {limit ? `${limit} allowance` : 'No spending allowance set'} · {used} used this period{period ? ` (${period})` : ''}
+          {limit ? `${limit} allowance` : policy.revision > 0 && policy.enabled ? 'No limit set; application runs need an allowance' : 'No spending allowance set'} · {used} used this period{period ? ` (${period})` : ''}
         </Typography>
         {limit && usd(policy.remainingUsd) && <Typography variant="s1">{usd(policy.remainingUsd)} left this period.</Typography>}
         {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}

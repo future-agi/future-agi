@@ -378,7 +378,7 @@ function PacketActions({
         }}
         closeDisabled={operation.busy}
         title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
-        content={`${request?.name || "This resource"}: ${packet.transition.label} ${packet.transition.expectedVersion == null ? "unassigned" : `v${packet.transition.expectedVersion}`} → v${packet.transition.version}. ${packet.target ? `Application target: ${review?.targetConfiguration?.name || packet.target.bindingId || packet.target.environmentId}.` : "No application target."} Execute only approved revision ${request?.revision ?? ""}. Existing threads and checked-in locks may still use another version. Current authority and all packet preconditions are rechecked by the server.`}
+        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} moves from ${packet.transition.expectedVersion == null ? "no version" : `v${packet.transition.expectedVersion}`} to v${packet.transition.version}${packet.target ? `, the version verified on the application (configuration r${packet.target.revision})` : ""}. New conversations get v${packet.transition.version}; conversations already running and installed copies keep their version until they update. The approval is checked again before the move.`}
         action={
           <Button
             variant="contained" color="primary"

@@ -218,11 +218,17 @@ it('reads human reviews only once the run has finished, so the first finished re
   rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} /></MemoryRouter>);
   expect(h.annotationIds).toContain('previous');
   expect(screen.queryByText("Couldn't load human reviews")).not.toBeInTheDocument();
-  expect(screen.getByText('0 disagreements')).toBeVisible();
+  expect(screen.getByText('No human reviews yet')).toBeVisible();
 });
 it('treats a missing review record as no human reviews and keeps real failures visible', () => {
   const missing = noReviewsYet({ isError: true, error: { response: { status: 404 } } });
   expect(missing).toMatchObject({ isError: false, data: { results: [] } });
   const failed = noReviewsYet({ isError: true, error: { response: { status: 500 } } });
   expect(failed.isError).toBe(true);
+});
+it('opens a reproduction handoff with its run form as the only primary', async () => {
+  h.runs = [];
+  renderPanel({ seed: { caseId: 'refund', reference: 4 } });
+  await screen.findByRole('button', { name: 'Run on the application' });
+  expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
 });

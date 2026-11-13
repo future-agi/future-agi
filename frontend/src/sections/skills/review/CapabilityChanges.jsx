@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import IdentityChip from '../components/IdentityChip';
 import CapabilityNotice from '../components/CapabilityNotice';
+import TechnicalDetails from '../components/TechnicalDetails';
 import Section from "src/components/section";
 
 export default function CapabilityChanges({ changes, onOpenFile }) {
@@ -12,12 +13,12 @@ export default function CapabilityChanges({ changes, onOpenFile }) {
           <CapabilityNotice title="Permission comparison unavailable" description="Review the file changes before deciding." />
         ) : (
           <>
-            <Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip label="Before" value={changes.beforeDigest} /><IdentityChip label="Candidate" value={changes.afterDigest} /></Stack>
             {!changes.changes.length && (
               <Typography variant="s1">
                 No changes in recognized static declarations. This is not a safety certification.
               </Typography>
             )}
+            <TechnicalDetails title="Compared content"><Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip label="Before" value={changes.beforeDigest} /><IdentityChip label="Candidate" value={changes.afterDigest} /></Stack></TechnicalDetails>
             {changes.changes.map((item) => (
               <Box key={`${item.path}:${item.category}:${item.name}`}>
                 <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>

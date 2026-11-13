@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import EvidenceSummary from '../components/EvidenceSummary';
 import { evidenceTitle, relativeReviewTime, outcomeLabel } from '../utils/review-display';
+import { impactSentence, nativeCaseLines, nativeSummaryConclusion } from '../utils/conclusions';
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
@@ -246,6 +247,7 @@ export function TypedEvidenceList({
               <Tooltip title={ref.payloadExpiresAt || ''}><Typography variant="s3" color="text.secondary">Expires {relativeReviewTime(ref.payloadExpiresAt) || 'at an unknown time'}</Typography></Tooltip>
               {summary ? (
                 <Stack spacing={0.5}>
+                  <NativeOutcomes summary={summary} />
                   <Typography variant="s1">
                     {summary.graded ?? "Unknown"}/{summary.planned ?? "Unknown"}{" "}
                     attempts graded · {summary.incomplete ?? "Unknown"}{" "}
@@ -410,6 +412,17 @@ export function ExternalPipeline({ reference }) {
 }
 ExternalPipeline.propTypes = { reference: PropTypes.object };
 
+// A completed application run carried into the packet: its own headline and per-case outcomes.
+function NativeOutcomes({ summary }) {
+  const conclusion = nativeSummaryConclusion(summary);
+  if (!conclusion) return null;
+  return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+    <Typography variant="s2">{conclusion}</Typography>
+    {nativeCaseLines(summary.cases).map((line) => <Typography key={line.caseId} variant="s3" color="text.secondary">{`${line.title}: ${line.text}`}</Typography>)}
+  </Stack>;
+}
+NativeOutcomes.propTypes = { summary: PropTypes.object };
+
 // Controlled presentation only. API mapping/caching and source authorization stay
 // in L7; this component never resolves a label or manufactures an evidence ref.
 export default function ReleaseReviewBody({
@@ -499,6 +512,7 @@ export default function ReleaseReviewBody({
           // grading completeness without an extra Inspect step.
           const summary = summaries?.find((row) => evidenceKey(row) === `${item.source}:${item.id}`);
           return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+            <NativeOutcomes summary={summary} />
             <IdentityChip inline kind="id" label="Evidence" value={item.id} />
             {summary && <Typography variant="s3" color="text.secondary">{`${summary.graded ?? 'Unknown'}/${summary.planned ?? 'Unknown'} attempts graded · ${summary.incomplete ?? 'Unknown'} incomplete · ${summary.regressions ?? 'Unknown'} regressions`}</Typography>}
           </Stack>;
@@ -572,13 +586,18 @@ export default function ReleaseReviewBody({
         {impact ? (
           <Stack spacing={1}>
             <Typography variant="s1">
-              {impact.following} followers · {impact.pinned} intentional pins ·{" "}
-              {impact.unobserved} unobserved bindings
+              {impactSentence(impact)}
             </Typography>
-            <IdentityValue
-              label="Reviewed impact fingerprint"
-              value={packet.transition.expectedImpactFingerprint}
-            />
+            <TechnicalDetails title="Impact counts">
+              <Typography variant="s3">
+                {impact.following} followers · {impact.pinned} intentional pins ·{" "}
+                {impact.unobserved} unobserved bindings
+              </Typography>
+              <IdentityValue
+                label="Reviewed impact fingerprint"
+                value={packet.transition.expectedImpactFingerprint}
+              />
+            </TechnicalDetails>
             <Typography variant="s3">
               Only authorized declared bindings are counted.{" "}
               {impact.moreAvailable

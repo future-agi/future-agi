@@ -272,7 +272,7 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
   const acknowledge = await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ });
   await waitFor(() => expect(acknowledge).toBeEnabled());
-  if (kind === 'agent_context') expect(screen.getByText(/2 followers · 1 intentional pins/)).toBeVisible();
+  if (kind === 'agent_context') expect(screen.getByText(/2 connected consumers follow this label and move with it; 1 is pinned and stays put/)).toBeVisible();
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));

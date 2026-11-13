@@ -82,7 +82,8 @@ export async function loadReleaseInspection(packet, fingerprint, config) {
   if (value.fingerprint !== fingerprint || value.capabilities.after_digest !== packet.candidate_digest) throw new Error('The inspection does not match the reviewed packet.');
   if (value.summaries.length !== packet.evidence.length || packet.evidence.some((ref) => !value.summaries.some((row) => row.source === ref.source && row.source_id === ref.source_id && row.annotation_revision === ref.annotation_revision))) throw new Error('The evidence inspection is incomplete.');
   return { capabilities: { ...value.capabilities, beforeDigest: value.capabilities.before_digest, afterDigest: value.capabilities.after_digest },
-    summaries: value.summaries.map((row) => ({ ...row, sourceId: row.source_id, annotationRevision: row.annotation_revision, cannotAssess: row.cannot_assess })),
+    summaries: value.summaries.map((row) => ({ ...row, sourceId: row.source_id, annotationRevision: row.annotation_revision, cannotAssess: row.cannot_assess,
+      cases: (row.cases || []).map((cell) => ({ ...cell, caseId: cell.case_id, repeatIndex: cell.repeat_index })) })),
     targetConfiguration: value.target_configuration };
 }
 

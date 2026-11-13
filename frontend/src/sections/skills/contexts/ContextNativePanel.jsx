@@ -18,7 +18,7 @@ import { paths } from 'src/routes/paths';
 import { useSkillsSpendPolicy } from 'src/api/skills/r3-spend';
 import { getSkillErrorCode } from 'src/api/skills/operation-errors';
 import OperationFeedback from '../components/OperationFeedback';
-import { noReviewsYet } from '../utils/conclusions';
+import { nativeConclusion, noReviewsYet } from '../utils/conclusions';
 import { useAppendEvidenceAnnotation, useAllEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
@@ -224,9 +224,6 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     return attempts.length > 0 && attempts.every((cell) => cell.status === 'completed' && FAMILIES.every(([key]) => cell[key] === 'pass'));
   }).length;
   const firstDisagreement = run.cells?.find((cell) => cell.attemptId && disagreements.some((row) => row.attemptId === cell.attemptId));
-  const reproduction = run.result?.reproduction === 'reproduced'
-    ? `the recorded failure reproduced${referenceArm ? ` on v${referenceArm.version}` : ''}`
-    : `the recorded failure ${run.result?.reproduction === 'not_reproduced' ? 'did not reproduce' : 'was not verified'}`;
   return <Stack spacing={1.5}>
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography component="h3" variant="m3" data-execution-fingerprint={run.executionFingerprint}>Application verification</Typography>
@@ -239,10 +236,10 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     {run.failure && <Alert severity="error">The run stopped: {run.failure.replaceAll('_', ' ')}. No outcome is inferred.</Alert>}
     {!active && (run.result || run.decision) && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
       <Typography variant="m3" component="p" sx={{ m: 0 }}>
-        {run.result ? `${run.result.repair_verified ? 'Repair verified' : 'Repair not verified'}: v${candidate?.version} passed ${passedCases} of ${runCases.length} cases; ${reproduction}.` : run.decision.state === 'release_ready' ? 'Application checks passed for these cases.' : 'Hold this release.'}
+        {nativeConclusion({ candidate: candidate?.version, reference: referenceArm?.version, passed: passedCases, total: runCases.length, result: run.result, decision: run.decision?.state })}
         {run.result?.regressed_cases > 0 ? ` ${run.result.regressed_cases} neighboring case${run.result.regressed_cases === 1 ? '' : 's'} regressed.` : ''}
       </Typography>
-      {annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : annotations.isLoading ? <Typography variant="s3">Loading human reviews…</Typography> : firstDisagreement ? <Button variant="text" size="small" sx={{ alignSelf: 'flex-start' }} onClick={(event) => inspect(firstDisagreement, event)}>{disagreementLabel(disagreements.length)} to inspect</Button> : <Typography variant="s3" color="text.secondary">{disagreementLabel(disagreements.length)}{disagreements.length ? ' recorded; attempt details unavailable' : ''}</Typography>}
+      {annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : annotations.isLoading ? <Typography variant="s3">Loading human reviews…</Typography> : firstDisagreement ? <Button variant="text" size="small" sx={{ alignSelf: 'flex-start' }} onClick={(event) => inspect(firstDisagreement, event)}>{disagreementLabel(disagreements.length)} to inspect</Button> : <Typography variant="s3" color="text.secondary">{disagreements.length ? `${disagreementLabel(disagreements.length)} recorded; attempt details unavailable` : annotations.data?.results?.length ? 'No reviewer disagreed with these grades' : 'No human reviews yet'}</Typography>}
       {run.decision?.state === 'release_ready' && <StatusBadge status="info" label="Ready for release review" sx={{ alignSelf: 'flex-start' }} />}
       {run.decision && <TechnicalDetails title="How it was decided">{run.decision.reasons.map((reason) => <Typography key={reason} variant="s1" component="div">{reason}</Typography>)}</TechnicalDetails>}
     </Stack>}
@@ -361,7 +358,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
         <OperationFeedback error={error} action="start this run" onRetry={run} onReconcile={run} onRefresh={() => { setError(null); setFresh(''); preview.mutate(plan, { onSuccess: () => setFresh(planKey) }); }} />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
           <Button variant={primary ? "contained" : "outlined"} color="primary" size="small" disabled={!canWrite || !result.reproducible || !current || !ack || create.isPending} onClick={run}>Run on the application</Button>
-          {allowanceMissing && <Typography variant="s3" color="text.secondary">No spending allowance is set for this workspace. <Link href={paths.dashboard.skills.allowance} color="inherit" underline="always">An admin can set one in Workspace allowance</Link>.</Typography>}
+          {allowanceMissing && getSkillErrorCode(error) !== 'spend_policy_required' && <Typography variant="s3" color="text.secondary">No spending allowance is set for this workspace. <Link href={paths.dashboard.skills.allowance} color="inherit" underline="always">An admin can set one in Workspace allowance</Link>.</Typography>}
         </Stack>
         {(!canWrite || !result.reproducible || !current || !ack || create.isPending) && <Typography variant="s3" color="text.secondary">{!canWrite ? 'Only a workspace author can run this test.' : !result.reproducible ? 'Add the missing historical inputs to continue.' : !current ? 'Wait for the updated plan before confirming.' : create.isPending ? 'Starting the application run…' : 'Confirm the provider-charge acknowledgment to continue.'}</Typography>}
       </Stack>}
@@ -394,7 +391,8 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const visibleHistory = history.filter((run) => historyFilter === 'all' || run.type === historyFilter);
   const latest = [...(runs.data?.[0] ? [{ ...runs.data[0], type: 'application' }] : []), ...(latestAnswer ? [{ ...latestAnswer, createdAt: latestAnswer.created_at, type: 'answers' }] : history.filter((run) => run.type === 'answers').slice(0, 1))].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
   const focus = state === 'empty' ? null : selected || latest;
-  const firstRun = !focus && (state === 'empty' || !history.length) && !startedForm;
+  // A reproduction handoff (seed) opens with its run form active: the empty-state button would be a second primary.
+  const firstRun = !focus && (state === 'empty' || !history.length) && !startedForm && !seed;
   const target = targets.data?.targets[0];
   const focusForm = (requestedKind) => {
     const chosenKind = typeof requestedKind === 'string' ? requestedKind : kind;

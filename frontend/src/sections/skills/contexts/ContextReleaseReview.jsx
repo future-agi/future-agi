@@ -14,6 +14,8 @@ import ObjectHeader from "../components/ObjectHeader";
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
 import { mountName, publishSentence } from "../utils/conclusions";
+
+const DESCRIPTOR_FILE = ".futureagi/context.json";
 import { paths } from "src/routes/paths";
 import Section from "src/components/section";
 import ChecksList from "../components/ChecksList";
@@ -125,13 +127,19 @@ function DraftPublication({
       </Section>
       <Section id="review-files" title="Changes from content origin">
         <Stack spacing={1.5}>
-          {draftReview.changes.map((file) => (
+          {/* Files people read come first; the machine descriptor's exact diff is one click away. */}
+          {draftReview.changes.filter((file) => file.path !== DESCRIPTOR_FILE).map((file) => (
             <Box key={file.path}>
               <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>
                 {file.path}
               </Typography>
               <ReviewFileDiff file={file} />
             </Box>
+          ))}
+          {draftReview.changes.filter((file) => file.path === DESCRIPTOR_FILE).map((file) => (
+            <TechnicalDetails key={file.path} title={`Raw ${file.path} change`}>
+              <ReviewFileDiff file={file} />
+            </TechnicalDetails>
           ))}
         </Stack>
       </Section>

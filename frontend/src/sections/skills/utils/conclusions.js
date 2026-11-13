@@ -54,3 +54,54 @@ export const recipientsOf = (options) => (options?.recipients ?? []).filter((per
 export const httpStatus = (error) => error?.response?.status ?? error?.statusCode ?? error?.status;
 // A finished run whose review record does not exist yet has no human reviews; only a real failure is an error.
 export const noReviewsYet = (query) => (query.isError && httpStatus(query.error) === 404 ? { ...query, isError: false, error: null, data: { results: [] } } : query);
+// Application verification headline. A plain regression run (no recorded failure selected) says
+// what passed; only a run that carried a recorded failure speaks about a repair.
+export function nativeConclusion({ candidate, reference, passed, total, result, decision }) {
+  if (!result) return decision === 'release_ready' ? 'Application checks passed for these cases.' : 'Hold this release.';
+  const lead = `v${candidate} passed ${passed} of ${total} cases`;
+  if (result.reproduction === 'not_requested') return `${lead}.`;
+  const reproduction = result.reproduction === 'reproduced'
+    ? `the recorded failure reproduced${reference ? ` on v${reference}` : ''}`
+    : `the recorded failure ${result.reproduction === 'not_reproduced' ? 'did not reproduce' : 'was not verified'}`;
+  return `${result.repair_verified ? 'Repair verified' : 'Repair not verified'}: ${lead}; ${reproduction}.`;
+}
+const CHECK_NAMES = { selection: 'skill selection', delivery: 'file delivery', tools: 'business tool', answer: 'answer' };
+const GRADED = new Set(['pass', 'fail', 'not_applicable']);
+// One line per reviewed case, per context version: "v1 failed business tool". Ungraded work says so.
+export function nativeCaseLines(cases = []) {
+  const byCase = new Map();
+  cases.forEach((cell) => byCase.set(cell.caseId, [...(byCase.get(cell.caseId) || []), cell]));
+  const order = { candidate: 0, reference: 1, production: 2 };
+  return [...byCase.values()].map((cells) => ({
+    caseId: cells[0].caseId,
+    title: cells[0].title || 'Reviewed case',
+    text: [...cells].sort((a, b) => (order[a.variant] ?? 3) - (order[b.variant] ?? 3) || a.repeatIndex - b.repeatIndex).map((cell) => {
+      const failed = Object.keys(CHECK_NAMES).filter((key) => cell[key] === 'fail');
+      const ungraded = cell.status !== 'completed' || Object.keys(CHECK_NAMES).some((key) => !GRADED.has(cell[key]));
+      const name = `${cell.version ? `v${cell.version}` : cell.variant}${cells.filter((other) => other.variant === cell.variant).length > 1 ? ` (run ${cell.repeatIndex + 1})` : ''}`;
+      return `${name} ${failed.length ? `failed ${failed.map((key) => CHECK_NAMES[key]).join(', ')}` : ungraded ? 'not fully graded' : 'passed every check'}`;
+    }).join(' · '),
+  }));
+}
+// The same headline for a run carried into a review packet (inspection summary rows).
+export function nativeSummaryConclusion(summary) {
+  if (!summary?.result) return null;
+  const cases = summary.cases || [];
+  const ids = [...new Set(cases.map((cell) => cell.caseId))];
+  const candidate = cases.filter((cell) => cell.variant === 'candidate');
+  const passed = ids.filter((id) => {
+    const attempts = candidate.filter((cell) => cell.caseId === id);
+    return attempts.length > 0 && attempts.every((cell) => cell.status === 'completed' && Object.keys(CHECK_NAMES).every((key) => cell[key] === 'pass'));
+  }).length;
+  return nativeConclusion({ candidate: candidate[0]?.version, reference: cases.find((cell) => cell.variant === 'reference')?.version, passed, total: ids.length, result: summary.result });
+}
+// Release impact in one sentence: "1 connected consumer follows this label and moves with it; 1 is pinned and stays put."
+export function impactSentence({ following = 0, pinned = 0, unobserved = 0 }) {
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+  const parts = [
+    following ? `${plural(following, 'connected consumer follows this label and moves', 'connected consumers follow this label and move')} with it` : 'No connected consumer follows this label',
+    pinned ? `${plural(pinned, 'is', 'are')} pinned and stays put` : null,
+    unobserved ? `${plural(unobserved, 'registered application has', 'registered applications have')} not reported a version yet` : null,
+  ].filter(Boolean);
+  return `${parts.join('; ')}.`;
+}

@@ -199,7 +199,7 @@ describe('EvidenceSummary', () => {
   it('reports exact coverage and visibility and forwards original records for controlled actions', () => {
     const inspect = vi.fn(); const toggle = vi.fn();
     render(<EvidenceSummary items={[item]} selectable selected={['simulation_native:run-1']} onToggle={toggle} onInspect={inspect} />);
-    expect(screen.getByText('3 of 4 cases · 1 regression · 1 human disagreement')).toBeVisible();
+    expect(screen.getByText('3 of 4 runs graded · 1 regression · 1 human disagreement')).toBeVisible();
     expect(screen.getByText('Private')).toBeVisible();
     expect(screen.getByRole('checkbox', { name: 'Attach Refund checks' })).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox'));
@@ -218,7 +218,7 @@ describe('EvidenceSummary', () => {
   });
   it('keeps explicit zero counts and never infers missing planned coverage', () => {
     render(<EvidenceSummary items={[{ ...item, counts: { graded: 0, regressed: 0, disagreements: 0 } }]} />);
-    expect(screen.getByText('0 of Not reported cases · 0 regressions · 0 human disagreements')).toBeVisible();
+    expect(screen.getByText('0 of Not reported runs graded · 0 regressions · 0 human disagreements')).toBeVisible();
   });
   it('keeps evidence with the same ID from different sources separate', () => {
     render(<EvidenceSummary items={[item, { ...item, source: 'skills_text', title: 'Text checks' }]} selectable selected={new Set(['simulation_native:run-1'])} onToggle={vi.fn()} />);
