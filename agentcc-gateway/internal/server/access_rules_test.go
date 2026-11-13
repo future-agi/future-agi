@@ -62,8 +62,17 @@ var accessRuleCases = map[string]accessRules{
 // request auth on.
 func accessServer(t *testing.T, provs map[string]config.ProviderConfig, rules accessRules, extra ...pipeline.Plugin) *Server {
 	t.Helper()
+	return accessServerWith(t, provs, rules, nil, extra...)
+}
+
+// accessServerWith is accessServer with edit applied to the config first.
+func accessServerWith(t *testing.T, provs map[string]config.ProviderConfig, rules accessRules, edit func(*config.Config), extra ...pipeline.Plugin) *Server {
+	t.Helper()
 	cfg := config.DefaultConfig()
 	cfg.IPACL = rules.global
+	if edit != nil {
+		edit(cfg)
+	}
 	cfg.Auth.Enabled = true
 	cfg.Auth.Keys = []config.AuthKeyConfig{{
 		Name:       "access-test",
