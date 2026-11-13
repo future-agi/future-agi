@@ -1066,3 +1066,171 @@ class TestOnlyWhatThePromptShowedCanBeCited:
     def test_a_cite_of_a_span_the_prompt_left_out_is_dropped(self, cite):
         tools = _tools_fail(cite, _cite(ROOT, "out", REFUND_PASSAGE))
         assert _scan_tools(_trace_cut_by_the_prompt_budget(), tools) == []
+
+
+# A recorded tool reply, and the same sentence with one word changed. Each
+# change is inside the sentence, so its first and last words still match.
+CAPTURE_NOTE = (
+    "The payment processor did not capture the charge for order 1182, so the "
+    "refund for this customer is still waiting on the card issuer."
+)
+CAPTURED_NOTE = CAPTURE_NOTE.replace("did not capture", "did capture")
+
+
+class TestAChangedWordIsNotAQuote:
+    """A passage is a quote only when its words are the recorded words, in
+    order: punctuation, casing and whitespace may differ, a word may not."""
+
+    @pytest.mark.parametrize(
+        "recorded, quote",
+        [
+            pytest.param(
+                HELD_REFUND,
+                HELD_REFUND.replace("unavailable", "available"),
+                id="unavailable-to-available",
+            ),
+            pytest.param(CAPTURE_NOTE, CAPTURED_NOTE, id="negation-dropped"),
+            pytest.param(CAPTURED_NOTE, CAPTURE_NOTE, id="negation-added"),
+            pytest.param(
+                CAPTURE_NOTE,
+                CAPTURE_NOTE.replace("order 1182", "order 1183"),
+                id="number-changed",
+            ),
+        ],
+    )
+    def test_a_quote_with_one_word_changed_is_dropped(self, recorded, quote):
+        assert quote != recorded
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(recorded), tools) == []
+
+    def test_a_one_cite_evidence_with_one_word_changed_is_dropped(self):
+        tools = {
+            "evidence": HELD_REFUND.replace("unavailable", "available"),
+            "verdict": "FAIL",
+            "cite": [{"span": REFUND_TOOL, "field": "out"}],
+        }
+        assert _scan_tools(_tool_error_trace(HELD_REFUND), tools) == []
+
+    @pytest.mark.parametrize(
+        "recorded, quote",
+        [
+            pytest.param(
+                "Dr. Smith confirmed the payment processor declined the refund "
+                "for order 1182 and the charge was never captured.",
+                "Dr Smith confirmed the payment processor declined the refund "
+                "for order 1182 and the charge was never captured.",
+                id="abbreviation-period-dropped",
+            ),
+            pytest.param(
+                CAPTURE_NOTE,
+                CAPTURE_NOTE.replace(", so", "; so").replace(" the ", "  the\n"),
+                id="punctuation-and-whitespace",
+            ),
+            pytest.param(
+                CAPTURE_NOTE,
+                "the charge for order 1182, so the refund for this customer",
+                id="shorter-than-the-sentence",
+            ),
+        ],
+    )
+    def test_a_quote_with_the_recorded_words_is_kept(self, recorded, quote):
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(recorded), tools) == [
+            ("Tool-related", "H")
+        ]
+
+
+def _trace_with_a_called_tool(span_name, attributes=None, kind="TOOL"):
+    """issue_refund and lookup_order are declared; one tool span, recorded
+    under ``span_name``, ran and succeeded."""
+    trace = _trace_with_declared_tools()
+    attrs = {
+        "input.value": "order=1182, amount=40",
+        "output.value": "Refund issued successfully for order 1182.",
+        **(attributes or {}),
+    }
+    if kind:
+        attrs["span.kind"] = kind
+    trace["spans"][0]["child_spans"] = [
+        {
+            "span_id": REFUND_TOOL,
+            "span_name": span_name,
+            "duration": "PT0.3S",
+            "status_code": "Ok",
+            "span_attributes": attrs,
+            "child_spans": [],
+        }
+    ]
+    return trace
+
+
+def _never_called(name):
+    return _tools_fail(
+        {"field": "tools", "quote": name}, _cite(ROOT, "out", REFUND_PASSAGE)
+    )
+
+
+class TestACalledToolIsKnownByItsRecordedName:
+    """A tool call is matched to a listed tool by the name the trace records
+    for it, not only by the whole span name."""
+
+    @pytest.mark.parametrize(
+        "trace",
+        [
+            pytest.param(_trace_with_a_called_tool("Tool issue_refund"), id="prefixed"),
+            pytest.param(
+                _trace_with_a_called_tool("Tool issue_refund", kind=None),
+                id="prefixed-without-kind",
+            ),
+            pytest.param(_trace_with_a_called_tool("issue_refund tool"), id="suffixed"),
+            pytest.param(
+                _trace_with_a_called_tool(
+                    "execute_tool issue_refund", {"gen_ai.tool.name": "issue_refund"}
+                ),
+                id="gen-ai-tool-name",
+            ),
+            pytest.param(
+                _trace_with_a_called_tool("run", {"tool.name": "issue_refund"}),
+                id="tool-name-attribute",
+            ),
+        ],
+    )
+    def test_a_called_tool_cannot_be_cited_as_never_called(self, trace):
+        assert _scan_tools(trace, _never_called("issue_refund")) == []
+
+    def test_a_tool_call_recorded_on_the_model_span_counts_as_a_call(self):
+        trace = _trace_with_declared_tools()
+        trace["spans"][0]["span_attributes"][
+            "llm.output_messages.0.message.tool_calls.0.tool_call.function.name"
+        ] = "issue_refund"
+        assert _scan_tools(trace, _never_called("issue_refund")) == []
+
+    @pytest.mark.parametrize("name", ["issue_refund", "lookup_order"])
+    def test_a_tool_span_without_a_tool_name_declines_never_called_cites(self, name):
+        assert _scan_tools(_trace_with_a_called_tool("Tool"), _never_called(name)) == []
+
+    @pytest.mark.parametrize(
+        "trace",
+        [
+            pytest.param(_trace_with_a_called_tool("Tool issue_refund"), id="prefixed"),
+            pytest.param(
+                _trace_with_a_called_tool("run", {"tool.name": "issue_refund"}),
+                id="tool-name-attribute",
+            ),
+        ],
+    )
+    def test_a_tool_that_was_not_called_stays_citable(self, trace):
+        assert _scan_tools(trace, _never_called("lookup_order")) == [
+            ("Tool-related", "H")
+        ]
+
+    def test_a_flattened_tool_definition_is_not_a_call(self):
+        trace = _trace_with_a_called_tool("lookup_order")
+        trace["spans"][0]["span_attributes"]["llm.tools.1.tool.name"] = "issue_refund"
+        assert _scan_tools(trace, _never_called("issue_refund")) == [
+            ("Tool-related", "H")
+        ]

@@ -247,14 +247,24 @@ _STATUS_WORD = re.compile(r"[a-z0-9_]+")
 # Where a quote is split into sentences: one passage per cite when a quote has
 # no per-cite passages, and one checked sentence at a time within a passage.
 _PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
-# Within one sentence matched by its trigrams, the longest run of consecutive
-# trigrams that may be missing from the field. One changed word misses at most
-# three; punctuation and casing are compared away before trigrams are counted.
-_MAX_UNMATCHED_RUN = 3
 # Words of a quote with punctuation and casing set aside.
 _WORD = re.compile(r"\w+")
 # An optional label in front of a quote of the tools list, as the prompt shows it.
 _TOOLS_LABEL = re.compile(r"^tools available\s*:\s*")
+# Attributes a trace records a called tool's name under: the tool span's own
+# name (``tool.name``, ``gen_ai.tool.name``) and the function name of a tool
+# call on the span that made it (``...tool_calls.N.tool_call.function.name``).
+# The tool definitions sent to the model (``llm.tools.N...``) name the tools
+# available, not the ones called.
+_TOOL_NAME_KEY = re.compile(
+    r"(?:^|\.)(?:tool\.name|tool_call\.function\.name|function_call\.name)$"
+)
+_TOOL_DEFINITION_KEY = re.compile(r"^llm\.tools\.|tool\.definitions")
+# Words a tool span's name can carry besides the tool's own name. A span name
+# made only of these ("Tool", "tool_call") does not say which tool ran.
+_TOOL_SPAN_WORDS = frozenset(
+    {"tool", "tools", "call", "calls", "function", "execute", "run", "invoke"}
+)
 
 
 def _cites(verdict: dict[str, Any]):
@@ -364,15 +374,57 @@ def _shown_tool_names(shown) -> list[str]:
     return visible
 
 
-def _called_tool_names(trace) -> set[str]:
-    """Names of the tool spans the trace recorded, by the prefilter's rule."""
+def _recorded_tool_names(attrs) -> set[str]:
+    """Tool names recorded in a span's attributes, as the prompt shows names."""
+    return {
+        _norm_for_match(neutralize(value))
+        for key, value in attrs.items()
+        if _TOOL_NAME_KEY.search(str(key))
+        and not _TOOL_DEFINITION_KEY.search(str(key))
+        and str(value or "").strip()
+    }
+
+
+def _names_listed_tool(span_name: str, listed: str) -> bool:
+    """Does a tool span's name carry this listed tool name as a whole name?"""
+    return bool(
+        listed
+        and re.search(rf"(?<![a-z0-9_]){re.escape(listed)}(?![a-z0-9_])", span_name)
+    )
+
+
+def _only_generic_words(span_name: str) -> bool:
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", span_name).casefold()
+    return set(re.findall(r"[a-z0-9]+", words)) <= _TOOL_SPAN_WORDS
+
+
+def _called_tool_names(trace, listed: list[str]) -> set[str] | None:
+    """Names of the tools the trace recorded a call to, or None when it
+    recorded a tool call whose tool cannot be named.
+
+    A tool span (by the prefilter's rule) is a call of the tool its name
+    attribute names, of its own span name, and of every listed tool whose
+    name appears in that span name as a whole name ("Tool issue_refund" is a
+    call of issue_refund). A tool call recorded on the span that made it
+    counts too. A tool span with no name attribute and a span name such as
+    "Tool" could be a call of any listed tool, so nothing is known to be
+    uncalled. ``listed`` are the shown tool names, normalised for matching.
+    """
     called = set()
     for top in (trace or {}).get("spans") or []:
         for span, _depth in flatten_spans(top):
-            name = str(span.get("span_name") or "")
-            kind = _get_span_kind(span.get("span_attributes") or {})
-            if kind in {"Tool", "TOOL"} or "Tool" in name:
-                called.add(_norm_for_match(neutralize(name)))
+            attrs = span.get("span_attributes") or {}
+            recorded = _recorded_tool_names(attrs)
+            called |= recorded
+            raw_name = str(span.get("span_name") or "")
+            kind = _get_span_kind(attrs)
+            if not (kind in {"Tool", "TOOL"} or "Tool" in raw_name):
+                continue
+            name = _norm_for_match(neutralize(raw_name))
+            called.add(name)
+            called |= {n for n in listed if _names_listed_tool(name, n)}
+            if not recorded and _only_generic_words(raw_name):
+                return None
     return called
 
 
@@ -402,13 +454,15 @@ def _passage_names_status(passage: str | None, lines) -> bool:
     return False
 
 
-def _passage_names_tools(passage: str, names: list[str], called: set[str]) -> bool:
+def _passage_names_tools(passage: str, names: list[str], trace) -> bool:
     """Is this passage copied from TOOLS AVAILABLE, naming a tool never called?
 
     The passage must be one listed name or a run of them in the order the
     line shows (optionally with its label), and at least one of them must
     have no recorded call: a tools cite supports a FAIL for an available tool
-    the agent never called, and a tool it did call cannot show that.
+    the agent never called, and a tool it did call cannot show that. When the
+    trace recorded a tool call it does not name, no tool is known to be
+    uncalled and the cite is declined.
     """
     said = _TOOLS_LABEL.sub("", _norm_for_match(passage))
     items = [i.strip(" \"'`.") for i in said.split(",")]
@@ -419,7 +473,10 @@ def _passage_names_tools(passage: str, names: list[str], called: set[str]) -> bo
     in_order = any(
         listed[i : i + width] == items for i in range(len(listed) - width + 1)
     )
-    return in_order and any(i not in called for i in items)
+    if not in_order:
+        return False
+    called = _called_tool_names(trace, listed)
+    return called is not None and any(i not in called for i in items)
 
 
 def _words(text) -> str:
@@ -432,28 +489,12 @@ def _sentence_is_quoted(sentence: str, fields: list[str]) -> bool:
     """One sentence of a passage, found in the cited field on its own.
 
     ``fields`` are the field copies as ``_words``. The sentence's words must
-    appear in order, or match by trigrams within the tolerance with both its
-    first and last trigram found and no run of more than three missing: a
-    changed word is tolerated, words added at either end or in a run are not.
+    appear in the field as one run, in order: punctuation, casing and
+    whitespace may differ, but no word inside it may be changed, added or
+    left out.
     """
-    words = _words(sentence).split()
-    if not words:
-        return True
-    if any(f" {' '.join(words)} " in f for f in fields):
-        return True
-    if len(words) < 3:
-        return False
-    grams = [f" {' '.join(words[i : i + 3])} " for i in range(len(words) - 2)]
-    found = [any(g in f for f in fields) for g in grams]
-    if not (found[0] and found[-1]):
-        return False
-    if sum(found) / len(grams) < _EVIDENCE_TRIGRAM_FLOOR:
-        return False
-    run = longest = 0
-    for hit in found:
-        run = 0 if hit else run + 1
-        longest = max(longest, run)
-    return longest <= _MAX_UNMATCHED_RUN
+    words = _words(sentence)
+    return not words.strip() or any(words in f for f in fields)
 
 
 def _passage_in_field(passage: str, values: list[str]) -> bool:
@@ -461,8 +502,8 @@ def _passage_in_field(passage: str, values: list[str]) -> bool:
 
     Punctuation and casing a model rewrites are set aside, but one passage is
     one quote: unless its words appear in the field in order, every sentence
-    in it has to be found in the field on its own. Scored as a whole, a long
-    real sentence would carry an added one inside the trigram tolerance.
+    in it has to be found in the field on its own, so a real sentence cannot
+    carry an added one.
     """
     said = _norm_for_match(passage)
     fields = [_norm_for_match(v) for v in values]
@@ -531,7 +572,7 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
             names = _shown_tool_names(shown)
             if not names:
                 return "cited_field_missing", []
-            if not _passage_names_tools(passage, names, _called_tool_names(trace)):
+            if not _passage_names_tools(passage, names, trace):
                 return "not_in_cited_field", []
             checked.append(passage)
             continue
