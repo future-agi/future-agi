@@ -83,9 +83,12 @@ export const matchesSavedQuestion = (
   sameLabels(item.labels, labels) &&
   sameDefinitions(item.definitions, definitions);
 
+// `fresh`: read from the primary database. What to create next is decided
+// from this list (reuse an evaluator, pick a unique name), so a question saved
+// a moment ago must be in it even when list reads go to a lagging replica.
 async function listProjectConfigs(projectId) {
   const response = await axios.get(endpoints.project.getEvalTaskConfig(), {
-    params: { project_id: projectId },
+    params: { project_id: projectId, fresh: true },
   });
   return result(response) || [];
 }

@@ -275,17 +275,21 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # still goes through the router for EvalGroup (likely landing
             # on `default`) and remains a pre-existing N+1. We do NOT fix
             # that here — fixing the serializer is a separate refactor.
-            queryset = (
-                CustomEvalConfig.objects.db_manager(
+            # `fresh` (the Ask page) reads the primary: it reuses an evaluator
+            # or picks a unique name from this list right after creating one.
+            # Every other caller keeps the replica-eligible alias.
+            manager = (
+                CustomEvalConfig.objects.db_manager("default")
+                if query_data.get("fresh")
+                else CustomEvalConfig.objects.db_manager(
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
                 )
-                .filter(
-                    deleted=False,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-                .all()
             )
+            queryset = manager.filter(
+                deleted=False,
+                project__organization=getattr(request, "organization", None)
+                or request.user.organization,
+            ).all()
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)

@@ -690,6 +690,11 @@ def allowed_root_spans_for_request(
     }
 
 
+class _RecalculateLeftNoResult(Exception):
+    """A recalculate's recompute saved no live result; the retired previous
+    result has been put back."""
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1816,6 +1821,75 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
+    def _recalculate(self, request, observation_span, custom_eval_config, feedback_id):
+        """Retire the span's live result for the config and recompute it.
+        Raises _RecalculateLeftNoResult, after putting the retired result
+        back, when the recompute leaves no live result.
+
+        Not one transaction: the eval activities close the request's
+        connection when called (close_old_connections), which would end it.
+        The retirement is undone explicitly instead."""
+        try:
+            # Primary: the live result may be newer than a lagging
+            # replica (a fresh eval, or the previous recalculate's).
+            eval_logger = EvalLogger.objects.using("default").get(
+                observation_span=observation_span,
+                custom_eval_config=custom_eval_config,
+                deleted=False,
+            )
+            task_id = eval_logger.eval_task_id
+
+            soft_delete_eval_results(EvalLogger.objects.filter(pk=eval_logger.pk))
+        except EvalLogger.DoesNotExist:
+            raise Exception("No eval associated with this span")  # noqa: B904
+
+        properties = get_mixpanel_properties(
+            user=request.user,
+            span=observation_span,
+            eval=custom_eval_config.eval_template,
+            count=1,
+            type=MixpanelTypes.FEEDBACK.value,
+        )
+        track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
+
+        def put_back():
+            EvalLogger.all_objects.using("default").filter(pk=eval_logger.pk).update(
+                deleted=False, deleted_at=None
+            )
+
+        try:
+            if observation_span.project_version:
+                # Experiment spans: results carry no eval task, and the
+                # activity takes (span, config, feedback_id).
+                status = evaluate_observation_span(
+                    str(observation_span.id),
+                    str(custom_eval_config.id),
+                    feedback_id=feedback_id,
+                )
+            else:
+                status = evaluate_observation_span_observe(
+                    str(observation_span.id),
+                    str(custom_eval_config.id),
+                    task_id,
+                    feedback_id,
+                )
+        except Exception:
+            put_back()
+            raise
+        # Primary: the replacement was written moments ago.
+        if (
+            not EvalLogger.objects.using("default")
+            .filter(
+                observation_span=observation_span,
+                custom_eval_config=custom_eval_config,
+                deleted=False,
+            )
+            .exists()
+        ):
+            put_back()
+            raise _RecalculateLeftNoResult()
+        return status
+
     # Primary for the whole request, as submit_feedback: the recalculate it
     # runs in place reads the same fresh span and config.
     @action(detail=False, methods=["post"])
@@ -1862,44 +1936,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 pass  ### This is coz we are using mapping_fields fxn in utils
 
             elif action_type == "recalculate":
+                # Retire the live result and compute its replacement as one
+                # unit: if the recompute leaves no live result (it raised, or
+                # returned without saving one), the retirement rolls back and
+                # the previous result stays live.
                 try:
-                    # Primary: the live result may be newer than a lagging
-                    # replica (a fresh eval, or the previous recalculate's).
-                    eval_logger = EvalLogger.objects.using("default").get(
-                        observation_span=observation_span,
-                        custom_eval_config=custom_eval_config,
-                        deleted=False,
-                    )
-                    task_id = eval_logger.eval_task_id
-
-                    soft_delete_eval_results(
-                        EvalLogger.objects.filter(pk=eval_logger.pk)
-                    )
-                except EvalLogger.DoesNotExist:
-                    raise Exception("No eval associated with this span")  # noqa: B904
-
-                properties = get_mixpanel_properties(
-                    user=request.user,
-                    span=observation_span,
-                    eval=custom_eval_config.eval_template,
-                    count=1,
-                    type=MixpanelTypes.FEEDBACK.value,
-                )
-                track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
-
-                if observation_span.project_version:
-                    status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
+                    status = self._recalculate(
+                        request,
+                        observation_span,
+                        custom_eval_config,
                         feedback_id,
                     )
-                else:
-                    status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                except _RecalculateLeftNoResult:
+                    return self._gm.bad_request(
+                        "The evaluation could not be recalculated. The previous "
+                        "result is kept."
                     )
 
                 if status:

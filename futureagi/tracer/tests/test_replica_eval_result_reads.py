@@ -426,6 +426,111 @@ def test_r5_result_details_for_config_created_after_freeze(
     assert asked == [(span.id, str(config.id), str(project.id))]
 
 
+# -- Follow-up: recalculate on an experiment span, and a failed recompute ------
+
+
+def _recalculate(client, span, config, feedback):
+    return client.post(
+        "/tracer/observation-span/submit_feedback_action_type/",
+        {
+            "observation_span_id": span.id,
+            "action_type": "recalculate",
+            "custom_eval_config_id": str(config.id),
+            "feedback_id": str(feedback.id),
+        },
+        format="json",
+    )
+
+
+def _feedback(user, span, config):
+    return Feedback.objects.create(
+        source=FeedbackSourceChoices.OBSERVE.value,
+        source_id=str(span.id),
+        value="Passed",
+        eval_template=config.eval_template,
+        user=user,
+        custom_eval_config_id=config.id,
+        organization=span.project.organization,
+        workspace=span.project.workspace,
+    )
+
+
+def test_recalculate_on_experiment_span_saves_a_new_result(
+    lagging_replica,  # noqa: F811
+    settings,
+    no_embeddings,
+    auth_client,
+    user,
+    trace,
+    project_version,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """An experiment span (project_version set) recalculates through the
+    experiment activity: the old result is retired and a new one saved, even
+    when both are newer than the replica."""
+    from tracer.models.observation_span import ObservationSpan
+
+    settings.EVAL_SPAN_READ_SOURCE = "postgres"
+    lagging_replica.freeze()
+    span = ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        project_version=project_version,
+        name="experiment span",
+        observation_type="llm",
+        input={"question": "What is the capital of France?"},
+        output={"answer": "Paris"},
+    )
+    with force_primary():
+        old = _result(trace, span, custom_eval_config)
+    feedback = _feedback(user, span, custom_eval_config)
+
+    response = _recalculate(auth_client, span, custom_eval_config, feedback)
+
+    assert response.status_code == 200, response.data
+    assert EvalLogger.all_objects.using("default").get(pk=old.pk).deleted is True
+    live = EvalLogger.objects.using("default").filter(
+        observation_span=span, custom_eval_config=custom_eval_config
+    )
+    assert live.count() == 1
+    assert live.get().pk != old.pk
+    assert len(stub_run_eval.requests) == 1
+
+
+def test_failed_recalculate_keeps_the_previous_result(
+    lagging_replica,  # noqa: F811
+    no_embeddings,
+    auth_client,
+    user,
+    trace,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    """A recompute that saves nothing must not leave the span without its
+    result: the retirement rolls back and the request says so."""
+    from tracer.views import observation_span as span_views
+
+    old = _result(trace, observation_span, custom_eval_config)
+    feedback = _feedback(user, observation_span, custom_eval_config)
+    lagging_replica.freeze()
+
+    def failing_recompute(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(
+        span_views, "evaluate_observation_span_observe", failing_recompute
+    )
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert EvalLogger.objects.using("default").get(pk=old.pk).deleted is False
+
+
 # -- D16: eval results copied into a dataset ----------------------------------
 
 

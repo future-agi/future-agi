@@ -481,8 +481,9 @@ describe("Keep answering", () => {
       ],
     ]);
     expect(await find()).toEqual(live);
+    // Read from the primary: the question may have been saved a moment ago.
     expect(http.get).toHaveBeenCalledWith("/configs", {
-      params: { project_id: "p1" },
+      params: { project_id: "p1", fresh: true },
     });
     expect(getCalls("/tasks")[0][1].params).toMatchObject({
       project_id: "p1",

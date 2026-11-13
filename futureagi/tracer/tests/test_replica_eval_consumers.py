@@ -819,3 +819,36 @@ def test_r4_4_sdk_check_sees_a_config_created_a_moment_ago(
     assert not _check_exists(
         auth_client, project, "sdk-eval", eval_template, {"input": "input"}
     )
+
+
+# -- Follow-up: the Ask page's config list right after it saves a question ----
+
+LIST_URL = "/tracer/custom-eval-config/list_custom_eval_configs/"
+
+
+def test_fresh_config_list_includes_a_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+    monkeypatch,
+):
+    """With feature:custom_eval_config_list opted in the list reads the
+    replica; the Ask page asks for `fresh` and sees the question it saved a
+    moment ago (to reuse it, and to pick a name that is not taken). Other
+    callers keep the replica."""
+    from tracer.views import custom_eval_config as config_views
+
+    monkeypatch.setattr(
+        config_views, "DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST", lagging_replica.alias
+    )
+    lagging_replica.freeze()
+    config_id = _create_config(auth_client, project, eval_template)
+
+    def listed(**params):
+        response = auth_client.get(LIST_URL, {"project_id": str(project.pk), **params})
+        assert response.status_code == 200, response.content
+        return [str(row["id"]) for row in response.json()["result"]]
+
+    assert config_id in listed(fresh="true")
+    assert config_id not in listed()
