@@ -508,6 +508,282 @@ def test_deadline_sweep_expires_and_releases_once(env):
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
 
 
+# ------------------------------------------- staged objects of finished jobs
+
+IDLE = (0, 0, 0, 0, 0, 0)
+
+
+class StrictStore(Store):
+    """Like the real store: ``promote`` never overwrites a key (IfNoneMatch)."""
+
+    def promote(self, snapshot, *, upload_id, **kwargs):
+        assert f"original/{upload_id}" not in self.objects, "key already exists"
+        return super().promote(snapshot, upload_id=upload_id, **kwargs)
+
+
+class RejectThird(StrictStore):
+    """The third staged part fails validation: a terminal, non-retried reject."""
+
+    def __init__(self):
+        super().__init__()
+        self.promoted = 0
+
+    def promote(self, snapshot, **kwargs):
+        self.promoted += 1
+        if self.promoted == 3:
+            raise AttachmentError("validation_failed", 422)
+        return super().promote(snapshot, **kwargs)
+
+
+class EraseFailsOnce(RejectThird):
+    def __init__(self):
+        super().__init__()
+        self.failures = 1
+
+    def erase_upload(self, upload_id):
+        if self.failures:
+            self.failures -= 1
+            # What PrivateMediaStorage.erase_upload raises on a storage error.
+            raise AttachmentError("cleanup_unavailable", 503)
+        return super().erase_upload(upload_id)
+
+
+def _submitted(env, data):
+    current = session(env)
+    _, job = imports.submit(
+        env[2],
+        scope_id=env[0].id,
+        body=body(current, data=data, envelope_id=envelope(env, data)),
+    )
+    return job
+
+
+def _segment_states(job):
+    return [
+        (row.index, row.state)
+        for row in AttachmentRecordingSegment.objects.filter(
+            recording_id=job.recording_id
+        ).order_by("index")
+    ]
+
+
+def test_rejected_import_erases_every_staged_object_before_release(env):
+    store = RejectThird()
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    assert drive(job, store, data) == "rejected"
+    job.refresh_from_db()
+    assert job.released_at is not None
+    # The part whose write failed was allocated first, so it is erased too.
+    assert _segment_states(job) == [(0, "erased"), (1, "erased"), (2, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+
+
+def test_an_erase_failure_in_terminal_cleanup_holds_the_release_until_the_sweep(
+    env,
+):
+    store = EraseFailsOnce()
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    # The storage error never escapes the run (it would end the tick).
+    assert drive(job, store, data) == "rejected"
+    job.refresh_from_db()
+    assert job.released_at is None
+    assert _segment_states(job) == [(0, "staged"), (1, "erased"), (2, "erased")]
+    assert len(store.objects) == 1
+    assert set(budgets().values()) != {IDLE}
+    # Nothing else schedules a release of this job's reservation early.
+    assert imports.pending(limit=10) == []
+    assert imports.sweep(storage=store) == 1
+    job.refresh_from_db()
+    assert job.released_at is not None
+    assert _segment_states(job) == [(0, "erased"), (1, "erased"), (2, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+    assert imports.sweep(storage=store) == 0
+
+
+def test_a_released_job_with_a_staged_object_left_is_still_erased(env):
+    """Rows left ``staged`` by an older release are found regardless of it."""
+    store = EraseFailsOnce()
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    assert drive(job, store, data) == "rejected"
+    imports._release(job)  # as the pre-fix sweep did, with bytes still stored
+    assert len(store.objects) == 1
+    assert imports.sweep(storage=store) == 0  # nothing left to release
+    assert _segment_states(job) == [(0, "erased"), (1, "erased"), (2, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+
+
+def test_sweep_expiring_a_job_while_its_worker_writes_a_segment(env):
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    seen = {}
+
+    class SweptDuringWrite(StrictStore):
+        def promote(inner, snapshot, **kwargs):
+            if len(inner.objects) == 1:
+                # The 300 s sweep lands while segment 1's object is in flight.
+                AttachmentImportJob.objects.filter(pk=job.pk).update(
+                    deadline=timezone.now() - timedelta(seconds=1)
+                )
+                seen["swept"] = imports.sweep(storage=inner)
+                row = AttachmentImportJob.objects.get(pk=job.pk)
+                seen["state"], seen["released"] = row.state, row.released_at
+                seen["segments"] = _segment_states(job)
+            return super().promote(snapshot, **kwargs)
+
+    store = SweptDuringWrite()
+    assert drive(job, store, data) == "expired"
+    # The sweep expired the job, erased the finished part, and kept the
+    # in-flight part and the whole reservation while the worker held its lease.
+    assert seen["swept"] == 1 and seen["state"] == "expired"
+    assert seen["released"] is None
+    assert seen["segments"] == [(0, "erased"), (1, "staged")]
+    # The worker's next fence sees the expiry; it erases its part and releases.
+    job.refresh_from_db()
+    assert job.released_at is not None
+    assert _segment_states(job) == [(0, "erased"), (1, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+    assert imports.sweep(storage=store) == 0
+
+
+def test_sweep_expiring_a_job_before_its_worker_allocates_a_segment(env, monkeypatch):
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    store = StrictStore()
+    original = imports._allocate
+    calls = []
+
+    def allocate(job_row, *args):
+        calls.append(1)
+        if len(calls) == 2:
+            # Swept while segment 1 was still in the sandbox: no row, no object.
+            AttachmentImportJob.objects.filter(pk=job.pk).update(
+                deadline=timezone.now() - timedelta(seconds=1)
+            )
+            assert imports.sweep(storage=store) == 1
+        return original(job_row, *args)
+
+    monkeypatch.setattr(imports, "_allocate", allocate)
+    assert drive(job, store, data) == "expired"
+    # A finished job never gets a new row, so no object appears after release.
+    assert _segment_states(job) == [(0, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+
+
+def _crash_after_the_object_write(monkeypatch):
+    original = imports._record_object
+    crashed = []
+
+    def record(*args):
+        if not crashed:
+            crashed.append(1)
+            raise RuntimeError("worker died after writing the object")
+        return original(*args)
+
+    monkeypatch.setattr(imports, "_record_object", record)
+
+
+def test_a_crash_between_object_write_and_row_update_is_retried_cleanly(
+    env, monkeypatch
+):
+    _crash_after_the_object_write(monkeypatch)
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    store = StrictStore()
+    assert drive(job, store, data) == "importing"
+    row = AttachmentRecordingSegment.objects.get(recording_id=job.recording_id)
+    # The object exists and its row already names it; no version recorded yet.
+    assert (row.state, row.storage_version) == ("staged", "")
+    assert set(store.objects) == {f"original/{row.attachment_client_id}"}
+    # The retry erases that object and writes it again under the same identity.
+    assert drive(job, store, data) == "ready"
+    row.refresh_from_db()
+    assert row.state == "published" and row.storage_version == "immutable-v1"
+    assert str(row.attachment_client_id) in store.erased
+    assert len(store.objects) == 3
+    assert set(budgets().values()) == {IDLE}
+
+
+def test_a_crash_after_the_object_write_never_strands_it(env, monkeypatch):
+    _crash_after_the_object_write(monkeypatch)
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+    store = StrictStore()
+    assert drive(job, store, data) == "importing"
+    # A real crash keeps the lease until it lapses; then the deadline passes.
+    AttachmentImportJob.objects.filter(pk=job.pk).update(
+        lease_until=timezone.now() + timedelta(minutes=5),
+        deadline=timezone.now() - timedelta(seconds=1),
+    )
+    assert imports.sweep(storage=store) == 1
+    job.refresh_from_db()
+    # The writer might still be uploading: keep the row and the reservation.
+    assert job.state == "expired" and job.released_at is None
+    assert _segment_states(job) == [(0, "staged")] and len(store.objects) == 1
+    AttachmentImportJob.objects.filter(pk=job.pk).update(
+        lease_until=timezone.now() - timedelta(seconds=1)
+    )
+    assert imports.sweep(storage=store) == 1
+    job.refresh_from_db()
+    assert job.released_at is not None
+    assert _segment_states(job) == [(0, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+
+
+def test_a_worker_that_lost_its_row_erases_the_object_it_wrote(env, monkeypatch):
+    data = wav_bytes(seconds=65)
+    job = _submitted(env, data)
+
+    class ErasedDuringWrite(StrictStore):
+        def promote(inner, snapshot, **kwargs):
+            if not inner.objects:
+                # The worker stalled past its lease and the job was finished
+                # and cleaned up meanwhile (the sweep erased its row).
+                AttachmentImportJob.objects.filter(pk=job.pk).update(
+                    deadline=timezone.now() - timedelta(seconds=1),
+                    lease_until=timezone.now() - timedelta(seconds=1),
+                )
+                assert imports.sweep(storage=inner) == 1
+            return super().promote(snapshot, **kwargs)
+
+    store = ErasedDuringWrite()
+    assert drive(job, store, data) == "importing"  # lease lost: stop quietly
+    job.refresh_from_db()
+    assert job.state == "expired" and job.released_at is not None
+    assert _segment_states(job) == [(0, "erased")]
+    assert store.objects == {}
+    assert set(budgets().values()) == {IDLE}
+
+
+def test_one_failing_import_does_not_end_the_tick(env, settings, monkeypatch):
+    from tracer.tasks import attachment_recordings as tasks
+
+    store = Store()
+    first, second = (uuid.uuid4(), env[0].id), (uuid.uuid4(), env[0].id)
+    ran = []
+
+    def run(job_id, *, scope_id, storage):
+        ran.append(job_id)
+        if job_id == first[0]:
+            raise AttachmentError("cleanup_unavailable", 503)
+        return "ready"
+
+    monkeypatch.setattr(tasks, "_ready", lambda: store)
+    monkeypatch.setattr(imports, "pending", lambda limit: [first, second])
+    monkeypatch.setattr(imports, "run", run)
+    monkeypatch.setattr(derivatives, "pending", lambda limit: [])
+    tasks.run_attachment_recording_jobs._original_func()
+    assert ran == [first[0], second[0]]
+
+
 # ---------------------------------------------------------------- provider
 
 

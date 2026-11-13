@@ -13,7 +13,10 @@ Flow (README "Completed-recording import"):
    sandbox, validates each segment again, stages it privately and finally
    publishes every segment occurrence and the manifest atomically.
 3. Failure, expiry, deletion or tightening fences late work, erases staged
-   segments and releases reservations exactly once.
+   segments and releases reservations exactly once, and only after every
+   staged segment object is erased. A segment row is allocated before its
+   object is written, so an erase never misses an object; an erase that fails
+   leaves the row ``staged`` and ``sweep`` retries it before releasing.
 
 Durable rows keep only opaque references and F01 Reason codes.
 """
@@ -646,7 +649,10 @@ def _reserve_segment(job, size, token=None):
         rows = _lock_import_budgets(scope)
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
         _hold(locked, token)
-        if locked.released_at is not None:
+        if (
+            locked.state in TERMINAL_RECORDING_STATES
+            or locked.released_at is not None
+        ):
             raise AttachmentError("conflict", 409)
         amounts = {"bytes": size, **SEGMENT_UNITS}
         headroom = _headroom(rows)
@@ -686,16 +692,74 @@ def _release(job):
 
 
 def _erase_staged(job, storage):
+    """Erase every staged segment object of a finished job; True when none is left.
+
+    A row without a ``storage_version`` was allocated but its object may still
+    be in flight. While the job's lease is live its writer may still be
+    uploading it, so the row is kept (and the reservation with it) until the
+    writer stops or its lease runs out. Erasing an id that has no object is a
+    no-op. A failed erase leaves the row ``staged`` for the next sweep. The
+    row is marked ``erased`` only if it is unchanged since it was read, so an
+    object version recorded in between is never lost.
+    """
+    now = timezone.now()
+    live = job.lease_until is not None and job.lease_until > now
+    left = 0
     for segment in AttachmentRecordingSegment.objects.filter(
         recording_id=job.recording_id, state=RecordingSegmentState.STAGED
-    ):
-        storage.erase_upload(segment.attachment_client_id)
-        segment.state = RecordingSegmentState.ERASED
-        segment.save(update_fields=["state"])
+    ).order_by("index"):
+        if live and not segment.storage_version:
+            left += 1
+            continue
+        try:
+            storage.erase_upload(segment.attachment_client_id)
+        except AttachmentError as error:
+            logger.warning(
+                "attachment_import_erase_deferred",
+                job_id=str(job.pk),
+                reason=error.code,
+            )
+            left += 1
+            continue
+        erased = AttachmentRecordingSegment.objects.filter(
+            pk=segment.pk,
+            state=RecordingSegmentState.STAGED,
+            storage_version=segment.storage_version,
+        ).update(state=RecordingSegmentState.ERASED)
+        left += not erased
+    return left == 0
+
+
+def _cleanup(job, storage):
+    """Erase a finished job's staged objects, then release its reservation once.
+
+    The reservation is never released while a staged object may remain. Only
+    erase failures are absorbed here (the row stays ``staged``); ``sweep``
+    retries both steps. Returns True when this call released the reservation.
+    """
+    locked = AttachmentImportJob.objects.get(pk=job.pk)
+    if locked.state not in TERMINAL_RECORDING_STATES:
+        return False
+    if locked.state != RecordingState.READY and not _erase_staged(locked, storage):
+        return False
+    return _release(job)
+
+
+def _drop_lease(job, token):
+    """The lease owner stops writing: its unpromoted rows become erasable."""
+    if token is not None:
+        AttachmentImportJob.objects.filter(pk=job.pk, lease_token=token).update(
+            lease_until=None
+        )
 
 
 def _finish(job, *, state, reason, storage, token=None):
-    """Terminal transition. A worker passes its lease token; the sweep doesn't."""
+    """Terminal transition. A worker passes its lease token; the sweep doesn't.
+
+    Only the lease owner clears the lease. When the sweep expires a job, a live
+    lease is the signal that a worker may still be writing a segment object,
+    so ``_erase_staged`` keeps that row (and the reservation) until it stops.
+    """
     with transaction.atomic():
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
         already = locked.state in TERMINAL_RECORDING_STATES
@@ -704,19 +768,21 @@ def _finish(job, *, state, reason, storage, token=None):
                 return locked
             locked.state, locked.reason = state, reason
             locked.finished_at = timezone.now()
-            locked.lease_until = None
-            locked.save(update_fields=["state", "reason", "finished_at", "lease_until"])
+            fields = ["state", "reason", "finished_at"]
+            if token is not None:
+                locked.lease_until = None
+                fields.append("lease_until")
+            locked.save(update_fields=fields)
             if state != RecordingState.READY:
                 AttachmentRecording.objects.filter(pk=job.recording_id).exclude(
                     state__in=TERMINAL_RECORDING_STATES
                 ).update(state=state)
     if already:
-        # Finished elsewhere (published, swept): its reservation must still go.
-        _release(job)
+        # Finished elsewhere (published, swept): erase, then release.
+        _drop_lease(job, token)
+        _cleanup(job, storage)
         return locked
-    if state != RecordingState.READY:
-        _erase_staged(job, storage)
-    _release(job)
+    _cleanup(job, storage)
     if job.envelope_id:
         envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
     return locked
@@ -777,12 +843,19 @@ def _segments(job, recording, snapshot_path, facts, limits, storage, token=None)
     }
     for plan in plans:
         existing = staged.get(plan.index)
-        if existing is not None and existing.state == RecordingSegmentState.STAGED:
-            continue  # Retries reuse allocations; no new occurrence identity.
-        if existing is not None:
+        if existing is not None and existing.state != RecordingSegmentState.STAGED:
             raise AttachmentError("conflict", 409)
+        if existing is not None and existing.storage_version:
+            continue  # Retries reuse allocations; no new occurrence identity.
         _fence(job)
-        _reserve_segment(job, plan.byte_length, token)
+        if existing is None:
+            _reserve_segment(job, plan.byte_length, token)
+        else:
+            # An earlier attempt allocated this part (its reservation still
+            # stands) but died before recording the object's version. Erase
+            # whatever it may have written, then write it again under the
+            # same identity (``promote`` never overwrites an existing key).
+            storage.erase_upload(existing.attachment_client_id)
         with tempfile.NamedTemporaryFile(dir=_work_dir()) as part:
             result = sandbox.run(
                 "segment",
@@ -810,29 +883,77 @@ def _segments(job, recording, snapshot_path, facts, limits, storage, token=None)
             digest = hashlib.sha256()
             for chunk in iter(lambda: part.read(256 * 1024), b""):
                 digest.update(chunk)
-            attachment_id = uuid.uuid4()
+            row = _allocate(job, recording, plan, digest.hexdigest(), existing, token)
             identity = storage.promote(
                 part,
-                upload_id=attachment_id,
+                upload_id=row.attachment_client_id,
                 expected_length=plan.byte_length,
                 expected_sha256=digest.hexdigest(),
             )
-        staged[plan.index] = AttachmentRecordingSegment.objects.create(
+        staged[plan.index] = _record_object(job, row, identity, storage)
+    return plans, [staged[plan.index] for plan in plans]
+
+
+def _allocate(job, recording, plan, sha256, existing, token):
+    """Name a segment's object in a durable ``staged`` row BEFORE writing it.
+
+    Under the job row lock, only while this worker holds the lease and the job
+    is still importing, so no row (and no object) can appear after the job
+    finished. The row has no ``storage_version`` until ``_record_object``.
+    """
+    with transaction.atomic():
+        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
+        _hold(locked, token)
+        if (
+            locked.state in TERMINAL_RECORDING_STATES
+            or locked.released_at is not None
+        ):
+            raise AttachmentError("conflict", 409)
+        locked.save(update_fields=["lease_until"])
+        if existing is not None:
+            existing.sha256 = sha256
+            existing.save(update_fields=["sha256"])
+            return existing
+        return AttachmentRecordingSegment.objects.create(
             scope_id=job.scope_id,
             recording=recording,
             index=plan.index,
-            attachment_client_id=attachment_id,
+            attachment_client_id=uuid.uuid4(),
             occurrence_client_id=uuid.uuid4(),
             start_frame=plan.start_frame,
             frame_count=plan.frame_count,
             start_ms=plan.start_ms,
             duration_ms=plan.duration_ms,
-            storage_key=identity.key,
-            storage_version=identity.version,
-            sha256=digest.hexdigest(),
+            storage_key="",
+            storage_version="",
+            sha256=sha256,
             byte_length=plan.byte_length,
         )
-    return plans, [staged[plan.index] for plan in plans]
+
+
+def _record_object(job, row, identity, storage):
+    """Record the written object's exact version on its still-staged row.
+
+    If cleanup already erased the row (this worker lost its lease and the job
+    finished), the object it just wrote has no owner: erase it here. If that
+    erase fails, put the row back to ``staged`` with the version so the sweep
+    erases it (it looks for staged rows of finished jobs, released or not).
+    """
+    recorded = AttachmentRecordingSegment.objects.filter(
+        pk=row.pk, state=RecordingSegmentState.STAGED, storage_version=""
+    ).update(storage_key=identity.key, storage_version=identity.version)
+    if not recorded:
+        try:
+            storage.erase_upload(row.attachment_client_id)
+        except AttachmentError:
+            AttachmentRecordingSegment.objects.filter(pk=row.pk).update(
+                state=RecordingSegmentState.STAGED,
+                storage_key=identity.key,
+                storage_version=identity.version,
+            )
+        raise _LeaseLost()
+    row.storage_key, row.storage_version = identity.key, identity.version
+    return row
 
 
 def _publish(job, recording, facts, manifest, rows, token=None):
@@ -1011,7 +1132,7 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         AttachmentImportJob.objects.filter(
             pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
         ).update(reason=retry.code, lease_until=None)
-        return _settled(job)
+        return _settled(job, storage, token)
     except AttachmentError as error:
         transient = error.status in {429, 503} and error.code in {
             "source_unavailable",
@@ -1020,12 +1141,12 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         }
         job.refresh_from_db()
         if job.state in TERMINAL_RECORDING_STATES:
-            return _settled(job)
+            return _settled(job, storage, token)
         if transient and job.attempts < MAX_ATTEMPTS:
             AttachmentImportJob.objects.filter(
                 pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
             ).update(reason=public_reason(error.code), lease_until=None)
-            return _settled(job)
+            return _settled(job, storage, token)
         state = {
             "expired": RecordingState.EXPIRED,
             "deleted": RecordingState.DELETED,
@@ -1051,12 +1172,12 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         if job.state in TERMINAL_RECORDING_STATES:
             # Failed after publication (the release, the envelope destroy):
             # the job is READY; never relabel it, and retry the release.
-            return _settled(job)
+            return _settled(job, storage, token)
         if job.attempts < MAX_ATTEMPTS:
             AttachmentImportJob.objects.filter(
                 pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
             ).update(reason="source_unavailable", lease_until=None)
-            return _settled(job)
+            return _settled(job, storage, token)
         return _finish(
             job,
             state=RecordingState.FAILED,
@@ -1066,15 +1187,21 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         ).state
 
 
-def _settled(job):
-    """The job's state after a failed step. A finished job's reservation goes."""
+def _settled(job, storage, token=None):
+    """The job's state after a failed step.
+
+    A finished job (expired by the sweep, fenced, published) has its staged
+    objects erased and then its reservation released; the worker gives up its
+    lease first, so the parts it allocated are erasable at once.
+    """
     job.refresh_from_db()
     if job.state in TERMINAL_RECORDING_STATES:
         try:
-            _release(job)
+            _drop_lease(job, token)
+            _cleanup(job, storage)
             if job.envelope_id:
                 envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
-        except Exception:  # noqa: BLE001 - ``sweep`` releases; envelopes expire
+        except Exception:  # noqa: BLE001 - ``sweep`` erases and releases; envelopes expire
             logger.warning("attachment_import_release_deferred", job_id=str(job.pk))
         return job.state
     return RecordingState.IMPORTING
@@ -1083,20 +1210,45 @@ def _settled(job):
 def sweep(*, storage, limit=100):
     """Expire jobs past their deadline; erase staged parts; release once.
 
-    Also releases every finished job whose reservation is still held (a
-    release that failed after publication or after a terminal transition), so
-    a transient error can never leak budget for good.
+    Also revisits every finished job whose reservation is still held or that
+    still has a ``staged`` segment row (an erase or a release that failed, a
+    worker that was still writing when the job expired): its staged objects
+    are erased first and its reservation is released only once none is left,
+    so a transient error can never leak budget or bytes for good. One job's
+    failure never stops the sweep.
     """
     count = 0
     for job in AttachmentImportJob.objects.filter(
         state=RecordingState.IMPORTING, deadline__lte=timezone.now()
     )[:limit]:
-        _finish(job, state=RecordingState.EXPIRED, reason="expired", storage=storage)
+        try:
+            _finish(
+                job, state=RecordingState.EXPIRED, reason="expired", storage=storage
+            )
+        except Exception as error:  # noqa: BLE001 - per-job boundary; the next sweep retries
+            logger.warning(
+                "attachment_import_sweep_failed",
+                job_id=str(job.pk),
+                error=type(error).__name__,
+            )
+            continue
         count += 1
+    staged = AttachmentRecordingSegment.objects.filter(
+        state=RecordingSegmentState.STAGED
+    ).values("recording_id")
     for job in AttachmentImportJob.objects.filter(
-        state__in=TERMINAL_RECORDING_STATES, released_at__isnull=True
+        Q(released_at__isnull=True)
+        | (Q(recording_id__in=staged) & ~Q(state=RecordingState.READY)),
+        state__in=TERMINAL_RECORDING_STATES,
     ).order_by("finished_at", "pk")[:limit]:
-        count += bool(_release(job))
+        try:
+            count += bool(_cleanup(job, storage))
+        except Exception as error:  # noqa: BLE001 - per-job boundary; the next sweep retries
+            logger.warning(
+                "attachment_import_sweep_failed",
+                job_id=str(job.pk),
+                error=type(error).__name__,
+            )
     return count
 
 

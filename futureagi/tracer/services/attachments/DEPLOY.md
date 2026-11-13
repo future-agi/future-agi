@@ -129,7 +129,7 @@ pod or Compose service is needed. Two Temporal schedules
 | Schedule | Interval | Work per tick |
 |---|---|---|
 | `run-attachment-recording-jobs` | 30 s | up to 2 import jobs, then up to 20 segments' derivatives (live, enabled segments only, oldest first; a segment whose attempt failed goes to the back) |
-| `sweep-attachment-recordings` | 300 s | delete expired source envelopes; expire jobs past their deadline, erase their staged parts, release their reservations; release any finished job whose reservation is still held |
+| `sweep-attachment-recordings` | 300 s | delete expired source envelopes; expire jobs past their deadline; for every finished job whose reservation is still held or that still has a `staged` segment, erase the staged segment objects first and release the reservation only once none is left |
 
 Jobs are durable database rows. A lost tick or a worker restart only delays
 progress. Each job gets at most 3 attempts and a deadline of at most 3 hours.
@@ -140,6 +140,23 @@ with a fresh token, renews it at every staged segment and re-checks it under
 the job row lock before publication. A second worker skips a leased job, and a
 worker that lost its lease (crash, pause, a tick started by hand) cannot
 reserve, publish or finish; after the lease lapses the next tick retries.
+
+Staged segment objects live in the serving bucket, which has no age expiry on
+current versions (see the retention caveat above), so the code erases them
+itself. A worker writes a `staged` segment row naming the object's id, under
+the job row lock while it holds the lease, BEFORE it writes the object, and
+records the object's version afterwards. When a job ends other than `ready`,
+its staged objects are erased (`erase_upload` removes every version of that
+id) and its reservation is released only after none is left. A storage error
+during that erase leaves the row `staged`, and the 300 s sweep retries it. When
+the sweep expires a job, only the lease owner clears the lease. A row with no
+recorded version is kept while the lease is live, because its writer may still
+be uploading it. It is erased once the writer stops or the lease lapses. One
+residual remains: a writer that stalls past its 15-minute lease, has its row
+erased, and then crashes in the gap between its object write and its version
+check would leave that object behind. If it does not crash, it erases the
+object itself. A job that raises in the 30 s tick is logged by exception type
+only, and the tick goes on to the next job.
 
 A job is charged to the deployment row `global:imports` (full deployment caps:
 8 GiB, 128 transfers, 64 recordings), plus its organization and project rows.

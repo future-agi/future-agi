@@ -39,7 +39,16 @@ def run_attachment_recording_jobs():
     from tracer.services.attachments.contract import AttachmentError
 
     for job_id, scope_id in imports.pending(limit=JOBS_PER_TICK):
-        state = imports.run(job_id, scope_id=scope_id, storage=storage)
+        try:
+            state = imports.run(job_id, scope_id=scope_id, storage=storage)
+        except Exception as error:  # noqa: BLE001 - one job never stalls the tick; the sweep cleans up
+            # The type name only: exception text may carry a URL or a path.
+            logger.warning(
+                "attachment_import_tick_failed",
+                job_id=str(job_id),
+                error=type(error).__name__,
+            )
+            continue
         logger.info("attachment_import_tick", job_id=str(job_id), state=state)
     for segment_id, scope_id in derivatives.pending(limit=DERIVATIVES_PER_TICK):
         try:
