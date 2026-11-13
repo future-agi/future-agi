@@ -767,8 +767,8 @@ def _recompute_task_result(previous, entry, feedback_id):
     eval core the engine's workers use. Only a completed run keeps it.
     Otherwise (the eval errored or was skipped, or the run raised) the new
     entry is retired, the previous result is put back (only a finished one)
-    and ``_RecalculateLeftNoResult`` is raised; an exception from the run is
-    re-raised after the same restore. If something else retired the new
+    and ``_RecalculateLeftNoResult`` is raised, also when the run raised
+    (the exception is logged and chained). If something else retired the new
     entry meanwhile (the task was deleted, Delete & rerun), that retirement
     stands and the previous result stays retired too. If the task's engine
     took the new entry over (its reaper or a pause requeued it), it is left
@@ -778,11 +778,20 @@ def _recompute_task_result(previous, entry, feedback_id):
     """
     from tracer.services.eval_tasks.run_entry import run_entry
 
+    unfinished = previous.status not in TERMINAL_STATUSES
     try:
         status = run_entry(entry, feedback_id=feedback_id)
-    except Exception:
-        abandon_recalculation(entry, previous, left_as=EvalEntryStatus.RUNNING)
-        raise
+    except Exception as exc:
+        logger.exception(
+            "recalculate_task_result_run_raised",
+            eval_logger_id=str(previous.pk),
+            eval_task_id=str(previous.eval_task_id),
+        )
+        outcome = abandon_recalculation(
+            entry, previous, left_as=EvalEntryStatus.RUNNING
+        )
+        # Say what became of the result, as for a run that did not complete.
+        raise _RecalculateLeftNoResult(outcome, unfinished=unfinished) from exc
     if status != EvalEntryStatus.COMPLETED:
         logger.info(
             "recalculate_task_result_not_completed",
@@ -800,9 +809,7 @@ def _recompute_task_result(previous, entry, feedback_id):
             if status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED)
             else (EvalEntryStatus.RUNNING if status == "deleted" else None),
         )
-        raise _RecalculateLeftNoResult(
-            outcome, unfinished=previous.status not in TERMINAL_STATUSES
-        )
+        raise _RecalculateLeftNoResult(outcome, unfinished=unfinished)
     keep_replacement(entry, previous)
     return True
 
@@ -2014,11 +2021,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     task_id,
                     feedback_id,
                 )
-        except Exception:
+        except Exception as exc:
             # Keeps a result the eval wrote before it raised, or puts the
             # previous one back; never both.
-            close_untasked_recalculation(journal)
-            raise
+            outcome = close_untasked_recalculation(journal)
+            if outcome == KEPT:
+                raise
+            logger.exception(
+                "recalculate_untasked_result_raised",
+                eval_logger_id=str(eval_logger.pk),
+            )
+            raise _RecalculateLeftNoResult(outcome) from exc
         outcome = close_untasked_recalculation(journal)
         if outcome != KEPT:
             raise _RecalculateLeftNoResult(outcome)

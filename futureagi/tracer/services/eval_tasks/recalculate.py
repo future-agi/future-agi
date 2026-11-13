@@ -139,6 +139,26 @@ def _task_is_draining(task_id) -> bool:
     )
 
 
+def _task_drains_now(task_id) -> bool:
+    """``_task_is_draining``, under the task row's lock: a resume (or any
+    status change) that commits first is seen, and one that comes later
+    waits for the caller's transaction. Taken before any entry lock, the
+    order the task's own writers use."""
+    from tracer.models.eval_task import EvalTask
+    from tracer.selectors.eval_tasks.stranded import sweepable_statuses
+
+    if not task_id:
+        return False
+    status = (
+        EvalTask.no_workspace_objects.using("default")
+        .select_for_update()
+        .filter(id=task_id)
+        .values_list("status", flat=True)
+        .first()
+    )
+    return status is not None and status in sweepable_statuses()
+
+
 def _refusal_for_unfinished(result_id, task_id) -> RecalculationRefused | None:
     """Why a ``PENDING`` or ``RUNNING`` result cannot be recalculated now, or
     ``None`` when it can: its task is not draining, so nothing will finish it.
@@ -181,6 +201,11 @@ def begin_recalculation(previous: EvalLogger) -> EvalLogger:
     )
     now = timezone.now()
     with transaction.atomic(using="default"):
+        if previous.status not in TERMINAL_STATUSES and _task_drains_now(
+            previous.eval_task_id
+        ):
+            # Resumed since the request checked: its engine will claim it.
+            raise RecalculationRefused(STILL_EVALUATING)
         retired = retire_pending_replacement(
             _rows().filter(
                 pk=previous.pk,
@@ -424,7 +449,7 @@ def put_back_dropped_replacements(dropped_ids) -> int:
 def _slot_has_live_result(previous_id) -> bool:
     """Whether the span and config of ``previous_id`` hold a live result
     other than it (the recompute's, or a newer one)."""
-    return _other_live_results(previous_id).exists()
+    return bool(_other_live_results(previous_id).exists())
 
 
 def _other_live_results(previous_id):
@@ -470,12 +495,13 @@ def begin_untasked_recalculation(previous: EvalLogger) -> EvalRecalculation:
             if _journal().filter(previous_id=previous.pk).exists():
                 raise RecalculationRefused(ALREADY_RUNNING)
             raise RecalculationRefused(CHANGED_MEANWHILE)
-        return _journal().create(
+        journal: EvalRecalculation = _journal().create(
             replacement=None,
             previous_id=previous.pk,
             eval_task_id=str(previous.eval_task_id or ""),
             started_at=timezone.now(),
         )
+    return journal
 
 
 def refuse_while_untasked_runs(span_id, config_id) -> None:
@@ -525,12 +551,18 @@ def close_untasked_recalculation(journal: EvalRecalculation) -> str:
     with transaction.atomic(using="default"):
         locked = _journal().select_for_update().filter(pk=journal.pk).first()
         if locked is None:
-            # The sweep finished it meanwhile.
-            if _previous_is_live(journal.previous_id):
+            # The sweep finished it meanwhile: it took this request for dead
+            # and put the previous result back, or kept a result it found.
+            if not _previous_is_live(journal.previous_id):
+                return (
+                    KEPT if _slot_has_live_result(journal.previous_id) else LEFT_RETIRED
+                )
+            if not _slot_has_live_result(journal.previous_id):
                 return RESTORED
-            return (
-                KEPT if _slot_has_live_result(journal.previous_id) else (LEFT_RETIRED)
-            )
+            # It put the previous result back, and this request's result
+            # landed after it: the newer one stays, never both.
+            soft_delete_eval_results(_rows().filter(pk=journal.previous_id))
+            return KEPT
         return _close_untasked(locked)
 
 

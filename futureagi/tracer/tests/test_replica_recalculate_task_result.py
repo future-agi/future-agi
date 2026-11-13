@@ -278,6 +278,7 @@ def test_recompute_that_raises_keeps_the_task_result(
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
+    assert "previous result is kept" in str(response.data)
     live = _live(observation_span, custom_eval_config)
     assert [row.pk for row in live] == [previous.pk]
     retired = EvalLogger.all_objects.using("default").filter(
@@ -1298,6 +1299,7 @@ def test_run_that_raises_after_the_engine_took_the_replacement_hands_it_over(
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
+    assert "task is evaluating this result again" in str(response.data)
     (replacement,) = _live(observation_span, custom_eval_config)
     assert (replacement.status, replacement.attempts) == (EvalEntryStatus.RUNNING, 1)
     assert _stored(previous.pk).deleted is True
@@ -1928,8 +1930,7 @@ def test_untasked_recompute_that_writes_nothing_keeps_the_result(
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
-    if how == "returned":
-        assert "previous result is kept" in str(response.data)
+    assert "previous result is kept" in str(response.data)
     assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
         previous.pk
     ]
@@ -2073,5 +2074,125 @@ def test_sweep_does_not_restore_an_untasked_result_over_a_newer_one(
     _sweep()
 
     assert [row.pk for row in _live(observation_span, custom_eval_config)] == [other.pk]
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+# -- round 9 review follow-ups -------------------------------------------------
+
+
+def test_raised_recompute_of_an_unfinished_result_says_there_was_none_to_keep(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The run raised (an infrastructure error) on a pending entry of a
+    paused task: the user is told why there is no result, not "Unable to
+    submit feedback action"."""
+    previous, feedback = _write_result(
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+        user,
+        status=EvalEntryStatus.PENDING,
+    )
+    _set_task_status(eval_task, "paused")
+
+    def _raises(entry, **_kwargs):
+        raise RuntimeError("clickhouse unavailable")
+
+    monkeypatch.setattr("tracer.services.eval_tasks.run_entry.run_entry", _raises)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "had not finished evaluating" in str(response.data)
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert not _recalculation_rows().exists()
+
+
+def test_task_resumed_between_the_check_and_the_retirement_keeps_its_entry(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """The request saw the task paused; the task was resumed before the
+    retirement. Its engine will claim the pending entry, so it is refused
+    and nothing changes."""
+    import tracer.views.observation_span as view
+
+    previous, feedback = _write_result(
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+        user,
+        status=EvalEntryStatus.PENDING,
+    )
+    _set_task_status(eval_task, "paused")
+    real_properties = view.get_mixpanel_properties
+
+    def _resumed_meanwhile(*args, **kwargs):
+        _set_task_status(eval_task, "running")
+        return real_properties(*args, **kwargs)
+
+    monkeypatch.setattr(view, "get_mixpanel_properties", _resumed_meanwhile)
+    before = _snapshot(observation_span, custom_eval_config)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "still being evaluated" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert stub_run_eval.requests == []
+    assert not _recalculation_rows().exists()
+
+
+def test_untasked_result_landing_after_the_sweep_gave_up_replaces_the_restored_one(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    """The request was slow enough for the sweep to take it for dead and put
+    the previous result back; then its eval wrote the new result. The
+    request keeps the new one and retires the previous one: never both."""
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+    seen = {}
+
+    def _slow(*_args):
+        _age_untasked(RECOVER_AFTER_SECONDS + 60)
+        seen["sweep"] = _sweep()
+        seen["new"] = _new_inline_result(observation_span, custom_eval_config)
+        return True
+
+    _per_span_eval(monkeypatch, _slow)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert seen["sweep"]["restored"] == 1
+    assert response.status_code == 200, response.data
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        seen["new"].pk
+    ]
+    assert _stored(previous.pk).deleted is True
     assert _membership(member).deleted is True
     assert not _recalculation_rows().exists()
