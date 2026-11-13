@@ -261,6 +261,11 @@ export async function createDriver({ jobId, runId, registration }) {
           // sent); the author still inspects and attests it below.
           const attach = author.getByRole('checkbox', { name: /^Attach Text comparison/ });
           await expect(attach).toHaveCount(input.evidenceIds.length);
+          await expect(author.getByText('No matching test evidence. Not tested is not a pass.', { exact: true })).toHaveCount(0);
+          await expect(author.getByRole('button', { name: 'Share and attach', exact: true })).toHaveCount(input.evidenceIds.length);
+          // Capture without scrolling or adding an operator action. Private
+          // results must occupy the same evidence table, never an empty state.
+          await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
           await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
           for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();

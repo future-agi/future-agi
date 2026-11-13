@@ -27,6 +27,8 @@ it('shows every changed precondition and removed evidence before creating the ne
   const onClose = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} />);
   expect(screen.getByText('transition.expected_release_revision')).toBeVisible();
+  expect(screen.getByRole('cell', { name: 'transition.expected_release_revision', exact: true })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Field: transition.expected_release_revision' })).toHaveAttribute('tabindex', '0');
   expect(screen.getByText(/is removed from the renewed packet/)).toBeVisible();
   const create = screen.getByRole('button', { name: 'Approve renewed revision' });
   expect(create).toBeDisabled();

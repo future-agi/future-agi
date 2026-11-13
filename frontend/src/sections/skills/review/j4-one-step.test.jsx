@@ -17,6 +17,7 @@ vi.mock('react-router-dom', async (load) => ({ ...(await load()), useNavigate: (
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ scope: { userId: 'reviewer' } }), useSkillV11Query: vi.fn(() => ({})) }));
 vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: vi.fn(() => ({})), useContextDraft: vi.fn(() => ({})) }));
 vi.mock('src/api/skills/context-production', () => ({ contextReviewReady: () => true, loadContextReview: vi.fn(), useAcknowledgeContextHead: vi.fn(() => ({})), usePublishContext: vi.fn(() => ({})) }));
+vi.mock('src/api/skills/review-metadata', async (load) => ({ ...(await load()), useReviewMembers: () => ({}), useReviewSubject: () => ({}) }));
 vi.mock('src/api/skills/review-production', () => ({
   reviewsReady: () => true,
   isStaleReview: (error) => [403, 409, 410].includes(error?.statusCode) && ['release_conflict', 'evidence_expired'].includes(error?.code),

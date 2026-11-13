@@ -92,6 +92,7 @@ try {
     await page.waitForTimeout(250);
     await page.evaluate(() => document.fonts.ready);
     if (screen === 'renewal') await page.getByRole('dialog').waitFor();
+    if (screen === 'inbox' && !state) assert.equal(await page.getByText(/production v1 → v2/).count(), 1, 'Inbox must name the version move at every width');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Page overflow: ${screen} ${width}`);
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(output, `${screen}${state ? `-${state}` : ''}-${theme}-${width}.png`) });

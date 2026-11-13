@@ -140,7 +140,19 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
             const resource = skillV11Result(await axios.get(url, config));
             name = resource.context?.name || resource.name;
           } catch { /* Metadata is optional; this never grants authority. */ }
-          return { request: { id: requestId, revision: renewal.revision, status: renewal.status, name, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, preview: { packet: renewal.packet, fingerprint: renewal.fingerprint, current: false }, review: { complete: false }, renewalRequired: error.code || 'evidence_expired', canExecute: false };
+          let review = { complete: false };
+          try {
+            const next = renewal.packet;
+            const inspected = next.subjectKind === 'agent_context'
+              ? await loadContextReview(renewal.subjectId, null, config, { operation: 'move', target_version: next.transition.version, label: next.transition.label })
+              : await loadSkillReview(renewal.subjectId, { candidate_version_id: next.candidateVersionId, candidate_digest: next.candidateDigest, transition: { label: next.transition.label, version: next.transition.version, expected_version: next.transition.expectedVersion } }, config);
+            const label = inspected.releaseState?.labels.find((item) => item.name === next.transition.label);
+            // Context comparison uses the current pointer. Never present it as
+            // this renewal's diff if that pointer moved during the read.
+            const matchesBaseline = next.subjectKind === 'skill' || (label?.version ?? null) === next.transition.expectedVersion;
+            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { complete: false, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
+          } catch { /* Read-only detail is optional. Renewal remains explicit. */ }
+          return { request: { id: requestId, revision: renewal.revision, status: renewal.status, name, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, preview: { packet: renewal.packet, fingerprint: renewal.fingerprint, current: false }, review, renewalRequired: error.code || 'evidence_expired', canExecute: false };
         }
       }
       if (contextId || !unavailableEvidence) throw error;

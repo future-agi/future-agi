@@ -165,7 +165,7 @@ export default function ReleaseRenewalDialog({
                     sx={{ minHeight: ROW_HEIGHT.default }}
                   >
                     <TableCell>{setting(row.item)}<Typography variant="s3" display="block" color="text.secondary">Changed</Typography>{JSON.stringify(row.before) === JSON.stringify(row.after) && <Typography variant="s3" display="block">Changed and restored</Typography>}</TableCell>
-                    <TableCell sx={{ typography: "s3", fontFamily: "monospace" }}><Box sx={{ maxWidth: 160, whiteSpace: "nowrap", overflowX: "auto" }}>{row.item}</Box></TableCell>
+                    <TableCell aria-label={row.item} sx={{ typography: "s3", fontFamily: "monospace" }}><Box tabIndex={0} role="region" aria-label={`Field: ${row.item}`} sx={{ maxWidth: 160, whiteSpace: "nowrap", overflowX: "auto" }}>{row.item}</Box></TableCell>
                     <TableCell sx={{ overflowWrap: "break-word" }}>
                       {show(row.before, 'before')}
                     </TableCell>

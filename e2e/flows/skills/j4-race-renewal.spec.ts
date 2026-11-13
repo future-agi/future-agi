@@ -266,7 +266,10 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await page.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await page.reload();
     await expect(page.getByText(/Release paused — detailed evidence expired/)).toBeVisible();
+    await expect(page.getByText('Paused', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Current candidate shown for renewal/)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/03-renewal-required-dark.png` });
+    await page.screenshot({ path: `${output}/shots/renewal-required.png` });
     diagnostics.push('--- renew expiry');
     const expiryRenewal = await renew('expiry-dark', { reloaded: true });
     diagnostics.push('--- renewed expiry');

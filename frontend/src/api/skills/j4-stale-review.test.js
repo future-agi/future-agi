@@ -34,6 +34,18 @@ it('exposes only explicit renewal when detailed evidence expired', async () => {
   expect(value.review.complete).toBe(false);
 });
 
+it.each([['digest', 1, true], ['different', 1, false], ['digest', 3, false]])('keeps renewal comparison read-only and bound to both versions (%s, %s)', async (candidateDigest, version, matches) => {
+  const changes = [{ path: 'AGENTS.md', status: 'modified', fromText: 'Before', toText: 'Candidate' }];
+  loadContextReview.mockResolvedValue({ complete: true, candidateDigest, originChanges: changes, dependencyChanges: [], releaseState: { labels: [{ name: 'production', version }] } });
+  axios.get.mockImplementationOnce(() => rejected(410, 'evidence_expired')).mockResolvedValueOnce({ data: { result: {
+    request_id: 'request', revision: 3, status: 'approved', subject_id: 'context', fingerprint: 'renewed', packet, changes: [], removed_evidence: [] } } }).mockResolvedValueOnce({ data: { result: { name: 'Support agent' } } });
+  const value = await loadReleaseRequest('request', 'context', {});
+  expect(value.review.changes).toEqual(matches ? changes : undefined);
+  expect(value.review.complete).toBe(false);
+  expect(value.preview.current).toBe(false);
+  expect(value.canExecute).toBe(false);
+});
+
 it('never treats authorization or unrelated failures as stale', async () => {
   expect(isStaleReview({ statusCode: 403, code: 'permission_denied' })).toBe(false);
   expect(isStaleReview({ statusCode: 500, code: 'release_conflict' })).toBe(false);

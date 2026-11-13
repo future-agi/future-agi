@@ -89,6 +89,7 @@ function InboxRows({
             <Button color="inherit" aria-label={item.name} onClick={() => onOpen(item)} sx={{ p: 0, minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start' }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
                 <Stack direction="row" gap={1} alignItems="center">{item.unread && <><Box aria-hidden="true" sx={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', bgcolor: 'text.primary' }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                {item.transition && <Typography variant="s1">{item.transition.label} {item.transition.expectedVersion == null ? 'unassigned' : `v${item.transition.expectedVersion}`} → v{item.transition.version}</Typography>}
                 <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · {relativeReviewTime(item.updatedAt) || 'Update time unavailable'}</Typography>
               </Stack>
             </Button>

@@ -14,6 +14,11 @@ it('renders author and assigned reviewer names mapped from the server, not their
   expect(screen.getByText(/Approval pending · Robin Reviewer/)).toBeVisible();
   expect(screen.queryByText(/Unavailable member/)).not.toBeInTheDocument();
 });
+it('does not mistake missing recipient metadata for an unassigned request', () => {
+  render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'pending' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={vi.fn()} />);
+  expect(screen.getByText('Approval pending', { exact: true })).toBeVisible();
+  expect(screen.queryByText(/Reviewer not assigned/)).not.toBeInTheDocument();
+});
 it('maps recorded execution time, approver, executor and both versions into the receipt', () => {
   const receipt = mapReleaseReceipt({ request_id: 'request', executed_by: 'executor-id', executed_by_name: 'Erin Releaser', approved_by_name: 'Robin Reviewer', executed_at: '2026-11-10T12:00:00Z', previous_version: 1, name: 'Support agent', currentness_at_action: {}, post_move_state: { label: 'production', version: 2 } });
   render(<ReleaseReceipt receipt={receipt} />);

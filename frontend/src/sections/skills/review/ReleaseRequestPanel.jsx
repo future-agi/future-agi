@@ -236,7 +236,7 @@ function PacketActions({
         <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} alignItems={{ sm: 'center' }} aria-label="Release progress">
           <Typography variant="s3">Submitted by {reviewPersonName(request.authorName)}{request.createdAt && ` · ${relativeReviewTime(request.createdAt)}`}</Typography>
           <Typography variant="s3" color="text.secondary" aria-hidden="true">→</Typography>
-          <Typography variant="s3" color={request.status === 'approved' ? 'text.primary' : 'text.secondary'}>{request.status === 'approved' || closed ? `Approved by ${reviewPersonName(request.decidedByName)}${request.decidedAt ? ` · ${relativeReviewTime(request.decidedAt)}` : ''}` : `Approval pending · ${request.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'Reviewer not assigned'}`}</Typography>
+          <Typography variant="s3" color={request.status === 'approved' ? 'text.primary' : 'text.secondary'}>{request.status === 'approved' || closed ? `Approved by ${reviewPersonName(request.decidedByName)}${request.decidedAt ? ` · ${relativeReviewTime(request.decidedAt)}` : ''}` : `Approval pending${request.recipients?.length ? ` · ${request.recipients.map((person) => reviewPersonName(person.name)).join(', ')}` : ''}`}</Typography>
           <Typography variant="s3" color="text.secondary" aria-hidden="true">→</Typography>
           <StatusBadge status={!current && !closed ? 'stale' : closed ? 'released' : 'not_started'} label={!current && !closed ? 'Release paused' : closed ? 'Released' : 'Not released'} />
           <Typography variant="s3" color="text.secondary">Revision {request.revision}</Typography>
