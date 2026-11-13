@@ -101,3 +101,50 @@ describe("getSafeActionErrorMessage for typed user-facing refusals", () => {
     ).toBe(fallback);
   });
 });
+
+describe("getSafeActionErrorMessage for rate-limit refusals", () => {
+  const fallback = "Failed to run evaluation. Please retry.";
+  const limit =
+    "Evaluation rate limit reached. Wait for the usage window to reset before retrying.";
+
+  it("shows the server's 429 message from the interceptor-flattened error", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          status: false,
+          type: "rate_limit",
+          code: "rate_limited",
+          message: limit,
+          result: limit,
+          statusCode: 429,
+        },
+        fallback,
+      ),
+    ).toBe(limit);
+  });
+
+  it("shows the server's 429 message from a raw Axios error", () => {
+    expect(
+      getSafeActionErrorMessage(
+        { response: { status: 429, data: { detail: limit } } },
+        fallback,
+      ),
+    ).toBe(limit);
+  });
+
+  it.each([
+    ["no message", { statusCode: 429 }],
+    ["a structured result", { statusCode: 429, result: { code: "x" } }],
+    [
+      "an internal-looking message",
+      { statusCode: 429, result: "Code: 159. DB::Exception: Timeout exceeded" },
+    ],
+    ["a multiline message", { statusCode: 429, result: "Slow down\nTrace" }],
+  ])("never invites an immediate retry for a 429 with %s", (_, error) => {
+    const message = getSafeActionErrorMessage(error, fallback);
+    expect(message).toBe(
+      "Rate limit reached. Please try again in a few minutes.",
+    );
+    expect(message).not.toContain("DB::");
+  });
+});

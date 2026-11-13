@@ -34932,6 +34932,8 @@ export interface UserAlertMonitorApi {
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
+  /** @maxLength 200 */
+  webhook_url?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorApiFilters;
   readonly logs?: readonly UserAlertMonitorApiLogsItem[];
@@ -35128,6 +35130,8 @@ export interface UserAlertMonitorPreviewGraphApi {
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
+  /** @maxLength 200 */
+  webhook_url?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorPreviewGraphApiFilters;
   readonly logs?: readonly UserAlertMonitorPreviewGraphApiLogsItem[];

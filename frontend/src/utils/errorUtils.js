@@ -25,6 +25,11 @@ const INTERNAL_ERROR_MARKERS =
  * details from a failed mutation. Server-side failures without a user-facing
  * code, and suspiciously large or multiline payloads, intentionally collapse
  * to the caller's safe fallback.
+ *
+ * A 429 is a refusal the server words for users (`too_many_requests`,
+ * throttles): its message says when to try again, so it is shown. Without a
+ * usable message it reads the rate-limit default rather than the caller's
+ * fallback, which usually invites an immediate retry.
  */
 export function getSafeActionErrorMessage(error, fallback) {
   const responseData = error?.response?.data || {};
@@ -43,15 +48,21 @@ export function getSafeActionErrorMessage(error, fallback) {
     error?.result,
   ).trim();
 
+  const showable =
+    Boolean(message) &&
+    message.length <= 240 &&
+    !/[\r\n]/.test(message) &&
+    !INTERNAL_ERROR_MARKERS.test(message);
+
+  if (statusCode === RESPONSE_CODES.LIMIT_REACHED) {
+    return showable ? message : withRetryGuidance(DEFAULT_RATE_LIMIT_MESSAGE);
+  }
   if (
+    !showable ||
     !(
       SAFE_VALIDATION_STATUS_CODES.has(statusCode) ||
       USER_FACING_ERROR_CODES.has(code)
-    ) ||
-    !message ||
-    message.length > 240 ||
-    /[\r\n]/.test(message) ||
-    INTERNAL_ERROR_MARKERS.test(message)
+    )
   ) {
     return fallback;
   }
