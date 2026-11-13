@@ -32,7 +32,11 @@ const image = (index, reference) => spanImage(index, { reference });
 function View({ attachments, input = chat(2), viewMode = "chat", enabled }) {
   const value = span(attachments);
   return (
-    <SpanAttachmentsProvider projectId={projectId} span={value} enabled={enabled}>
+    <SpanAttachmentsProvider
+      projectId={projectId}
+      span={value}
+      enabled={enabled}
+    >
       <SmartPreview
         span={value}
         input={input}
@@ -109,7 +113,9 @@ describe("images at their message position (U01)", () => {
   it("lists an image whose role disagrees with the message instead of misplacing it", async () => {
     render(
       <View
-        attachments={[image(0, { message_index: 1, part_index: 0, role: "user" })]}
+        attachments={[
+          image(0, { message_index: 1, part_index: 0, role: "user" }),
+        ]}
       />,
     );
     // Input message 2 is the assistant's.
@@ -133,7 +139,9 @@ describe("images at their message position (U01)", () => {
     expect(screen.queryByLabelText("Message images")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Show 3 more/ }));
     const inline = await screen.findByLabelText("Message images");
-    expect(within(inline.parentElement).getByText("message text 3")).toBeVisible();
+    expect(
+      within(inline.parentElement).getByText("message text 3"),
+    ).toBeVisible();
     expect(screen.queryByText("Input · message 3 · part 1")).toBeNull();
     expect(screen.queryByText("Attachments")).toBeNull();
     // Moving between list and message never re-resolves the batch.

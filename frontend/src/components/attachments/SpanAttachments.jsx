@@ -135,7 +135,17 @@ export function SpanAttachmentsProvider({
       placed,
       place,
     }),
-    [active, projectId, traceId, spanId, items, images, imageResults, placed, place],
+    [
+      active,
+      projectId,
+      traceId,
+      spanId,
+      items,
+      images,
+      imageResults,
+      placed,
+      place,
+    ],
   );
   return (
     <SpanAttachmentsContext.Provider value={value}>
@@ -183,7 +193,8 @@ export function MessageAttachments({ direction, messageIndex, role }) {
   const context = useContext(SpanAttachmentsContext);
   const items = context?.active && context.parent ? context.items : null;
   const inline = useMemo(
-    () => (items ? inlineImagesFor(items, { direction, messageIndex, role }) : []),
+    () =>
+      items ? inlineImagesFor(items, { direction, messageIndex, role }) : [],
     [items, direction, messageIndex, role],
   );
   const ids = inline.map((item) => item.reference.occurrence_id).join(",");

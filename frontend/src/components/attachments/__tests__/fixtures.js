@@ -94,7 +94,11 @@ export const projection = {
   state: "ready",
   manifest: mixedManifest,
 };
-/** A ready per-span attachment status as projected on observation spans. */
+/**
+ * A ready per-span attachment status as projected on observation spans.
+ * @param {number} index
+ * @param {{reference?: object, [key: string]: unknown}} [overrides]
+ */
 export function spanImage(index, { reference = {}, ...rest } = {}) {
   const id = String(index + 1).padStart(12, "0");
   return {
@@ -114,6 +118,7 @@ export function spanImage(index, { reference = {}, ...rest } = {}) {
     ...rest,
   };
 }
+/** @param {string} occurrence_id */
 export const readyGrant = (occurrence_id) => ({
   occurrence_id,
   status: "ready",

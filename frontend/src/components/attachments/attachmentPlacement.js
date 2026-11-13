@@ -135,8 +135,7 @@ export function inlineImagesFor(items, { direction, messageIndex, role }) {
  * within one step, so they are never compared across steps.
  */
 function stepKey(frame) {
-  const { conversation_id: conversation, turn_id: turn } =
-    frame.item.reference;
+  const { conversation_id: conversation, turn_id: turn } = frame.item.reference;
   return conversation && turn
     ? `turn:${conversation}:${turn}`
     : `span:${frame.parent.span_id}`;

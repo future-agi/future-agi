@@ -309,7 +309,11 @@ describe("computer-use filmstrip ordering by step, placement, then time", () => 
         shot(0, { message_index: 2, part_index: 0 }),
       ]),
       spanEntry("1000000000000002", "2026-11-11T10:00:02Z", [
-        shot(1, { message_index: undefined, part_index: undefined, role: "tool" }),
+        shot(1, {
+          message_index: undefined,
+          part_index: undefined,
+          role: "tool",
+        }),
       ]),
       spanEntry("1000000000000003", "2026-11-11T10:00:03Z", [
         shot(2, { message_index: 4, part_index: 0 }),
