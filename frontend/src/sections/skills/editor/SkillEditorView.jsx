@@ -43,6 +43,7 @@ DraftInitializer.propTypes = {
 };
 
 export default function SkillEditorView() {
+  useEffect(() => { import("@monaco-editor/react").then(({ loader }) => loader.init()).catch(() => {}); }, []);
   const { skillId } = useParams();
   const { identity } = useSkillV11Scope();
   const navigate = useNavigate();
@@ -56,7 +57,7 @@ export default function SkillEditorView() {
   let content;
   if (preview === "loading" || (!preview && query.isPending)) content = <ContentSkeleton variant="page" label="Loading skill editor" />;
   else if (preview === "error" || (!preview && query.isError && !query.data)) content = <ErrorState title="Couldn't load this skill" onRetry={retry} />;
-  else if (preview === "empty" || !query.data) content = <EmptyState title="No skill to edit" description="Open a skill from your library or create one to start a draft." action={<Button variant="contained" onClick={() => navigate(paths.dashboard.skills.root)}>Back to Skills</Button>} />;
+  else if (preview === "empty" || !query.data) content = <EmptyState title="No skill to edit" description="Open a skill from your library or create one to start a draft." action={<Button variant="contained" color="primary" onClick={() => navigate(paths.dashboard.skills.root)}>Back to Skills</Button>} />;
   else content = <DraftInitializer key={`${identity}:${skillId}`} skill={query.data} />;
   return <Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column", overflowY: { xs: "auto", md: "hidden" } }}>{content}</Box>;
 }

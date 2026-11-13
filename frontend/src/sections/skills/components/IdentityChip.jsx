@@ -10,7 +10,7 @@ import './skillIcons';
 export default function IdentityChip({ value, label, kind = 'digest', length = 12, inline = false }) {
   const [failedValue, setFailedValue] = useState(null);
   const present = typeof value === 'string' && value.length > 0;
-  const shortened = present ? (kind === 'id' ? value.slice(0, 8) : shortDigest(value).slice(0, length)) : '';
+  const shortened = present ? (kind === 'id' ? value.replace(/^(?:release|context|consumer|runtime|session|binding)-/, '').slice(0, 8) : shortDigest(value).slice(0, length)) : '';
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);

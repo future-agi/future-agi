@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useSkillV11Scope, useSkillTestingOptions } from "src/api/skills/testing";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { Alert, Button, MenuItem, Stack, TextField } from "@mui/material";
+import { Alert, Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { getSkillErrorCode, useCreateSkill, useSkillTemplates } from "src/api/skills";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
@@ -11,6 +11,7 @@ import { LIMITS, SKILL_NAME_PATTERN } from "src/sections/skills/constants";
 
 function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
   const navigate = useNavigate();
+  const templateSelectId = useId();
   const templates = useSkillTemplates();
   const create = useCreateSkill();
   const options = useSkillTestingOptions();
@@ -57,14 +58,16 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
         <TextField required label="Description" size="small" multiline minRows={3} value={description}
           disabled={create.isPending} onChange={(event) => setDescription(event.target.value)}
           inputProps={{ maxLength: LIMITS.MAX_DESCRIPTION }} helperText="Say what it does and when an agent should use it" />
-        <TextField select label="Start from" size="small" value={templateId} disabled={create.isPending}
+        <TextField id={templateSelectId} SelectProps={{ SelectDisplayProps: { "aria-labelledby": `${templateSelectId}-label` } }} select label="Start from" size="small" value={templateId} disabled={create.isPending}
           onChange={(event) => setTemplateId(event.target.value)}>
           <MenuItem value="blank">Blank</MenuItem>
           {(templates.data || []).filter((template) => template.id !== "blank").map((template) => (
             <MenuItem key={template.id} value={template.id}>{template.title}</MenuItem>
           ))}
         </TextField>
-        {templates.isError && <Alert severity="warning">Templates could not load. You can still start with a blank skill.</Alert>}
+        {templates.isPending && <Typography variant="s3" color="text.secondary">Loading templates… You can start blank.</Typography>}
+        {templates.isError && <Alert severity="warning" action={<Button onClick={templates.refetch}>Retry</Button>}>Templates could not load. You can still start with a blank skill.</Alert>}
+        {!templates.isPending && !templates.isError && !(templates.data || []).some((template) => template.id !== "blank") && <Typography variant="s3" color="text.secondary">No templates available — start blank.</Typography>}
       </Stack>
     </ModalWrapper>
   );

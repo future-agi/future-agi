@@ -21,3 +21,13 @@ addIcon(SKILLS_NAV_ICON, {
 });
 addIcon('solar:alt-arrow-right-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5L15 12L9 19"/>' });
 addIcon('solar:alt-arrow-down-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9L12 15L5 9"/>' });
+
+addIcon('solar:inbox-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 14l3-10h12l3 10v6H3z"/><path d="M3 14h5l2 3h4l2-3h5"/></g>' });
+addIcon('solar:danger-triangle-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3L2 21h20zM12 9v5"/></g><circle cx="12" cy="18" r="1" fill="currentColor"/>' });
+addIcon('solar:refresh-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8a9 9 0 1 0 0 8M20 3v5h-5"/></g>' });
+// A permissions boundary is a neutral lock, including in offline workspaces.
+addIcon('solar:lock-keyhole-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="10" width="16" height="11" rx="3"/><path stroke-linecap="round" d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></g>' });
+
+// Task drawers and selected-release indicators must work offline too.
+addIcon('solar:close-linear', { width: 24, height: 24, body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M18 6L6 18M6 6l12 12"/>' });
+addIcon('solar:check-circle-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="m8 12 3 3 5-6"/></g>' });

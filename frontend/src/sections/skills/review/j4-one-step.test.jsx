@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import PropTypes from 'prop-types';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ContextReviewController, RequestReviewController } from './SkillsReviewControllers';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -17,6 +17,7 @@ vi.mock('react-router-dom', async (load) => ({ ...(await load()), useNavigate: (
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ scope: { userId: 'reviewer' } }), useSkillV11Query: vi.fn(() => ({})) }));
 vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: vi.fn(() => ({})), useContextDraft: vi.fn(() => ({})) }));
 vi.mock('src/api/skills/context-production', () => ({ contextReviewReady: () => true, loadContextReview: vi.fn(), useAcknowledgeContextHead: vi.fn(() => ({})), usePublishContext: vi.fn(() => ({})) }));
+vi.mock('src/api/skills/review-metadata', async (load) => ({ ...(await load()), useReviewMembers: () => ({}), useReviewSubject: () => ({}) }));
 vi.mock('src/api/skills/review-production', () => ({
   reviewsReady: () => true,
   isStaleReview: (error) => [403, 409, 410].includes(error?.statusCode) && ['release_conflict', 'evidence_expired'].includes(error?.code),
@@ -30,20 +31,21 @@ vi.mock('src/api/skills/review-authoring', () => ({
 afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
 
-function Runner({ onExecute }) {
-  return <button type="button" onClick={() => onExecute({}).catch(() => {})}>Run release</button>;
+function Runner({ onExecute, onRenew }) {
+  return <><button type="button" onClick={() => onExecute({}).catch(() => {})}>Run release</button><button type="button" onClick={onRenew}>Inspect renewal</button></>;
 }
-Runner.propTypes = { onExecute: PropTypes.func.isRequired };
+Runner.propTypes = { onExecute: PropTypes.func.isRequired, onRenew: PropTypes.func };
 
 const withRequest = () => useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', authorId: 'author', revision: 1 } }, refetch: vi.fn() });
 
-it('opens the renewal inspection when the server refuses a stale release, and nothing else', async () => {
+it('opens renewal after a definite stale release refusal', async () => {
   withRequest();
   const mutateAsync = vi.fn().mockRejectedValueOnce({ statusCode: 409, code: 'release_conflict' });
   useExecuteReleaseRequest.mockReturnValue({ mutateAsync });
   render(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={Runner} /></MemoryRouter>);
   expect(useRenewalPreview).toHaveBeenLastCalledWith('request', false);
   fireEvent.click(screen.getByRole('button', { name: 'Run release' }));
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   await waitFor(() => expect(useRenewalPreview).toHaveBeenLastCalledWith('request', true));
   expect(screen.getByText('Renew release review')).toBeVisible();
 });
@@ -62,7 +64,7 @@ const ref = (id, visibility = 'private') => ({ source: 'skills_text', sourceId: 
   visibility, status: 'completed', payloadExpiresAt: '2999-01-01T00:00:00Z', annotationRevision: 1, executionFingerprint: 'exec', configuration: { text: { model: 'm' }, digest: 'cfg' } });
 
 it('carries the published candidate forward, preselects the only target and shares the named results in one decision', async () => {
-  useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy' }], total_pages: 1 } });
+  useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy', labels: [{ name: 'production', version: 1 }] }], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [{ id: 'v1', number: 1, digest: 'sha256:old' }], total_pages: 2 } });
   const shared = { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }], evidence: [ref('run-a', 'workspace'), ref('run-b', 'workspace')], recipients: [] };
   const refetch = vi.fn().mockResolvedValue({ data: shared });
@@ -74,14 +76,16 @@ it('carries the published candidate forward, preselects the only target and shar
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
-  expect(screen.getByLabelText('Release resource')).toHaveValue('Refund policy');
-  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
+  expect(screen.getByText('Refund policy · production v1 → v2')).toBeVisible();
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
+  expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
+  screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  expect(screen.getByText(/run-a · private/)).toBeVisible();
-  expect(screen.getByText(/run-b · private/)).toBeVisible();
+  expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
+  expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
+  expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
   expect(share).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-a', acknowledgeSnapshotSharing: true }));
   // The batch decision continues to the exact packet without another click;
@@ -96,7 +100,7 @@ function PublishStub({ onPublishAndRequest, oneStepOperation }) {
   return <>
     <button type="button" onClick={() => oneStepOperation.run(onPublishAndRequest, { revision: 3, expectedDigest: 'sha256:candidate', expectedHeadVersion: 1, reviewFingerprint: 'fp3', headAcknowledged: false, baseVersion: 1, note: '', acknowledgeWarnings: false })}>One step</button>
     {oneStepOperation.error && <p>{oneStepOperation.error}</p>}
-    {oneStepOperation.uncertain && <button type="button" onClick={oneStepOperation.retry}>Retry original request</button>}
+    {oneStepOperation.uncertain && <button type="button" onClick={oneStepOperation.retry}>Check status</button>}
   </>;
 }
 PublishStub.propTypes = { onPublishAndRequest: PropTypes.func.isRequired, oneStepOperation: PropTypes.object.isRequired };
@@ -132,10 +136,10 @@ it('keeps an unknown publish outcome retryable without a second head acknowledgm
   usePublishContext.mockReturnValue({ mutateAsync: publish });
   render(<MemoryRouter><ContextReviewController scopeKey="org:ws:author" contextId="context" View={PublishStub} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'One step' }));
-  expect(await screen.findByText(/response was not confirmed/)).toBeVisible();
+  expect(await screen.findByText(/couldn't confirm whether this went through/)).toBeVisible();
   // The server now reports the acknowledged draft; retry reuses it.
   useContextDraft.mock.results.at(-1).value.refetch.mockResolvedValue({ data: { revision: 4, digest: 'sha256:candidate', headAcknowledged: true, reviewFingerprint: 'fp4' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Retry original request' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
   expect(ack).toHaveBeenCalledTimes(1);
   expect(publish.mock.calls[1][0].idempotencyKey).toBe(publish.mock.calls[0][0].idempotencyKey);
@@ -151,9 +155,24 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'External pipeline (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Attach 1 results' }));
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach text evidence / })).toBeChecked());
+  expect(screen.queryByRole('button', { name: 'Attach 1 result' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Text comparison/ })).toBeChecked());
   expect(prepare).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Prepare exact review' })).toBeDisabled();
+});
+
+it('fences a confirmed receipt to its request and authenticated scope while queries refresh', async () => {
+  withRequest();
+  const receipt = { requestId: 'request', postMoveState: { version: 2 } };
+  useExecuteReleaseRequest.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue(receipt) });
+  const View = vi.fn(() => null);
+  const { rerender } = render(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={View} /></MemoryRouter>);
+  await act(async () => { await View.mock.calls.at(-1)[0].onExecute({}); });
+  expect(View.mock.calls.at(-1)[0].receipt).toEqual(receipt);
+  rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="another-request" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
+  rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:another-login" requestId="request" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
 });

@@ -105,7 +105,7 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/dashboard/skills/contexts/rollouts');
     await expect(page.getByText('Repository rollouts', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText('No repository rollouts', { exact: true })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText('Repository rollouts are off', { exact: true })).toBeVisible({ timeout: 60_000 });
     const capabilities = await actor.api.get<{ result: { campaigns_enabled: boolean } }>('/model-hub/skills/contexts/capabilities/');
     const campaigns = await actor.api.get<{ result: { count: number; results: unknown[] } }>('/model-hub/skills/contexts/campaigns/');
     const assertGate = (capability: typeof capabilities, list: typeof campaigns) => {
@@ -127,7 +127,7 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
       localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'dark' }));
     });
     await page.reload();
-    await expect(page.getByText('No repository rollouts', { exact: true })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText('Repository rollouts are off', { exact: true })).toBeVisible({ timeout: 60_000 });
     await page.screenshot({ path: testInfo.outputPath('J5-rollouts-dark.png'), animations: 'disabled' });
     const reason = 'Checkpoint P and bounded real-GitHub authorization/conformance are absent; campaigns remain disabled in the default stack. This flow exercises inventory only; synthetic lifecycle evidence does not qualify a complete-job measurement.';
     const report = unavailableJob(getJob('J5'), reason);

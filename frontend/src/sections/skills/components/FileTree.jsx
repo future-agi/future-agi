@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Autocomplete, Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
 import ModalWrapper from 'src/components/ModalWrapper/ModalWrapper';
 import { ConfirmDialog } from 'src/components/custom-dialog';
@@ -11,24 +11,36 @@ import './skillIcons';
 
 const DEFAULT_PINNED = ['SKILL.md'];
 
-export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true }) {
-  const [collapsed, setCollapsed] = useState(new Set());
+export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [] }) {
+  const [collapsed, setCollapsed] = useState(() => new Set([...generatedFolders, 'group:linked', 'group:generated']));
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pathInput, setPathInput] = useState('');
-  const [folderPrefix, setFolderPrefix] = useState('');
+  const folders = [...new Set(files.flatMap((file) => file.path.split('/').slice(0, -1).map((_, index, parts) => `${parts.slice(0, index + 1).join('/')}/`)))];
   const refs = useRef(new Map());
   useEffect(() => {
     // Preview links may select a file inside a collapsed ancestor.
     const parts = (selectedPath || '').split('/');
     setCollapsed((previous) => {
       const ancestors = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
+      if (files.some((file) => file.origin?.kind)) {
+        const kind = files.find((file) => file.path === selectedPath)?.origin?.kind;
+        const group = `group:${['linked', 'generated'].includes(kind) ? kind : 'owned'}`;
+        ancestors.push(...ancestors.map((path) => `${group}/${path}`), group);
+      }
       if (!ancestors.some((path) => previous.has(path))) return previous;
       return new Set([...previous].filter((path) => !ancestors.includes(path)));
     });
-  }, [selectedPath]);
+  }, [selectedPath, files]);
   const rows = useMemo(() => {
-    const tree = buildFileTree(files);
+    const grouped = files.some((file) => file.origin?.kind);
+    const groupTree = (kind, name) => {
+      const groupPath = `group:${kind}`;
+      const prefixFolders = (nodes) => nodes.map((node) => node.children ? { ...node, path: `${groupPath}/${node.path}`, children: prefixFolders(node.children) } : node);
+      const items = files.filter((file) => (['linked', 'generated'].includes(file.origin?.kind) ? file.origin.kind : 'owned') === kind);
+      return { name, path: groupPath, type: 'folder', children: prefixFolders(buildFileTree(items)) };
+    };
+    const tree = grouped ? [['owned', 'Instructions'], ['linked', 'Linked skills'], ['generated', 'Generated files']].map(([kind, name]) => groupTree(kind, name)).filter((group) => group.children.length) : buildFileTree(files);
     tree.sort((a, b) => {
       const ai = pinned.indexOf(a.path);
       const bi = pinned.indexOf(b.path);
@@ -80,7 +92,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     }
   };
   const openDialog = (kind) => {
-    setPathInput(kind === 'rename' ? selectedPath : folderPrefix);
+    setPathInput(kind === 'rename' ? selectedPath : '');
     setDialog(kind);
   };
   const pathError = (() => {
@@ -92,25 +104,22 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     if (files.some((file) => {
       if (dialog === 'rename' && file.path === selectedPath) return false;
       const existing = file.path.toLowerCase();
-      return existing === lower || lower.startsWith(`${existing}/`) || (dialog !== 'folder' && existing.startsWith(`${lower}/`));
+      return existing === lower || lower.startsWith(`${existing}/`) || existing.startsWith(`${lower}/`);
     })) return 'That path is already used by a file or folder.';
     return '';
   })();
   const submitPath = () => {
     if (pathError || readOnly || (dialog === 'rename' && cannotChangeSelected)) return;
-    if (dialog === 'folder') setFolderPrefix(`${pathInput}/`);
-    if (dialog === 'create') { onCreate?.(pathInput); setFolderPrefix(''); }
+    if (dialog === 'create') onCreate?.(pathInput);
     if (dialog === 'rename' && !protectedRoot) onRename?.(selectedPath, pathInput);
     setDialog(null);
   };
   return <Stack spacing={1} sx={{ minWidth: 0 }}>
     {!readOnly && <Stack direction="row" spacing={0.5} useFlexGap role="group" aria-label="File actions" sx={{ flexWrap: 'nowrap', '& > span': { display: 'inline-flex', flexShrink: 0 } }}>
-      <Tooltip title={files.length >= LIMITS.MAX_FILES ? 'File limit reached.' : 'New file'}><span><IconButton size="small" color="inherit" aria-label="New file" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}><Iconify icon="solar:file-add-linear" /></IconButton></span></Tooltip>
-      <Tooltip title="New folder"><span><IconButton size="small" color="inherit" aria-label="New folder" onClick={() => openDialog('folder')} disabled={!onCreate}><Iconify icon="solar:folder-with-files-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={cannotChangeSelected ? protectedReason : 'Rename'}><span><IconButton size="small" color="inherit" aria-label="Rename" disabled={!selectedFile || !onRename || cannotChangeSelected} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={cannotChangeSelected ? protectedReason : 'Delete'}><span><IconButton size="small" color="inherit" aria-label="Delete" disabled={!selectedFile || !onDelete || cannotChangeSelected} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={files.length >= LIMITS.MAX_FILES ? 'File limit reached.' : 'Add file'}><span><IconButton size="small" color="inherit" aria-label="Add file" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}><Iconify icon="solar:file-add-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Rename file'}><span><IconButton size="small" color="inherit" aria-label="Rename file" disabled={!selectedFile || !onRename || cannotChangeSelected} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Delete file'}><span><IconButton size="small" color="inherit" aria-label="Delete file" disabled={!selectedFile || !onDelete || cannotChangeSelected} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
     </Stack>}
-    {folderPrefix && !readOnly && <Typography variant="s3" color="text.secondary">New files will start in {folderPrefix}</Typography>}
     {!rows.length && <Typography variant="s3" color="text.secondary">No files yet.</Typography>}
     <Box role="tree" aria-label="Skill files">
       {rows.map((row, index) => <ButtonBase key={row.path} component="div" role="treeitem"
@@ -118,15 +127,20 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
         tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
         aria-selected={row.path === selectedPath} aria-expanded={row.type === 'folder' ? !collapsed.has(row.path) : undefined}
         onFocus={() => setFocused(row.path)} onKeyDown={(event) => onKeyDown(event, row, index)} onClick={() => activate(row)}
-        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 40, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
-        {row.type === 'folder' && <Iconify icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}
+        sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 32, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+        <Box sx={{ width: 16, flexShrink: 0, display: 'flex' }}>{row.type === 'folder' && <Iconify width={16} icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}</Box>
         <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>
+        {generatedFolders.includes(row.path) && <Typography variant="s3" color="text.secondary">Generated</Typography>}
         {row.status && <FileStatusBadge status={row.status} />}
       </ButtonBase>)}
     </Box>
-    <ModalWrapper open={['create', 'folder', 'rename'].includes(dialog)} onClose={() => setDialog(null)}
-      title={dialog === 'rename' ? 'Rename file' : dialog === 'folder' ? 'New folder' : 'New file'} actionBtnTitle={dialog === 'folder' ? 'Use prefix' : dialog === 'rename' ? 'Rename' : 'Create file'} isValid={!pathError} onSubmit={submitPath}>
-      <TextField autoFocus size="small" label={dialog === 'folder' ? 'Folder path' : 'File path'} value={pathInput} onChange={(event) => setPathInput(event.target.value)} error={Boolean(pathInput && pathError)} helperText={pathInput && pathError ? pathError : dialog === 'folder' ? 'Folders are path prefixes. Add a file to keep this folder in the skill.' : 'Paths are relative to the skill, for example references/policy.md.'} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitPath(); } }} />
+    <ModalWrapper open={['create', 'rename'].includes(dialog)} onClose={() => setDialog(null)}
+      title={dialog === 'rename' ? 'Rename file' : 'Add file'} actionBtnTitle={dialog === 'rename' ? 'Rename' : 'Create file'} isValid={!pathError} onSubmit={submitPath}>
+      <Autocomplete freeSolo forcePopupIcon={dialog === 'create' && folders.length > 0} options={dialog === 'create' ? folders : []}
+        popupIcon={<Iconify icon="solar:alt-arrow-down-linear" />} inputValue={pathInput}
+        onInputChange={(_, value) => setPathInput(value)}
+        renderInput={(params) => <TextField {...params} autoFocus size="small" label="File path"
+          error={Boolean(pathInput && pathError)} helperText={pathInput && pathError ? pathError : 'Folders are created from file paths. For example, references/policy.md.'} />} />
     </ModalWrapper>
     <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} title="Delete file?" content={`Remove ${selectedPath || 'this file'} from this draft? Published versions will not change.`}
       action={<Button variant="contained" color="error" disabled={!selectedFile || cannotChangeSelected} onClick={() => { if (selectedFile && !cannotChangeSelected) onDelete?.(selectedPath); setDialog(null); }}>Delete file</Button>} />
@@ -134,6 +148,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
 }
 FileTree.propTypes = {
   files: PropTypes.arrayOf(PropTypes.shape({ path: PropTypes.string.isRequired, status: PropTypes.string })).isRequired,
+  generatedFolders: PropTypes.arrayOf(PropTypes.string),
   selectedPath: PropTypes.string, onSelect: PropTypes.func.isRequired, onCreate: PropTypes.func, onRename: PropTypes.func,
   onDelete: PropTypes.func, pinned: PropTypes.arrayOf(PropTypes.string), protectedPaths: PropTypes.arrayOf(PropTypes.string), isPathReadOnly: PropTypes.func, readOnly: PropTypes.bool,
 };

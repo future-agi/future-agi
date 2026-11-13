@@ -152,7 +152,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   const ack = page.getByRole('checkbox', { name: ACK, exact: true });
   const attempt = async (acknowledge = true) => {
     if (acknowledge) await ack.check();
-    await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     const response = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     const result = await response;
@@ -163,13 +163,13 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await expect(page.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0);
     await ack.check();
     const decided = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/decisions/`) && res.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await decided).ok()).toBe(true);
     // Attestation of an unchanged revision survives the approval refresh.
     // Wait for that server-backed refresh to settle before the environment
     // injects the next race, so the race lands after the approved state is
     // shown (as in the registered driver), not inside the refresh itself.
-    await expect(page.getByRole('button', { name: 'Release approved packet', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Release to production', exact: true })).toBeEnabled();
     await expect(ack).toBeChecked();
   };
   const renewals: unknown[] = [];
@@ -265,8 +265,11 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     // renewal is offered on the reloaded page.
     await page.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await page.reload();
-    await expect(page.getByText(/is no longer available \(evidence_expired\)/)).toBeVisible();
+    await expect(page.getByText(/Release paused — detailed evidence expired/)).toBeVisible();
+    await expect(page.getByText('Paused', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Current candidate shown for renewal/)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/03-renewal-required-dark.png` });
+    await page.screenshot({ path: `${output}/shots/renewal-required.png` });
     diagnostics.push('--- renew expiry');
     const expiryRenewal = await renew('expiry-dark', { reloaded: true });
     diagnostics.push('--- renewed expiry');
@@ -275,7 +278,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     expect(remaining.packet.evidence.map((ref: { source_id: string }) => ref.source_id)).toEqual([runs[0]]);
     await approve();
     await ack.check();
-    await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     const executed = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     const response = await executed;
@@ -288,7 +291,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     expect(release).toEqual({ events: [{ id: receipt.post_move_state.event_id, from_version: 1, actor_id: reviewer.userId }], receiptEvent: receipt.post_move_state.event_id,
       fingerprint: remaining.fingerprint, renewed: remaining.fingerprint, revision: 5 });
     await page.reload();
-    await expect(page.getByText('Durable release receipt', { exact: true })).toBeVisible();
+    await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/02-durable-receipt.png` });
     Object.assign(evidence, { races, renewals, release });
   } finally {

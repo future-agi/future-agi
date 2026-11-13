@@ -89,7 +89,7 @@ export function GitHubPreviewReview({ preview, onStage, busy, stageDisabled = fa
         {preview.localDiverged && <FormControlLabel control={<Checkbox checked={replacement} onChange={(event) => setReplacement(event.target.checked)} disabled={busy} />} label="Replace my reviewed local changes. They will not be merged." />}
         <FormControlLabel control={<Checkbox checked={rights} onChange={(event) => setRights(event.target.checked)} disabled={busy} />} label="I confirm that I have the rights to import these files." />
         <TextField size="small" multiline minRows={2} label={preview.license.requiresAdminReview ? 'Rights-review note (required for admins)' : 'Rights-review note'} value={reviewNote} inputProps={{ maxLength: 2000 }} onChange={(event) => setReviewNote(event.target.value)} disabled={busy} />
-        <Button variant="contained" disabled={busy || stageDisabled || !mayStage} onClick={() => onStage({ rights: { confirmed: true, reviewNote }, acceptReplacement: replacement })}>
+        <Button variant="contained" color="primary" disabled={busy || stageDisabled || !mayStage} onClick={() => onStage({ rights: { confirmed: true, reviewNote }, acceptReplacement: replacement })}>
           {busy ? 'Staging draft…' : preview.operation === 'update' ? 'Stage replacement draft' : 'Import as draft'}
         </Button>
         <Typography variant="s3" color="text.secondary">No version is published and no label moves. Review and test the draft before publishing.</Typography>

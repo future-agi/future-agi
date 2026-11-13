@@ -89,7 +89,7 @@ function Recovery({ scopeKey, session, baseFiles, serverDraft, checkpoints = [],
     {hasLiveDraft ? <>
       <Alert severity="warning">{targetVersion ? `Editing viewed v${targetVersion} requires suspending this draft first. ` : ""}A private checkpoint retains the saved files and accepted links until its expiry. Nothing is published.</Alert>
       <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={operation.pending} />} label="Save a recovery checkpoint and suspend my current draft." />
-      <Button variant="contained" onClick={preserve} disabled={!confirmed || !onSuspend || operation.pending}>Preserve and suspend draft</Button>
+      <Button variant="contained" color="primary" onClick={preserve} disabled={!confirmed || !onSuspend || operation.pending}>Preserve and suspend draft</Button>
     </> : <>
       <TextField select size="small" label="Recovery checkpoint" value={selected} onChange={(event) => { setSelected(event.target.value); setConfirmed(false); }}>
         <MenuItem value="">Select a checkpoint</MenuItem>
@@ -101,7 +101,7 @@ function Recovery({ scopeKey, session, baseFiles, serverDraft, checkpoints = [],
         {expired && <Alert severity="warning">This checkpoint expired. It cannot replace your current state.</Alert>}
       </Box>}
       <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={restoreExpired || operation.pending} />} label="Restore this checkpoint as a new draft revision, without changing production." />
-      <Button variant="contained" onClick={restore} disabled={!checkpoint || restoreExpired || !confirmed || !onRestore || operation.pending}>Restore private checkpoint</Button>
+      <Button variant="contained" color="primary" onClick={restore} disabled={!checkpoint || restoreExpired || !confirmed || !onRestore || operation.pending}>Restore private checkpoint</Button>
     </>}
   </Stack>;
 }

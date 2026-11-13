@@ -5,12 +5,14 @@ import { paths } from "src/routes/paths";
 import {
   Box,
   Button,
+  Checkbox,
   IconButton,
   ListItemIcon,
   Menu,
   MenuItem,
   Stack,
   Typography,
+  Tooltip,
 } from "@mui/material";
 
 import { useSkillLabels, useSkillVersions } from "src/api/skills";
@@ -23,9 +25,10 @@ import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import Section from "src/components/section";
 import SelectionBar from "src/components/selection-bar";
-import LabelChip from "src/sections/skills/components/LabelChip";
+import StatusBadge from "src/components/status-badge";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
-import { shortDigest } from "src/sections/skills/utils/format";
+import IdentityChip from "../components/IdentityChip";
 import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 import MoveLabelDialog from "./MoveLabelDialog";
@@ -39,6 +42,7 @@ export default function VersionsTab({ skill }) {
   const [, setParams] = useSearchParams();
   const [selectedIds, setSelectedIds] = useState([]);
   const [menu, setMenu] = useState(null);
+  const [labelMenu, setLabelMenu] = useState(null);
   const [move, setMove] = useState(null);
   const [history, setHistory] = useState(null);
   const [protectionOpen, setProtectionOpen] = useState(false);
@@ -46,13 +50,7 @@ export default function VersionsTab({ skill }) {
   const versions = useSkillVersions(skill.id, { page: page + 1, pageSize });
   const labels = useSkillLabels(skill.id);
   const rows = versions.data?.results ?? [];
-  // DataTable uses page indexes; retain identities so refetches cannot move a selection.
-  const selection = Object.fromEntries(
-    rows.map((row, index) => [index, selectedIds.includes(row.id)]),
-  );
   const selected = rows.filter((row) => selectedIds.includes(row.id));
-  const setSelection = (next) =>
-    setSelectedIds(rows.filter((_, index) => next[index]).map((row) => row.id));
   const production =
     !labels.isError &&
     labels.data?.find((label) => label.name === "production")?.version;
@@ -83,6 +81,7 @@ export default function VersionsTab({ skill }) {
   };
 
   const columns = [
+    { id: 'select', header: '', size: 48, cell: ({ row: { original } }) => <Checkbox size="small" checked={selectedIds.includes(original.id)} disabled={selectedIds.length === 2 && !selectedIds.includes(original.id)} inputProps={{ 'aria-label': `Select v${original.number} for comparison` }} onClick={(event) => event.stopPropagation()} onChange={(_, checked) => setSelectedIds((current) => checked ? [...current, original.id] : current.filter((id) => id !== original.id))} /> },
     {
       accessorKey: "number",
       header: "Version",
@@ -132,30 +131,13 @@ export default function VersionsTab({ skill }) {
       accessorKey: "labels",
       header: "Labels",
       size: 170,
-      cell: ({ getValue }) => (
-        <Typography
-          variant="s3"
-          color="text.secondary"
-          noWrap
-          title={(getValue() || []).join(", ")}
-        >
-          {(getValue() || []).join(" · ") || "—"}
-        </Typography>
-      ),
+      cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={name} />) : '—' }</Stack>,
     },
     {
       accessorKey: "digest",
       header: "Digest",
-      size: 130,
-      cell: ({ getValue }) => (
-        <Typography
-          variant="s3"
-          title={getValue()}
-          sx={{ fontFamily: "monospace" }}
-        >
-          {shortDigest(getValue())}
-        </Typography>
-      ),
+      size: 150,
+      cell: ({ getValue }) => <Box onClick={(event) => event.stopPropagation()}><IdentityChip value={getValue()} inline /></Box>,
     },
     { accessorKey: "fileCount", header: "Files", size: 70 },
     {
@@ -198,14 +180,6 @@ export default function VersionsTab({ skill }) {
         description="Agents fetching a label receive the version it points to."
         actions={
           <Stack direction="row" spacing={1}>
-            <Button variant="outlined" size="small" disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => setProtectionOpen(true)}>Protection</Button>
-            <Button
-              size="small"
-              color="inherit"
-              onClick={() => setHistory("")}
-            >
-              Label history
-            </Button>
             <Button
               variant="outlined"
               size="small"
@@ -216,10 +190,11 @@ export default function VersionsTab({ skill }) {
             >
               Set label
             </Button>
+            <Button size="small" onClick={(event) => setLabelMenu({ anchor: event.currentTarget })}>Label settings</Button>
           </Stack>
         }
       >
-        <Typography variant="s3" color="text.secondary">Protected names: {skill.protectedLabelNames?.join(', ') || 'None'}. Protection remains even when a label is unassigned.</Typography>
+
         {labels.isLoading && (
           <ContentSkeleton variant="rows" rows={2} label="Loading labels" />
         )}
@@ -241,41 +216,25 @@ export default function VersionsTab({ skill }) {
               alignItems="center"
               sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}
             >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <LabelChip name={label.name} version={label.version} />
-                <Typography variant="s3" color="text.secondary">{label.isProtected ? "Protected" : "Not protected"}</Typography>
-              </Box>
-              <Button
-                size="small"
-                color="inherit"
-                disabled={label.canMove !== true}
-                aria-label={`Move ${label.name}`}
-                onClick={() => setMove({ label: label.name })}
-              >
-                Move
-              </Button>
-              <Button
-                size="small"
-                color="inherit"
-                aria-label={`History for ${label.name}`}
-                onClick={() => setHistory(label.name)}
-              >
-                History
-              </Button>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="s1">{label.name} → v{label.version}</Typography>
+                {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip title={`Only reviewers can move ${label.name}.`}><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
+              </Stack>
+              <IconButton size="small" aria-label={`Actions for ${label.name}`} onClick={(event) => setLabelMenu({ anchor: event.currentTarget, label })}><Iconify icon="solar:menu-dots-bold" /></IconButton>
             </Stack>
           ))}
       </Section>
       <Section
         title="Versions"
-        description="Select exactly two versions on this page to compare their files."
+        description="Select two versions on this page to compare their files."
       >
         <SelectionBar
           count={selected.length}
-          noun="versions"
-          onCancel={() => setSelection({})}
+          noun="version"
+          onCancel={() => setSelectedIds([])}
           actions={[
             {
-              label: "Compare",
+              label: selected.length === 2 ? `Compare ${selected.map((item) => item.number).sort((a, b) => a - b).map((number) => `v${number}`).join(" and ")}` : "Select two versions",
               disabled: selected.length !== 2,
               onClick: () => {
                 if (selected.length === 2) {
@@ -288,14 +247,11 @@ export default function VersionsTab({ skill }) {
             },
           ]}
         />
-        <Box sx={{ height: 440, minWidth: 0 }}>
+        <Box sx={{ height: rows.length * ROW_HEIGHT.default + TABLE_HEADER_HEIGHT.default, minWidth: 0 }}>
           <DataTable
             data={rows}
             columns={columns}
             rowCount={versions.data?.count || 0}
-            enableSelection
-            rowSelection={selection}
-            onRowSelectionChange={setSelection}
             onRowClick={(row) =>
               router.push(`${detailPath}?tab=files&version=${row.number}`)
             }
@@ -375,6 +331,11 @@ export default function VersionsTab({ skill }) {
           </ListItemIcon>
           Set label…
         </MenuItem>
+      </Menu>
+      <Menu anchorEl={labelMenu?.anchor} open={Boolean(labelMenu)} onClose={() => setLabelMenu(null)}>
+        {labelMenu?.label && <MenuItem disabled={labelMenu.label.canMove !== true} onClick={() => { setMove({ label: labelMenu.label.name }); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:tag-linear" width={16} /></ListItemIcon>Move</MenuItem>}
+        <MenuItem onClick={() => { setHistory(labelMenu?.label?.name || ''); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:history-linear" width={16} /></ListItemIcon>History</MenuItem>
+        <MenuItem disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => { setProtectionOpen(true); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:lock-linear" width={16} /></ListItemIcon>Protection</MenuItem>
       </Menu>
       <LabelProtectionDialog open={protectionOpen} onClose={() => setProtectionOpen(false)} skill={skill} />
       <MoveLabelDialog

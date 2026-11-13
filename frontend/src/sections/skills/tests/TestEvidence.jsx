@@ -19,7 +19,6 @@ import {
   useSkillV11Scope,
 } from "src/api/skills/testing";
 import ContentSkeleton from "src/components/content-skeleton";
-import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
@@ -65,8 +64,8 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
     );
   return (
     <Section
-      title="Test evidence"
-      description="Model tests are advisory. Exact content is an identity match, not an approval."
+      title={<Typography component="span" variant="m3">Test evidence</Typography>}
+      description={runs.length ? "Tests help you review this version; they do not approve it for you." : undefined}
     >
       <Stack spacing={1.5}>
         {error && <Alert severity="error">{error}</Alert>}
@@ -79,11 +78,10 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
             </Alert>
           )}
         {!runs.length ? (
-          <EmptyState
-            variant="no-results"
-            title="No test evidence for these files"
-            description="Model tests are advisory. Publishing remains subject to static checks and release permissions."
-          />
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+            <Typography variant="s1">No tests run for {candidate.kind === 'draft' ? 'this draft' : 'these files'}. Not tested is not a pass.</Typography>
+            <Button size="small" component={RouterLink} to={`${paths.dashboard.skills.edit(skillId)}?tab=tests`}>Run tests</Button>
+          </Stack>
         ) : (
           <>
             <TextField
@@ -226,9 +224,9 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
           </>
         )}
         <Stack direction="row" spacing={1}>
-          <Button size="small" component={RouterLink} to={link()}>
+          {runs.length > 0 && <Button size="small" component={RouterLink} to={link()}>
             Run tests
-          </Button>
+          </Button>}
           {selectedRunId && (
             <Button size="small" onClick={() => onSelectRun(null)}>
               Continue without attachment

@@ -12,6 +12,7 @@ export default function SkillsReviewsPage({ Controller = ReviewInboxController }
   const [params] = useSearchParams();
   const requested = params.get("state");
   const viewState = [
+    "off", "denied", "filtered-empty",
     "loading",
     "error",
     "empty",

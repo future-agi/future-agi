@@ -18,8 +18,9 @@ function ExportVersion({ resourceId, number }) {
   };
   return <Section title="Export with source mapping">
     <Stack spacing={1.5}>
-      <Typography variant="s3">Keep both files together. Export does not modify the source, remove local files or revoke credentials.</Typography>
-      <Button variant="outlined" disabled={request.isPending} onClick={prepare}>{request.isPending ? 'Preparing export…' : `Prepare v${number} migration export`}</Button>
+      <Typography variant="s1">Prepare v{number}’s files and a mapping file to download, so you can re-import later.</Typography>
+      <Typography variant="s3" color="text.secondary">Keep both downloads together. This does not change the source.</Typography>
+      <Button variant="contained" color="primary" sx={{ alignSelf: 'flex-end' }} disabled={request.isPending} onClick={prepare}>{request.isPending ? 'Preparing export…' : `Prepare v${number} migration export`}</Button>
       {error && <Alert severity="error">{error}</Alert>}
       {files && <>
         <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>v{number} · {files.versionId} · {files.digest} · {files.mappingCount} source mappings</Typography>

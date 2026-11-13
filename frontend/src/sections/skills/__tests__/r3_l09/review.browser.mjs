@@ -127,7 +127,7 @@ try {
       await page.getByText("Exact release", { exact: true }).waitFor();
       assert(
         await page
-          .getByRole("button", { name: "Approve exact packet" })
+          .getByRole("button", { name: "Approve release" })
           .isDisabled(),
       );
       if (width < 600)

@@ -26,7 +26,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({ data: undefined }), useRuntimeConfiguration: () => ({ data: undefined }),
   useCreateNativeTarget: idle, usePrepareReleasePacket: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle,
 }));
-vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
+vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
 vi.mock('./ContextCaptureController', () => ({ default: (props) => { state.capture(props); return <button type="button" onClick={props.onChangeContext}>Change context</button>; } }));
 const projectId = '10000000-0000-4000-8000-000000000001';
@@ -97,16 +97,19 @@ it('does not grant capture rights from a context list entry alone', () => {
 });
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
   render(<ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite />);
-  expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
-  expect(screen.getByText(/Application verification unavailable/)).toBeVisible();
+  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
+  expect(screen.getByText(/Application verification is off/)).toBeVisible();
   expect(screen.getByText('No regression cases yet')).toBeVisible();
 });
 it('offers application verification only when the deployment has a hosted runtime', () => {
   state.runtime = true;
   render(<ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite />);
-  expect(screen.queryByText(/Application verification unavailable/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText('Application target')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add application target' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Runtime details' }));
   expect(screen.getByText(/synthetic fixture/)).toBeVisible();
 });
 it('does not turn an inaccessible suite into empty successful coverage', () => {

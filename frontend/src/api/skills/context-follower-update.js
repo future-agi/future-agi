@@ -26,13 +26,13 @@ export function useFollowerUpdates(skillId) {
     try {
       const existing = mapContextDraft(skillV11Result(await axios.get(contextEndpoints.draft(target.contextId), config())));
       if (existing.baseVersion !== target.version) return { conflict: 'different_origin' };
-      return { draft: existing };
+      return { draft: existing, reusedDraft: true };
     } catch (error) {
       if (errorCode(error) !== 'draft_not_found') throw error;
     }
     const started = mapContextDraft(skillV11Result(await axios.post(contextEndpoints.start(target.contextId), contextDraftStartInput({ revision: 0, fromVersion: target.version }), { headers: { ...access.headers, ...idempotencyHeaders(operationKey(`start:${target.contextId}:${target.version}`)) } })));
     refresh(target.contextId);
-    return { draft: started };
+    return { draft: started, reusedDraft: false };
   };
 
   const prepareOne = async (target) => {
@@ -42,7 +42,7 @@ export function useFollowerUpdates(skillId) {
       const { draft } = resolved;
       const links = draft.contextSpec.links;
       const preview = mapDependencyPreview(skillV11Result(await axios.post(contextEndpoints.previewDependencies(target.contextId), contextDependencyPreviewInput({ revision: draft.revision, links, refreshSkillIds: [skillId] }), config())));
-      return { target, status: 'ready', links, plan: preview };
+      return { target, status: 'ready', links, plan: preview, reusedDraft: resolved.reusedDraft };
     } catch (error) { return failure(target, error); }
   };
 
@@ -59,7 +59,7 @@ export function useFollowerUpdates(skillId) {
         draft = requireAcknowledgedDraft(receipt, mapContextDraft(skillV11Result(await axios.get(contextEndpoints.draft(target.contextId), config()))));
       }
       refresh(target.contextId);
-      return { target, status: 'applied', revision: draft.revision, digest: draft.digest, lock: draft.resolvedLock };
+      return { target, status: 'applied', revision: draft.revision, digest: draft.digest, lock: draft.resolvedLock, reusedDraft: item.reusedDraft };
     } catch (error) { refresh(target.contextId); return failure(target, error); }
   };
 

@@ -96,13 +96,13 @@ describe("reviewed source capture", () => {
     expect(screen.queryByText("incorrect answer")).not.toBeInTheDocument();
     // Every supported segment starts selected; the reviewer deselects exceptions.
     expect(
-      screen.getByRole("checkbox", { name: "Request · request-1" }),
+      screen.getByRole("checkbox", { name: "Customer request" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
+      screen.getByRole("checkbox", { name: "Tool result" }),
     ).toBeChecked();
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
+      screen.getByRole("checkbox", { name: "Tool result" }),
     );
     click("Preview selected text");
     await waitFor(() => expect(preview).toHaveBeenCalledTimes(1));
@@ -292,28 +292,30 @@ describe("qualified exact install handoff", () => {
       }),
     ).toThrow();
   });
-  it("does not advertise commands for unreleased packages or unqualified clients", () => {
-    const { rerender } = render(
-      <ContextUsePanel
-        {...useProps}
-        qualification={{ ...qualification, released: false }}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Copy plan command" }),
-    ).not.toBeInTheDocument();
-    rerender(
-      <ContextUsePanel
-        {...useProps}
-        qualification={{
-          ...qualification,
-          profiles: [{ ...qualification.profiles[0], state: "preview" }],
-        }}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Copy plan command" }),
-    ).not.toBeInTheDocument();
+  it('offers an explicit preview SDK path without inventing package or host qualification', () => {
+    const { rerender } = render(<ContextUsePanel {...useProps} qualification={undefined} />);
+    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy plan command' })).toBeEnabled();
+    expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
+    expect(screen.getByLabelText('Context install plan command')).not.toHaveTextContent('pip install');
+    rerender(<ContextUsePanel {...useProps} qualification={{ ...qualification, profiles: [{ ...qualification.profiles[0], state: 'preview' }] }} />);
+    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
+    expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
+  });
+  it('keeps the reviewed apply step visible and copies its command separately', async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: write } });
+    render(<ContextUsePanel {...useProps} />);
+    expect(screen.getByRole('heading', { name: '4. Apply after you review the plan' })).toBeVisible();
+    click('Copy apply command');
+    await screen.findByText('Copied the apply command.');
+    expect(write).toHaveBeenCalledWith("python -m fi.context apply --plan 'context-plan.json' --quiescent");
+    expect(screen.queryByText('Copied the complete plan command.')).not.toBeInTheDocument();
+  });
+  it('fails closed when the public API origin is not configured', () => {
+    render(<ContextUsePanel {...useProps} origin={null} originError="not_https" />);
+    expect(screen.getByText(/no public HTTPS API address configured/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Copy plan command' })).not.toBeInTheDocument();
   });
   it("reports clipboard failure honestly and does not show copied until fulfillment", async () => {
     const write = vi
@@ -409,11 +411,14 @@ describe("independent consumer observations", () => {
     );
     expect(screen.getByText("Pinned as intended")).toBeVisible();
     expect(screen.getByText("Runtime loading not observed")).toBeVisible();
-    expect(screen.getAllByText("Not observed")).toHaveLength(3);
+    expect(screen.getByRole("alert")).toHaveTextContent("1 of 1 consumers still need delivery verification.");
+    expect(screen.getAllByText("Not observed")).toHaveLength(1);
     click("Pilot application");
     expect(screen.getByText("Delivery receipts")).toBeVisible();
+    // The drawer retains all five independent stages; the queue shows delivery only.
+    expect(screen.getAllByText("Not observed").filter((node) => node.closest('[role="dialog"]'))).toHaveLength(3);
     expect(
-      screen.getByText(/Version numbers do not establish freshness/),
+      screen.getByText(/Delivered means the release was sent to this runtime/),
     ).toBeVisible();
     click("Close delivery receipts");
   });

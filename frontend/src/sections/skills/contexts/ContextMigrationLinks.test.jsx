@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import ContextLinksPanel from "./ContextLinksPanel";
 import ContextImportDialog from "./ContextImportDialog";
 
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 const digest = `sha256:${"a".repeat(64)}`;
 const session = (links = []) => {
   const value = { revision: 1, dirty: false, editSequence: 0, contextSpec: { links }, resolvedLock: { links: [] } };
@@ -30,10 +31,11 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
   await waitFor(() => expect(apply).toHaveBeenCalledOnce());
 });
 
-it("never replaces already accepted links with proposals", () => {
+it("never replaces already accepted links with proposals", async () => {
   render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} />);
   expect(screen.queryByText(/from your migration are proposed/)).not.toBeInTheDocument();
-  expect(screen.getByText("kept")).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Lock details' }));
+  expect(await screen.findByText('kept…')).toBeVisible();
 });
 
 it("tells the author which migration skills will be proposed before creating the draft", () => {

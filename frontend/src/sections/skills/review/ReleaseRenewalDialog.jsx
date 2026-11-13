@@ -2,6 +2,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   FormControlLabel,
@@ -14,6 +15,9 @@ import {
   Typography,
 } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { evidenceTitle } from '../utils/review-display';
+import TechnicalDetails from "../components/TechnicalDetails";
+import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
@@ -30,8 +34,17 @@ import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 // the inspected fingerprint and records this reviewer's approval of exactly
 // that revision. Both writes are server-checked; if anything moved after the
 // inspection, the server refuses and the revision stays pending.
-const show = (value) =>
-  value === null || value === undefined ? "None" : JSON.stringify(value);
+const show = (value, side) =>
+  typeof value === 'string' && (/^(sha256:)?[a-f0-9]{64}$/i.test(value) || /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value)) ? (side === 'before' ? 'Earlier configuration' : 'Current configuration') : value === null || value === undefined ? 'None' : typeof value === 'object' ? 'See details' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+const setting = (path) => {
+  if (path.endsWith('expected_security_revision')) return 'Security policy revision';
+  if (path.endsWith('expected_release_revision')) return 'Release revision';
+  if (path === 'transition.expected_impact_fingerprint') return 'Affected applications';
+  if (path === 'target') return 'Application configuration';
+  if (path.startsWith('target')) return 'Application configuration';
+  if (path.startsWith('evidence')) return `Evidence ${path.split('.').slice(1).join(' ').replaceAll('_', ' ')}`;
+  return path.replace(/^transition\./, '').replaceAll('_', ' ');
+};
 
 const REASONS = {
   evidence_expired: "Detailed evidence expired",
@@ -48,7 +61,6 @@ export default function ReleaseRenewalDialog({
   const renew = useRenewReleaseRequest();
   const decide = useDecideReleaseRequest();
   const operation = useReviewedOperation();
-  const renewOnly = useReviewedOperation();
   const [inspected, setInspected] = useState(null);
   const value = preview.data;
   const current =
@@ -59,9 +71,9 @@ export default function ReleaseRenewalDialog({
   // result blocks only the revision it renewed, preventing a double submit.
   const renewedThis = (result) =>
     Boolean(result) && Boolean(value) && result.revision === value.revision + 1;
-  const done = renewedThis(operation.result) || renewedThis(renewOnly.result);
-  const busy = operation.busy || renewOnly.busy;
-  const uncertain = operation.uncertain || renewOnly.uncertain;
+  const done = renewedThis(operation.result);
+  const busy = operation.busy;
+  const uncertain = operation.uncertain;
   const close = () => {
     if (busy) return;
     setInspected(null);
@@ -136,12 +148,13 @@ export default function ReleaseRenewalDialog({
               Revision {value.revision} becomes revision {value.revision + 1}{" "}
               for the same candidate, transition and target.
             </Typography>
-            <Table size="small" aria-label="Changed preconditions">
+            <Table size="small" aria-label="Changed preconditions" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: '1fr 1fr' }, '& td': { minWidth: 0 }, '& td:first-of-type, & td:nth-of-type(2)': { gridColumn: '1 / -1' } }}>
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                  <TableCell>Changed item</TableCell>
-                  <TableCell>Reviewed</TableCell>
-                  <TableCell>Current</TableCell>
+                  <TableCell>Setting</TableCell>
+                  <TableCell>Field</TableCell>
+                  <TableCell>Before</TableCell>
+                  <TableCell>After</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -149,34 +162,35 @@ export default function ReleaseRenewalDialog({
                   <TableRow
                     key={row.item}
                     hover
-                    sx={{ height: ROW_HEIGHT.default }}
+                    sx={{ minHeight: ROW_HEIGHT.default }}
                   >
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      {row.item}
+                    <TableCell>{setting(row.item)}<Typography variant="s3" display="block" color="text.secondary">Changed</Typography>{JSON.stringify(row.before) === JSON.stringify(row.after) && <Typography variant="s3" display="block">Changed and restored</Typography>}</TableCell>
+                    <TableCell aria-label={row.item} sx={{ typography: "s3", fontFamily: "monospace" }}><Box tabIndex={0} role="region" aria-label={`Field: ${row.item}`} sx={{ maxWidth: 160, whiteSpace: "nowrap", overflowX: "auto" }}>{row.item}</Box></TableCell>
+                    <TableCell sx={{ overflowWrap: "break-word" }}>
+                      {show(row.before, 'before')}
                     </TableCell>
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      {show(row.before)}
-                    </TableCell>
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      {show(row.after)}
+                    <TableCell sx={{ overflowWrap: "break-word" }}>
+                      {show(row.after, 'after')}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            {value.removedEvidence.map((row) => (
-              <Alert severity="warning" key={`${row.source}:${row.sourceId}`}>
-                {REASONS[row.reason] || "Evidence unavailable"}: {row.sourceId}{" "}
-                is removed from the renewed packet. It is not replaced.
-              </Alert>
-            ))}
-            <Typography variant="s3">
-              The renewed packet keeps{" "}
-              {value.packet.evidence.length
-                ? value.packet.evidence.map((ref) => ref.sourceId).join(", ")
-                : "no evidence"}{" "}
-              for the same candidate and target.
-            </Typography>
+            <Stack spacing={1}>
+              <Typography variant="m3">Evidence</Typography>
+              {value.removedEvidence.map((row) => <Stack spacing={0.5} key={`${row.source}:${row.sourceId}`}>
+                <Stack direction="row" gap={1} alignItems="center"><Typography variant="s1">{evidenceTitle(row, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status="expired" label={row.reason === 'evidence_expired' ? 'Removed (expired)' : 'Removed (unavailable)'} /></Stack>
+                <Typography variant="s3" color="text.secondary">{REASONS[row.reason] || 'Evidence unavailable'}. It is not replaced.</Typography>
+                <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed packet.</Typography>
+              </Stack>)}
+              <Typography variant="s3">{value.packet.evidence.length ? `The renewed packet keeps ${value.packet.evidence.length} results for the same candidate and target.` : 'The renewed packet keeps no evidence.'}</Typography>
+              {value.packet.evidence.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} direction="row" gap={1} flexWrap="wrap"><Typography variant="s3">{evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status={ref.outcome || (ref.status !== 'completed' ? ref.status : 'not_tested')} label={ref.outcome ? undefined : ref.status === 'completed' ? 'Result not recorded' : undefined} /></Stack>)}
+            </Stack>
+            <TechnicalDetails title="Changed values">
+              {value.packet.evidence.length > 0 && <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>The renewed packet keeps {value.packet.evidence.map((ref) => ref.sourceId).join(', ')} for the same candidate and target.</Typography>}
+              <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
+            </TechnicalDetails>
+            <Typography variant="s3">Approving creates revision {value.revision + 1} of this request.</Typography>
             <FormControlLabel
               control={
                 <Checkbox
@@ -192,23 +206,11 @@ export default function ReleaseRenewalDialog({
           </>
         )}
         <OperationFeedback operation={operation} />
-        <OperationFeedback operation={renewOnly} />
-        <Stack direction="row">
-            <Button
-              variant="outlined"
-              size="small"
-              disabled={!acknowledged || busy || uncertain || done}
-              onClick={async () => {
-                const result = await renewOnly.run(
-                  (input) => renew.mutateAsync(input),
-                  renewInput,
-                );
-                if (result) close();
-              }}
-            >
-              Create renewed revision
-            </Button>
-          </Stack>
+        <Button variant="text" sx={{ alignSelf: 'flex-start' }} disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
+          const result = await operation.run(renew.mutateAsync, renewInput);
+          if (result) close();
+        }}>Create renewed revision</Button>
+        <Typography variant="s3" color="text.secondary">Creates a pending revision without approval, if you need more time to decide.</Typography>
       </Stack>
     </ModalWrapper>
   );

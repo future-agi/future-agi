@@ -1,11 +1,14 @@
+vi.mock('./useDraftChecks', () => ({ default: () => ({ current: true, pending: false, checks: { summary: { errors: 0, warnings: 0 }, items: [] } }) }));
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import SkillEditorSession from './SkillEditorSession';
 
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
+
 const legacy = vi.hoisted(() => ({ save: vi.fn(), discard: vi.fn() }));
 vi.mock('src/api/skills', () => ({ useSaveSkillDraft: () => ({ mutateAsync: legacy.save }), useDiscardSkillDraft: () => ({ mutateAsync: legacy.discard }), getSkillErrorCode: (error) => error.code }));
-vi.mock('src/api/skills/testing', () => ({ useSkillTestingOptions: () => ({ data: { assistEnabled: false } }) }));
+vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:workspace:user:context', enabled: true }), useSkillTestingOptions: () => ({ data: { assistEnabled: false } }) }));
 vi.mock('./SkillFileEditor', () => ({ default: ({ file, readOnly, onChange }) => <textarea aria-label="Context file source" value={file.content} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} /> }));
 vi.mock('./PublishDialog', () => ({ default: () => <p>Legacy publication must not mount</p> }));
 vi.mock('../tests/EditorTestsPanel', () => ({ default: () => null }));

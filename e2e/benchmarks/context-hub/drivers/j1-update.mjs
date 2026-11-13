@@ -76,7 +76,7 @@ export async function performUpdate(stage, tools, state) {
   const preview = async page => {
     await go(page, '/dashboard/skills', 'second-migration-library');
     await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
-    await click(page, 'tab', 'Retained migration');
+    await click(page, 'tab', 'Review sources');
     await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-revision-two' }, () => page.getByLabel('Retained source files', { exact: true }).setInputFiles(input.update.exchange));
     const response = page.waitForResponse(res => res.url().endsWith('/intake/langfuse/preview/') && res.request().method() === 'POST');
     await click(page, 'button', 'Preview retained migration');

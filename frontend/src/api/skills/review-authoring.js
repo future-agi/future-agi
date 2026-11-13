@@ -15,16 +15,20 @@ export function useReviewCandidates(kind, resourceId, page) {
     url: () => kind === 'agent_context' ? contextEndpoints.versions(resourceId) : endpoints.versions(resourceId),
     params: { page, page_size: 25 }, mapper: (value) => value });
 }
-export function useReviewSubjects(kind, page) {
-  return useSkillV11Query({ parts: ['review-subjects', kind, page],
+export function useReviewSubjects(kind, page, search = '') {
+  return useSkillV11Query({ parts: ['review-subjects', kind, page, search],
     url: () => kind === 'agent_context' ? contextEndpoints.list() : endpoints.list(),
-    params: { page, page_size: 25 }, mapper: (value) => value });
+    params: { page, page_size: 25, search }, mapper: (value) => value });
 }
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),
-    url: () => apiPath('/model-hub/skills/release-requests/options/'),
-    params: { resource_id: resourceId, kind, candidate_version_id: candidateId },
-    mapper: (value) => ({ ...value, evidence: value.evidence.map(mapEvidenceRef), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) }) });
+    load: async (config) => {
+      const [value, resource] = await Promise.all([
+        axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
+        axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
+      ]);
+      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map(mapEvidenceRef), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
+    } });
 }
 export async function prepareReleaseReview(input, config) {
   const body = { resource_id: input.resourceId, kind: input.kind, candidate_version_id: input.candidateId,
@@ -38,7 +42,7 @@ export async function prepareReleaseReview(input, config) {
   const current = skillV11Result(await axios.post(previewPath(), body, config));
   if (!inspected.complete || inspected.candidateDigest !== raw.packet.candidate_digest || current.fingerprint !== raw.fingerprint) throw new Error('Review changed while reading. Prepare a new packet explicitly.');
   return { raw, preview: { packet: mapReleasePacket(raw.packet), fingerprint: raw.fingerprint, current: true },
-    review: { ...inspection, complete: true, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } };
+    review: { ...inspection, complete: true, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } };
 }
 export function usePrepareReleaseReview() {
   return useSkillV11Mutation({ send: prepareReleaseReview });

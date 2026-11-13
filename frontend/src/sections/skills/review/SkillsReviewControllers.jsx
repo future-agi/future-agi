@@ -5,11 +5,16 @@ import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
 import { Alert, Button, Stack } from '@mui/material';
-import { reviewsReady, isStaleReview, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
+import { isStaleReview, reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
+import ObjectHeader from '../components/ObjectHeader';
+import StatusBadge from 'src/components/status-badge';
+import ReleaseReviewBody from './ReleaseReviewBody';
+import { reviewComposerUrl } from '../utils/review-links';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
 import ReleaseRenewalDialog from './ReleaseRenewalDialog';
+import { enrichReviewDisplay, useReviewMembers, useReviewSubject } from 'src/api/skills/review-metadata';
 
 // Intent: an assigned reviewer inspects immutable bytes, then makes an explicit
 // decision. Hierarchy: candidate/diff before action; no inferred evidence.
@@ -17,16 +22,28 @@ import ReleaseRenewalDialog from './ReleaseRenewalDialog';
 // theme status roles, m3/s1/s3 and 12px groups; no new visual system.
 export function RequestReviewController({ scopeKey, requestId, contextId, viewState, View = ReleaseRequestPanel }) {
   const access = useSkillV11Scope();
+  const navigate = useNavigate();
   const query = useReleaseRequest(requestId, contextId);
   const decide = useDecideReleaseRequest();
   const execute = useExecuteReleaseRequest();
   const [renewing, setRenewing] = useState(false);
+  const [executedReceipt, setExecutedReceipt] = useState(null);
   // J4: the reviewer's attestation for one exact revision/fingerprint survives
   // the pending -> approved refresh; a renewal approved in the dialog attests
   // the renewed revision it created. Nothing carries across revisions.
   const [reviewedIdentity, setReviewedIdentity] = useState(null);
   const state = viewState || (query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
   const canDecide = Boolean(query.data && query.data.request.authorId !== access.scope.userId);
+  const members = useReviewMembers();
+  const subject = useReviewSubject(query.data?.request?.subjectId || query.data?.receipt?.subjectId, query.data?.request?.subjectKind || query.data?.receipt?.subjectKind);
+  const display = enrichReviewDisplay(query.data?.request, query.data?.receipt || (executedReceipt?.requestId === requestId && executedReceipt?.scopeKey === scopeKey ? executedReceipt.value : null), members.data, subject.data);
+  const request = display.request;
+  const author = Boolean(request?.authorId && request.authorId === access.scope.userId);
+  const revise = () => navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`);
+  const transition = query.data?.preview?.packet.transition;
+  const resourceName = request?.name || query.data?.receipt?.name || 'Release review';
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} badge={query.data?.renewalRequired ? <StatusBadge status="stale" label="Paused" /> : undefined} title={transition ? `${resourceName}: ${transition.label} ${transition.expectedVersion == null ? 'unassigned' : `v${transition.expectedVersion}`} → v${transition.version}` : resourceName} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps
   // the dialog mounted while the page switches between stale and renewed.
@@ -35,26 +52,24 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   // explicit renewal remains. Expired evidence is removed, never substituted.
   if (state === 'ready' && query.data?.renewalRequired) return <>
     <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
-      <Alert severity="warning">Detailed evidence for revision {query.data.request.revision} is no longer available ({query.data.renewalRequired}). No approval of that revision can release it.</Alert>
-      <Stack direction="row"><Button variant="contained" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+      {header}
+      <Alert severity="warning">Release paused — {query.data.renewalRequired === 'evidence_expired' ? 'detailed evidence expired.' : 'the reviewed evidence is no longer available.'} Inspect the changes before approving a new revision.</Alert>
+      <Stack direction="row"><Button variant="contained" color="primary" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+      {query.data.preview && <ReleaseReviewBody packet={query.data.preview.packet} {...query.data.review} />}
     </Stack>
     {renewal}
   </>;
-  return <>
-    <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
-      permissions={{ canDecide, canExecute: query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
+  return <Stack spacing={1.5} sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}>
+    {header}
+    <View scopeKey={scopeKey} state={state} {...query.data} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
+      renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
       onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })}
       onExecute={async (input, options) => {
-        try { return await execute.mutateAsync({ ...input, ...options }); } catch (error) {
-          // A server refusal for changed preconditions opens the renewal
-          // inspection directly for the assigned reviewer; nothing is renewed
-          // or approved until they inspect and decide.
-          if (canDecide && isStaleReview(error)) setRenewing(true);
-          throw error;
-        }
+        try { const receipt = await execute.mutateAsync({ ...input, ...options }); setExecutedReceipt({ requestId, scopeKey, value: receipt }); return receipt; }
+        catch (error) { if (isStaleReview(error)) setRenewing(true); throw error; }
       }} />
     {renewal}
-  </>;
+  </Stack>;
 }
 RequestReviewController.propTypes = { scopeKey: PropTypes.string.isRequired, requestId: PropTypes.string.isRequired, contextId: PropTypes.string, viewState: PropTypes.string, View: PropTypes.elementType };
 
@@ -64,21 +79,21 @@ export function ReviewInboxController({ scopeKey, viewState, View }) {
   const [params] = useSearchParams();
   const authored = params.get('mine') === '1';
   const query = useReviewInbox({ page, status, authored });
+  const members = useReviewMembers();
+  const data = query.data && { ...query.data, results: query.data.results.map((row) => enrichReviewDisplay(row, null, members.data).request) };
   const seen = useMarkReviewSeen();
   const navigate = useNavigate();
   const requestId = params.get('request');
-  if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || params.get('candidate') || 'new'}`} scopeKey={scopeKey}
+  if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || params.get('candidate') || 'new'}`} scopeKey={scopeKey} state={viewState}
     renewal={params.get('renew') ? { id: params.get('renew'), revision: Number(params.get('revision')), subjectId: params.get('subject'), kind: params.get('kind') } : undefined}
-    prefill={!params.get('renew') && params.get('subject') && params.get('candidate') ? { subjectId: params.get('subject'), kind: params.get('kind') || 'skill', name: params.get('name') || '',
+    prefill={!params.get('renew') && params.get('subject') && params.get('candidate') ? { subjectId: params.get('subject'), kind: params.get('kind') || 'skill', name: params.get('name') || '', label: params.get('label') || 'production', target: params.get('target') || '', evidence: (params.get('evidence') || '').split(',').filter(Boolean),
       candidate: { id: params.get('candidate'), number: Number(params.get('number')), digest: params.get('digest') } } : undefined} />;
   if (requestId) return <RequestReviewController key={`${scopeKey}:${requestId}`} scopeKey={scopeKey} requestId={requestId} viewState={viewState} />;
   const state = viewState || (!reviewsReady() ? 'unavailable' : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
-  return <View scopeKey={scopeKey} state={state} data={query.data} status={status} authored={authored}
+  return <View scopeKey={scopeKey} state={state} data={data} status={status} authored={authored}
     onCompose={() => navigate(`${paths.dashboard.skills.reviews}?compose=1`)}
     onToggleAuthored={() => { setPage(1); navigate(`${paths.dashboard.skills.reviews}${authored ? '' : '?mine=1'}`); }} onStatusChange={(value) => { setStatus(value); setPage(1); }} onPageChange={setPage} onRetry={query.refetch} onSeen={seen.mutateAsync}
-    onOpen={(request) => navigate(authored && request.status !== 'released'
-      ? `${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`
-      : request.subjectKind === 'agent_context' ? `${paths.dashboard.skills.contextReview(request.subjectId)}?request=${request.id}` : `${paths.dashboard.skills.reviews}?request=${request.id}`)} />;
+    onOpen={(item) => navigate(`${paths.dashboard.skills.reviews}?request=${item.id}`)} />;
 }
 ReviewInboxController.propTypes = { scopeKey: PropTypes.string.isRequired, viewState: PropTypes.string, View: PropTypes.elementType.isRequired };
 
@@ -122,8 +137,7 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
         }
       }
       const receipt = await publish.mutateAsync({ ...fields, idempotencyKey, ...options });
-      navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', kind: 'agent_context', subject: contextId, name: detail.data?.context.name || '',
-        candidate: receipt.version.id, number: String(receipt.version.number), digest: receipt.version.digest })}`);
+      navigate(reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: detail.data?.context.name || '', candidateId: receipt.version.id, number: receipt.version.number, digest: receipt.version.digest }));
       return receipt;
     }} />;
 }

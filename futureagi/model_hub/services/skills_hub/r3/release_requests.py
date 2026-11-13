@@ -628,7 +628,21 @@ def get_release_receipt(*, principal: SkillPrincipal, request_id: UUID) -> dict:
     )
     if receipt is None:
         raise _error("resource_not_found", "Release execution receipt not found.", 404)
-    return dict(receipt.response)
+    result = dict(receipt.response)
+    # Enrich old durable receipts only after request-scoped authorization. Never
+    # revalidate historical evidence or change the retained release identity.
+    decision = HubSkillReleaseDecision.objects.select_related("actor", "packet").get(
+        pk=result["decision_id"], packet__request=request
+    )
+    executor = User.objects.filter(pk=result["executed_by"]).first()
+    result.setdefault("executed_at", receipt.created_at.isoformat())
+    result.setdefault("executed_by_name", (executor.name or executor.email) if executor else "Former member")
+    result.setdefault("approved_by_name", decision.actor.name or decision.actor.email)
+    result.setdefault("previous_version", decision.packet.packet["transition"]["expected_version"])
+    result.setdefault("name", request.skill.name)
+    result.setdefault("subject_id", str(request.skill_id))
+    result.setdefault("subject_kind", request.skill.kind)
+    return result
 
 
 def get_release_request(
@@ -853,6 +867,7 @@ def execute_release_request(
     # the actual executor and event, including no-op releases with no fabricated event.
     request.status = "released"
     request.save(update_fields=["status", "updated_at"])
+    executor = User.objects.get(pk=principal.user_id)
     return _receipt(
         lookup,
         digest,
@@ -862,6 +877,13 @@ def execute_release_request(
             "revision": revision,
             "decision_id": str(approval.pk),
             "executed_by": str(principal.user_id),
+            "executed_by_name": executor.name or executor.email,
+            "approved_by_name": approval.actor.name or approval.actor.email,
+            "executed_at": timezone.now().isoformat(),
+            "previous_version": transition["expected_version"],
+            "name": skill.name,
+            "subject_id": str(skill.pk),
+            "subject_kind": skill.kind,
             "actor_api_key_id": (
                 str(principal.api_key_id) if principal.api_key_id else None
             ),

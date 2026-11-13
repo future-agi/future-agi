@@ -129,7 +129,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     const draft = await read<Draft>(`${SKILLS}${id}/draft/`);
     const responsePromise = page.waitForResponse(response => response.url().endsWith(`${SKILLS}${id}/draft/publish/`) &&
       response.request().method() === 'POST', { timeout: UI_READY });
-    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await dialog.getByRole('button', { name: production ? 'Publish and move production' : 'Publish', exact: true }).click();
     const response = await responsePromise;
     expect(response.status()).toBe(201);
     expect(response.request().postDataJSON().revision).toBe(draft.revision);
@@ -146,9 +146,11 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(initial.results).toEqual([]);
       expect(initial.stats.total).toBe(0);
       await page.goto(LIBRARY, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByRole('button', { name: 'Start from a template', exact: true })).toBeVisible({ timeout: UI_READY });
-      await page.getByRole('button', { name: /^Support policy/ }).click();
+      await expect(page.getByRole('button', { name: 'Create your first skill', exact: true })).toBeVisible({ timeout: UI_READY });
+      await page.getByRole('button', { name: 'Create your first skill', exact: true }).click();
       const dialog = page.getByRole('dialog');
+      await dialog.getByRole('combobox', { name: 'Start from', exact: true }).click();
+      await page.getByRole('option', { name: 'Support policy', exact: true }).click();
       await dialog.getByRole('textbox', { name: /^Name/ }).fill(name);
       await dialog.getByRole('textbox', { name: /^Description/ }).fill('Use when a customer asks about refunds, returns, or support-policy exceptions.');
       await expect(dialog.getByRole('combobox', { name: 'Start from' })).toHaveText('Support policy', { timeout: UI_READY });
@@ -211,9 +213,9 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     await test.step('Rename a supporting file through the editor', async () => {
       await page.getByRole('link', { name: 'Edit latest v1', exact: true }).click();
       await page.getByRole('treeitem', { name: 'examples.md', exact: true }).click();
-      await page.getByRole('button', { name: 'Rename', exact: true }).click();
+      await page.getByRole('button', { name: 'Rename file', exact: true }).click();
       const dialog = page.getByRole('dialog');
-      await dialog.getByRole('textbox', { name: 'File path', exact: true }).fill('references/exceptions.md');
+      await dialog.getByRole('combobox', { name: 'File path', exact: true }).fill('references/exceptions.md');
       await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
       await expect(dialog).not.toBeVisible({ timeout: UI_READY });
       await page.getByRole('treeitem', { name: 'SKILL.md', exact: true }).click();
@@ -277,7 +279,8 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     }, { timeout: UI_READY });
 
     await test.step('Explicit CAS promotion and exact history reject stale movement', async () => {
-      await page.getByRole('button', { name: 'Move production', exact: true }).click();
+      await page.getByRole('button', { name: 'Actions for production', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Move', exact: true }).click();
       const dialog = page.getByRole('dialog');
       await dialog.getByRole('combobox', { name: /^Version(?:\s|$)/ }).click();
       await page.getByRole('option', { name: 'v3', exact: true }).click();
@@ -298,7 +301,8 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(stale.body.code).toBe('release_conflict');
       expect(stale.body.detail).toEqual({ current_version: 3, release_revision: release.release_revision });
       expect((await read<Label[]>(`${SKILLS}${id}/labels/`)).map(label => [label.name, label.version])).toEqual([['production', 3]]);
-      await page.getByRole('button', { name: 'History for production', exact: true }).click();
+      await page.getByRole('button', { name: 'Actions for production', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'History', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Close label history' })).toBeVisible({ timeout: UI_READY });
       const history = await read<{ results: { from_version: number | null; to_version: number }[] }>(`${SKILLS}${id}/labels/history/`, { label: 'production' });
       expect(history.results.map(event => [event.from_version, event.to_version])).toEqual([[1, 3], [null, 1]]);

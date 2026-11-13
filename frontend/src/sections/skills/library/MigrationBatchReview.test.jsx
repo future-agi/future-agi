@@ -44,6 +44,12 @@ it('requires the blocked-member acknowledgment and rights before one decision im
   expect(create).toHaveBeenCalledWith([{ skillId: 'resource-one', version: 1 }, { skillId: 'resource-two', version: 1 }]);
 });
 
+it('shows a reason instead of a zero-item import action when every item is held', () => {
+  render(<MigrationBatchReview plans={[plan([item('mine', { hasDraft: true })])]} onAccept={vi.fn()} />);
+  expect(screen.getByText('Resolve the held items, then preview again')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Import and publish 0 items' })).not.toBeInTheDocument();
+});
+
 it('settles a lost response by replaying the exact body and operation key once', async () => {
   const accept = vi.fn().mockRejectedValueOnce(new Error('connection lost')).mockImplementation(async (input) => receipt(input.itemKey));
   render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={async (input) => ({ version: 1, resourceId: input.resourceId })} />);
@@ -77,14 +83,14 @@ it('blocks the set until each diverged item has an explicit keep or replace deci
   const preserve = vi.fn();
   const diverged = item('both', { diverged: true, destinationId: 'd', expectedHeadVersion: 2, basisPayloadAvailable: true, sourceChanges: [], hubChanges: [] });
   render(<MigrationBatchReview plans={[plan([diverged, item('other', { destinationId: 'o', expectedHeadVersion: 1 }), item('mine', { hasDraft: true, destinationId: 'm' })])]} onAccept={accept} onKeep={keep} onPublish={async (input) => ({ version: 2, resourceId: input.resourceId })} onPreserveDraft={preserve} />);
-  expect(screen.getByText('1 held item is not part of this decision. Resolve it, then preview again.')).toBeVisible();
+  expect(screen.getByText('Your personal draft blocks replacement. Preserve it, then preview again.')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Preserve draft for mine' }));
   expect(preserve).toHaveBeenCalledWith(expect.objectContaining({ key: 'mine' }));
   fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
   const submit = screen.getByRole('button', { name: 'Import and publish 2 items' });
   expect(submit).toBeDisabled();
   // The exception's differences are open for review and its decision is one click.
-  expect(screen.getByText('Base, Source and Hub differences').closest('details')).toHaveAttribute('open');
+  expect(screen.getByRole('button', { name: 'Review file differences' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('radio', { name: 'Keep Hub content' })).not.toBeChecked();
   expect(screen.getByRole('radio', { name: 'Replace with reviewed source' })).not.toBeChecked();
   expect(screen.getByRole('radiogroup', { name: 'Decision for both' })).toBeVisible();
@@ -128,7 +134,7 @@ it('holds items whose publication warnings are unacknowledged and publishes them
 it('lets the owner inspect every defaulted item\'s exact source files inside the reviewed set', () => {
   const files = [{ path: 'SKILL.md', status: 'removed', fromText: 'Exact source café', toText: '' }];
   render(<MigrationBatchReview plans={[plan([item('one', { sourceHubChanges: files })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
-  fireEvent.click(screen.getByText('Inspect source files'));
+  fireEvent.click(screen.getByRole('button', { name: 'Details', exact: true }));
   expect(screen.getByText('SKILL.md · added')).toBeVisible();
 });
 
@@ -159,4 +165,44 @@ it('assembles the packet\'s proposed context from exactly the published versions
   expect(context.publish.mock.calls[0][0]).toMatchObject({ prepared, acknowledgeWarnings: false });
   // The same operation keys are kept for an exact retry.
   expect(context.publish.mock.calls[0][0].keys).toBe(context.prepare.mock.calls[0][0].keys);
+});
+
+it('keeps import consequence copy synchronized with the actual publication choice', () => {
+  const onConsequenceChange = vi.fn();
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={vi.fn()} onPublish={vi.fn()} onConsequenceChange={onConsequenceChange} />);
+  expect(onConsequenceChange).toHaveBeenLastCalledWith("Imports 2 items as new published versions. Production labels don't change.");
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Publish each imported draft as a new version without labels' }));
+  expect(onConsequenceChange).toHaveBeenLastCalledWith('Imports 2 items as unpublished drafts.');
+  expect(screen.queryByText('Imports 2 items as unpublished drafts.')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Confirm your rights to continue');
+});
+
+it('filters held items without removing required decisions or changing the submitted set', () => {
+  render(<MigrationBatchReview plans={[plan([item('one'), item('both', { diverged: true, destinationId: 'd' }), item('mine', { hasDraft: true })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Item status' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Held (1)', exact: true }));
+  expect(screen.getByRole('table')).toHaveTextContent('mine');
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  expect(screen.getByRole('button', { name: 'Import and publish 2 items' })).toBeDisabled();
+});
+
+it('requires fresh rights and exception acknowledgments when the reviewed source set changes', () => {
+  const first = plan([item('one')]);
+  const accept = vi.fn(); const publish = vi.fn();
+  const { rerender } = render(<MigrationBatchReview plans={[first]} onAccept={accept} onPublish={publish} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  expect(screen.getByRole('button', { name: 'Import and publish 1 item' })).toBeEnabled();
+  rerender(<MigrationBatchReview plans={[first, plan([item('two')], 'second')]} onAccept={accept} onPublish={publish} />);
+  expect(screen.getByRole('checkbox', { name: /^I confirm my rights/ })).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Import and publish 2 items' })).toBeDisabled();
+});
+
+it('shows a single next step rather than zero-item acknowledgments when everything is held', () => {
+  render(<MigrationBatchReview plans={[plan([item('mine', { hasDraft: true })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
+  expect(screen.getByText('1 item needs your decision before anything can be imported.')).toBeVisible();
+  expect(screen.queryByRole('checkbox', { name: /^I confirm my rights/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Import and publish 0 items' })).not.toBeInTheDocument();
+  expect(screen.getByText('Resolve the held items, then preview again')).toBeVisible();
+  expect(screen.queryByRole('columnheader', { name: 'Result' })).not.toBeInTheDocument();
 });

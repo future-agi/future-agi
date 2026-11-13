@@ -39,3 +39,29 @@ describe("live draft checks", () => {
     expect(result.current.pending).toBe(false);
   });
 });
+
+it("keeps previous findings without authorizing publication while new bytes are pending", async () => {
+  api.checks.mockResolvedValueOnce(resultData);
+  const { result, rerender } = renderHook(({ value }) => useDraftChecks(value, "sample"), { initialProps: { value: files } });
+  await advance(600);
+  expect(result.current.current).toBe(true);
+  api.checks.mockReturnValue(new Promise(() => {}));
+  rerender({ value: changed });
+  expect(result.current.previous).toEqual(resultData);
+  expect(result.current.checks).toBeNull();
+  expect(result.current.current).toBe(false);
+  expect(result.current.pending).toBe(true);
+});
+
+it("invalidates a same-file check when the skill name changes or a retry starts", async () => {
+  api.checks.mockResolvedValue(resultData);
+  const { result, rerender } = renderHook(({ name }) => useDraftChecks(files, name), { initialProps: { name: 'one' } });
+  await advance(600);
+  act(() => result.current.retry());
+  expect(result.current.current).toBe(false);
+  expect(result.current.previous).toEqual(resultData);
+  await advance(600);
+  rerender({ name: 'another' });
+  expect(result.current.checks).toBeNull();
+  expect(result.current.previous).toBeNull();
+});

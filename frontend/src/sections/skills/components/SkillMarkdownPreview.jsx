@@ -23,11 +23,11 @@ function splitFrontmatter(content) {
 
 function SkillLink({ href, children, currentPath, onOpenPath }) {
   if (/^(https?:|mailto:)/i.test(href || '')) {
-    return <Link href={href} target="_blank" rel="noopener noreferrer" sx={{ overflowWrap: 'anywhere' }}>{children}</Link>;
+    return <Link href={href} target="_blank" rel="noopener noreferrer" sx={{ color: 'text.link', overflowWrap: 'anywhere', '&:hover, &:focus-visible': { textDecoration: 'underline' } }}>{children}</Link>;
   }
   const path = resolveRelativePath(currentPath, href);
   if (!path) return <span>{children}</span>;
-  return <Link component="button" type="button" onClick={() => onOpenPath?.(path)} sx={{ typography: 'inherit', verticalAlign: 'baseline', textAlign: 'left', overflowWrap: 'anywhere' }}>{children}</Link>;
+  return <Link component="button" type="button" onClick={() => onOpenPath?.(path)} sx={{ color: 'text.link', '&:hover, &:focus-visible': { textDecoration: 'underline' }, typography: 'inherit', verticalAlign: 'baseline', textAlign: 'left', overflowWrap: 'anywhere' }}>{children}</Link>;
 }
 SkillLink.propTypes = { href: PropTypes.string, children: PropTypes.node, currentPath: PropTypes.string, onOpenPath: PropTypes.func };
 

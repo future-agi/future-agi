@@ -176,7 +176,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const page = await newPage();
           await go(page, '/dashboard/skills', 'migration-library');
           await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
-          await click(page, 'tab', 'Retained migration');
+          await click(page, 'tab', 'Review sources');
           const previews = [];
           const onPreview = response => {
             const url = response.url();
@@ -328,7 +328,7 @@ export async function createDriver({ jobId, runId, registration }) {
           lastPage = page;
           await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
           const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
-          await click(page, 'button', 'Issue pilot credential');
+          await click(page, 'button', 'Create credential');
           const issuedResponse = await issued;
           assert.equal(issuedResponse.status(), 201);
           credentialId = (await issuedResponse.json()).result.id;

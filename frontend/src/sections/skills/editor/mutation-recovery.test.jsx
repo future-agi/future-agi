@@ -5,6 +5,8 @@ import useDraftSession from './useDraftSession';
 import HotfixHeadReview from './HotfixHeadReview';
 import ContextLinksPanel from '../contexts/ContextLinksPanel';
 
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
+
 const api = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock('src/api/skills', () => ({ useSaveSkillDraft: () => ({ mutateAsync: api.save }), getSkillErrorCode: (error) => error.code }));
 const initial = { revision: 4, baseVersion: 2, files: [{ path: 'AGENTS.md', content: 'Rules' }], description: 'Purpose', note: '', contextSpec: { links: [] }, resolvedLock: { links: [] } };

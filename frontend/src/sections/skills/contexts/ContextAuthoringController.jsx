@@ -9,6 +9,7 @@ import { paths } from 'src/routes/paths';
 import { useContextSkillInventory } from 'src/api/skills/context-skill-inventory';
 import { useContextDraftInventory, useContextDraftFile, usePreviewContextRelease, useAcknowledgeContextHead, contextReviewReady } from 'src/api/skills/context-production';
 import ContentSkeleton from 'src/components/content-skeleton';
+import CapabilityNotice from '../components/CapabilityNotice';
 import ErrorState from 'src/components/error-state';
 import ContextLibraryView from './ContextLibraryView';
 import ContextDraftSwitch from './ContextDraftSwitch';
@@ -121,7 +122,7 @@ export default function ContextAuthoringController({ mode }) {
   const access = useSkillV11Scope();
   const { contextId } = useParams();
   const [params] = useSearchParams();
-  if (!access.enabled || !contextAuthoringReady()) return <ErrorState title="Agent contexts unavailable" detail="The human authoring contract is not enabled in this deployment. Existing Skills are unchanged; no consume credential or leaf API is substituted." />;
+  if (!access.enabled || !contextAuthoringReady()) return <CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="Existing skills stay available. Ask a workspace admin about access." />;
   const scopeKey = `${access.identity}:agent_context:${contextId || 'library'}`;
   return <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0, minHeight: 0, flex: 1 }}>
     {mode === 'library' ? <Library key={scopeKey} scopeKey={scopeKey} state={params.get('state')} /> : <Editor key={scopeKey} scopeKey={scopeKey} contextId={contextId} />}

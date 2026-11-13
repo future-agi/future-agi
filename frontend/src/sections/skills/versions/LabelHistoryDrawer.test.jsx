@@ -43,6 +43,16 @@ describe("LabelHistoryDrawer", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("distinguishes a filtered empty result and restores all label changes", async () => {
+    axios.get.mockImplementation((_url, { params }) => Promise.resolve(response(params.label === 'staging' ? [] : events)));
+    show({ label: 'staging' });
+    expect(await screen.findByText('No changes to staging.')).toBeInTheDocument();
+    expect(screen.queryByText('No label changes yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all labels' }));
+    expect(await screen.findByText('production: v1 → v2')).toBeInTheDocument();
+    expect(axios.get.mock.lastCall[1].params.label).toBeUndefined();
+  });
+
   it("does not fetch history while closed", () => {
     show({ open: false });
     expect(axios.get).not.toHaveBeenCalled();
@@ -74,7 +84,7 @@ describe("LabelHistoryDrawer", () => {
     expect(screen.getByRole("button", { name: "Older changes" })).toBeDisabled();
     await waitFor(() => expect(rejectOlder).toBeTypeOf("function"));
     rejectOlder(new Error("Offline"));
-    await screen.findByText("Could not load label history");
+    await screen.findByText("Couldn't load label history.");
     axios.get.mockImplementation((_url, { params }) => Promise.resolve(response(events, params.page, 26)));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText("Retired");
@@ -91,7 +101,7 @@ describe("LabelHistoryDrawer", () => {
 
   it.each(["loading", "error", "empty"])("shows the %s preview", (state) => {
     show({}, `/?state=${state}`);
-    const text = { loading: "Loading label history", error: "Could not load label history", empty: "No label changes yet" };
+    const text = { loading: "Loading label history", error: "Couldn't load label history.", empty: "No label changes yet" };
     expect(state === "loading" ? screen.getByRole("progressbar", { name: text[state] }) : screen.getByText(text[state])).toBeInTheDocument();
   });
 });

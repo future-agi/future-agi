@@ -295,7 +295,8 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
     await admin.setViewportSize({ width: 1440, height: 900 });
     const moveInUi = async (target: number, attach: boolean) => {
       await admin.goto(`${UI}/${id}?tab=versions`);
-      await admin.getByRole('button', { name: 'Move production', exact: true }).click();
+      await admin.getByRole('button', { name: 'Actions for production', exact: true }).click();
+      await admin.getByRole('menuitem', { name: 'Move', exact: true }).click();
       await select(admin, /^Version(?:\s|$)/, `v${target}`);
       const dialog = admin.getByRole('dialog');
       if (attach) await dialog.getByRole('button', { name: 'Attach this evidence', exact: true }).click();
@@ -311,7 +312,8 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
     expect(attached.map(row => [row.version_id, row.run_id, row.attached_by_id, row.label_event_id === null]))
       .toEqual([[published!.id, tested.id, member.userId, true], [published!.id, tested.id, owner.userId, false]]);
     await test.step('Inspect label history before the ABA probe', async () => {
-      await admin.getByRole('button', { name: 'History for production', exact: true }).click();
+      await admin.getByRole('button', { name: 'Actions for production', exact: true }).click();
+      await admin.getByRole('menuitem', { name: 'History', exact: true }).click();
       await expect(admin.getByText('production: v1 → v2', { exact: true })).toBeVisible({ timeout: UI_READY });
       await admin.getByRole('button', { name: 'Close label history', exact: true }).click();
     }, { timeout: UI_READY });
@@ -344,7 +346,8 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       for (const themeMode of ['light', 'dark'] as const) {
         await admin.evaluate(mode => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: mode })); }, themeMode);
         await admin.reload();
-        await admin.getByRole('button', { name: 'History for production', exact: true }).click();
+        await admin.getByRole('button', { name: 'Actions for production', exact: true }).click();
+        await admin.getByRole('menuitem', { name: 'History', exact: true }).click();
         await expect(admin.getByText('production: v2 → v1', { exact: true })).toHaveCount(2, { timeout: UI_READY });
         await testInfo.attach(`reviewed-release-${themeMode}`, { body: await admin.screenshot(), contentType: 'image/png' });
         await admin.getByRole('button', { name: 'Close label history', exact: true }).click();

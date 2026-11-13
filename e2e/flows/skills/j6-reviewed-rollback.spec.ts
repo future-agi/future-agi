@@ -133,12 +133,12 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     await page.screenshot({ path: testInfo.outputPath('j6-lower-release-review.png') });
     await acknowledged.check();
     const decision = page.waitForResponse(res => res.url().endsWith(`/release-requests/${fresh.id}/decisions/`) && res.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await decision).ok()).toBe(true);
     // The acknowledgement is keyed to the exact packet revision and fingerprint, so it carries
     // across pending -> approved for the unchanged revision; any renewal clears it (J4).
     await expect(acknowledged).toBeChecked();
-    await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${fresh.id}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     expect((await executed).ok()).toBe(true);
@@ -152,7 +152,7 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     const consumers = await api(reviewer, 'GET', `${root}consumers/`);
     expect(consumers.results.find((row: any) => row.binding.id === binding.id).states).toEqual(['unknown']);
     await page.reload();
-    await expect(page.getByText('Durable release receipt', { exact: true })).toBeVisible();
+    await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('j6-lower-release-receipt.png') });
     await testInfo.attach('j6-rollback-observations', { body: JSON.stringify({ evidence_class: 'synthetic fixture', native_qualified: false, complete_job_qualified: false, versions, retained, closure, quarantine: { status: refused.response.status(), body: refused.body }, aba: { status: stale.response.status(), body: stale.body, events_before: before }, receipt, event, consumers }), contentType: 'application/json' });
   } finally {

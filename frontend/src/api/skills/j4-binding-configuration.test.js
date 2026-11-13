@@ -14,7 +14,10 @@ it('keeps a pinned native manifest and server digest on reads, but never asserts
 });
 
 it('distinguishes legacy omission from explicit configuration removal', () => {
-  const legacy = mapContextBinding(wire.BindingOut);
+  const legacyWire = { ...wire.BindingOut };
+  delete legacyWire.configuration;
+  delete legacyWire.configuration_digest;
+  const legacy = mapContextBinding(legacyWire);
   expect(contextBindingInput(legacy)).not.toHaveProperty('configuration');
   const cleared = mapContextBinding({ ...wire.BindingOut, configuration: null, configuration_digest: '' });
   expect(contextBindingInput(cleared)).toHaveProperty('configuration', null);

@@ -99,6 +99,12 @@ class RequestReceipt(Revision):
 
 
 class RequestDetail(RequestReceipt, Packet):
+    name = s.CharField()
+    author_name = s.CharField()
+    decided_by_name = s.CharField(allow_null=True)
+    decision = s.CharField(allow_null=True)
+    recipients = s.ListField(child=s.DictField())
+    updated_at = s.DateTimeField()
     author_id = s.UUIDField()
     subject_id = s.UUIDField()
 
@@ -145,6 +151,13 @@ class PostMove(ctx.ContextSerializer):
 
 
 class ExecutionReceipt(Revision):
+    name = s.CharField(required=False)
+    subject_id = s.UUIDField(required=False)
+    subject_kind = s.CharField(required=False)
+    executed_by_name = s.CharField(required=False)
+    approved_by_name = s.CharField(required=False)
+    executed_at = s.DateTimeField(required=False)
+    previous_version = Integer(allow_null=True, required=False)
     request_id = s.UUIDField()
     decision_id = s.UUIDField()
     executed_by = s.UUIDField()
@@ -211,6 +224,7 @@ class ReviewOptions(ctx.ContextSerializer):
 
 
 class AuthoredItem(RequestReceipt):
+    updated_at = s.DateTimeField()
     subject_id = s.UUIDField()
     subject_kind = s.ChoiceField(choices=["skill", "agent_context"])
     name = s.CharField()
