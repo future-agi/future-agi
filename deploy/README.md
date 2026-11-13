@@ -511,18 +511,30 @@ $COMPOSE pull
 # initialization" above that its release notes call for (every release with
 # database migrations needs step 1); `run --rm` starts nothing else
 # Before enabling the new trace/span tag editor, compare PG legacy tags against
-# curated CH tags, review the count, then apply the one-time reconciliation.
-# Run both commands after migrations and native CH setup, while stores are up.
-# Like step 1 it writes data, so it needs the operator authorization pair, or
-# Django's startup guard refuses it.
+# curated CH tags, review the count, then apply. Run after migrations and native
+# CH setup while stores are up. Old backend PATCH requests can still change PG
+# tags after this scan; repeat the apply immediately after up -d, before exposing
+# the new editor. Both applies need the operator authorization pair or Django's
+# startup guard refuses them.
 $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
 $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags
-# Release the new editor only after reconciliation completes; do not expose it
-# with the frontend pin before these commands have finished.
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
+# Catch legacy PATCH writes made while the old backend was still serving,
+# including edits after the first scan. Do not announce the new editor until
+# this second apply succeeds; keep the editor unavailable during both passes.
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+# Release the new editor only now.
 ```
+
+The new trace/span tag PATCH stores manual assignments, **not**
+`tracer_trace.tags`. Langfuse ingestion (`tracer/utils/langfuse_upsert.py`)
+still writes that PG column from incoming trace tags, then best-effort mirrors
+its trace into ClickHouse; OTLP ingestion also mirrors PG traces on root writes.
+The second pass covers any legacy edits through cutover; it does not replace
+ongoing ingestion mirroring or protect later collector writes.
 
 **Known limits:** the collector's root-span writes carry `tags DEFAULT '[]'` and
 can reset `traces.tags` to `[]` on co-owned traces after reconciliation. Recheck

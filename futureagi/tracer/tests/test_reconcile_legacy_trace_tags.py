@@ -21,10 +21,19 @@ from tracer.tests.test_entity_tag_targets_ch25 import OTHER_PROJECT
 
 def test_upgrade_docs_run_reconcile_before_releasing_editor():
     guide = (Path(__file__).resolve().parents[3] / "deploy/README.md").read_text()
-    upgrade = guide.split("### Upgrading a production install", 1)[1]
-    assert upgrade.index("reconcile_legacy_trace_tags --dry-run") < upgrade.index(
-        "reconcile_legacy_trace_tags\n"
+    upgrade = guide.split("### Upgrading a production install", 1)[1].split("### ", 1)[
+        0
+    ]
+    steps = (
+        "reconcile_legacy_trace_tags --dry-run",
+        "reconcile_legacy_trace_tags\n",
+        "$COMPOSE up -d",
+        "reconcile_legacy_trace_tags\n",
+        "Release the new editor",
     )
+    position = 0
+    for step in steps:
+        position = upgrade.index(step, position) + len(step)
     assert "collector's root-span writes" in upgrade
     assert "tags DEFAULT '[]'" in upgrade
 

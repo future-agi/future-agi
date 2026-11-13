@@ -75,8 +75,55 @@ helm history futureagi --kube-context CONTEXT -n futureagi
 kubectl --context CONTEXT -n futureagi get deployments,statefulsets,jobs,pvc
 ```
 
-Complete the release/backup review above. Use the verified local chart, the
-intended context/namespace and the complete current values file:
+Complete the release/backup review above. For upgrades introducing the
+trace/span tag editor, reconcile legacy PG tags before **and** after the
+rollout. This is a documented one-off Job, not a new chart hook: the chart's
+pre-upgrade bootstrap Job only runs `bootstrap_install`, and it completes
+*before* the old backend stops accepting PG-only tag PATCH requests. A hook
+would miss edits made after its scan. Use the **verified new backend image**,
+current values, namespace and bootstrap Job's existing datastore credentials,
+mounts and operator environment (`SERVICE_TYPE=bootstrap` and
+`STARTUP_DB_MUTATION_MODE=operator`); an ordinary backend pod's
+`NO_STARTUP_DB_MUTATIONS=true` does not authorize this command.
+
+Render only the bootstrap Job from the verified chart. The following one-off
+Job reuses its backend image, service account, env and volume configuration,
+changes only its name and command, and removes hook annotations. Python 3 with
+PyYAML is already a prerequisite for preparing the signed release. Check any
+release-specific schema prerequisites before running it against the old schema.
+Leave the old backend serving until the first apply finishes; keep the new tag
+editor unavailable until the second apply finishes. Do not publish the rendered
+Job if its env or values contain credentials.
+
+```sh
+set -e
+NEW=X.Y.Z
+reconcile_tags() {
+  helm template futureagi "$HOME/futureagi-release-$NEW/futureagi-$NEW.tgz" \
+    -n futureagi -f my-values.yaml --show-only templates/bootstrap/job.yaml |
+    python3 -c '
+import sys, yaml
+job = yaml.safe_load(sys.stdin)
+job["metadata"]["name"] = "futureagi-reconcile-legacy-tags"
+job["metadata"].pop("annotations", None)
+container = job["spec"]["template"]["spec"]["containers"][0]
+container["command"] = ["python", "manage.py", "reconcile_legacy_trace_tags"]
+container["args"] = sys.argv[1:]
+yaml.safe_dump(job, sys.stdout)
+' "$@" | kubectl --context CONTEXT -n futureagi apply -f -
+  kubectl --context CONTEXT -n futureagi wait \
+    --for=condition=complete job/futureagi-reconcile-legacy-tags --timeout=20m
+  kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags
+  kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true
+}
+reconcile_tags --dry-run  # review the number of differing traces before applying
+reconcile_tags            # first apply while the old backend is still serving
+```
+
+If the Job fails, inspect its logs and stop; do not advance or delete failed
+Job evidence until you have diagnosed it. The reconciler is idempotent, so a
+retry after repair is safe. Use the verified local chart, the intended
+context/namespace and the complete current values file:
 
 ```sh
 helm upgrade futureagi "$HOME/futureagi-release-X.Y.Z/futureagi-X.Y.Z.tgz" \
@@ -92,6 +139,57 @@ leave changed data even when no new Deployment was rolled out.
 The bootstrap Job has its own deadline. A Helm timeout is not evidence that the
 Job stopped: inspect its terminal state before another upgrade, rollback or
 restore. Keep failed Job diagnostics; do not repeatedly replace a running Job.
+
+For the trace/span tag-editor upgrade, finish the handoff immediately after the
+new backend rollout, before announcing the tag editor. Run this in the **same
+operator shell** as the first pass (or redefine `reconcile_tags` from the first
+block before proceeding):
+
+```sh
+kubectl --context CONTEXT -n futureagi rollout status deployment/futureagi-backend --timeout=20m
+reconcile_tags            # second apply after rollout; catch old-backend edits
+```
+
+The new editor stores manual assignments, not PG `tracer_trace.tags`.
+Langfuse ingestion still updates that PG column and mirrors traces to CH;
+this one-time handoff does not replace ongoing ingestion mirroring or protect
+against later collector root-span resets. For Argo CD/Flux, run the same dry-run
+and apply before syncing the reviewed release, and the second apply after the
+new backend is healthy, before releasing the editor. Do not let automated
+promotion expose the editor between the two passes.
+
+## Standalone
+
+Standalone's `app` service also has no reconciliation step in its
+`deploy/standalone/bin/bootstrap.py`. From the repository root, back up both
+stores and pin/pull the new Standalone image without replacing the old `app`
+container first. Use `docker compose run` with the new image and existing
+PostgreSQL/ClickHouse services: `--no-deps` leaves the old app serving, and
+`--entrypoint python` bypasses the standalone supervisord startup. The
+operator authorization pair is needed even for the dry-run because the startup
+guard treats this management command as mutating.
+
+```sh
+docker compose pull app
+# Review any release-specific schema prerequisites before reconciling.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags --dry-run
+# Review the reported count before applying.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags
+docker compose up -d --wait
+# Old-app PATCH writes between the first pass and the swap need this second pass.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags
+# Announce the tag editor only after the second apply finishes successfully.
+```
+
+The Standalone image's Django config uses the `clickhouse` service address for
+this one-off container, not the in-app collector's loopback address. If the
+release needs migrations before the first pass, follow its reviewed maintenance
+plan; never bring up a new backend on an old schema just to run the command.
+Automatic updates have a separate lifecycle; pause them and follow the safe
+handoff before manual changes.
 
 ## Argo CD
 
