@@ -12610,6 +12610,7 @@ def run_evaluation_task(evaluation_data):
         futures = {}
         failed_metric_ids = set()
         success_counts = defaultdict(int)
+        reporting_inputs = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(str(metric_id))
@@ -12620,6 +12621,12 @@ def run_evaluation_task(evaluation_data):
                 # metric FAILED and strand this metric's cells as RUNNING.
                 try:
                     if metric:
+                        # Load what completion reporting needs before fan-out,
+                        # ahead of the usage-limited early exit. Read after
+                        # fan-out, a failed lazy load drops the metric's
+                        # completion event.
+                        organization, dataset = metric.organization, metric.dataset
+                        reporting_inputs[str(metric_id)] = (organization, dataset)
                         try:
                             from ee.usage.services.metering import check_usage
                         except ImportError:
@@ -12630,7 +12637,7 @@ def run_evaluation_task(evaluation_data):
                                 metric.model or ModelChoices.TURING_LARGE.value
                             )
                             usage_check = check_usage(
-                                str(metric.organization.id), api_call_type
+                                str(organization.id), api_call_type
                             )
                             if not usage_check.allowed:
                                 from model_hub.tasks.user_evaluation import (
@@ -12650,10 +12657,10 @@ def run_evaluation_task(evaluation_data):
                                 continue
 
                         properties = get_mixpanel_properties(
-                            org=metric.organization,
+                            org=organization,
                             eval=metric,
                             source=evaluation_data.get("source"),
-                            dataset=metric.dataset,
+                            dataset=dataset,
                             count=len(row_ids),
                         )
                         track_mixpanel_event(
@@ -12756,12 +12763,15 @@ def run_evaluation_task(evaluation_data):
             metric = metric_map.get(str(metric_id))
             if not metric:
                 continue
+            # Only what setup loaded: a metric whose setup failed before that
+            # reports without them rather than reading the database here.
+            organization, dataset = reporting_inputs.get(str(metric_id), (None, None))
             try:
                 properties = get_mixpanel_properties(
                     eval=metric,
-                    org=metric.organization,
+                    org=organization,
                     source=evaluation_data.get("source"),
-                    dataset=metric.dataset,
+                    dataset=dataset,
                     count=success_counts[str(metric_id)],
                     failed=len(row_ids) - success_counts[str(metric_id)],
                 )

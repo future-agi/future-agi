@@ -557,10 +557,12 @@ def test_reporting_failure_does_not_request_replay_of_finished_evaluations(rerun
     assert status_of(rerun.metric) == StatusType.COMPLETED.value
 
 
-def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
-    """A usage-limited metric never loads its dataset before fan-out, so the
-    completion loop is the first place it is read. A database error on that
-    read must not relabel the healthy metric or drop its completion event."""
+def test_completion_reporting_reads_nothing_after_fanout(rerun):
+    """A usage-limited metric skips the start event, which used to load its
+    dataset, so the completion loop read it after fan-out, and a database
+    error there dropped its completion event. Every organization or dataset
+    read after the rows are stored now fails, and none may happen: both
+    metrics keep their status and send their completion event."""
     healthy, healthy_column = add_healthy_metric(rerun)
     limited = SimpleNamespace(
         allowed=False,
@@ -582,11 +584,12 @@ def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
             if len(stored) == 2:
                 rows_stored.set()
 
-    dataset_reads = []
+    tables = [f'FROM "{model._meta.db_table}"' for model in (Organization, Dataset)]
+    late_reads = []
 
-    def dataset_read_fails(execute, sql, params, many, context):
-        if rows_stored.is_set() and f'FROM "{Dataset._meta.db_table}"' in sql:
-            dataset_reads.append(sql)
+    def late_read_fails(execute, sql, params, many, context):
+        if rows_stored.is_set() and any(table in sql for table in tables):
+            late_reads.append(sql)
             raise OperationalError("synthetic connection failure")
         return execute(sql, params, many, context)
 
@@ -597,11 +600,12 @@ def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
         ),
         patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
         patch.object(EvaluationRunner, "_create_cell", create_cell),
-        connection.execute_wrapper(dataset_read_fails),
+        connection.execute_wrapper(late_read_fails),
     ):
         run_selected(rerun, [rerun.metric, healthy])
 
-    assert len(dataset_reads) == 1
+    assert rows_stored.is_set()
+    assert late_reads == []
     assert column_state(healthy_column) == [
         (CellStatus.PASS.value, "row-0"),
         (CellStatus.PASS.value, "row-1"),
@@ -609,7 +613,10 @@ def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
     ]
     assert status_of(healthy) == StatusType.COMPLETED.value
     assert status_of(rerun.metric) == StatusType.FAILED.value
-    assert completion_counts(rerun) == [(str(healthy.id), 2, 0)]
+    assert completion_counts(rerun) == [
+        (str(rerun.metric.id), 0, 2),
+        (str(healthy.id), 2, 0),
+    ]
 
 
 def fail_second_metric_setup(step, rows_started, waited):
