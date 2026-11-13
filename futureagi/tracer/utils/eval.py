@@ -1897,7 +1897,7 @@ def _execute_evaluation(
             error_localizer_enabled,
         )
 
-        if error_localizer_enabled(custom_eval_config):
+        if eval_log is not None and error_localizer_enabled(custom_eval_config):
             from model_hub.tasks.user_evaluation import (
                 trigger_error_localization_for_span,
             )
@@ -1905,6 +1905,7 @@ def _execute_evaluation(
             trigger_error_localization_for_span(
                 eval_template=eval_model,
                 eval_logger=eval_log,
+                observation_span=observation_span,
                 mapping=raw_mapping,
                 eval_explanation=logger_kwargs.get("eval_explanation", ""),
                 value=value,
