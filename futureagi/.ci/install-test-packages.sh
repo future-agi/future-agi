@@ -23,12 +23,12 @@ options=(
   -o APT::Update::Error-Mode=any
 )
 if [[ ! -f "$cache/complete" ]]; then
-  echo "APT cache miss: refresh Ubuntu indexes and download ffmpeg/ffprobe + xmlsec1"
+  echo "APT cache miss: refresh Ubuntu indexes and download ffmpeg/ffprobe + xmlsec1 + pgbouncer"
   # Separate bounds make the formerly quiet 33-39 minute stall diagnosable.
   # Retries are for asset transport only, never tests or package installation.
   timeout 120s sudo apt-get "${options[@]}" update
   timeout 180s sudo apt-get "${options[@]}" install -y --download-only \
-    --no-install-recommends ffmpeg xmlsec1
+    --no-install-recommends ffmpeg xmlsec1 pgbouncer
   touch "$cache/complete"
 else
   echo "APT cache hit: using runner-image-matched indexes and archives (no network)"
@@ -36,10 +36,11 @@ fi
 # Fail closed for incomplete/stale archives; do not silently fall back to apt
 # downloads in a test job. apt validates package hashes against its indexes.
 timeout 120s sudo apt-get "${options[@]}" install -y --no-download \
-  --no-install-recommends ffmpeg xmlsec1
+  --no-install-recommends ffmpeg xmlsec1 pgbouncer
 # apt's root-owned partial directories otherwise prevent the cache action from
 # reading the tree. Only this dedicated cache is made readable.
 sudo chmod -R a+rX "$cache"
 ffmpeg -version | head -n 1
 ffprobe -version | head -n 1
 xmlsec1 --version
+/usr/sbin/pgbouncer --version | head -n 1

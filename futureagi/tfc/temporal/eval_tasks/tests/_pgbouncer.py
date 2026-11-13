@@ -16,7 +16,12 @@ from pathlib import Path
 
 import psycopg
 
-PGBOUNCER_BIN = os.environ.get("PGBOUNCER_BIN") or shutil.which("pgbouncer")
+PGBOUNCER_BIN = (
+    os.environ.get("PGBOUNCER_BIN")
+    or shutil.which("pgbouncer")
+    # Debian and Ubuntu install it in /usr/sbin, which a PATH may omit.
+    or shutil.which("pgbouncer", path="/usr/sbin:/sbin")
+)
 
 
 def _free_port() -> int:
