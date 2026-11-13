@@ -240,13 +240,32 @@ class PureFunctionTests(unittest.TestCase):
             (base / path).write_bytes(b"x=1\r\n")
             (head / path).write_bytes(b"x = 1\n")
             proc = subprocess.CompletedProcess([], 0, stdout=b"x = 1\r\n", stderr=b"")
-            with patch.object(gate.subprocess, "run", return_value=proc) as run:
+            with (
+                patch.object(gate, "ruff_discovered", return_value={path}),
+                patch.object(gate.subprocess, "run", return_value=proc) as run,
+            ):
                 found = gate.formatting_only_files(
                     "ruff", head, base, {path: path}, set()
                 )
             self.assertEqual(found, set())
             self.assertEqual(run.call_args.kwargs["input"], b"x=1\r\n")
             self.assertEqual((base / path).read_bytes(), b"x=1\r\n")
+
+    def test_a_moved_file_never_reaches_the_formatting_comparison(self):
+        # Another path can fall under other lint settings, so identical bytes
+        # prove nothing; nothing is read or run for it.
+        with tempfile.TemporaryDirectory(prefix="lint-move-test-") as tmp:
+            trees = Path(tmp)
+            with patch.object(gate.subprocess, "run") as run:
+                found = gate.formatting_only_files(
+                    "ruff",
+                    trees / "head",
+                    trees / "base",
+                    {"futureagi/app/helper.py": "futureagi/app/tests/helper.py"},
+                    set(),
+                )
+            self.assertEqual(found, set())
+            run.assert_not_called()
 
 
 WORKFLOW = ROOT / ".github" / "workflows" / "python-lint.yml"
@@ -737,6 +756,82 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("ruff format", proc.stdout)
+        self.assertNotIn("No new violations.", proc.stdout)
+        self.assertEqual(
+            len(self.git("worktree", "list", "--porcelain").split("worktree ")) - 1, 1
+        )
+
+    def test_a_moved_formatted_file_is_judged_at_its_new_path(self):
+        # Identical bytes under tests/ and then under app/: the banned-pattern
+        # pass applies only at the new path. Its findings are new, as for any
+        # moved file, and the advisory rule stays a warning.
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write(
+            "futureagi/app/tests/helper.py",
+            'def q(table):\n    print(table)\n    return f"SELECT count() FROM {table}"\n',
+        )
+        base = self.commit()
+        self.git("mv", "futureagi/app/tests/helper.py", "futureagi/app/helper.py")
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual(
+            (code, found),
+            (1, [("futureagi/app/helper.py", 2, "T201")]),
+            proc.stdout + proc.stderr,
+        )
+        self.assertEqual(
+            self.warnings, [("futureagi/app/helper.py", 3, "S608")], proc.stdout
+        )
+
+    def link(self, rel, target):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            path.unlink()
+        path.symlink_to(target)
+
+    def test_an_excluded_unresolved_symlink_does_not_stop_the_check(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/migrations/0002_link.py"
+        self.link(path, "missing_one.py")
+        base = self.commit()
+        self.link(path, "missing_two.py")
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.assertEqual(self.warnings, [])
+        self.assertIn("No new violations.", proc.stdout)
+
+    def test_the_formatting_comparison_reads_only_files_ruff_includes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        excluded = "futureagi/app/migrations/0002_link.py"
+        included = "futureagi/app/link.py"
+        self.link(excluded, "missing.py")
+        self.link(included, "missing.py")
+        self.assertEqual(
+            gate.formatting_only_files(
+                RUFF, self.repo, self.repo, {excluded: excluded}, set()
+            ),
+            set(),
+        )
+        with self.assertRaisesRegex(gate.GateError, re.escape(included)):
+            gate.formatting_only_files(
+                RUFF, self.repo, self.repo, {included: included}, set()
+            )
+
+    def test_an_included_unreadable_file_fails_closed(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/link.py"
+        self.link(path, "missing_one.py")
+        base = self.commit()
+        self.link(path, "missing_two.py")
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (2, []), proc.stdout + proc.stderr)
+        self.assertIn(path, proc.stdout)
         self.assertNotIn("No new violations.", proc.stdout)
         self.assertEqual(
             len(self.git("worktree", "list", "--porcelain").split("worktree ")) - 1, 1

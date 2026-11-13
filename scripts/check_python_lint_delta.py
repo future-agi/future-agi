@@ -5,9 +5,10 @@ The coding standards ban some patterns from new code (internal-docs
 coding-standards/12-banned-patterns.md). Old instances stay until a dedicated
 cleanup PR, so this check fails only on what the change adds. A violation is new
 when its rule and its source line occur more often at the head than at the base.
-For a file whose head bytes exactly equal pinned Ruff's formatting of the original
-base bytes, compare per-rule counts instead. Always lint the unformatted base:
-formatting can move a suppression and expose a previously hidden violation.
+For a file at an unchanged path whose head bytes exactly equal pinned Ruff's
+formatting of the original base bytes, compare per-rule counts instead. Always
+lint the unformatted base: formatting can move a suppression and expose a
+previously hidden violation.
 
 Three passes run on the changed files under futureagi/:
 
@@ -333,6 +334,38 @@ def ruff_unformatted(ruff: str, tree: Path, paths: list[str]) -> set[str]:
     }
 
 
+def ruff_discovered(ruff: str, tree: Path) -> set[str]:
+    """Repo-relative paths of the backend files Ruff's configuration includes in one tree.
+
+    Ruff's own file discovery applies the configured exclusions, as --force-exclude
+    does for a path passed by name, without reading any file. It still lists an
+    included file it cannot read, such as a broken symlink. Ignore files are not
+    applied: the lint and format passes name their paths, and Ruff does not
+    filter named paths by .gitignore.
+    """
+    proc = run(
+        [
+            ruff,
+            "check",
+            "--no-cache",
+            "--force-exclude",
+            "--no-respect-gitignore",
+            "--show-files",
+            "--",
+            ".",
+        ],
+        tree / BACKEND_DIR,
+    )
+    # Absolute paths under the resolved directory. Not resolved per file: that
+    # would follow a symlinked file to its target.
+    root = f"{(tree / BACKEND_DIR).resolve().as_posix()}/"
+    return {
+        f"{BACKEND_DIR}/{line[len(root) :]}"
+        for line in proc.stdout.splitlines()
+        if line.startswith(root)
+    }
+
+
 def formatting_only_files(
     ruff: str,
     head_tree: Path,
@@ -342,15 +375,36 @@ def formatting_only_files(
 ) -> set[str]:
     """Prove exact formatter output, using raw base bytes and base-side config.
 
+    Only a file at an unchanged path qualifies: a moved file can fall under other
+    lint settings (per-file ignores, excludes, the test and migration rules), so
+    identical bytes do not make its findings comparable by count. A file that
+    Ruff's configuration excludes in either tree is skipped before anything is
+    read; an included file that cannot be read fails closed.
+
     Stdin keeps the baseline worktree untouched. Byte I/O deliberately preserves
     line endings: text-mode newline normalization would weaken the equality test.
     New and unparseable base files cannot qualify; formatter failures fail closed.
     """
+    candidates = sorted(
+        path
+        for path, base_path in files.items()
+        if base_path == path and path not in base_broken
+    )
+    if not candidates:
+        return set()
+    included = ruff_discovered(ruff, base_tree) & ruff_discovered(ruff, head_tree)
     result = set()
-    for path, base_path in files.items():
-        if base_path is None or base_path in base_broken:
+    for path in candidates:
+        if path not in included:
             continue
-        rel = str(PurePosixPath(base_path).relative_to(BACKEND_DIR))
+        try:
+            base_bytes = (base_tree / path).read_bytes()
+            head_bytes = (head_tree / path).read_bytes()
+        except OSError as exc:
+            raise GateError(
+                f"cannot read {path}, which the Ruff configuration includes: {exc}"
+            ) from exc
+        rel = str(PurePosixPath(path).relative_to(BACKEND_DIR))
         proc = subprocess.run(
             [
                 ruff,
@@ -363,15 +417,13 @@ def formatting_only_files(
             ],
             cwd=base_tree / BACKEND_DIR,
             check=False,
-            input=(base_tree / base_path).read_bytes(),
+            input=base_bytes,
             capture_output=True,
         )
         if proc.returncode != 0:
             error = proc.stderr.decode("utf-8", errors="replace").strip()[:2000]
-            raise GateError(
-                f"ruff format {base_path} exited {proc.returncode}: {error}"
-            )
-        if proc.stdout == (head_tree / path).read_bytes():
+            raise GateError(f"ruff format {path} exited {proc.returncode}: {error}")
+        if proc.stdout == head_bytes:
             result.add(path)
     return result
 
