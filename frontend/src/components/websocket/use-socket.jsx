@@ -267,6 +267,9 @@ export const WebSocketProvider = ({ children }) => {
       }
       setError("WebSocket connection error");
       setIsConnected(false);
+      // A failure other than 1011 ends the slow retries for unavailable
+      // authentication; the normal retry limit applies again.
+      authenticationUnavailableRef.current = false;
 
       if (
         socketRef.current?.readyState !== WebSocket.OPEN &&
@@ -303,6 +306,8 @@ export const WebSocketProvider = ({ children }) => {
         // Keep backing off while the server cannot authenticate the socket.
         reconnectAttempts.current = reconnectAttemptsBeforeOpen.current;
         authenticationUnavailableRef.current = true;
+      } else {
+        authenticationUnavailableRef.current = false;
       }
 
       if (event.code === 1006) {

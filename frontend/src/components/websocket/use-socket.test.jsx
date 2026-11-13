@@ -283,6 +283,22 @@ it.each([4001, 4003])(
   },
 );
 
+it("returns to the retry limit when a later failure is not 1011", () => {
+  vi.useFakeTimers();
+  render(tree());
+  spendTheRetryBudget();
+  failHandshake();
+  waitFor(60000);
+  expect(sockets).toHaveLength(12);
+  // The server is now unreachable: the handshake fails without a 1011.
+  act(() => {
+    sockets.at(-1).emit("error");
+    sockets.at(-1).emit("close", { code: 1006 });
+  });
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(12);
+});
+
 it("still stops at the reconnect limit when authentication is not the cause", () => {
   vi.useFakeTimers();
   render(tree());
@@ -356,6 +372,7 @@ it("gives a replaced credential the full retry budget during an outage", () => {
   spendTheRetryBudget();
   // The spent budget leaves a slow retry scheduled.
   failHandshake();
+  expect(vi.getTimerCount()).toBe(1);
 
   act(() => {
     state.user = { ...state.user, accessToken: "synthetic-token-2" };
