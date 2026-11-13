@@ -244,7 +244,7 @@ const BaseColumnDrawer = ({
                       sx={{
                         color: "text.primary",
                         fontWeight: 400,
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     >
                       {val}

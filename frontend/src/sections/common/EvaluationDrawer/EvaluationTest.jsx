@@ -111,7 +111,7 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
           <Typography fontWeight={600} fontSize={16} color={"text.primary"}>
             Test Eval
           </Typography>
-          <Typography fontWeight={400} fontSize={13} color={"text.secondary"}>
+          <Typography fontWeight={400} fontSize={12} color={"text.secondary"}>
             Test runs on the first 3 rows of a dataset
           </Typography>
         </Box>
@@ -166,7 +166,7 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
               >
                 <Typography
                   fontWeight={500}
-                  fontSize={13}
+                  fontSize={12}
                   color={"text.primary"}
                 >
                   Result - row {row}

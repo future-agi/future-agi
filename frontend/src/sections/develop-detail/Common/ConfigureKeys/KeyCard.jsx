@@ -43,7 +43,7 @@ const ProviderLogo = ({ data }) =>
         justifyContent: "center",
         bgcolor: "action.hover",
         color: "text.secondary",
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 600,
       }}
     >

@@ -171,7 +171,7 @@ const LLMPromptEditor = ({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               Generating messages...
             </Typography>
@@ -201,7 +201,7 @@ const LLMPromptEditor = ({
                 }
                 if (e.key === "Escape") handleClose();
               }}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             />
             <IconButton
               size="small"
@@ -222,7 +222,7 @@ const LLMPromptEditor = ({
             variant="body2"
             sx={{
               flex: 1,
-              fontSize: "13px",
+              fontSize: "12px",
               color: "text.secondary",
               fontStyle: "italic",
             }}
@@ -290,7 +290,7 @@ const LLMPromptEditor = ({
               if (e.key === "Escape") handleClose();
             }}
             sx={{
-              fontSize: "13px",
+              fontSize: "12px",
               borderTop: "1px solid",
               borderColor: "divider",
               pt: 0.75,
@@ -379,7 +379,7 @@ const LLMPromptEditor = ({
               >
                 <Typography
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 600,
                     fontFamily: "monospace",
                     width: 40,
@@ -395,7 +395,7 @@ const LLMPromptEditor = ({
                 <Box>
                   <Typography
                     variant="body2"
-                    sx={{ fontSize: "13px", fontWeight: 600 }}
+                    sx={{ fontSize: "12px", fontWeight: 600 }}
                   >
                     {fmt.label}
                   </Typography>

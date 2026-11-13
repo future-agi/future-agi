@@ -23,13 +23,20 @@ const HEARTBEAT_INTERVAL = 10000;
 // authorizes the socket (sockets/consumer.py, sockets/membership.py,
 // tfc/middleware/jwt_auth.py). The same credential would be refused again, so
 // these never reconnect; a new token or organization opens a fresh socket.
+// Any other code, including 1011 when the server could not complete
+// authentication (database or cache unavailable), reconnects with backoff.
 const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002, 4003]);
+// The server accepts the handshake before closing with this code, so the
+// open does not count as a successful connection for the retry backoff.
+const AUTHENTICATION_UNAVAILABLE_CLOSE_CODE = 1011;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
+  const reconnectAttemptsBeforeOpen = useRef(0);
+  const retryBudgetCredentialRef = useRef(null);
   const navigate = useNavigate();
 
   const socketRef = useRef(null);
@@ -180,12 +187,16 @@ export const WebSocketProvider = ({ children }) => {
     const openHandler = () => {
       setIsConnected(true);
       setError(null);
+      reconnectAttemptsBeforeOpen.current = reconnectAttempts.current;
       reconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
       logger.debug("WebSocket connected");
       startHeartbeat();
     };
 
     const messageHandler = (event) => {
+      // A frame from the server means the socket was authenticated, so a
+      // later 1011 close starts a new backoff instead of resuming the old one.
+      reconnectAttemptsBeforeOpen.current = 0;
       let message = event.data;
       try {
         message = JSON.parse(event.data);
@@ -274,6 +285,11 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
 
+      if (event.code === AUTHENTICATION_UNAVAILABLE_CLOSE_CODE) {
+        // Keep backing off while the server cannot authenticate the socket.
+        reconnectAttempts.current = reconnectAttemptsBeforeOpen.current;
+      }
+
       if (event.code === 1006) {
         logger.debug("WebSocket closed with 1006 - skipping reconnect");
         return;
@@ -355,6 +371,21 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
       authorizationRefusedRef.current = null;
+
+      const budget = retryBudgetCredentialRef.current;
+      if (
+        !budget ||
+        budget.token !== user?.accessToken ||
+        budget.organizationId !== organizationId
+      ) {
+        // A new credential or organization gets the full retry budget.
+        retryBudgetCredentialRef.current = {
+          token: user?.accessToken,
+          organizationId,
+        };
+        reconnectAttempts.current = 0;
+        reconnectAttemptsBeforeOpen.current = 0;
+      }
 
       if (
         !socketRef.current ||

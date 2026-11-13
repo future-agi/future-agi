@@ -41,6 +41,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tfc.utils.websocket_relay_auth import relay_signature
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -143,12 +144,14 @@ def relay(key, target=None):
     if target:
         body.update(send_to_uuid=True, uuid=target)
         message["uuid"] = target
+    raw = json.dumps(body).encode()
     response = api_client().post(
         "/call-websocket/",
-        body,
-        format="json",
+        raw,
+        content_type="application/json",
         HTTP_X_API_KEY=key.api_key,
         HTTP_X_SECRET_KEY=key.secret_key,
+        HTTP_X_RELAY_SIGNATURE=relay_signature(key.organization_id, raw),
     )
     assert response.status_code == 200, response.content
     return message
@@ -413,3 +416,326 @@ def test_membership_check_matches_connect_rules(state, expected):
 
     member, org = _membership_state(state)
     assert organization_membership_is_active(member.pk, org.pk) is expected
+
+
+class FakeClock:
+    """A monotonic clock the membership checks read instead of the real one."""
+
+    def __init__(self):
+        import time
+
+        self.now = time.monotonic()
+        self.module = types.SimpleNamespace(monotonic=self.monotonic, time=time.time)
+
+    def monotonic(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+@pytest.fixture
+def membership_clock(monkeypatch):
+    clock = FakeClock()
+    for module in ("sockets.membership", "sockets.consumer"):
+        monkeypatch.setattr(f"{module}.time", clock.module)
+    return clock
+
+
+def deactivate_membership_rows(user, org):
+    """Deactivate the user's membership without a model signal."""
+
+    updated = OrganizationMembership.no_workspace_objects.filter(
+        user=user, organization=org
+    ).update(is_active=False)
+    assert updated == 1
+
+
+async def broadcast(org, message):
+    from channels.layers import get_channel_layer
+
+    await get_channel_layer().group_send(
+        f"org_{org.pk}", {"type": "send_data", "data": message}
+    )
+
+
+async def notify_membership_changed(user, org):
+    from channels.layers import get_channel_layer
+
+    from sockets.membership import MEMBERSHIP_CHANGED_EVENT, user_socket_group
+
+    await get_channel_layer().group_send(
+        user_socket_group(user.pk),
+        {"type": MEMBERSHIP_CHANGED_EVENT, "organization_id": str(org.pk)},
+    )
+
+
+async def open_direct_socket(user, org, *, saml):
+    """Open a DataConsumer with a prepared scope (``saml`` adds an auth scope)."""
+
+    from sockets.consumer import DataConsumer
+
+    socket = WebsocketCommunicator(
+        DataConsumer.as_asgi(), f"/ws/connect/?organization_id={org.pk}"
+    )
+    socket.scope["user"] = user
+    if saml:
+        socket.scope["auth_scope"] = types.SimpleNamespace(org_id=org.pk)
+        socket.scope["auth_token_id"] = uuid4()
+    connected, code = await socket.connect(timeout=10)
+    assert connected, code
+    return socket
+
+
+@pytest.mark.parametrize("saml", [False, True], ids=["session", "saml"])
+@pytest.mark.parametrize("outcome", ["membership-kept", "membership-removed"])
+def test_failed_forced_recheck_delivers_nothing_until_a_check_succeeds(saml, outcome):
+    from unittest.mock import AsyncMock, patch
+
+    from django.db import OperationalError
+
+    from sockets.org_scope import organization_membership_is_active
+    from sockets.saml_guard import SamlSocketGuard
+
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    database = {"available": True}
+
+    def membership_check(user_id, organization_id):
+        if not database["available"]:
+            raise OperationalError("synthetic database outage")
+        return organization_membership_is_active(user_id, organization_id)
+
+    async def run():
+        socket = await open_direct_socket(member, org, saml=saml)
+        try:
+            first = {"marker": uuid4().hex}
+            await broadcast(org, first)
+            assert await socket.receive_json_from(timeout=10) == first
+
+            database["available"] = False
+            await notify_membership_changed(member, org)
+            assert await socket.receive_nothing(timeout=0.5)
+            during = {"marker": uuid4().hex}
+            await broadcast(org, during)
+            assert frames(await outputs(socket, settle=0.5)) == []
+
+            if outcome == "membership-removed":
+                await sync_to_async(deactivate_membership_rows)(member, org)
+            database["available"] = True
+            after = {"marker": uuid4().hex}
+            await broadcast(org, after)
+            events = await outputs(socket, settle=0.5)
+            if outcome == "membership-removed":
+                assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+            else:
+                assert (frames(events), closed(events)) == ([after], [])
+        finally:
+            await socket.disconnect()
+
+    with (
+        patch.object(
+            SamlSocketGuard, "_validate", new_callable=AsyncMock
+        ) as saml_check,
+        patch(
+            "sockets.membership.organization_membership_is_active",
+            side_effect=membership_check,
+        ),
+    ):
+        asyncio.run(run())
+    if saml:
+        # Connect, then the first push after the notification: the cached
+        # credential check is not reused once membership has changed.
+        assert saml_check.await_count == 2
+
+
+def test_delivery_rechecks_membership_after_the_default_interval(membership_clock):
+    from unittest.mock import patch
+
+    from sockets.membership import DEFAULT_REVALIDATE_SECONDS
+    from sockets.org_scope import organization_membership_is_active
+
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    checks = []
+
+    def membership_check(user_id, organization_id):
+        checks.append(membership_clock.now)
+        return organization_membership_is_active(user_id, organization_id)
+
+    async def run():
+        socket = await open_direct_socket(member, org, saml=False)
+        try:
+            await sync_to_async(deactivate_membership_rows)(member, org)
+            # Within the interval the result from connect is reused.
+            membership_clock.advance(DEFAULT_REVALIDATE_SECONDS - 0.5)
+            cached = {"marker": uuid4().hex}
+            await broadcast(org, cached)
+            assert await socket.receive_json_from(timeout=10) == cached
+            assert checks == []
+
+            membership_clock.advance(0.5)
+            await broadcast(org, {"marker": uuid4().hex})
+            events = await outputs(socket, settle=0.5)
+            assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+            assert len(checks) == 1
+        finally:
+            await socket.disconnect()
+
+    assert DEFAULT_REVALIDATE_SECONDS == 10
+    with patch(
+        "sockets.membership.organization_membership_is_active",
+        side_effect=membership_check,
+    ):
+        asyncio.run(run())
+
+
+async def open_simulation_socket(user, org, test_id):
+    token = await sync_to_async(lambda: issue_tokens(user)["access"])()
+    socket = WebsocketCommunicator(
+        APPLICATION,
+        f"/ws/simulation-updates/?token={token}&test_id={test_id}"
+        f"&organization_id={org.pk}",
+    )
+    connected, code = await socket.connect(timeout=10)
+    assert connected, code
+    return socket
+
+
+async def publish_simulation_update(org, test_id, subscribers):
+    """Publish once ``subscribers`` sockets listen; return the message sent."""
+
+    import redis.asyncio as aioredis
+    from django.conf import settings
+
+    channel = f"simulation_updates:{org.pk}:{test_id}"
+    message = {"type": "simulation_update", "data": {"marker": uuid4().hex}}
+    client = aioredis.from_url(settings.REDIS_URL)
+    try:
+        for _ in range(200):
+            [(_, listening)] = await client.pubsub_numsub(channel)
+            if listening >= subscribers:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError("simulation sockets did not subscribe")
+        await client.publish(channel, json.dumps(message))
+    finally:
+        await client.aclose()
+    return message
+
+
+def test_open_simulation_socket_closes_when_membership_is_removed():
+    org, owner, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    test_id = str(uuid4())
+
+    async def run():
+        own = await open_simulation_socket(owner, org, test_id)
+        removed = await open_simulation_socket(member, org, test_id)
+        try:
+            before = await publish_simulation_update(org, test_id, 2)
+            assert await own.receive_json_from(timeout=10) == before
+            assert await removed.receive_json_from(timeout=10) == before
+
+            await sync_to_async(remove_member)(owner, member)
+            events = await outputs(removed)
+            assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+            # The organization's remaining member is the positive control.
+            after = await publish_simulation_update(org, test_id, 1)
+            assert await own.receive_json_from(timeout=10) == after
+        finally:
+            await disconnect(own, removed)
+
+    asyncio.run(run())
+
+
+def test_simulation_socket_rechecks_membership_after_the_default_interval(
+    monkeypatch, membership_clock
+):
+    monkeypatch.setattr("sockets.simulation_consumer.time", membership_clock.module)
+    org, owner, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    test_id = str(uuid4())
+
+    async def run():
+        own = await open_simulation_socket(owner, org, test_id)
+        socket = await open_simulation_socket(member, org, test_id)
+        try:
+            await sync_to_async(deactivate_membership_rows)(member, org)
+            membership_clock.advance(9.5)
+            cached = await publish_simulation_update(org, test_id, 2)
+            assert await socket.receive_json_from(timeout=10) == cached
+            assert await own.receive_json_from(timeout=10) == cached
+
+            membership_clock.advance(0.5)
+            after = await publish_simulation_update(org, test_id, 2)
+            assert await own.receive_json_from(timeout=10) == after
+            events = await outputs(socket)
+            assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+        finally:
+            await disconnect(own, socket)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("outcome", ["membership-kept", "membership-removed"])
+def test_graph_socket_answers_nothing_until_a_failed_check_succeeds(outcome):
+    from unittest.mock import patch
+
+    from django.db import OperationalError
+
+    from sockets.org_scope import organization_membership_is_active
+    from tracer.socket import GraphDataConsumer
+
+    org, _, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    database = {"available": True}
+
+    def membership_check(user_id, organization_id):
+        if not database["available"]:
+            raise OperationalError("synthetic database outage")
+        return organization_membership_is_active(user_id, organization_id)
+
+    async def answer_with_metrics(self):
+        # Stands in for the chart queries.
+        await self.send_json({"type": "metrics", "project": self.project_id})
+
+    async def run():
+        socket = WebsocketCommunicator(
+            GraphDataConsumer.as_asgi(), f"/ws/graphs/?organization_id={org.pk}"
+        )
+        socket.scope["user"] = member
+        connected, code = await socket.connect(timeout=10)
+        assert connected, code
+        try:
+            project_id = str(uuid4())
+            database["available"] = False
+            await notify_membership_changed(member, org)
+            assert await socket.receive_nothing(timeout=0.5)
+            await socket.send_json_to({"projectId": project_id, "graph": "charts"})
+            assert frames(await outputs(socket, settle=0.5)) == []
+
+            if outcome == "membership-removed":
+                await sync_to_async(deactivate_membership_rows)(member, org)
+            database["available"] = True
+            await socket.send_json_to({"projectId": project_id, "graph": "charts"})
+            events = await outputs(socket, settle=0.5)
+            if outcome == "membership-removed":
+                assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
+            else:
+                assert (frames(events), closed(events)) == (
+                    [{"type": "metrics", "project": project_id}],
+                    [],
+                )
+        finally:
+            await socket.disconnect()
+
+    with (
+        patch(
+            "sockets.membership.organization_membership_is_active",
+            side_effect=membership_check,
+        ),
+        patch.object(GraphDataConsumer, "send_metrics_data", answer_with_metrics),
+    ):
+        asyncio.run(run())

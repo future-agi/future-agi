@@ -48,6 +48,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.EmbeddingRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 
 	// Resolve timeout and apply.
