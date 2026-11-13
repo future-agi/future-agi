@@ -408,10 +408,12 @@ class LinkAcceptance(unittest.TestCase):
             def log_message(self, *_):
                 pass
 
+        # Bound but not listening: connections are refused, and the port stays
+        # reserved so the HTTP server below cannot be given the same one.
         closed = socket.socket()
+        self.addCleanup(closed.close)
         closed.bind(("127.0.0.1", 0))
         closed_port = closed.getsockname()[1]
-        closed.close()
         records = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.1", 80)),
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.2", 80)),
