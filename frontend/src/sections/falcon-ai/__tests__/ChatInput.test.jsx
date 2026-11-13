@@ -120,7 +120,7 @@ describe("ChatInput", () => {
 
   it("renders the text input", () => {
     render(<ChatInput onSend={vi.fn()} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
     expect(input).toBeInTheDocument();
   });
 
@@ -134,7 +134,7 @@ describe("ChatInput", () => {
   it("calls onSend with trimmed text on enter key", () => {
     const onSend = vi.fn();
     render(<ChatInput onSend={onSend} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
 
     fireEvent.change(input, { target: { value: "  Hello world  " } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
@@ -145,7 +145,7 @@ describe("ChatInput", () => {
   it("does not call onSend for empty/whitespace-only input", () => {
     const onSend = vi.fn();
     render(<ChatInput onSend={onSend} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
 
     fireEvent.change(input, { target: { value: "   " } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
@@ -156,7 +156,7 @@ describe("ChatInput", () => {
   it("does not send on Shift+Enter (allows newline)", () => {
     const onSend = vi.fn();
     render(<ChatInput onSend={onSend} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
 
     fireEvent.change(input, { target: { value: "Hello" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
@@ -167,7 +167,7 @@ describe("ChatInput", () => {
   it("disables input when streaming", () => {
     useFalconStore.getState().setStreaming(true, "msg1");
     render(<ChatInput onSend={vi.fn()} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
     expect(input).toBeDisabled();
   });
 
@@ -194,7 +194,7 @@ describe("ChatInput", () => {
   it("clears input after sending", () => {
     const onSend = vi.fn();
     render(<ChatInput onSend={onSend} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    const input = screen.getByPlaceholderText("Ask anything...");
 
     fireEvent.change(input, { target: { value: "Test message" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
@@ -212,7 +212,7 @@ describe("ChatInput", () => {
   it("renders disclaimer text", () => {
     render(<ChatInput onSend={vi.fn()} />);
     expect(
-      screen.getByText("Falcon AI can make mistakes. Check important info."),
+      screen.getByText("AI can make mistakes. Check important info."),
     ).toBeInTheDocument();
   });
 
