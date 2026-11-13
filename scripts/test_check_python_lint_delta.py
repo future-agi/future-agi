@@ -275,6 +275,9 @@ WORKFLOW = ROOT / ".github" / "workflows" / "python-lint.yml"
 LINT_PATHS = (
     "futureagi/**/*.py",
     "futureagi/pyproject.toml",
+    "futureagi/**/pyproject.toml",
+    "futureagi/**/ruff.toml",
+    "futureagi/**/.ruff.toml",
     "scripts/check_python_lint_delta.py",
     "scripts/test_check_python_lint_delta.py",
     "scripts/lint-staged-python.sh",
@@ -695,6 +698,93 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
             proc.stdout + proc.stderr,
         )
 
+    def test_new_exclusion_cannot_hide_a_new_finding(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/hidden.py"
+        self.write(path, 'print("new")\n')
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace(
+                'exclude = ["migrations"]', 'exclude = ["migrations", "hidden.py"]'
+            ),
+        )
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+        )
+
+    def test_nested_config_cannot_hide_a_new_finding(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        for config_name, config_text in (
+            ("ruff.toml", 'exclude = ["hidden.py"]\n'),
+            (".ruff.toml", 'exclude = ["hidden.py"]\n'),
+            ("pyproject.toml", '[tool.ruff]\nexclude = ["hidden.py"]\n'),
+        ):
+            with self.subTest(config=config_name):
+                path = "futureagi/app/hidden.py"
+                self.write(path, 'print("new")\n')
+                self.write("futureagi/app/" + config_name, config_text)
+                self.commit()
+                code, found, proc = self.gate(base)
+                self.assertEqual(
+                    (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+                )
+                self.git("reset", "--hard", base)
+
+    def test_changed_banned_api_config_requires_strict_text_matching(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/mod.py"
+        self.write(path, "print('old')\n")
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG + "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+            '"library.old_api" = { msg = "Use another API." }\n',
+        )
+        self.format_file(path)
+        self.commit()
+
+        # The exact reformat would normally use per-rule counts, but changing
+        # a governing lint setting requires line-text matching instead.
+        code, found, proc = self.gate(base)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base_tree = Path(tmp) / "base"
+            self.git("worktree", "add", "--detach", "--quiet", str(base_tree), base)
+            try:
+                self.assertNotIn(
+                    path,
+                    gate.formatting_only_files(
+                        RUFF, self.repo, base_tree, {path: path}, set(), {path}
+                    ),
+                )
+            finally:
+                self.git("worktree", "remove", "--force", str(base_tree))
+
+    def test_ordinary_reformat_still_uses_count_comparison(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/mod.py"
+        self.write(path, "print('old')\n")
+        base = self.commit()
+        self.format_file(path)
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+        # Non-Ruff metadata in the same TOML file does not change matching.
+        self.write(
+            "futureagi/pyproject.toml", CONFIG + '\n[project]\nname = "example"\n'
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
     def test_formatter_uses_base_config_not_a_changed_head_config(self):
         self.write("futureagi/pyproject.toml", CONFIG)
         path = "futureagi/app/mod.py"
@@ -709,7 +799,9 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
 
         code, found, proc = self.gate(base)
         self.assertEqual(
-            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+            (code, found),
+            (1, [(path, 1, "T201"), (path, 1, "FORMAT")]),
+            proc.stdout + proc.stderr,
         )
 
     def test_moved_type_ignore_remains_visible_to_raw_base_comparison(self):

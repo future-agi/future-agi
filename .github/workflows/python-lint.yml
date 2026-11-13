@@ -47,6 +47,9 @@ jobs:
             python:
               - 'futureagi/**/*.py'
               - 'futureagi/pyproject.toml'
+              - 'futureagi/**/pyproject.toml'
+              - 'futureagi/**/ruff.toml'
+              - 'futureagi/**/.ruff.toml'
               - 'scripts/check_python_lint_delta.py'
               - 'scripts/test_check_python_lint_delta.py'
               - 'scripts/lint-staged-python.sh'

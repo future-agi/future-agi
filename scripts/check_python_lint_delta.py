@@ -12,7 +12,7 @@ previously hidden violation.
 
 Three passes run on the changed files under futureagi/:
 
-- the repo's own ruff configuration (futureagi/pyproject.toml);
+- the base branch's Ruff configuration (futureagi/pyproject.toml and nested configs);
 - the banned-pattern rules that configuration does not select yet, on app code
   only (tests and migrations are left out, as in the standard);
 - `ruff format --check`, which fails only for a file that was formatted at the
@@ -32,9 +32,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -187,6 +189,63 @@ def changed_files(repo: Path, base: str) -> dict[str, str | None]:
             continue
         result[new] = base_path
     return result
+
+
+def changed_lint_configs(repo: Path, base_tree: Path, base: str) -> set[str]:
+    """Find changed Ruff settings, ignoring unrelated pyproject metadata."""
+    changed = run(
+        ["git", "diff", "--name-only", "-z", f"{base}...HEAD", "--", BACKEND_DIR],
+        repo,
+    ).stdout.split("\0")
+    result = set()
+    for path in changed:
+        name = PurePosixPath(path).name
+        if name in {"ruff.toml", ".ruff.toml"}:
+            result.add(path)
+        elif name == "pyproject.toml":
+
+            def ruff_section(tree: Path) -> object:
+                try:
+                    data = (tree / path).read_bytes()
+                except FileNotFoundError:
+                    return None
+                try:
+                    return (
+                        tomllib.loads(data.decode("utf-8")).get("tool", {}).get("ruff")
+                    )
+                except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+                    # An invalid config cannot safely prove settings unchanged.
+                    return data
+
+            if ruff_section(base_tree) != ruff_section(repo):
+                result.add(path)
+    return result
+
+
+def trusted_head_tree(
+    repo: Path, base_tree: Path, target: Path, paths: list[str]
+) -> None:
+    """Copy changed head sources alongside only base-branch Ruff configuration.
+
+    Ruff discovers the nearest config from each file's ancestors. Supplying one
+    global --config would flatten nested settings and per-file path rules.
+    """
+    configs = run(["git", "ls-files", "-z"], base_tree).stdout.split("\0")
+    for path in configs:
+        if PurePosixPath(path).name not in {
+            "pyproject.toml",
+            "ruff.toml",
+            ".ruff.toml",
+        }:
+            continue
+        source = base_tree / path
+        dest = target / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest, follow_symlinks=False)
+    for path in paths:
+        dest = target / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo / path, dest, follow_symlinks=False)
 
 
 def line_ranks(diff: str) -> dict[int, int]:
@@ -379,14 +438,15 @@ def formatting_only_files(
     base_tree: Path,
     files: dict[str, str | None],
     base_broken: set[str],
+    config_affected: set[str] | frozenset[str] = frozenset(),
 ) -> set[str]:
     """Prove exact formatter output, using raw base bytes and base-side config.
 
-    Only a file at an unchanged path qualifies: a moved file can fall under other
-    lint settings (per-file ignores, excludes, the test and migration rules), so
-    identical bytes do not make its findings comparable by count. A file that
-    Ruff's configuration excludes in either tree is skipped before anything is
-    read; the format pass fails closed for an included unreadable file.
+    Only a file at an unchanged path with unchanged governing lint settings
+    qualifies: a moved file can fall under other per-file rules, and a config
+    edit can change which findings exist even with identical formatter output.
+    A file excluded in either tree is skipped before reading; the format pass
+    fails closed for an included unreadable file.
 
     Stdin keeps the baseline worktree untouched. Byte I/O deliberately preserves
     line endings: text-mode newline normalization would weaken the equality test.
@@ -395,7 +455,7 @@ def formatting_only_files(
     candidates = sorted(
         path
         for path, base_path in files.items()
-        if base_path == path and path not in base_broken
+        if base_path == path and path not in base_broken and path not in config_affected
     )
     if not candidates:
         return set()
@@ -527,9 +587,22 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             repo,
         )
         try:
+            changed_configs = changed_lint_configs(repo, base_tree, base)
+            config_affected = {
+                path
+                for path in head_paths
+                if any(
+                    PurePosixPath(config).parent in PurePosixPath(path).parents
+                    for config in changed_configs
+                )
+            }
+            head_tree = repo
+            if changed_configs:
+                head_tree = Path(tmp) / "head"
+                trusted_head_tree(repo, base_tree, head_tree, head_paths)
             head = dedupe(
-                ruff_check(ruff, repo, head_paths, None)
-                + ruff_check(ruff, repo, app_head, BANNED_RULES)
+                ruff_check(ruff, head_tree, head_paths, None)
+                + ruff_check(ruff, head_tree, app_head, BANNED_RULES)
             )
             old = dedupe(
                 ruff_check(ruff, base_tree, base_paths, None)
@@ -541,10 +614,10 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
             head_broken = {v.path for v in head if v.code == SYNTAX_ERROR}
             base_broken = {v.path for v in old if v.code == SYNTAX_ERROR}
             formatting_only = formatting_only_files(
-                ruff, repo, base_tree, files, base_broken
+                ruff, head_tree, base_tree, files, base_broken, config_affected
             )
             head_dirty = ruff_unformatted(
-                ruff, repo, [p for p in head_paths if p not in head_broken]
+                ruff, head_tree, [p for p in head_paths if p not in head_broken]
             )
             base_dirty = base_broken | ruff_unformatted(
                 ruff, base_tree, [p for p in base_paths if p not in base_broken]
