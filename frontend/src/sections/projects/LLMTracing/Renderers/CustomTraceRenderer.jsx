@@ -107,15 +107,16 @@ const CustomTraceRenderer = (params) => {
         entityType={params.context?.entityType}
         canEditTags={params.context?.canEditTags}
         // This grid is AG-Grid server-side, not React Query, so the popover's
-        // cache invalidation can't refresh it. Apply the acknowledged save to
-        // the loaded rows (the datasource can serve this page from its cache
-        // on refresh), then pull the rows via the grid api.
+        // cache invalidation can't refresh it.
         onTagsUpdated={(saved) => {
-          // Only grids that declare their row kind (trace or span) can map
-          // a save onto their rows' tag assignments.
           const gridKind = params.context?.entityType;
-          if (saved && (gridKind === "trace" || gridKind === "span")) {
-            applySavedEntityTags(params.api, { ...saved, gridKind });
+          if (gridKind === "trace" || gridKind === "span") {
+            // The Observe trace and span grids map the acknowledged save onto
+            // their rows' tag assignments. They do not refresh: their cursor
+            // pagination serves loaded pages from its cache, and a refresh
+            // from page 2 left a later "page 1" showing page 2's rows.
+            if (saved) applySavedEntityTags(params.api, { ...saved, gridKind });
+            return;
           }
           params.api?.refreshServerSide();
         }}

@@ -108,9 +108,9 @@ describe("CustomTraceRenderer — tags column", () => {
     expect(popover).toHaveAttribute("data-trace-id", "");
   });
 
-  it("refreshes the server-side grid when the popover closes (not mid-edit)", async () => {
+  it("refreshes a grid without a declared row kind when the popover closes (not mid-edit)", async () => {
     const user = userEvent.setup();
-    const { container, refreshServerSide } = renderTagsColumn();
+    const { container, refreshServerSide } = renderTagsColumn({ context: {} });
 
     await user.click(container.firstChild);
     expect(refreshServerSide).not.toHaveBeenCalled();
@@ -119,7 +119,22 @@ describe("CustomTraceRenderer — tags column", () => {
     expect(refreshServerSide).toHaveBeenCalledTimes(1);
   });
 
-  it("gives the row the saved tags and revision before the grid refreshes", async () => {
+  it.each(["trace", "span"])(
+    "does not refresh the Observe %s grid when the popover closes",
+    async (entityType) => {
+      // A refresh there re-reads cached cursor pages; from page 2 it left a
+      // later "page 1" showing page 2's rows.
+      const user = userEvent.setup();
+      const { container, refreshServerSide } = renderTagsColumn({
+        context: { entityType },
+      });
+      await user.click(container.firstChild);
+      await user.click(screen.getByTestId("popover-close"));
+      expect(refreshServerSide).not.toHaveBeenCalled();
+    },
+  );
+
+  it("gives the row the saved tags and revision when the popover closes", async () => {
     // The datasource serves a completed page from its cache on refresh, so
     // without this the row keeps the old revision and the next edit is a 409.
     const user = userEvent.setup();
@@ -158,6 +173,6 @@ describe("CustomTraceRenderer — tags column", () => {
       tag_revision: 4,
     });
     expect(refreshCells).toHaveBeenCalledTimes(1);
-    expect(refreshServerSide).toHaveBeenCalledTimes(1);
+    expect(refreshServerSide).not.toHaveBeenCalled();
   });
 });
