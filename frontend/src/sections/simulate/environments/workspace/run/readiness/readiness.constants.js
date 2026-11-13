@@ -76,6 +76,8 @@ export const READY_TO_RUN_COPY = {
   notGradable: (n) =>
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
+  noVersions:
+    "Ready to run shows once this environment has a saved version.",
   groups: {
     needs_you: "Needs you",
     builder: "Builder chat can fix",

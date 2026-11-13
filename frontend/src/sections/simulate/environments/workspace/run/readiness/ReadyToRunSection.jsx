@@ -31,6 +31,7 @@ import {
 } from "src/api/simulate-environments/readinessFix";
 import {
   awaitedCheck,
+  isVersioningDisabled,
   useDrafts,
   useEnvironmentVersions,
   useRetryAgentVersion,
@@ -647,6 +648,17 @@ export default function ReadyToRunSection({
     );
   }
   if (!view) {
+    // No saved version yet: there is nothing to check, and the run still goes.
+    if (isVersioningDisabled(readiness.error)) {
+      return (
+        <Typography
+          data-testid="ready-to-run-no-versions"
+          sx={{ typography: "s3", color: "text.secondary" }}
+        >
+          {COPY.noVersions}
+        </Typography>
+      );
+    }
     return readiness.isError ? (
       <ErrorState title={COPY.loadError} onRetry={() => readiness.refetch()} />
     ) : null;
