@@ -22,7 +22,7 @@ func TestParsedFlags_RefuseOnlyWhatTheTableStates(t *testing.T) {
 		"states-no-tools": {"mode": "chat", "input_cost_per_token": 1e-6, "supports_function_calling": false},
 		"states-tools":    {"mode": "chat", "input_cost_per_token": 1e-6, "supports_function_calling": true},
 		"states-nothing":  {"mode": "chat", "input_cost_per_token": 1e-6}
-	}`))
+	}`), false)
 	if err != nil {
 		t.Fatal(err)
 	}

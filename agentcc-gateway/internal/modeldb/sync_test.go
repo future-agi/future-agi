@@ -426,3 +426,48 @@ func TestSync_OlderBundledFileKeepsModelsAddedSince(t *testing.T) {
 		c.SetOverrides(nil)
 	}
 }
+
+// An entry that states no rate the gateway reads cannot be priced from, in any
+// mode. In a good download it must not zero a bundled price, and a download of
+// only such entries is rejected however many there are.
+func TestSync_EntriesWithNoRateDoNotCount(t *testing.T) {
+	const rateless = `{"litellm_provider":"openai","mode":"image_generation","description":"wrong schema: no price fields"}`
+
+	t.Run("in a good catalogue", func(t *testing.T) {
+		body := catalogueJSON(60, 1e-6)
+		body = body[:len(body)-1] + `,"dall-e-3":` + rateless + `}`
+		f := newFakeCatalogue(t, body)
+		s, ptr, _ := newTestSyncer(f.URL, 100)
+		want, _ := ptr.Load().GetPricing("dall-e-3")
+
+		s.syncOnce(context.Background(), time.Second)
+
+		got, _ := ptr.Load().GetPricing("dall-e-3")
+		if got.InputPerImage != want.InputPerImage || got.InputPerImage == 0 {
+			t.Errorf("dall-e-3 pricing = %+v, want the bundled %+v", got, want)
+		}
+	})
+
+	t.Run("as every bundled key", func(t *testing.T) {
+		wrong := make(map[string]json.RawMessage, len(BundledModels))
+		for id := range BundledModels {
+			wrong[id] = json.RawMessage(rateless)
+		}
+		body, err := json.Marshal(wrong)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := newFakeCatalogue(t, string(body))
+		var ptr atomic.Pointer[ModelDB]
+		c := NewCatalogue(&ptr, nil)
+
+		NewSyncer(c, f.URL, time.Hour).syncOnce(context.Background(), 5*time.Second)
+
+		if info := c.Info(); info.Source != SourceBundled || info.LastError == "" {
+			t.Errorf("info = %+v, want bundled with a last_error", info)
+		}
+		if p, _ := ptr.Load().GetPricing("dall-e-3"); p.InputPerImage == 0 {
+			t.Errorf("dall-e-3 pricing = %+v, want the bundled price", p)
+		}
+	})
+}

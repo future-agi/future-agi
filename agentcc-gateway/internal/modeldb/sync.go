@@ -110,7 +110,7 @@ func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
 	if len(body) > maxCatalogueBytes {
 		return nil, fmt.Errorf("catalogue larger than %d bytes", maxCatalogueBytes)
 	}
-	models, err := parseLiteLLM(body)
+	models, err := parseLiteLLM(body, true)
 	if err != nil {
 		return nil, err
 	}
