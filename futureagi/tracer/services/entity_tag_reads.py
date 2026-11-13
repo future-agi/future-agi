@@ -18,7 +18,7 @@ from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExc
 from tracer.services.clickhouse.v2.entity_tag_targets import TRACE_ASSIGNMENT_HOUR
 from tracer.services.entity_tags import TagReadUnavailable, effective_tags
 from tracer.services.postgres_read_policy import application_postgres_reads
-from tracer.types.entity_tags import TagAssignmentKey
+from tracer.types.entity_tags import TagAssignmentKey, TagSourceRow
 
 TAG_READ_BATCH_SIZE = 200
 MAX_TAG_READ_ROWS = 4096
@@ -243,24 +243,30 @@ def enrich_entity_tags(
                 if len(records) > len(batch):
                     raise TagReadUnavailable("tag_assignment_budget_exceeded")
                 for record in records:
-                    key = tuple(
+                    record_key = tuple(
                         str(record[field]) if field == "project_id" else record[field]
                         for field in _IDENTITY_FIELDS
                     )
-                    if key not in batch or key in assignments:
+                    if record_key not in batch or record_key in assignments:
                         raise TagReadUnavailable("tag_assignment_identity_mismatch")
-                    assignments[key] = record
+                    assignments[record_key] = record
                 deadline.remaining_ms()
-        enriched = []
+        enriched: list[dict[str, Any]] = []
         payload_bytes = 0
         for row, key in zip(rows, keys, strict=True):
             deadline.remaining_ms()
             assignment = assignments.get(key)
             manual = assignment["manual_tags"] if assignment is not None else None
             target = _tag_target(row, kind=kind)
+            source: TagSourceRow = {
+                "tags": row.get("tags"),
+                "attrs_string": row.get("attrs_string"),
+                "attributes_extra": row.get("attributes_extra"),
+                "span_attributes": row.get("span_attributes"),
+            }
             try:
                 values = effective_tags(
-                    row, manual_tags=manual, legacy_tags=row.get("trace_tags")
+                    source, manual_tags=manual, legacy_tags=row.get("trace_tags")
                 )
             except TagReadUnavailable as exc:
                 if exc.code != "tag_source_budget_exceeded":
@@ -270,7 +276,7 @@ def enrich_entity_tags(
                 # can be decoded and is read-only, so no save is ever built
                 # from an incomplete view.
                 values = effective_tags(
-                    row,
+                    source,
                     manual_tags=manual,
                     legacy_tags=row.get("trace_tags"),
                     skip_oversized=True,
@@ -294,5 +300,5 @@ def enrich_entity_tags(
         deadline.remaining_ms()
     except (DatabaseError, ReadDeadlineExceeded):
         raise TagReadUnavailable("tag_assignment_unavailable") from None
-    for row, values in zip(rows, enriched, strict=True):
-        row.update(values)
+    for row, updates in zip(rows, enriched, strict=True):
+        row.update(updates)

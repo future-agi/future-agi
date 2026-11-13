@@ -17,7 +17,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol, cast
 
 from django.conf import settings
 
@@ -328,11 +328,28 @@ class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
     """A page's remap fan-in exceeded the optional enrichment read bound."""
 
 
+class _TraceReplayHost(Protocol):
+    """Legacy trace-list hooks supplied by both trace and voice list builders."""
+
+    _FILTER_BUILDER_CLS: type[ClickHouseFilterBuilderV2]
+
+    def _bounded_match_filters(self) -> list[dict[str, Any]]: ...
+
+    def _partition_trace_filter_plans(
+        self, filters: list[dict[str, Any]]
+    ) -> tuple[list[LatestFilterPredicate], list[dict[str, Any]]]: ...
+
+
 class _TraceRootReplayV2:
     """CH25 physical replacement and hydration, independent of acquisition policy."""
 
+    TABLE: str  # Provided by the trace-list host.
+
     def build_filter_match_query(self, candidate_ids, **kwargs):
-        query, params = super().build_filter_match_query(candidate_ids, **kwargs)
+        # Both hosts inherit TraceListQueryBuilder immediately after this mixin.
+        query, params = TraceListQueryBuilder.build_filter_match_query(
+            cast(TraceListQueryBuilder, self), candidate_ids, **kwargs
+        )
         from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 
         if (
@@ -359,11 +376,12 @@ class _TraceRootReplayV2:
 
         from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 
-        plans, residual_filters = self._partition_trace_filter_plans(
-            self._bounded_match_filters()
+        host = cast(_TraceReplayHost, self)
+        plans, residual_filters = host._partition_trace_filter_plans(
+            host._bounded_match_filters()
         )
         is_tag_leaf = getattr(
-            self._FILTER_BUILDER_CLS, "is_effective_tag_filter", lambda _item: False
+            host._FILTER_BUILDER_CLS, "is_effective_tag_filter", lambda _item: False
         )
         return all(is_tag_leaf(item) for item in residual_filters) and all(
             any(

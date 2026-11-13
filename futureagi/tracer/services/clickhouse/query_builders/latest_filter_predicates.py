@@ -1610,7 +1610,7 @@ def compile_exact_graph_filter_predicates(
         raw_value = config.get("filter_value", config.get("filterValue"))
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
         column_id = item.get("column_id") or item.get("columnId")
-        if is_effective_tag_leaf(column_id, col_type):
+        if is_effective_tag_leaf(column_id, col_type) and isinstance(column_id, str):
             # The list's effective-tag relation reads spans again and binds its
             # UI overlay only at execution. Graph statements also run where no
             # preparation hook exists, so compile a self-contained row witness.

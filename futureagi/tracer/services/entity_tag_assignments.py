@@ -1,7 +1,7 @@
 """Authorized, revision-checked assignment writes; never write telemetry tables."""
 
 from functools import partial
-from typing import cast
+from uuid import UUID
 
 import structlog
 from clickhouse_driver.errors import Error as ClickHouseError
@@ -56,7 +56,7 @@ def _can_write_to_workspace(user, workspace) -> bool:
     return bool(user.can_write_to_workspace(workspace))
 
 
-def _authorize_project(request: Request, project_id: object) -> Project:
+def _authorize_project(request: Request, project_id: str | UUID) -> Project:
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
@@ -173,22 +173,16 @@ def update_entity_tags(
     try:
         with force_primary(), _postgres_budget(deadline):
             project = _authorize_project(request, data["project_id"])
-        reference = cast(
-            TagTargetReference,
-            {
-                key: data[key]
-                for key in (
-                    "project_id",
-                    "trace_id",
-                    "span_id",
-                    "start_hour",
-                    "observation_type",
-                    "service_name",
-                    "expected_start_time",
-                    "expected_version",
-                )
-            },
-        )
+        reference: TagTargetReference = {
+            "project_id": data["project_id"],
+            "trace_id": data["trace_id"],
+            "span_id": data["span_id"],
+            "start_hour": data["start_hour"],
+            "observation_type": data["observation_type"],
+            "service_name": data["service_name"],
+            "expected_start_time": data["expected_start_time"],
+            "expected_version": data["expected_version"],
+        }
         try:
             analytics = V2AnalyticsQueryService()
         except (ClickHouseError, OSError, TypeError, ValueError) as exc:

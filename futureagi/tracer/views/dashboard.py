@@ -4255,10 +4255,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         metric_name=metric_name,
                         # Workspace-scoped (dashboard widget) tag pickers list
                         # the raw spans.tags vocabulary the widget matches.
-                        **(
-                            {"effective_tags": False}
-                            if project_scope.batched and metric_name in {"tag", "tags"}
-                            else {}
+                        effective_tags=not (
+                            project_scope.batched and metric_name in {"tag", "tags"}
                         ),
                         # The legacy response has no continuation contract, so
                         # it cannot exhaustively walk raw ids and then search
