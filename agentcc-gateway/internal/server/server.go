@@ -68,6 +68,7 @@ type Server struct {
 	videoExporter    otel.SpanExporter
 	videoInitErr     error
 	shadowFlusher    *routing.ShadowFlusher
+	router           *Router
 	ready            atomic.Bool
 }
 
@@ -238,6 +239,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -854,7 +856,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -862,8 +864,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
@@ -930,10 +939,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
+	s.router = router
+
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -948,6 +959,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		WriteTimeout:      cfg.Server.WriteTimeout,
 		IdleTimeout:       cfg.Server.IdleTimeout,
+		// 0 leaves net/http's default (1MB).
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
 
 	return s

@@ -65,7 +65,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	// Usage is only known when the session ends, so post-plugins run then, not after the dial.
 	rc.IsStream = true
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	rc.Metadata["x-guardrail-policy"] = r.Header.Get("X-Guardrail-Policy")
 	if key := speechClientKey(r); key != "" {
 		rc.Metadata["authorization"] = "Bearer " + key
