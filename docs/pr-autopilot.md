@@ -1242,8 +1242,9 @@ Suggested rollout:
    observe that notification), an overtaken catch-up (while the note is
    live, the author merges `dev` in and pushes, and another PR merges into
    `dev` before the first run on that head: the bot posts one new comment
-   naming the head and edits the note to name it; a plain push instead
-   gets only the edit), a branch behind `dev` with a push by an
+   naming the head and edits the note to name it, and the author receives
+   a notification for the new comment; a plain push instead gets only the
+   edit and no notification), a branch behind `dev` with a push by an
    account not on the list (an escalation and no behind-dev note), a push
    by an account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
