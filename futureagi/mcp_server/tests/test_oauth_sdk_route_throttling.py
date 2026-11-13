@@ -564,3 +564,142 @@ async def test_sdk_valid_exchange_is_admitted_when_an_earlier_request_finishes_m
     assert response.status_code == 200, response.text
     assert response.json()["access_token"]
 
+
+TRUSTED_PROXY = "10.0.0.1"
+
+
+def _forwarded_client(forwarded_for, peer=TRUSTED_PROXY):
+    transport = httpx.ASGITransport(app=_oauth_app(), client=(peer, 40000))
+    return httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"X-Forwarded-For": forwarded_for},
+    )
+
+
+async def _register_status(http):
+    response = await http.post(
+        "/register",
+        json={"redirect_uris": [REDIRECT_URI], "client_name": "Synthetic"},
+    )
+    return response
+
+
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE": "2/hour"},
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"],
+)
+async def test_sdk_register_window_is_per_forwarded_client_behind_a_trusted_proxy():
+    # Three clients reach the API through the same ingress address.
+    for i in range(3):
+        async with _forwarded_client(f"198.51.100.{i + 1}") as http:
+            response = await _register_status(http)
+        assert response.status_code == 201, response.text
+
+    # Each client still has its own window, whatever earlier entries it sends.
+    async with _forwarded_client("198.51.100.1") as http:
+        assert (await _register_status(http)).status_code == 201
+    async with _forwarded_client("192.0.2.9, 198.51.100.1") as http:
+        _assert_throttled(await _register_status(http), "Too many client registrations")
+
+
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_IP_THROTTLE_RATE": "2/min"},
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"],
+)
+async def test_sdk_token_window_is_per_forwarded_client_behind_a_trusted_proxy():
+    statuses = []
+    for i in range(3):
+        async with _forwarded_client(f"198.51.100.{20 + i}") as http:
+            response = await http.post("/token", data=_code_form(f"unknown-{i}", "x"))
+        statuses.append(response.status_code)
+    assert statuses == [401, 401, 401]
+
+    async with _forwarded_client("198.51.100.20") as http:
+        second = await http.post("/revoke", {"client_id": "unknown-9", "token": "t"})
+        third = await http.post("/token", data=_code_form("unknown-10", "x"))
+    assert second.status_code == 401
+    _assert_throttled(third, "Too many token requests")
+
+
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE": "2/hour"},
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"],
+)
+async def test_sdk_forwarded_address_from_an_untrusted_peer_is_ignored():
+    statuses = []
+    for i in range(3):
+        async with _forwarded_client(
+            f"198.51.100.{40 + i}", peer="203.0.113.9"
+        ) as http:
+            statuses.append((await _register_status(http)).status_code)
+    assert statuses == [201, 201, 429]
+
+
+ORIGIN = "http://localhost:3031"
+
+
+def _assert_readable_cross_origin(response):
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+    exposed = response.headers["Access-Control-Expose-Headers"].lower()
+    assert "retry-after" in [name.strip() for name in exposed.split(",")]
+
+
+@override_settings(
+    **{
+        **LOCKOUT_SETTINGS,
+        "MCP_OAUTH_TOKEN_IP_THROTTLE_RATE": "1/min",
+        "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE": "1/hour",
+    }
+)
+@pytest.mark.parametrize("path", ["/token", "/revoke", "/register"])
+async def test_sdk_rate_limited_response_carries_cors_headers(path):
+    addr = "203.0.113.160"
+    async with _client(addr) as http:
+        if path == "/register":
+            first = await _register_status(http)
+            refused = await http.post(
+                path,
+                json={"redirect_uris": [REDIRECT_URI], "client_name": "Synthetic"},
+                headers={"Origin": ORIGIN},
+            )
+        else:
+            form = {**_code_form("unknown", "x"), "token": "t"}
+            first = await http.post(path, data=form)
+            refused = await http.post(path, data=form, headers={"Origin": ORIGIN})
+    assert first.status_code in (201, 401), first.text
+    assert refused.status_code == 429
+    assert refused.json()["error"] == "slow_down"
+    assert int(refused.headers["Retry-After"]) > 0
+    _assert_readable_cross_origin(refused)
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_invalid_request_response_carries_cors_headers():
+    async with _client("203.0.113.161") as http:
+        response = await http.post(
+            "/token",
+            json={"client_id": "x"},
+            headers={"Origin": ORIGIN},
+        )
+    _assert_invalid_request(response)
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_responses_without_origin_have_no_cors_headers():
+    async with _client("203.0.113.162") as http:
+        response = await http.post("/token", json={"client_id": "x"})
+    _assert_invalid_request(response)
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_handled_response_keeps_its_cors_headers():
+    # The SDK's own reply (wrong credentials) uses the same CORS policy.
+    async with _client("203.0.113.163") as http:
+        response = await http.post(
+            "/token", data=_code_form("unknown", "x"), headers={"Origin": ORIGIN}
+        )
+    assert response.status_code == 401
+    assert response.headers["Access-Control-Allow-Origin"] == "*"

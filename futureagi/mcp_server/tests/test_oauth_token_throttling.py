@@ -1275,3 +1275,86 @@ def test_redis_recorded_attempts_and_reservations_share_the_limit(redis_cache):
             throttles.release_token_attempt_reservation(request)
         _clear_redis_attempts(redis_cache, client_id, addr)
 
+
+def _client_ident_for(remote_addr, forwarded_for=None):
+    extra = {"HTTP_X_FORWARDED_FOR": forwarded_for} if forwarded_for else {}
+    raw_request = APIRequestFactory().post(
+        TOKEN_URL,
+        {"grant_type": "refresh_token", "client_id": "same-client"},
+        format="json",
+        REMOTE_ADDR=remote_addr,
+        **extra,
+    )
+    return throttles.client_ident(MCPOAuthTokenView().initialize_request(raw_request))
+
+
+@override_settings(MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8", "2001:db8:ffff::/48"])
+@pytest.mark.parametrize(
+    "remote_addr, forwarded_for, expected",
+    [
+        # The nearest address that is not a trusted proxy.
+        ("10.0.0.1", "198.51.100.10", "198.51.100.10"),
+        ("10.0.0.1", "192.0.2.7, 198.51.100.10", "198.51.100.10"),
+        ("10.0.0.1", "192.0.2.7, 198.51.100.10, 10.0.0.9", "198.51.100.10"),
+        ("2001:db8:ffff::1", "2001:db8:1::5", "2001:db8:1::5"),
+        # Every hop is a trusted proxy: the first one.
+        ("10.0.0.1", "10.0.0.8, 10.0.0.9", "10.0.0.8"),
+        # A peer that is not a trusted proxy keeps its own address.
+        ("203.0.113.5", "198.51.100.10", "203.0.113.5"),
+        ("10.0.0.1", None, "10.0.0.1"),
+        ("10.0.0.1", " , ", "10.0.0.1"),
+    ],
+)
+def test_trusted_proxy_forwarded_address_is_used(remote_addr, forwarded_for, expected):
+    assert _client_ident_for(remote_addr, forwarded_for) == expected
+
+
+@override_settings(MCP_OAUTH_TRUSTED_PROXIES=[])
+def test_forwarded_address_is_ignored_without_trusted_proxies():
+    assert _client_ident_for("10.0.0.1", "198.51.100.10") == "10.0.0.1"
+
+
+@override_settings(MCP_OAUTH_TRUSTED_PROXIES=["not-an-address", "10.0.0.0/8"])
+def test_unparseable_trusted_proxy_entry_is_skipped():
+    assert _client_ident_for("10.0.0.1", "198.51.100.10") == "198.51.100.10"
+
+
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"],
+    REST_FRAMEWORK={**settings.REST_FRAMEWORK, "NUM_PROXIES": 1},
+)
+def test_configured_proxy_count_takes_precedence_over_trusted_proxies():
+    assert _client_ident_for("10.0.0.1", "192.0.2.7, 10.0.0.9") == "10.0.0.9"
+
+
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"],
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+def test_clients_behind_a_trusted_proxy_get_separate_lockouts(
+    api_client, oauth_client_app
+):
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": "bad-refresh-token",
+        "client_id": oauth_client_app.client_id,
+        "client_secret": CLIENT_SECRET,
+    }
+
+    def post(forwarded_for):
+        return _post_token(
+            api_client,
+            payload,
+            remote_addr="10.0.0.1",
+            HTTP_X_FORWARDED_FOR=forwarded_for,
+        ).status_code
+
+    assert [post("198.51.100.10") for _ in range(3)] == [400, 400, 429]
+    # The proxy appends the address it saw, so an earlier entry changes nothing.
+    assert post("192.0.2.1, 198.51.100.10") == 429
+    # Another client behind the same proxy has its own counter.
+    assert post("198.51.100.11") == 400
