@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -5103,3 +5104,32 @@ def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
         ("adj-1", "applied"),
         ("adj-2", "pending"),
     ]
+
+
+def test_process_log_capture_labels_the_builds_logs_apart_from_the_runs(tmp_path):
+    from simulate.services.hosted_harness_diagnostics import _process_log_command
+
+    build = tmp_path / "authoring" / "generic-harness" / "process-logs"
+    retained = tmp_path / "diagnostics" / "process-logs"
+    live = tmp_path / "worlds" / "w0" / "agent"
+    for directory in (build, retained, live):
+        directory.mkdir(parents=True)
+    (build / "worlds-w0-agent-a.log").write_text("validation worker\n")
+    (retained / "worlds-w0-agent-b.log").write_text("stt: 402 Payment Required\n")
+    (live / "process.log").write_text("live worker\n")
+
+    output = subprocess.run(
+        ["sh", "-c", _process_log_command(str(tmp_path))],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    assert f"===== build: {build}/worlds-w0-agent-a.log =====" in output
+    assert f"===== run: {retained}/worlds-w0-agent-b.log =====" in output
+    assert f"===== run: {live}/process.log =====" in output
+    assert (
+        output.index("validation worker")
+        < output.index("402 Payment Required")
+        < output.index("live worker")
+    )
