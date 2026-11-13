@@ -477,7 +477,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       const carried = page.getByRole('group', { name: 'Carried release candidate' });
       await loading(carried, () => proceed.click());
       await glide(carried);
-      await caption('The request carries the exact candidate, support-agent production v1 → v2, and its application target.', 2400);
+      await caption('The request carries the exact candidate (production v1 → v2) and the application target it was verified on.', 2400);
       const suggested = page.getByText('Suggested', { exact: true }).first();
       await expect(suggested).toBeVisible();
       await glide(suggested);
@@ -492,8 +492,9 @@ test('skills walkthrough', async ({ browser, request }) => {
       await click(authorAck, 500);
       const send = page.getByRole('button', { name: 'Send review request', exact: true });
       await glide(send);
-      await loading(page.getByRole('button', { name: 'support-agent', exact: true }), () => send.click());
-      await expect(page).toHaveURL(/mine=1/);
+      // The composer itself shows "production v1 → v2", so readiness is checked only after the URL changes.
+      await loading(page.getByText(/support-agent · production v1 → v2/), async () => { await send.click(); await page.waitForURL(/mine=1/); });
+      await glide(page.getByText(/support-agent · production v1 → v2/));
       await caption('The request is sent. Nothing has moved yet.', 1800);
       await as('priya', '/dashboard/skills', page.getByRole('cell').getByRole('link', { name: 'refund-policy', exact: true }));
       await caption('Now signed in as the reviewer: the request waits in her review inbox.', 1600);
