@@ -1,6 +1,6 @@
 import { createContext, useContext, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Button, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from "@mui/material";
+import { Button, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from "@mui/material";
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -9,6 +9,8 @@ import ErrorState from "src/components/error-state";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import ContextImportDialog from "./ContextImportDialog";
+import CapabilityNotice from '../components/CapabilityNotice';
+import StatusBadge from 'src/components/status-badge';
 
 // Intent: locate the exact standing-context release, then create a deliberate draft.
 // Hierarchy: purpose and independent production/latest columns, not a quality score.
@@ -24,7 +26,7 @@ export function ContextAuthoringProvider({ scopeKey, bindings, children }) {
 ContextAuthoringProvider.propTypes = { scopeKey: PropTypes.string.isRequired, bindings: PropTypes.object.isRequired, children: PropTypes.node };
 export const useContextAuthoring = () => useContext(AuthoringContext);
 
-function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, onSkills, onArchived, importActions, state }) {
+function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, importActions, state }) {
   // Arriving from a reviewed migration opens creation directly; its published
   // skills are proposed (not accepted) as pinned links in the new draft.
   const proposedLinks = importActions?.proposedLinks;
@@ -34,33 +36,34 @@ function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, onSkil
   const rows = data?.results || [];
   const loading = state === "loading" || query.isLoading || !scoped;
   const error = state === "error" || query.error;
-  const empty = state === "empty" || !rows.length;
+  const empty = ['empty', 'filtered-empty'].includes(state) || !rows.length;
+  const filtered = state === 'filtered-empty' || Boolean(filters.search || filters.tag || filters.label);
+  const outOfRange = empty && !filtered && (data?.page ?? filters.page ?? 1) > 1;
+  const firstRun = empty && !filtered && !outOfRange && !loading && !error;
+  const clearFilters = () => onFilterChange?.({ ...filters, search: '', tag: '', label: '', page: 1 });
   const change = (key, value) => onFilterChange?.({ ...filters, [key]: value, page: 1 });
+  if (state === 'off') return <Stack spacing={1.5}><PageHeader title="Agent contexts" description="Standing instructions and linked skills, released together." /><CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="Existing skills stay available. Ask a workspace admin about access." /></Stack>;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <PageHeader title="Agent contexts" description="Standing instructions and linked skills, released together." sx={{ mb: 0 }} />
-    <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
-      <Button variant="outlined" onClick={onSkills} disabled={!onSkills}>Skills</Button>
-      <Button variant="outlined" onClick={onArchived} disabled={!onArchived}>Archived identities</Button>
-      {!empty && <Button variant="contained" disabled={!importActions} onClick={() => setImportOpen(true)}>New agent context</Button>}
-    </Stack>
+    <PageHeader title="Agent contexts" description="Standing instructions and linked skills, released together." sx={{ mb: 0 }} actions={!firstRun && <Button variant="contained" disabled={!importActions} onClick={() => setImportOpen(true)}>New agent context</Button>} />
+    {query.isFetching && !loading && <StatusBadge status="checking" label="Updating…" />}
     <ListToolbar>
       <FormSearchField label="Search agent contexts" searchQuery={filters.search || ""} onChange={(event) => change("search", event.target.value)} sx={{ minWidth: 0, flex: 1 }} />
       <TextField size="small" label="Tag" value={filters.tag || ""} onChange={(event) => change("tag", event.target.value)} />
       <TextField select size="small" label="Label" value={filters.label || ""} onChange={(event) => change("label", event.target.value)}><MenuItem value="">Any label</MenuItem><MenuItem value="production">Production</MenuItem><MenuItem value="staging">Staging</MenuItem></TextField>
       <TextField select size="small" label="Sort" value={filters.sort || "updated"} onChange={(event) => change("sort", event.target.value)}><MenuItem value="updated">Updated</MenuItem><MenuItem value="name">Name</MenuItem><MenuItem value="created">Created</MenuItem></TextField>
     </ListToolbar>
-    {loading ? <ContentSkeleton /> : error ? <ErrorState title="Agent contexts unavailable" detail="An access or network error is not an empty library." onRetry={query.refetch} /> : empty ? <EmptyState variant={filters.search || filters.tag || filters.label ? "no-results" : "first-run"} title="No agent contexts" description="Standing instructions and linked skills, released together." action={<Button variant="contained" disabled={!importActions} onClick={() => setImportOpen(true)}>{importActions?.onCreate && !importActions.onPreview ? 'Write AGENTS.md' : 'Import AGENTS.md'}</Button>} /> : <>
-      <TableContainer><Table size="small" aria-label="Agent contexts"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{["Context and purpose", "Production", "Latest", "Draft", "Linked skills", "Updates", "Delivery"].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>
+    {loading ? <ContentSkeleton variant="rows" /> : state === 'off' ? <CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="Existing skills stay available. Ask a workspace admin about access." /> : state === 'denied' ? <ErrorState title="You don't have access to agent contexts." onRetry={query.refetch} /> : error ? <ErrorState title="Couldn't load agent contexts." onRetry={query.refetch} /> : outOfRange ? <EmptyState title="This page is no longer available" action={<Button onClick={() => onFilterChange?.({ ...filters, page: 1 })}>Go to first page</Button>} /> : empty ? filtered ? <EmptyState variant="no-results" title="No contexts match these filters" onClearFilters={clearFilters} /> : <EmptyState variant="first-run" title="Create your first agent context" description="Combine standing instructions with linked skills, then review and release them together." action={<Button variant="contained" disabled={!importActions} onClick={() => setImportOpen(true)}>Create agent context</Button>} secondaryAction={<Button variant="outlined" disabled={!importActions} onClick={() => setImportOpen(true)}>Import AGENTS.md</Button>} /> : <>
+      <TableContainer><Table size="small" aria-label="Agent contexts"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Name', 'Production', 'Latest', 'Draft', 'Updated'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>
         {rows.map((context) => <TableRow hover key={context.id} sx={{ height: ROW_HEIGHT.default }}>
           <TableCell><Button onClick={() => onOpen?.(context)} disabled={!onOpen} sx={{ justifyContent: "flex-start", overflowWrap: "anywhere", textAlign: "left" }}>{context.name}</Button><Typography variant="s3" display="block">{context.description}</Typography></TableCell>
           <TableCell>{context.labels?.find((label) => label.name === "production")?.version ? `v${context.labels.find((label) => label.name === "production").version}` : "Not assigned"}</TableCell>
           <TableCell>{context.latestVersion == null ? "Not published" : `v${context.latestVersion}`}</TableCell>
-          <TableCell>{context.hasDraft ? "Your draft" : "—"}</TableCell><TableCell>{context.linkCount ?? "Not loaded"}</TableCell><TableCell>{context.updateCount ?? "Not checked"}</TableCell><TableCell>{context.deliverySummary || "Not observed"}</TableCell>
+          <TableCell>{context.hasDraft ? 'Your draft' : '—'}</TableCell><TableCell>{context.updatedAt ? new Date(context.updatedAt).toLocaleString() : 'Not reported'}</TableCell>
         </TableRow>)}
       </TableBody></Table></TableContainer>
       <TablePagination component="div" count={data.count} page={data.page - 1} rowsPerPage={data.pageSize} rowsPerPageOptions={[]} onPageChange={(_, page) => onFilterChange?.({ ...filters, page: page + 1 })} />
     </>}
-    {!importActions && <Alert severity="info">Context authoring is unavailable until its service and scoped client are enabled.</Alert>}
+    {!importActions && state !== 'off' && <CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="You can still read the contexts you have access to." />}
     {importOpen && importActions && <ContextImportDialog {...importActions} scopeKey={scopeKey} proposedLinkCount={Array.isArray(proposedLinks) ? proposedLinks.length : 0} open onClose={() => setImportOpen(false)} onCreated={(result) => { setImportOpen(false); importActions.onCreated?.(result); }} />}
   </Stack>;
 }

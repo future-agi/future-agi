@@ -17,6 +17,9 @@ import { contextSkillChoices } from './context-skill-choices';
 import { productionBaseline } from './production-baseline';
 import ContextTargetRegistration from './ContextTargetRegistration';
 import J6RecoveryPanel from './J6RecoveryPanel';
+import Section from 'src/components/section';
+import TechnicalDetails from '../components/TechnicalDetails';
+import { publicApiOrigin } from '../utils/origin';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -60,6 +63,8 @@ function Detail() {
   const selectedVersion = version.data?.version;
   const versionRows = versions.data?.results || [];
   const allChoices = selectedVersion && !versionRows.some((row) => row.id === selectedVersion.id) ? [selectedVersion, ...versionRows] : versionRows;
+  const api = publicApiOrigin();
+  const selectTab = (tab) => setParams((current) => { const next = new URLSearchParams(current); next.set('tab', tab); return next; });
   const deliveryState = version.isError ? 'error' : version.isLoading ? 'loading' : version.data && !version.data.distributionBlocked ? 'ready' : 'unavailable';
   return <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
     {requested !== null && number === null && <Alert severity="error">Choose a positive, explicit release number. No latest-version substitution was made.</Alert>}
@@ -77,9 +82,9 @@ function Detail() {
         // J6: incident recovery choice and local/application recovery guidance.
         recovery: query.data?.context ? <J6RecoveryPanel contextId={contextId} contextName={query.data.context.name} /> : null,
         use: <Stack spacing={2}>
-          <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />
-          {query.data?.context && version.data?.descriptor?.links?.length > 0 && <ContextMigrationExport contextName={query.data.context.name} links={version.data.descriptor.links} />}
-          {deliveryState === 'ready' && version.data?.snapshot && <ContextPilotCredentials key={`${scopeKey}:${version.data.snapshot.versionId}`} contextId={contextId} snapshot={version.data.snapshot} canIssue={query.data?.releaseState.permissions.canIssueCredentials === true} />}
+          <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={api.origin} originError={api.error} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} onViewFiles={() => selectTab('context')} onOpenLinks={() => selectTab('links')} />
+          {deliveryState === 'ready' && version.data?.snapshot && <Section title="Runtime access"><ContextPilotCredentials key={`${scopeKey}:${version.data.snapshot.versionId}`} contextId={contextId} snapshot={version.data.snapshot} canIssue={query.data?.releaseState.permissions.canIssueCredentials === true} /></Section>}
+          {query.data?.context && version.data?.descriptor?.links?.length > 0 && <TechnicalDetails title="Migration export"><ContextMigrationExport contextName={query.data.context.name} links={version.data.descriptor.links} /></TechnicalDetails>}
         </Stack>,
       }} />
   </Stack>;

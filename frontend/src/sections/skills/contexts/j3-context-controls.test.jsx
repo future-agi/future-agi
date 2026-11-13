@@ -29,6 +29,8 @@ vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: ()
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
 vi.mock('src/api/skills/context-release-request', () => ({ usePreviewContextLabelRequest: () => ({ mutateAsync: state.previewLabel }), useSubmitContextLabelRequest: () => ({ mutateAsync: state.submitLabel }) }));
 vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: (_skill, { view }) => (view === 'history' ? state.history : state.dependents) }));
+vi.mock('src/api/skills', () => ({ useSkill: () => ({}) }));
+vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'parent-v2', number: 2, digest };
 const preview = { fingerprint: 'preview', attemptCount: 2, estimate: { upperBoundUsd: '0.01' }, providerDisclosure: { taskProvider: 'openai' }, inventory: [], outboundFindings: [] };

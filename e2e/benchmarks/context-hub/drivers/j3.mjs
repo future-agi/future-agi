@@ -195,7 +195,7 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'accept-followers') {
           // One reviewed update over the preselected followers, started from the dependents inventory the person is already viewing.
-          await click(`Preview updates for ${followers.length} selected contexts`, 'followers-preview');
+          await click(`Prepare draft updates for ${followers.length} contexts`, 'followers-preview');
           await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
           const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByText('Compiled candidate')).toHaveCount(followers.length));
           await reviewPlans('followers-dependency-review');

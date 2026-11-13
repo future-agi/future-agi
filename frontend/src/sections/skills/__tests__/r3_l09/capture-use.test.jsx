@@ -292,28 +292,20 @@ describe("qualified exact install handoff", () => {
       }),
     ).toThrow();
   });
-  it("does not advertise commands for unreleased packages or unqualified clients", () => {
-    const { rerender } = render(
-      <ContextUsePanel
-        {...useProps}
-        qualification={{ ...qualification, released: false }}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Copy plan command" }),
-    ).not.toBeInTheDocument();
-    rerender(
-      <ContextUsePanel
-        {...useProps}
-        qualification={{
-          ...qualification,
-          profiles: [{ ...qualification.profiles[0], state: "preview" }],
-        }}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Copy plan command" }),
-    ).not.toBeInTheDocument();
+  it('offers an explicit preview SDK path without inventing package or host qualification', () => {
+    const { rerender } = render(<ContextUsePanel {...useProps} qualification={undefined} />);
+    expect(screen.getByText('Preview: host profile not yet verified')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy plan command' })).toBeEnabled();
+    expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
+    expect(screen.getByLabelText('Context install plan command')).not.toHaveTextContent('pip install');
+    rerender(<ContextUsePanel {...useProps} qualification={{ ...qualification, profiles: [{ ...qualification.profiles[0], state: 'preview' }] }} />);
+    expect(screen.getByText('Preview: host profile not yet verified')).toBeVisible();
+    expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
+  });
+  it('fails closed when the public API origin is not configured', () => {
+    render(<ContextUsePanel {...useProps} origin={null} originError="not_https" />);
+    expect(screen.getByText(/no public HTTPS API address configured/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Copy plan command' })).not.toBeInTheDocument();
   });
   it("reports clipboard failure honestly and does not show copied until fulfillment", async () => {
     const write = vi

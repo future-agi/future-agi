@@ -4,6 +4,7 @@ import { Alert, Box, Button, Stack, Typography } from '@mui/material';
 import { saveAs } from 'file-saver';
 import { useMigrationCollectionExport } from 'src/api/skills/j1-migration-export';
 import Section from 'src/components/section';
+import IdentityChip from '../components/IdentityChip';
 
 // Intent: leave a pilot with one download of every linked skill's current
 // supported bytes and source mapping, instead of one export per skill.
@@ -24,13 +25,13 @@ export default function ContextMigrationExport({ contextName, links }) {
       setItems(result.items);
     } catch (failure) { setError(failure?.message || 'Could not prepare this export. Nothing was downloaded.'); }
   };
-  return <Section title="Export linked skills">
+  return <Section title="Export latest linked skills (not this context's locked versions)">
     <Stack spacing={1.5}>
       <Typography variant="s1">Downloads the current published version of each of the {skillIds.length} linked skills as its exact archive with its source mapping receipt, in one ZIP. Export does not modify the source, remove local files or revoke credentials.</Typography>
       <Box><Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Export ${skillIds.length} linked skills with mapping receipts`}</Button></Box>
       {error && <Alert severity="error">{error}</Alert>}
       {items && <Stack spacing={0.5}>
-        {items.map((item) => <Typography key={item.resource_id} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{item.name} · v{item.version} · {item.digest} · {item.mapping_receipts} source mappings</Typography>)}
+        {items.map((item) => <Stack key={item.resource_id} spacing={0.5}><Typography variant="s3">{item.name} · v{item.version} · {item.mapping_receipts} source mappings</Typography><IdentityChip value={item.digest} label="Export digest" /></Stack>)}
       </Stack>}
     </Stack>
   </Section>;
