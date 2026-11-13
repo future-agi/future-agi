@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -106,6 +110,15 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// RealtimeReady validates configuration without contacting the dependency.
+func (g *WebhookGuardrail) RealtimeReady() error {
+	u, err := url.Parse(g.url)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
+		return fmt.Errorf("%w: webhook is not configured", guardrails.ErrRealtimeUnavailable)
+	}
+	return nil
+}
+
 // Check calls the webhook endpoint.
 func (g *WebhookGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || g.url == "" {
@@ -178,12 +191,73 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 		return nil, fmt.Errorf("failed to parse webhook response: %v", err)
 	}
 
+	// Availability stays separate from the legacy HTTP score/pass contract.
+	// A realtime decision uses the exact fields that were validated, never the
+	// case-insensitive struct decoder's interpretation of an ambiguous envelope.
+	pass, score, unavailable := exactVerdict(respBody)
+	if unavailable == nil {
+		wr.Pass, wr.Score = pass, score
+	}
 	return &guardrails.CheckResult{
-		Pass:    wr.Pass,
-		Score:   wr.Score,
-		Message: wr.Message,
-		Details: wr.Details,
+		RealtimeErr: unavailable,
+		Pass:        wr.Pass,
+		Score:       wr.Score,
+		Message:     wr.Message,
+		Details:     wr.Details,
 	}, nil
+}
+
+// exactVerdict accepts one JSON object with unique, exact-case protected keys.
+// An absent score preserves the historical zero-score threshold semantics.
+func exactVerdict(body []byte) (bool, float64, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return false, 0, errors.New("webhook verdict must be an object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return false, 0, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return false, 0, errors.New("invalid webhook verdict key")
+		}
+		for _, protected := range []string{"pass", "score", "message", "details"} {
+			if strings.EqualFold(key, protected) && key != protected {
+				return false, 0, errors.New("webhook verdict has a protected key alias")
+			}
+		}
+		if _, exists := fields[key]; exists {
+			return false, 0, errors.New("webhook verdict has a duplicate key")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return false, 0, err
+		}
+		fields[key] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return false, 0, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return false, 0, errors.New("webhook verdict has trailing data")
+	}
+	var pass *bool
+	if json.Unmarshal(fields["pass"], &pass) != nil || pass == nil {
+		return false, 0, errors.New("webhook did not return a boolean pass verdict")
+	}
+	score := 0.0
+	if raw, present := fields["score"]; present {
+		var value *float64
+		if json.Unmarshal(raw, &value) != nil || value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > 1 {
+			return false, 0, errors.New("webhook returned an invalid score")
+		}
+		score = *value
+	}
+	return *pass, score, nil
 }
 
 func errorResult(msg string) *guardrails.CheckResult {

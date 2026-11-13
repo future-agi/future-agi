@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -93,6 +94,13 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 
 func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady refuses adapters whose provider-specific response envelopes do
+// not yet distinguish unavailable/indeterminate responses from content approval.
+// HTTP guardrail behavior is unchanged; speech must not release unchecked text.
+func (g *ExternalGuardrail) RealtimeReady() error {
+	return errors.New("external adapter realtime verdict validation is unsupported")
+}
 
 // Check evaluates text against the external provider.
 func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

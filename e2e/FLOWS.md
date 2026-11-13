@@ -323,6 +323,29 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
 ### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
 
 **Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
@@ -1292,7 +1315,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
@@ -2601,6 +2624,33 @@
 - an atomic replace on the host is seen by the container without restarting anything
 - with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
 - POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 

@@ -56,6 +56,11 @@ func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC 
 
 // ProcessRequest runs pre-stage guardrails.
 func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Speech has no chat body at admission. The relay binds this plugin after auth
+	// and checks complete protocol text units before forwarding them instead.
+	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
+		return pipeline.ResultContinue()
+	}
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -78,6 +83,9 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
+		return pipeline.ResultContinue()
+	}
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)

@@ -74,7 +74,7 @@ const RunModeCard = ({ mode, isActive, onClick }) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: 600,
             color: isActive ? "primary.main" : "text.primary",
           }}

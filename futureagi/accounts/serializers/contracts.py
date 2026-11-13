@@ -624,6 +624,8 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     enabled = serializers.BooleanField()
     type = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+    is_expired = serializers.BooleanField()
 
 
 class SecretKeyListResultSerializer(serializers.Serializer):
@@ -643,6 +645,7 @@ class SecretKeyCreateResultSerializer(serializers.Serializer):
     masked_api_key = serializers.CharField()
     secret_key = serializers.CharField()
     masked_secret_key = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class SecretKeyCreateResponseSerializer(serializers.Serializer):

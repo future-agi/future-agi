@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -151,6 +153,22 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// RealtimeReady refuses unavailable checks before a speech provider is dialed.
+func (g *FutureAGIGuardrail) RealtimeReady() error {
+	u, err := url.Parse(g.baseURL)
+	if strings.TrimSpace(g.apiKey) == "" || strings.TrimSpace(g.secretKey) == "" || len(g.evalIDs) == 0 || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
+		return fmt.Errorf("%w: evaluation credentials, URL or ids are unavailable", guardrails.ErrRealtimeUnavailable)
+	}
+	seen := make(map[string]bool)
+	for _, id := range g.evalIDs {
+		if strings.TrimSpace(id) == "" || seen[id] {
+			return fmt.Errorf("%w: evaluation ids are invalid", guardrails.ErrRealtimeUnavailable)
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
 // Check evaluates text against the Future AGI evaluation API.
 func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil {
@@ -194,13 +212,21 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		}(i, id)
 	}
 	wg.Wait()
-	return combineVerdicts(verdicts)
+	result := combineVerdicts(verdicts)
+	for _, v := range verdicts {
+		if v.realtimeErr != nil {
+			result.RealtimeErr = v.realtimeErr
+			break
+		}
+	}
+	return result
 }
 
 // templateVerdict is the outcome of evaluating one template.
 type templateVerdict struct {
-	resp *evalResponse
-	err  error
+	resp        *evalResponse
+	err         error
+	realtimeErr error
 }
 
 func (g *FutureAGIGuardrail) evaluate(ctx context.Context, text, id string) templateVerdict {
@@ -208,10 +234,33 @@ func (g *FutureAGIGuardrail) evaluate(ctx context.Context, text, id string) temp
 	if err != nil {
 		return templateVerdict{err: fmt.Errorf("futureagi evaluation failed: %w", err)}
 	}
+	unidentified := hasUnidentifiedEvaluation(resp)
 	if err := validateEvaluations(resp, []string{id}); err != nil {
 		return templateVerdict{err: err}
 	}
-	return templateVerdict{resp: resp}
+	verdict := templateVerdict{resp: resp}
+	// Realtime checks also require a single result group, and an evaluation
+	// id on each verdict whenever several templates are configured.
+	if len(resp.Result) != 1 {
+		verdict.realtimeErr = errors.New("evaluation result envelope is incomplete")
+	} else if unidentified && len(g.evalIDs) > 1 {
+		verdict.realtimeErr = errors.New("evaluation identity is missing")
+	}
+	return verdict
+}
+
+func hasUnidentifiedEvaluation(resp *evalResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for _, group := range resp.Result {
+		for _, ev := range group.Evaluations {
+			if ev.EvalID == "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // combineVerdicts fails the check when any template reports Failed, even if

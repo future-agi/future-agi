@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
@@ -64,7 +65,8 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	// Usage is only known when the session ends, so post-plugins run then, not after the dial.
 	rc.IsStream = true
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
+	rc.Metadata["x-guardrail-policy"] = r.Header.Get("X-Guardrail-Policy")
 	if key := speechClientKey(r); key != "" {
 		rc.Metadata["authorization"] = "Bearer " + key
 	}
@@ -112,6 +114,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 
 	var upstream *websocket.Conn
+	var speechPolicy *guardrails.RealtimePolicy
 	dialCtx, cancel := context.WithTimeout(r.Context(), speechDialTimeout)
 	defer cancel()
 	err = h.engine.Process(dialCtx, rc, func(ctx context.Context, rc *models.RequestContext) error {
@@ -127,6 +130,26 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 			if err := h.speechModelAllowed(rc, rc.Model); err != nil {
 				return err
 			}
+		}
+		plugin, ok := h.engine.Plugin("guardrails").(*guardrails.GuardrailPlugin)
+		if !ok {
+			// Bind configured speech checks when the pipeline plugin is
+			// unavailable. Resolve implementations before opening the upstream
+			// session.
+			plugin = guardrails.NewPlugin(h.guardrailEngine, nil, nil, h.policyStore, h.tenantStore)
+		}
+		var policyErr *models.APIError
+		speechPolicy, policyErr = plugin.BindRealtime(rc)
+		if policyErr != nil {
+			return policyErr
+		}
+		// Audio cannot be inspected as text before transcription or after synthesis.
+		// Validate the supported direction before opening the vendor connection.
+		if (session.Kind == speech.Transcription && speechPolicy.Blocking(guardrails.StagePre)) ||
+			(session.Kind == speech.Synthesis && speechPolicy.Blocking(guardrails.StagePost)) ||
+			(path == "/stt/turns/websocket" && speechPolicy.Blocking(guardrails.StagePost)) {
+			return &models.APIError{Status: http.StatusForbidden, Type: models.ErrTypeGuardrail,
+				Code: "realtime_guardrail_unsupported", Message: "configured blocking guardrails cannot inspect this speech protocol; use a supported text direction"}
 		}
 		conn, resp, err := speechDialer.DialContext(ctx, session.URL, session.Header)
 		if err != nil {
@@ -158,7 +181,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	}
 	relaySession := realtime.NewSession("speech-"+rc.RequestID, rc.RequestID, orgID, rc.Model, rc.Provider, client, upstream)
 	expire := time.AfterFunc(speechMaxSession, func() { relaySession.Close("max_duration") })
-	realtime.NewRelay(relaySession, realtime.RelayConfig{
+	relayConfig := realtime.RelayConfig{
 		PingInterval:   30 * time.Second,
 		PongTimeout:    10 * time.Second,
 		IdleTimeout:    speechIdleTimeout,
@@ -166,7 +189,15 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		OnClientMessage: func(messageType int, data []byte) error {
 			return session.ClientMessage(messageType == websocket.BinaryMessage, data)
 		},
-	}, slog.Default()).Start()
+	}
+	inspector := realtime.NewSpeechGuardrails(r.Context(), speechPolicy, vendor)
+	if session.Kind == speech.Synthesis && speechPolicy.Has(guardrails.StagePre) {
+		relayConfig.FilterClient = inspector.Client
+	}
+	if session.Kind == speech.Transcription && speechPolicy.Has(guardrails.StagePost) {
+		relayConfig.FilterProvider = inspector.Provider
+	}
+	realtime.NewRelay(relaySession, relayConfig, slog.Default()).Start()
 	expire.Stop()
 	relaySession.Close("relay_done")
 
