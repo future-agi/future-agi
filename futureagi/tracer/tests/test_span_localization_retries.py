@@ -48,6 +48,7 @@ NEW_OUTPUT = "It arrives Friday."
 NEW_REASON = "The requested Monday delivery was answered as Friday."
 CONTEXT_MISMATCH = "error_localizer_span_context_mismatch"
 OUT_OF_SCOPE = "error_localizer_span_existing_task_out_of_scope"
+WORKSPACE_MISMATCH = "error_localizer_workspace_mismatch"
 TRIGGER_RETRYING = "error_localizer_span_trigger_retrying"
 TRIGGER_FAILED = "error_localizer_span_trigger_failed"
 DB_UNAVAILABLE = "error_localizer_span_trigger_db_unavailable"
@@ -383,10 +384,17 @@ def test_borrowed_config_outside_tenant_scope_is_rejected(
         author.workspace = _other_workspace(workspace)
     author.save(update_fields=["organization", "workspace"])
     clear_workspace_context()
-    _trigger(entry, span, config)
+    with capture_logs() as records:
+        _trigger(entry, span, config)
     assert ErrorLocalizerTask.no_workspace_objects.filter(
         source_id=entry.id
     ).count() == int(existing)
+    _assert_no_trigger_errors(records)
+    if mismatch == "workspace":
+        (refusal,) = _events(records, WORKSPACE_MISMATCH)
+        assert refusal["log_level"] == "warning"
+        assert refusal["eval_logger_id"] == str(entry.id)
+        assert refusal["reason"] == "cross_workspace_config"
     if existing:
         old.refresh_from_db()
         assert old.status == ErrorLocalizerStatus.COMPLETED

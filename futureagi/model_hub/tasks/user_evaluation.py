@@ -1044,13 +1044,20 @@ def _resolve_span_localization_workspace(
         and target_workspace.is_default
         and target_workspace.is_active
     )
-    if (
-        target_workspace.organization_id != project.organization_id
-        or not config_workspace_matches
-    ):
+    if target_workspace.organization_id != project.organization_id:
         logger.warning(
             "error_localizer_workspace_mismatch",
             eval_logger_id=str(eval_logger.id),
+            reason="target_workspace_organization",
+        )
+        return None
+    if not config_workspace_matches:
+        # Task creation only accepts configs from the task's own project, so a
+        # config authored in another workspace is not a supported pairing.
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="cross_workspace_config",
         )
         return None
     return target_workspace
@@ -1499,6 +1506,7 @@ def process_single_error_localization(task_id):
                 task_id=str(task.id),
                 source_id=str(task.source_id),
                 failure_code=failure_code,
+                error_type=type(e).__name__,
             )
             task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:
