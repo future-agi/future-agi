@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 from django.conf import settings as django_settings
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -72,6 +73,7 @@ from simulate.services.agent_fix_runs import (
     split_held_back,
 )
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
+from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -2751,7 +2753,9 @@ class TestWinnerGrading:
             for execution in _executions(runs[key])
         }
         assert {call.args[0] for call in dispatched.call_args_list} == graded
-        assert {call.args[1] for call in dispatched.call_args_list} == {str(config.id)}
+        assert {tuple(call.args[1]) for call in dispatched.call_args_list} == {
+            (str(config.id),)
+        }
         # The graded runs are held at their worst case, an eval included, until their
         # evals are done; the screen stays at what it billed.
         assert committed_usd(fix_run) == Decimal("0.01") + 2 * Decimal("0.75")
@@ -2774,11 +2778,58 @@ class TestWinnerGrading:
             for key in ("base", "final")
             for execution in _executions(runs[key])
         }
-        assert {(call.args[0], call.args[1]) for call in dispatched.call_args_list} == {
-            (call_id, str(config.id))
-            for call_id in graded
-            for config in (first, second)
+        # One job per call carrying both configs: two jobs for one call each save
+        # the call's whole eval_outputs and drop the other's verdict (slot 6, 12 Nov:
+        # 177 of 576 verdicts lost when each config was its own job).
+        assert len(dispatched.call_args_list) == len(graded)
+        assert {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        } == {call_id: sorted([str(first.id), str(second.id)]) for call_id in graded}
+
+    def test_a_failed_hand_off_unstamps_every_config_of_the_calls_it_did_not_reach(
+        self, source_run
+    ):
+        fix_run, _, _, first = self._fix(source_run)
+        second = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+        run = _check(fix_run, label="baseline-r2", keys=KEYS)
+        _finished_and_sealed(run)
+        calls = sorted(str(e.call_execution_id) for e in _executions(run))
+        assert len(calls) == 2
+
+        def _hand_off(*args, **kwargs):
+            if kwargs["args"] == (calls[1],):
+                raise RuntimeError("broker unreachable")
+
+        with (
+            patch(
+                "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+                side_effect=_hand_off,
+            ) as hand_off,
+            TestCase.captureOnCommitCallbacks(execute=True),
+            transaction.atomic(),
+        ):
+            queue_evals_for_finished_calls(run.test_execution, [first, second])
+
+        assert [call.kwargs["args"][0] for call in hand_off.call_args_list] == calls[:2]
+        assert sorted(
+            hand_off.call_args_list[0].kwargs["kwargs"]["eval_config_ids"]
+        ) == sorted([str(first.id), str(second.id)])
+        reached = CallExecution.objects.get(id=calls[0])
+        assert set(reached.call_metadata["eval_queued"]) == {
+            str(first.id),
+            str(second.id),
         }
+        for call_id in calls[1:]:
+            call = CallExecution.objects.get(id=call_id)
+            assert not set(call.call_metadata.get("eval_queued") or {}) & {
+                str(first.id),
+                str(second.id),
+            }
+            assert str(first.id) not in (call.eval_outputs or {})
+            assert str(second.id) not in (call.eval_outputs or {})
+            assert call.call_metadata["eval_completed"] is True
 
     def test_a_fix_with_no_winner_pays_for_no_evals(self, source_run):
         fix_run, candidate, _, _ = self._fix(source_run)
