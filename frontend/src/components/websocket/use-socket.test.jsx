@@ -173,11 +173,68 @@ it("still reconnects after an abnormal drop of an open socket", () => {
   expect(sockets).toHaveLength(2);
 });
 
-it("reconnects when the server could not complete authentication", () => {
+it("backs off while the server cannot complete authentication", () => {
   vi.useFakeTimers();
   render(tree());
-  // The handshake is accepted and then closed with 1011 while the backend
+  // Each handshake is accepted and then closed with 1011 while the backend
   // cannot reach its database or cache; the credential was never refused.
+  const failHandshake = () =>
+    act(() => {
+      sockets.at(-1).emit("open");
+      sockets.at(-1).emit("close", { code: 1011 });
+    });
+  const waitFor = (ms) =>
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+
+  failHandshake();
+  waitFor(5000);
+  expect(sockets).toHaveLength(2);
+  expect(new URL(sockets[1].url).searchParams.get("token")).toBe(
+    "synthetic-token",
+  );
+  failHandshake();
+  waitFor(9999);
+  expect(sockets).toHaveLength(2);
+  waitFor(1);
+  expect(sockets).toHaveLength(3);
+  failHandshake();
+  waitFor(19999);
+  expect(sockets).toHaveLength(3);
+  waitFor(1);
+  expect(sockets).toHaveLength(4);
+
+  // Once authentication succeeds the backoff starts again from the beginning.
+  act(() => {
+    sockets[3].emit("open");
+  });
+  act(() => {
+    sockets[3].emit("close", { code: 1000 });
+  });
+  waitFor(5000);
+  expect(sockets).toHaveLength(5);
+});
+
+it("stops retrying unavailable authentication at the reconnect limit", () => {
+  vi.useFakeTimers();
+  render(tree());
+  for (let i = 0; i < 20; i += 1) {
+    act(() => {
+      sockets.at(-1).emit("open");
+      sockets.at(-1).emit("close", { code: 1011 });
+    });
+    act(() => {
+      vi.advanceTimersByTime(30000);
+    });
+  }
+  // The first socket plus MAX_RECONNECT_ATTEMPTS (10) retries.
+  expect(sockets).toHaveLength(11);
+});
+
+it("does not retry a credential the server refused after an outage", () => {
+  vi.useFakeTimers();
+  render(tree());
   act(() => {
     sockets[0].emit("open");
     sockets[0].emit("close", { code: 1011 });
@@ -186,22 +243,10 @@ it("reconnects when the server could not complete authentication", () => {
     vi.advanceTimersByTime(5000);
   });
   expect(sockets).toHaveLength(2);
-  expect(new URL(sockets[1].url).searchParams.get("token")).toBe(
-    "synthetic-token",
-  );
   act(() => {
     sockets[1].emit("open");
-    sockets[1].emit("close", { code: 1011 });
-  });
-  act(() => {
-    vi.advanceTimersByTime(5000);
-  });
-  expect(sockets).toHaveLength(3);
-  // Once the credential itself is refused, the same token is not retried.
-  act(() => {
-    sockets[2].emit("open");
-    sockets[2].emit("close", { code: 4003 });
+    sockets[1].emit("close", { code: 4003 });
   });
   waitLongerThanEveryBackoff();
-  expect(sockets).toHaveLength(3);
+  expect(sockets).toHaveLength(2);
 });

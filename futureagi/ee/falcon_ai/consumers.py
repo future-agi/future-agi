@@ -35,6 +35,8 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._agent_task = None
+        # Every run started on this socket, including ones a later chat replaced.
+        self._agent_runs = set()
         self.user = None
         self.organization = None
         self.workspace = None
@@ -261,7 +263,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             return
 
         # Launch agent loop — pass full context + file context + images
-        self._agent_task = asyncio.create_task(
+        self._start_agent_run(
             self._run_agent(
                 conversation_id,
                 message_content,
@@ -273,26 +275,36 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             )
         )
 
+    def _start_agent_run(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._agent_task = task
+        self._agent_runs.add(task)
+        task.add_done_callback(self._agent_runs.discard)
+        return task
+
     async def _handle_stop(self):
         if self._agent_task and not self._agent_task.done():
             await self._cancel_agent_task()
             self._agent_task = None
             await self.send_json({"type": "stopped"})
 
-    async def _cancel_agent_task(self):
-        task = self._agent_task
+    async def _cancel_agent_task(self, task=None):
+        task = self._agent_task if task is None else task
         if task is None or task.done():
             return
-        # A cluster-RCA run executes in a non-cancellable worker thread that
-        # keeps calling the LLM after the coroutine unwinds. The bridge stashes
-        # a threading.Event on the task; set it so the agent loop stops
-        # cooperatively and returns its partial result (with accumulated cost,
-        # which the bridge then bills from the thread). Set before cancel so the
-        # worker observes it; harmless no-op for non-RCA runs.
-        rca_stop_event = getattr(task, "_rca_stop_event", None)
-        if rca_stop_event is not None:
-            rca_stop_event.set()
-        task.cancel()
+        # Request cancellation once: a second request would interrupt the
+        # run's own cleanup (partial save, usage, stream status).
+        if not task.cancelling():
+            # A cluster-RCA run executes in a non-cancellable worker thread that
+            # keeps calling the LLM after the coroutine unwinds. The bridge stashes
+            # a threading.Event on the task; set it so the agent loop stops
+            # cooperatively and returns its partial result (with accumulated cost,
+            # which the bridge then bills from the thread). Set before cancel so the
+            # worker observes it; harmless no-op for non-RCA runs.
+            rca_stop_event = getattr(task, "_rca_stop_event", None)
+            if rca_stop_event is not None:
+                rca_stop_event.set()
+            task.cancel()
         if task is asyncio.current_task():
             # Called from the run itself; it unwinds at its next await.
             return
@@ -310,8 +322,17 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         if await self._membership.ensure_member(force=force):
             return True
         if self._membership.closed:
-            await self._cancel_agent_task()
+            await self._stop_all_agent_runs()
         return False
+
+    async def _stop_all_agent_runs(self):
+        current = asyncio.current_task()
+        runs = [task for task in self._agent_runs if task is not current]
+        for task in runs:
+            await self._cancel_agent_task(task)
+        if current in self._agent_runs:
+            # The calling run stops last, at its next await.
+            await self._cancel_agent_task(current)
 
     async def membership_changed(self, event):
         """Revalidate now; one of this user's memberships has changed."""

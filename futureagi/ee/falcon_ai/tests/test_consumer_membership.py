@@ -45,9 +45,7 @@ def falcon_environment(settings):
 
     async def start_run(self, content):
         # Stand in for the agent loop: a run that lasts until it is stopped.
-        task = asyncio.create_task(asyncio.Event().wait())
-        self._agent_task = task
-        runs.append(task)
+        runs.append(self._start_agent_run(asyncio.Event().wait()))
 
     with (
         patch("ee.falcon_ai.consumers.check_ee_feature"),
@@ -69,9 +67,10 @@ async def open_falcon_socket(user, workspace):
 
 
 async def start_agent_run(socket, runs):
+    started = len(runs)
     await socket.send_json_to({"type": "chat", "message": "synthetic question"})
     for _ in range(100):
-        if runs:
+        if len(runs) > started:
             return runs[-1]
         await asyncio.sleep(0.02)
     raise AssertionError("agent run did not start")
@@ -94,14 +93,18 @@ def test_open_falcon_socket_closes_and_stops_its_run_when_membership_is_removed(
         own = await open_falcon_socket(owner, workspace)
         removed = await open_falcon_socket(member, workspace)
         try:
+            # A new chat does not stop an earlier run on the same socket.
+            earlier_run = await start_agent_run(removed, falcon_environment)
             removed_run = await start_agent_run(removed, falcon_environment)
+            assert earlier_run is not removed_run
             own_run = await start_agent_run(own, falcon_environment)
 
             await sync_to_async(remove_member)(owner, member)
             events = await outputs(removed)
             assert (frames(events), closed(events)) == ([], [MEMBERSHIP_CLOSE_CODE])
-            await wait_until_done(removed_run)
-            assert removed_run.cancelled()
+            for run in (earlier_run, removed_run):
+                await wait_until_done(run)
+                assert run.cancelled()
 
             # The organization's remaining member keeps its socket and run.
             assert not own_run.done()
@@ -172,3 +175,30 @@ def test_falcon_socket_for_a_remaining_membership_stays_open(falcon_environment)
             await remaining.disconnect()
 
     asyncio.run(run())
+
+
+def test_repeated_stop_requests_let_a_run_finish_its_cleanup():
+    consumer = FalconAIConsumer()
+    cleanup = []
+
+    async def agent_run():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Stands in for the partial save and usage emission on cancel.
+            await asyncio.sleep(0.1)
+            cleanup.append("finished")
+            raise
+
+    async def run():
+        task = consumer._start_agent_run(agent_run())
+        await asyncio.sleep(0)
+        # The run is already stopping (a delivery found the membership gone)
+        # when a membership notification asks again.
+        task.cancel()
+        await asyncio.sleep(0.02)
+        await consumer._stop_all_agent_runs()
+        assert task.cancelled()
+
+    asyncio.run(run())
+    assert cleanup == ["finished"]

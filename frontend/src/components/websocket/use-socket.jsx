@@ -26,12 +26,16 @@ const HEARTBEAT_INTERVAL = 10000;
 // Any other code, including 1011 when the server could not complete
 // authentication (database or cache unavailable), reconnects with backoff.
 const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002, 4003]);
+// The server accepts the handshake before closing with this code, so the
+// open does not count as a successful connection for the retry backoff.
+const AUTHENTICATION_UNAVAILABLE_CLOSE_CODE = 1011;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
+  const reconnectAttemptsBeforeOpen = useRef(0);
   const navigate = useNavigate();
 
   const socketRef = useRef(null);
@@ -182,6 +186,7 @@ export const WebSocketProvider = ({ children }) => {
     const openHandler = () => {
       setIsConnected(true);
       setError(null);
+      reconnectAttemptsBeforeOpen.current = reconnectAttempts.current;
       reconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
       logger.debug("WebSocket connected");
       startHeartbeat();
@@ -274,6 +279,11 @@ export const WebSocketProvider = ({ children }) => {
           message: `WebSocket closed by the server (${event.code}); not reconnecting`,
         });
         return;
+      }
+
+      if (event.code === AUTHENTICATION_UNAVAILABLE_CLOSE_CODE) {
+        // Keep backing off while the server cannot authenticate the socket.
+        reconnectAttempts.current = reconnectAttemptsBeforeOpen.current;
       }
 
       if (event.code === 1006) {

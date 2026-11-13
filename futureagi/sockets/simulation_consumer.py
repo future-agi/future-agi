@@ -93,16 +93,18 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             test_id=self.test_id,
             close_code=close_code,
         )
-        if self.user_group_name:
-            await self.channel_layer.group_discard(
-                self.user_group_name, self.channel_name
-            )
-        await self._stop_subscriber()
-        if self._pubsub:
-            await self._pubsub.unsubscribe()
-            await self._pubsub.close()
-        if self._redis:
-            await self._redis.close()
+        try:
+            if self.user_group_name:
+                await self.channel_layer.group_discard(
+                    self.user_group_name, self.channel_name
+                )
+        finally:
+            await self._stop_subscriber()
+            if self._pubsub:
+                await self._pubsub.unsubscribe()
+                await self._pubsub.close()
+            if self._redis:
+                await self._redis.close()
 
     async def _stop_subscriber(self):
         """Stop forwarding simulation updates to this socket."""

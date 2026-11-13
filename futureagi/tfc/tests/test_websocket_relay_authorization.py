@@ -494,3 +494,34 @@ def test_open_member_socket_closes_when_membership_is_removed(relay_server, targ
         # The organization's remaining member is the positive control.
         assert json.loads(own.recv(timeout=10)) == message
         assert close_code(open_member) == 4002
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+@pytest.mark.parametrize("organization_id", ["uuid", "str"])
+def test_internal_relay_client_reaches_only_its_organization(
+    relay_server, settings, targeted, organization_id
+):
+    from model_hub.utils import call_websocket
+
+    org, owner, _, _ = create_organization()
+    other_org, other_owner, _, _ = create_organization()
+    settings.CLOUD_DEPLOYMENT = ""
+    settings.WEBSOCKET_ENDPOINT = relay_server[1] + "/call-websocket/"
+    target = str(uuid4()) if targeted else None
+    message = {"alert_title": "Synthetic usage", "marker": uuid4().hex}
+    if target:
+        message["uuid"] = target
+    with (
+        subscriber(relay_server, org, owner, target) as own,
+        subscriber(relay_server, other_org, other_owner, target) as other,
+    ):
+        # Callers pass the organization as a UUID or as its string form.
+        result = call_websocket(
+            org.pk if organization_id == "uuid" else str(org.pk),
+            message,
+            send_to_uuid=targeted,
+            uuid=target,
+        )
+        assert result["status"] is True, result
+        assert json.loads(own.recv(timeout=10)) == message
+        assert receive_optional(other) is None
