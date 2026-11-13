@@ -29,14 +29,17 @@ config:
         # scheme-relative "//host". A "//host" starts a word and names a dotted
         # domain, an IPv4 address or a bracketed IPv6 address, followed by the
         # end, a port, "/", "?" or "#", so code comments and build labels such
-        # as "//TODO", "//go:build" or "//pkg:target" are not links.
+        # as "//TODO", "//go:build" or "//pkg:target" are not links. Quotes
+        # include typographic ones, and the last domain label may be punycode.
         # Bare domains need alphabetic TLDs.
         pattern = (
             r"(?<![\w@.+-])[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"']*|"
-            r"(?<![^\s\"'`(\[{<])//(?:[^\s/?#@<>\"'\[\]]*@)?"
-            r"(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\.?|"
+            r"(?<![^\s\"'`(\[{<\u201c\u2018\u00ab])//(?:[^\s/?#@<>\"'\[\]]*@)?"
+            r"(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+            r"(?:[A-Za-z]{2,}|xn--[A-Za-z0-9-]+)\.?|"
             r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9A-Fa-f.]*:[0-9A-Za-z:.%~_-]*\])"
-            r"(?::[0-9]+)?(?=[/?#\s<>\"')\]}]|[.,;!?:]+(?:[\s<>\"')\]}]|$)|$)"
+            r"(?::[0-9]+)?(?=[/?#\s<>\"'`)\]}\u201d\u2019\u00bb]|"
+            r"[.,;!?:]+(?:[\s<>\"'`)\]}\u201d\u2019\u00bb]|$)|$)"
             r"(?:[/?#][^\s<>\"']*)?|"
             r"(?<![\w@.+/:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
             r"[A-Za-z]{2,}(?![\w-]|\.[A-Za-z0-9])(?::[0-9]+)?(?:[/?#][^\s<>\"']*)?"
@@ -57,14 +60,18 @@ config:
                 authority = re.split(r"[/?#]", prefix + suffix, maxsplit=1)[0]
                 if "@" in authority:
                     continue
-                # Common filenames are prose, not bare links. An explicit scheme or
-                # www prefix disambiguates a real domain with one of these endings.
-                host = re.split(r"[/:?#]", candidate)[0]
-                if not candidate.lower().startswith("www.") and host.rsplit(".", 1)[-1].lower() in {
+            if not explicit or explicit.group() == "//":
+                # Common filenames are prose, not links ("//package.json" is a code
+                # comment). An explicit scheme or www prefix disambiguates a real
+                # domain with one of these endings.
+                authority = re.split(r"[/?#]", candidate.removeprefix("//"), maxsplit=1)[0]
+                host = authority.rsplit("@", 1)[-1].split(":")[0]
+                if not host.lower().startswith("www.") and host.rsplit(".", 1)[-1].lower() in {
                     "txt", "pdf", "json", "yaml", "yml", "csv", "png", "jpg", "jpeg",
                     "gif", "svg", "zip", "py", "js", "ts", "log", "html", "css",
                 }:
                     continue
+            if not explicit:
                 candidate = "http://" + candidate
             result.append(candidate)
             # Only http(s) links are requested; the others are never valid.

@@ -300,6 +300,9 @@ class LinkAcceptance(unittest.TestCase):
             "x = 1; //increment",
             "f(); //console.log(x)",
             "//eslint-disable-next-line no-console",
+            "f(); //console.log",
+            "//package.json",
+            "see //config.yaml:3",
         ):
             for name in NAMES:
                 evaluate = load(name)
@@ -331,6 +334,10 @@ class LinkAcceptance(unittest.TestCase):
             ("Use //10.0.0.1/x", "//10.0.0.1/x"),
             ("Use //[2001:db8::1]/x", "//[2001:db8::1]/x"),
             ("Use //user@allowed.example/x", "//user@allowed.example/x"),
+            ("Use `//allowed.example`", "//allowed.example"),
+            ("See \u201c//allowed.example/x\u201d", "//allowed.example/x\u201d"),
+            ("See \u2018//allowed.example\u2019", "//allowed.example"),
+            ("Use //allowed.xn--p1ai/x", "//allowed.xn--p1ai/x"),
         ):
             for name in NAMES:
                 evaluate = load(name)
