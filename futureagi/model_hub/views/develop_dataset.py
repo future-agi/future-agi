@@ -12594,47 +12594,52 @@ def run_evaluation_task(evaluation_data):
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(str(metric_id))
-                if metric:
-                    try:
-                        from ee.usage.services.metering import check_usage
-                    except ImportError:
-                        check_usage = None
-
-                    if check_usage is not None:
-                        api_call_type = _get_api_call_type(
-                            metric.model or ModelChoices.TURING_LARGE.value
-                        )
-                        usage_check = check_usage(
-                            str(metric.organization.id), api_call_type
-                        )
-                        if not usage_check.allowed:
-                            from model_hub.tasks.user_evaluation import (
-                                _mark_cells_usage_limit_error,
-                            )
-
-                            UserEvalMetric.objects.filter(id=metric_id).update(
-                                status=StatusType.FAILED.value
-                            )
-                            failed_metric_ids.add(str(metric_id))
-                            _mark_cells_usage_limit_error(metric, usage_check)
-                            logger.warning(
-                                "dataset_eval_rerun_usage_limit_exceeded",
-                                eval_id=str(metric_id),
-                                reason=usage_check.reason,
-                            )
-                            continue
-
-                    properties = get_mixpanel_properties(
-                        org=metric.organization,
-                        eval=metric,
-                        source=evaluation_data.get("source"),
-                        dataset=metric.dataset,
-                        count=len(row_ids),
-                    )
-                    track_mixpanel_event(
-                        MixpanelEvents.EVAL_RUN_STARTED.value, properties
-                    )
+                # All of this metric's setup, including the lazy organization and
+                # dataset loads, stays in this try. A database error there fails
+                # only this metric and finishes its cells instead of leaving the
+                # executor block, where the outer handler would relabel every
+                # metric FAILED and strand this metric's cells as RUNNING.
                 try:
+                    if metric:
+                        try:
+                            from ee.usage.services.metering import check_usage
+                        except ImportError:
+                            check_usage = None
+
+                        if check_usage is not None:
+                            api_call_type = _get_api_call_type(
+                                metric.model or ModelChoices.TURING_LARGE.value
+                            )
+                            usage_check = check_usage(
+                                str(metric.organization.id), api_call_type
+                            )
+                            if not usage_check.allowed:
+                                from model_hub.tasks.user_evaluation import (
+                                    _mark_cells_usage_limit_error,
+                                )
+
+                                UserEvalMetric.objects.filter(id=metric_id).update(
+                                    status=StatusType.FAILED.value
+                                )
+                                failed_metric_ids.add(str(metric_id))
+                                _mark_cells_usage_limit_error(metric, usage_check)
+                                logger.warning(
+                                    "dataset_eval_rerun_usage_limit_exceeded",
+                                    eval_id=str(metric_id),
+                                    reason=usage_check.reason,
+                                )
+                                continue
+
+                        properties = get_mixpanel_properties(
+                            org=metric.organization,
+                            eval=metric,
+                            source=evaluation_data.get("source"),
+                            dataset=metric.dataset,
+                            count=len(row_ids),
+                        )
+                        track_mixpanel_event(
+                            MixpanelEvents.EVAL_RUN_STARTED.value, properties
+                        )
                     # Resolve execution version and metadata together, but never
                     # share a mutable runner between concurrent rows.
                     runner_args = dict(args)
@@ -12683,9 +12688,10 @@ def run_evaluation_task(evaluation_data):
                         )
                         futures[future] = (metric_id, row_id)
 
-                except Exception as e:
-                    logger.error(
-                        f"Error initializing evaluation for metric {metric_id}: {str(e)}"
+                except Exception:
+                    logger.exception(
+                        "dataset_rerun_metric_setup_failed",
+                        metric_id=str(metric_id),
                     )
                     failed_metric_ids.add(str(metric_id))
                     _finish_failed_rerun_rows(metric_id, row_ids, target_column_id)

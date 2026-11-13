@@ -580,6 +580,84 @@ def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
     assert completion_counts(rerun) == [(str(healthy.id), 2, 0)]
 
 
+def fail_second_metric_setup(step, rows_started, waited):
+    """Fail the second metric's setup once, at ``step``, after the first
+    metric's rows have started. ``waited`` records whether they had."""
+
+    def fail():
+        waited.append(rows_started.wait(20))
+        raise OperationalError(f"synthetic connection failure at {step}")
+
+    if step == "usage-check":
+        calls = []
+
+        def check_usage(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 2:
+                fail()
+            return SimpleNamespace(allowed=True)
+
+        return patch("ee.usage.services.metering.check_usage", side_effect=check_usage)
+
+    # The lazy load passed to the usage check, or to the start event.
+    model = {"organization-load": Organization, "dataset-load": Dataset}[step]
+    table = f'FROM "{model._meta.db_table}"'
+    reads = []
+
+    def second_read_fails(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith("SELECT") and table in sql:
+            reads.append(sql)
+            # Read 1 is the first metric's setup, read 2 the second's.
+            if len(reads) == 2:
+                fail()
+        return execute(sql, params, many, context)
+
+    return connection.execute_wrapper(second_read_fails)
+
+
+@pytest.mark.parametrize("step", ["organization-load", "usage-check", "dataset-load"])
+def test_db_error_in_later_metric_setup_fails_only_that_metric(rerun, step):
+    """The first metric's rows are running when the second metric's setup hits
+    a database error. Only the second metric fails: none of its rows run, its
+    selected cells are finished, and the first metric keeps its results."""
+    healthy, healthy_column = add_healthy_metric(rerun)
+    started, rows_started, waited = [], Event(), []
+    original_row = dataset_views._run_dataset_evaluation_row
+
+    def run_row(metric_id, row_id, runner_args):
+        started.append(str(metric_id))
+        rows_started.set()
+        return original_row(metric_id, row_id, runner_args)
+
+    with (
+        patch.object(dataset_views, "_run_dataset_evaluation_row", run_row),
+        patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+        fail_second_metric_setup(step, rows_started, waited),
+    ):
+        run_selected(rerun, [healthy, rerun.metric])
+    connection.close()
+
+    assert waited == [True]
+    assert started == [str(healthy.id)] * 2
+    assert status_of(healthy) == StatusType.COMPLETED.value
+    assert column_state(healthy_column) == [
+        (CellStatus.PASS.value, "row-0"),
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "previous result"),
+    ]
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+    for column in (rerun.column, rerun.reason_column):
+        assert column_state(column) == [
+            (CellStatus.ERROR.value, FAILED_REASON),
+            (CellStatus.ERROR.value, FAILED_REASON),
+            (CellStatus.PASS.value, "previous result"),
+        ]
+    assert completion_counts(rerun) == [
+        (str(healthy.id), 2, 0),
+        (str(rerun.metric.id), 0, 2),
+    ]
+
+
 def test_optimization_failure_only_updates_the_requested_column(rerun):
     optimize = OptimizationDataset.objects.create(
         name="Rerun optimization", dataset=rerun.dataset, optimize_type="RIGHT_ANSWER"
