@@ -301,6 +301,7 @@ def test_chat_url_dispatch_does_not_wait_for_model_stream_executor(
     asyncio.run(chat())
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_slow_fetch_does_not_occupy_database_executor(monkeypatch):
     started = threading.Event()
