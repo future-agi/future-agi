@@ -66,6 +66,11 @@ it('round-trips the binding contract without inventing native configuration or i
   const mapped = mapContextBinding(wire.BindingOut);
   expect(contextBindingInput(mapped)).toMatchObject({ selector: wire.BindingOut.selector, profile_version: wire.BindingOut.profile_version, repository: wire.BindingOut.repository });
   expect(mapped).not.toHaveProperty('loaded');
-  expect(contextBindingInput(mapped)).not.toHaveProperty('configuration');
+  // The server's explicit null round-trips as null; a payload without the field
+  // (pre-J4) round-trips without it. Neither invents a configuration.
+  expect(wire.BindingOut.configuration).toBeNull();
+  expect(contextBindingInput(mapped).configuration).toBeNull();
+  const { configuration: _configuration, configuration_digest: _digest, ...legacyOut } = wire.BindingOut;
+  expect(contextBindingInput(mapContextBinding(legacyOut))).not.toHaveProperty('configuration');
   expect(mapVersionSafety({ revision: 2, quarantined: true, reason: 'review', replacement_version_id: null, affected_context_count: 3 })).toEqual({ revision: 2, quarantined: true, reason: 'review', replacementVersionId: null, affectedContextCount: 3 });
 });
