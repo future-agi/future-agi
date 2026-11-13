@@ -126,7 +126,7 @@ def run(
     cmd: list[str], cwd: Path, ok_codes: tuple[int, ...] = (0,)
 ) -> subprocess.CompletedProcess:
     """Run a command and raise GateError on an unexpected exit code."""
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
     if proc.returncode not in ok_codes:
         raise GateError(
             f"{' '.join(cmd)} exited {proc.returncode}: {proc.stderr.strip()[:2000]}"
@@ -362,6 +362,7 @@ def formatting_only_files(
                 "-",
             ],
             cwd=base_tree / BACKEND_DIR,
+            check=False,
             input=(base_tree / base_path).read_bytes(),
             capture_output=True,
         )

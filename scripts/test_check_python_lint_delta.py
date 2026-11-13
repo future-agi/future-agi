@@ -91,16 +91,14 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual([x.line for x in found], [11])
 
     def test_line_ranks_tell_new_code_from_a_comment_edit(self):
-        diff = "\n".join(
-            [
-                "@@ -4 +4 @@ def first():",
-                "-    except Exception:",
-                "+    except Exception:  # existing fallback",
-                "@@ -5,0 +6,3 @@",
-                "+",
-                "+def second():",
-                "+    pass",
-            ]
+        diff = (
+            "@@ -4 +4 @@ def first():\n"
+            "-    except Exception:\n"
+            "+    except Exception:  # existing fallback\n"
+            "@@ -5,0 +6,3 @@\n"
+            "+\n"
+            "+def second():\n"
+            "+    pass"
         )
         self.assertEqual(gate.line_ranks(diff), {4: 1, 6: 0, 7: 0, 8: 0})
 
@@ -364,13 +362,17 @@ class WorkflowTests(unittest.TestCase):
         # A PR branched before the gate has no scripts/check_python_lint_delta.py,
         # and a PR that edits the gate must not be judged by its own edit.
         ruff = job_block(self.text, "ruff-delta")
+        self.assertIn('trusted_ref="$(git rev-parse "origin/${BASE_REF}")"', ruff)
         self.assertIn(
-            'git show "origin/${BASE_REF}:scripts/check_python_lint_delta.py" > "$gate"',
+            'git show "${trusted_ref}:scripts/check_python_lint_delta.py" > "$gate"',
             ruff,
         )
-        self.assertRegex(
+        self.assertIn(
+            'git show "${trusted_ref}:.github/workflows/python-lint.yml"', ruff
+        )
+        self.assertIn(
+            'python3 -I "$gate" --base "$base" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
             ruff,
-            r'python3 -I "\$gate" --base "\$base" --expect-ruff-version "\$RUFF_VERSION"',
         )
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
         # The self-test runs only when the branch carries it.
@@ -412,6 +414,7 @@ class WorkflowTests(unittest.TestCase):
                 # The shell GitHub runs a step's script with.
                 proc = subprocess.run(
                     ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
+                    check=False,
                     capture_output=True,
                     text=True,
                     env={
@@ -468,20 +471,7 @@ CONFIG = textwrap.dedent(
 )
 
 
-@unittest.skipUnless(RUFF or REQUIRE_RUFF, "ruff is not installed")
-class EndToEndTests(unittest.TestCase):
-    def setUp(self):
-        if not RUFF:
-            self.fail(
-                "ruff must be on PATH in CI: the canary would otherwise prove nothing"
-            )
-        self.tmp = tempfile.TemporaryDirectory(prefix="lint-delta-test-")
-        self.repo = Path(self.tmp.name)
-        self.git("init", "-q", "-b", "main")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
+class RepositoryFixture:
     def git(self, *args):
         return subprocess.run(
             ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
@@ -501,10 +491,26 @@ class EndToEndTests(unittest.TestCase):
         self.git("commit", "-q", "-m", "c")
         return self.git("rev-parse", "HEAD")
 
+
+@unittest.skipUnless(RUFF or REQUIRE_RUFF, "ruff is not installed")
+class EndToEndTests(RepositoryFixture, unittest.TestCase):
+    def setUp(self):
+        if not RUFF:
+            self.fail(
+                "ruff must be on PATH in CI: the canary would otherwise prove nothing"
+            )
+        self.tmp = tempfile.TemporaryDirectory(prefix="lint-delta-test-")
+        self.repo = Path(self.tmp.name)
+        self.git("init", "-q", "-b", "main")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
     def gate(self, base):
         proc = subprocess.run(
             [sys.executable, "-I", str(SCRIPT), "--base", base],
             cwd=self.repo,
+            check=False,
             capture_output=True,
             text=True,
             env={**os.environ, "GITHUB_STEP_SUMMARY": ""},
@@ -725,6 +731,7 @@ class EndToEndTests(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, "-I", str(SCRIPT), "--base", base, "--ruff", str(fake)],
             cwd=self.repo,
+            check=False,
             capture_output=True,
             text=True,
         )
@@ -753,6 +760,191 @@ class EndToEndTests(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(RUFF or REQUIRE_RUFF, "ruff is not installed")
+class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
+    """Run the actual reporting step against separate base and PR-head commits.
+
+    Only package provisioning is stubbed, to keep self-tests offline. The base
+    gate, version checks, Git comparisons and lint all execute for real.
+    """
+
+    def setUp(self):
+        if not RUFF:
+            self.fail("ruff must be on PATH in CI")
+        self.tmp = tempfile.TemporaryDirectory(prefix="lint-workflow-test-")
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.runner = Path(self.tmp.name) / "runner"
+        self.runner.mkdir()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        self.installs = Path(self.tmp.name) / "installs"
+        self.git("init", "-q", "-b", "main")
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/mod.py", "value = 1\n")
+        self.write("scripts/check_python_lint_delta.py", SCRIPT.read_text())
+        self.write(".github/workflows/python-lint.yml", WORKFLOW.read_text())
+        # Provisioning shim: the requested pin must be the base pin, never the
+        # head's synthetic upgrade. Every other Python command runs normally.
+        provisioner = self.bin / "python3"
+        provisioner.write_text(
+            f"#!{sys.executable}\n"
+            "import os, pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:1] == ['-I']: args = args[1:]\n"
+            "if args[:2] == ['-m', 'venv']:\n"
+            "    bin_dir = pathlib.Path(args[-1]) / 'bin'\n"
+            "    bin_dir.mkdir(parents=True)\n"
+            "    python = bin_dir / 'python'\n"
+            "    python.write_text(pathlib.Path(__file__).read_text())\n"
+            "    python.chmod(0o755)\n"
+            "elif args[:3] == ['-m', 'pip', 'install']:\n"
+            "    pin = next(arg for arg in args if arg.startswith('ruff=='))\n"
+            "    pathlib.Path(os.environ['INSTALL_LOG']).write_text(pin)\n"
+            "    if pin != os.environ['BASE_RUFF_PIN']: sys.exit(87)\n"
+            "    ruff = pathlib.Path(__file__).parent / 'ruff'\n"
+            "    if not ruff.exists(): ruff.symlink_to(os.environ['REAL_RUFF'])\n"
+            "else:\n"
+            "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+        )
+        provisioner.chmod(0o755)
+        head_ruff = self.bin / "ruff"
+        head_ruff.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            "if sys.argv[1:] == ['--version']:\n"
+            "    print('ruff ' + os.environ['HEAD_RUFF_VERSION'])\n"
+            "else:\n"
+            "    os.execv(os.environ['REAL_RUFF'], [os.environ['REAL_RUFF'], *sys.argv[1:]])\n"
+        )
+        head_ruff.chmod(0o755)
+
+    def base(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.commit())
+
+    def report(self, head_version="99.99.99"):
+        text = WORKFLOW.read_text()
+        self.write(
+            ".github/workflows/python-lint.yml",
+            text.replace(
+                f'RUFF_VERSION: "{gate.RUFF_VERSION}"',
+                f'RUFF_VERSION: "{head_version}"',
+            ),
+        )
+        self.commit()
+        return self.run_step("Report new violations", head_version)
+
+    def run_step(self, name, workflow_version="99.99.99"):
+        step = (
+            job_block(WORKFLOW.read_text(), "ruff-delta")
+            .split(f"      - name: {name}\n", 1)[1]
+            .split("      - name:", 1)[0]
+        )
+        return subprocess.run(
+            [
+                "bash",
+                "--noprofile",
+                "--norc",
+                "-eo",
+                "pipefail",
+                "-c",
+                run_script(step),
+            ],
+            cwd=self.repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+                "RUNNER_TEMP": str(self.runner),
+                "GITHUB_STEP_SUMMARY": "",
+                "BASE_REF": "main",
+                "RUFF_VERSION": workflow_version,
+                "HEAD_RUFF_VERSION": workflow_version,
+                "REAL_RUFF": RUFF,
+                "BASE_RUFF_PIN": f"ruff=={gate.RUFF_VERSION}",
+                "INSTALL_LOG": str(self.installs),
+            },
+        )
+
+    def test_head_self_tests_use_head_pin_not_merge_workflow_pin(self):
+        self.write("scripts/test_check_python_lint_delta.py", "# Fixture self-test.\n")
+        proc = self.run_step("Install ruff for head self-tests")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.installs.read_text(), f"ruff=={gate.RUFF_VERSION}")
+
+    def test_head_without_self_tests_needs_no_head_pin(self):
+        (self.repo / ".github/workflows/python-lint.yml").unlink()
+        proc = self.run_step("Install ruff for head self-tests")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(self.installs.exists())
+
+    def test_base_pin_with_trailing_comment_passes(self):
+        self.write(
+            ".github/workflows/python-lint.yml",
+            WORKFLOW.read_text().replace(
+                f'RUFF_VERSION: "{gate.RUFF_VERSION}"',
+                f'RUFF_VERSION: "{gate.RUFF_VERSION}"  # synchronized pin\t',
+            ),
+        )
+        self.base()
+        proc = self.report()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.installs.read_text(), f"ruff=={gate.RUFF_VERSION}")
+
+    def test_ruff_upgrade_without_python_changes_passes(self):
+        self.base()
+        proc = self.report()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(f"using ruff {gate.RUFF_VERSION}", proc.stdout)
+        self.assertIn("No new violations.", proc.stdout)
+        self.assertEqual(self.installs.read_text(), f"ruff=={gate.RUFF_VERSION}")
+
+    def test_head_gate_and_pin_edits_cannot_accept_a_new_violation(self):
+        self.base()
+        self.write("scripts/check_python_lint_delta.py", "raise SystemExit(0)\n")
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        proc = self.report()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("title=ruff T201", proc.stdout)
+        self.assertIn(f"using ruff {gate.RUFF_VERSION}", proc.stdout)
+
+    def test_head_pin_alone_cannot_change_the_judging_ruff(self):
+        self.base()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        proc = self.report()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("title=ruff T201", proc.stdout)
+
+    def test_base_gate_crash_fails_closed_despite_passing_head_gate(self):
+        self.write(
+            "scripts/check_python_lint_delta.py",
+            'raise RuntimeError("base gate crashed")\n',
+        )
+        self.base()
+        self.write("scripts/check_python_lint_delta.py", "raise SystemExit(0)\n")
+        proc = self.report()
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("base gate crashed", proc.stderr)
+        self.assertNotIn("No new violations.", proc.stdout)
+
+    def test_invalid_base_pin_fails_closed(self):
+        for pins in (
+            "env: {}\n",
+            'env:\n  RUFF_VERSION: "not-a-version"\n',
+            f'env:\n  RUFF_VERSION: "{gate.RUFF_VERSION}"\n' * 2,
+        ):
+            with self.subTest(pins=pins):
+                self.write(".github/workflows/python-lint.yml", pins)
+                self.base()
+                proc = self.report(head_version=gate.RUFF_VERSION)
+                self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertFalse(self.installs.exists())
+                self.assertNotIn("No new violations.", proc.stdout)
+
+
 class RuffPinTests(unittest.TestCase):
     """`make lint`, `make format` and the futureagi pre-commit hooks run the ruff CI pins."""
 
@@ -767,8 +959,13 @@ class RuffPinTests(unittest.TestCase):
         self.assertIn('"ruff==$(RUFF_VERSION)"', makefile)
 
         pre_commit = (ROOT / "futureagi" / ".pre-commit-config.yaml").read_text()
-        hook_pin = re.search(r"repo: https://github\.com/astral-sh/ruff-pre-commit\n\s+rev: v([0-9.]+)\n", pre_commit)
-        self.assertIsNotNone(hook_pin, "futureagi/.pre-commit-config.yaml has no ruff-pre-commit hook")
+        hook_pin = re.search(
+            r"repo: https://github\.com/astral-sh/ruff-pre-commit\n\s+rev: v([0-9.]+)\n",
+            pre_commit,
+        )
+        self.assertIsNotNone(
+            hook_pin, "futureagi/.pre-commit-config.yaml has no ruff-pre-commit hook"
+        )
         self.assertEqual(hook_pin.group(1), pinned)
 
 
