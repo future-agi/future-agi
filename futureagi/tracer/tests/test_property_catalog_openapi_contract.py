@@ -30,7 +30,10 @@ def test_unified_property_catalog_openapi_is_cursor_complete() -> None:
     }
     assert metrics["x-runtime-request-validation"] is True
     role_param = next(item for item in metrics["parameters"] if item["name"] == "role")
-    assert set(role_param["enum"]) == {"metric", "dimension"}
+    # Blank is accepted (allow_blank) and is the documented default, so the
+    # contract lists it; generated clients reject a default outside the enum.
+    assert set(role_param["enum"]) == {"", "metric", "dimension"}
+    assert role_param["default"] == ""
     assert {"200", "400", "500", "503"} <= set(metrics["responses"])
 
     metric_result = swagger["definitions"]["DashboardMetricsCatalogResult"]

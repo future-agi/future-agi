@@ -76,6 +76,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
+	applyCacheHeaders(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header and the body's own
 	// non-spec fields. Read from the raw bytes: the native pass-through below
 	// never unmarshals this body.

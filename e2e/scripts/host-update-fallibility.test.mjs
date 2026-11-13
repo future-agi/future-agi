@@ -536,7 +536,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(inputs.stack.options, ['distributed', 'standalone']);
   assert.equal(inputs.host_update_fallibility.type, 'boolean');
   assert.equal(inputs.host_update_fallibility.default, false);
-  assert.deepEqual(workflow.on.pull_request.branches, ['dev', 'main']);
+  // PRs into any base branch, stacked feature-branch PRs included.
+  assert.ok('pull_request' in workflow.on);
+  assert.equal(workflow.on.pull_request?.branches, undefined);
   assert.deepEqual(workflow.on.push.branches, ['dev', 'main']);
   assert.deepEqual(workflow.on.schedule, [{ cron: '37 2 * * *' }]);
   const validation = workflow.jobs.changes.steps[0];

@@ -2,7 +2,7 @@ name: E2E CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   merge_group:
@@ -323,20 +323,47 @@ jobs:
           echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
 
       - name: Prefetch vendor images
-        # fi-collector, agentcc-gateway and the app images are deliberately
-        # absent: their tag is the locally built IMAGE_TAG and a pull would
-        # 404 (failing the whole invocation, not just that image); `up`
-        # resolves whatever is left.
+        # Await vendor-only pulls before boot. App/collector/gateway images and
+        # peerdb-temporal-init (the backend image) use the locally built tag.
+        # Pull one service at a time so a transient error cannot hide another
+        # image's permanent failure. Only pulls retry; bootstrap stays single-shot.
+        shell: bash
         run: |
           if [ "$E2E_STACK" = standalone ]; then
             services=(postgres clickhouse mock-llm)
           else
             services=(postgres clickhouse redis minio temporal mock-llm mock-slack
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
-              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init
-              peerdb-minio)
+              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
+              property-catalog-kafka property-catalog-topic-init
+              property-catalog-runtime-volume-init)
           fi
-          nohup bin/e2e compose pull --quiet "${services[@]}" > /tmp/e2e-pull.log 2>&1 &
+          attempt_log=$(mktemp)
+          trap 'rm -f "$attempt_log"' EXIT
+          : > /tmp/e2e-pull.log
+          # Fail closed for unknown errors, auth/tag/configuration failures and
+          # rate limits. An auth-token request returning 5xx IS transient.
+          permanent='unauthorized|authentication required|denied|manifest unknown|name unknown|no matching manifest|not found|too many requests|toomanyrequests|certificate|invalid reference|no such service|no space left|(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)4[0-9]{2}([^0-9]|$)'
+          transient='(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)5[0-9]{2}([^0-9]|$)|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|i/o timeout|TLS handshake timeout|connection reset by peer|dial tcp.*connection refused|(: |unexpected )EOF([[:space:]]|$)|temporary failure in name resolution|Client.Timeout exceeded'
+          for service in "${services[@]}"; do
+            for attempt in 1 2 3; do
+              echo "Prefetch $service: attempt $attempt/3" | tee -a /tmp/e2e-pull.log
+              status=0
+              bin/e2e compose pull --policy missing "$service" > "$attempt_log" 2>&1 || status=$?
+              cat "$attempt_log" | tee -a /tmp/e2e-pull.log
+              if [ "$status" -eq 0 ]; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ] || grep -Eiq "$permanent" "$attempt_log" || ! grep -Eiq "$transient" "$attempt_log"; then
+                echo "::error::Vendor prefetch failed for $service (attempt $attempt/3, exit $status)."
+                exit "$status"
+              fi
+              delay=$((attempt * 10))
+              echo "Transient registry failure for $service; retrying in ${delay}s." | tee -a /tmp/e2e-pull.log
+              sleep "$delay"
+            done
+          done
+          echo "Vendor image prefetch completed for $E2E_STACK." | tee -a /tmp/e2e-pull.log
 
       - uses: actions/setup-node@v4
         with:
@@ -528,6 +555,29 @@ jobs:
           if tools == sdk:
               print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
+
+      - name: Capture backend lifecycle on failure
+        if: failure() && steps.boot.outcome == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-lifecycle"
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(app)
+          else
+            services=(backend fi-collector)
+          fi
+          bin/e2e compose logs --no-color --timestamps "${services[@]}" > "$RUNNER_TEMP/backend-lifecycle/logs.txt" 2>&1
+          for id in $(bin/e2e compose ps -aq "${services[@]}"); do
+            docker inspect --format '{{.Name}} restartCount={{.RestartCount}} state={{json .State}}' "$id"
+          done > "$RUNNER_TEMP/backend-lifecycle/state.txt"
+
+      - name: Upload backend lifecycle diagnostics
+        if: failure() && steps.boot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lifecycle-${{ matrix.stack }}
+          path: ${{ runner.temp }}/backend-lifecycle
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Dump stack state on failure
         if: failure()
