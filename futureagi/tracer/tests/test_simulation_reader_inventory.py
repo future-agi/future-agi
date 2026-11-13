@@ -1106,6 +1106,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             PROJECT_SET,
             why="the canonical root of each trace in live_tag_source_sql's scope",
         ),
+        "live_tag_roots_sql": filed(
+            PROJECT_SET,
+            why=(
+                "identity-only live roots (start time, parent, deleted) of the "
+                "authorized project set in the overlay's window, with no tag "
+                "sources: the scope of the windowed legacy suppressions"
+            ),
+        ),
         "trace_overlay_sql": filed(
             PROJECT_SET,
             CHILDREN_TRACE_FILTERS,
@@ -1122,14 +1130,6 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "authorized project set, optionally limited to a finite batch of "
                 "trace ids its PostgreSQL assignments name; it decides which "
                 "assignments suppress a matching curated tag"
-            ),
-        ),
-        "legacy_trace_tags_sql": filed(
-            PROJECT_SET,
-            CHILDREN_TRACE_FILTERS,
-            why=(
-                "curated traces.tags of the leaf's authorized project set, "
-                "limited to traces with a live root in the requested window"
             ),
         ),
         "read_tag_overlay": filed(
