@@ -12,9 +12,16 @@ Extracted from EvaluationRunner.map_fields() (eval_runner.py:981).
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
-
 logger = structlog.get_logger(__name__)
+
+# Added after input mapping by tracing and ground-truth injection, not stored
+# with feedback. A template may still explicitly declare one as an input.
+_RUNTIME_CONTEXT_KEYS = {
+    "trace_context",
+    "span_context",
+    "session_context",
+    "ground_truth_blocks",
+}
 
 
 def prepare_run_params(
@@ -109,8 +116,21 @@ def _get_few_shot_examples(
         embedding_manager = EmbeddingManager()
 
         try:
-            input_keys = list(inputs.keys())
-            input_values = list(inputs.values())
+            optional_keys = set(eval_template.config.get("optional_keys") or [])
+            declared_keys = set(eval_template.config.get("required_keys") or [])
+            declared_keys.update(optional_keys)
+            # Inputs are already mapped. Keep keys from older/versioned mappings
+            # even when they no longer appear in today's template, and filter
+            # names and values together to keep input_types positionally aligned.
+            feedback_inputs = {
+                key: value
+                for key, value in inputs.items()
+                if key not in _RUNTIME_CONTEXT_KEYS or key in declared_keys
+            }
+            if not feedback_inputs:
+                return []
+            input_keys = list(feedback_inputs)
+            input_values = list(feedback_inputs.values())
 
             # print(f"[FEEDBACK RETRIEVAL] Fetching few-shots for eval_template={eval_template.id} org={organization_id} input_keys={input_keys}", flush=True)
             examples = embedding_manager.retrieve_avg_rag_based_examples(

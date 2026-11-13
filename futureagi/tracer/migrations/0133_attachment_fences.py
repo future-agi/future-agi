@@ -4,9 +4,11 @@ Rollback: disable attachment admission, drain/abort transfers, erase private
 objects via the deletion outbox, then reverse 0133 and 0132. Reversing 0132 drops
 control records, not object storage; never use it as a physical-erasure shortcut.
 
-This is the LAST attachment migration on purpose: every table it fences is
-created by 0132, so the triggers attach to final table shapes. Each upload
-names its own parent, so occurrences are not tied to a per-session parent.
+This runs directly after 0132 on purpose: every table it fences is created by
+0132, so the triggers attach to the shapes 0132 defines. Later attachment
+migrations may follow it; a column they add is not fenced unless it also
+redefines the function (see the frozen-SQL rule below). Each upload names its
+own parent, so occurrences are not tied to a per-session parent.
 
 Why this is RunSQL and not Django schema operations: every fence here compares a
 row's OLD and NEW values (identity, tombstone, snapshot and blob immutability,
