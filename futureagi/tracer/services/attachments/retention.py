@@ -62,7 +62,7 @@ def run_deletion_hook(hook, **kwargs):
 
 def tombstone_deleted_traces(traces):
     """Hook for trace / trace-session deletion: ``traces`` have ``project_id`` and ``id``."""
-    by_project = {}
+    by_project: dict[UUID, list[UUID]] = {}
     for trace in traces:
         by_project.setdefault(trace.project_id, []).append(trace.id)
     return sum(

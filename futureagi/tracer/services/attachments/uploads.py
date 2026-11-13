@@ -494,13 +494,13 @@ def transfer(token, *, scope_id, upload_id, chunks, storage, content_length=None
                 raise AttachmentError("transfer_conflict", 409)
             locked.transfer_started_at = timezone.now()
             locked.save(update_fields=["transfer_started_at"])
-    started, size, hasher = time.monotonic(), 0, hashlib.sha256()
+    began, size, hasher = time.monotonic(), 0, hashlib.sha256()
     try:
         # Disk belongs to the bounded server transfer, not an SDK disk spool.
         with tempfile.TemporaryFile() as snapshot:
             for chunk in chunks:
                 _live_upload(token, scope_id, upload_id, "upload")
-                if time.monotonic() - started > TRANSFER_SECONDS:
+                if time.monotonic() - began > TRANSFER_SECONDS:
                     raise AttachmentError("transfer_timeout", 408)
                 if not isinstance(chunk, bytes) or len(chunk) > CHUNK_BYTES:
                     raise AttachmentError("invalid_chunk")

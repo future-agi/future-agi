@@ -2,7 +2,7 @@ name: API Contracts
 
 on:
   pull_request:
-    branches: [main, develop, dev]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
       - "api_contracts/**"
       - "frontend/src/api/contracts/**"

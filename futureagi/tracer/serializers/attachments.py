@@ -215,7 +215,13 @@ class AttachmentImportRequestSerializer(serializers.Serializer):
     mode = serializers.CharField(required=False)
     recording = serializers.DictField(required=False)
     upload = serializers.DictField(required=False)
-    source = serializers.DictField()
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        # The F01 member "source" is added here: a class attribute of that name
+        # would shadow Field.source. DRF reads the same fields, in this order.
+        fields = super().get_fields()
+        fields["source"] = serializers.DictField()
+        return fields
 
 
 class AttachmentImportResponseSerializer(serializers.Serializer):

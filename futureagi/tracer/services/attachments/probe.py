@@ -15,6 +15,8 @@ Embedded metadata (EXIF, ID3, Vorbis comments, PDF info) is ignored: it is
 neither exported nor removed. Originals are served as uploaded.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -105,6 +107,7 @@ def _wav(data):
 
 PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
 PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+ADAM7: tuple[tuple[int, int, int, int], ...]
 ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4))
 ADAM7 += ((1, 0, 2, 2), (0, 1, 1, 2))
 # APNG animation chunks are refused: every frame would be a separate bomb budget.
@@ -128,6 +131,7 @@ def _png_raw_size(width, height, bits, interlace):
 
 def _png(data):
     size, pos = len(data), 8
+    expected: int | None
     expected = color = None
     inflater = zlib.decompressobj()
     inflated = chunks = 0
@@ -162,6 +166,8 @@ def _png(data):
             )
         elif kind == b"IDAT":
             _require(idat_state < 2 and not inflater.eof)
+            if expected is None:  # IHDR comes first (checked above)
+                raise ValueError
             idat_state = 1
             pending = body
             while True:
@@ -349,6 +355,7 @@ OGG_SAMPLE_RATE = 48000
 def _ogg(data):
     size, pos, pages = len(data), 0, 0
     serial = granule_last = None
+    packets: list[bytes]
     packets, current, eos = [], b"", False
     while pos < size:
         _require(not eos and pos + 27 <= size)
@@ -448,6 +455,7 @@ def _mp3(data):
     end = size
     if size - 128 >= pos and data[size - 128 : size - 125] == b"TAG":
         end = size - 128
+    first: tuple[int, int, int] | None
     first, frames = None, 0
     while pos < end:
         shape, length, per_frame = _mp3_header(data, pos)
@@ -460,6 +468,8 @@ def _mp3(data):
         frames += 1
         _require(frames <= MAX_ELEMENTS)
     _require(frames and pos == end)
+    if first is None:  # implied by frames > 0
+        raise ValueError
     _, rate, channels = first
     samples = frames * per_frame
     _require(samples <= rate * MAX_MEDIA_SECONDS)
@@ -523,6 +533,7 @@ def _flac_frame_header(data, pos):
 
 
 def _flac(data):
+    info: bytes | None
     size, pos, blocks, last, info = len(data), 4, 0, False, None
     while not last:
         _require(pos + 4 <= size)
@@ -539,6 +550,8 @@ def _flac(data):
         blocks += 1
         _require(blocks <= 1024)
         pos = end
+    if info is None:  # the first block is STREAMINFO (checked above)
+        raise ValueError
     min_block, max_block = struct.unpack(">HH", info[:4])
     min_frame = int.from_bytes(info[4:7], "big")
     max_frame = int.from_bytes(info[7:10], "big")
@@ -632,6 +645,7 @@ def _webm_tracks(data, start, end):
         if element != 0xAE:  # TrackEntry
             _require(element in GLOBAL)
             continue
+        track: dict[str, float | bytes | None]
         track = {"type": None, "codec": None, "width": 0, "height": 0}
         track.update(rate=0.0, channels=1)
         for child, inner, close in _ebml_elements(data, body, stop):
@@ -736,6 +750,8 @@ def _webm(data):
             tracks = _webm_tracks(data, body, body + length)
         pos = body + length
     _require(pos == end and info and tracks and clusters)
+    if tracks is None:  # implied by the check above
+        raise ValueError
     _require(0 < scale <= 1_000_000_000 and duration == duration and duration >= 0)
     seconds = (duration or last_time) * scale / 1e9
     _require(0 < seconds <= MAX_MEDIA_SECONDS)
@@ -797,7 +813,7 @@ def _boxes(data, pos, end, *, top=False):
     _require(pos == end)
 
 
-def _child(data, start, end, kind):
+def _child(data, start, end, kind) -> tuple[int, int]:
     found = [(a, b) for k, a, b in _boxes(data, start, end) if k == kind]
     _require(len(found) == 1)
     return found[0]

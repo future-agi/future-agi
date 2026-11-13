@@ -9,6 +9,7 @@ with an F01 ``Reason``; 429 always carries ``Retry-After``. Every response is
 """
 
 import uuid
+from collections.abc import Sequence
 
 import structlog
 from django.conf import settings
@@ -194,7 +195,7 @@ class AttachmentView(APIView):
     authentication_classes = ()
     permission_classes = (AllowAny,)
     content_negotiation_class = NoNegotiation
-    parser_classes = (StrictJSONParser,)
+    parser_classes: Sequence[type[BaseParser]] = (StrictJSONParser,)
     max_body_bytes = READ_BYTES
 
     def handle_exception(self, exc):
