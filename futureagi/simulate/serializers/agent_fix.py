@@ -586,6 +586,8 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
     allowed_models = serializers.ListField(child=serializers.CharField())
     # Whether the run's spans exported the agent's model calls at all.
     agent_cost_metered = serializers.BooleanField()
+    # Whether the sandbox could measure none of them, so their cost is unknown.
+    agent_calls_unmeasured = serializers.BooleanField()
     reply_latency_margin_pct = serializers.IntegerField()
     cost_margin_pct = serializers.IntegerField()
 

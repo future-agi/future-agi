@@ -123,6 +123,14 @@ export const tracesUnreadable = (options) =>
 export const NO_MODELS_NOTE =
   "This agent's traces name no model, so the model lock will show “Unknown”. Its cost is still checked.";
 
+// Every model call the run exported was one Epoch could not measure, so none of
+// them has a cost: the fix page says the same of such a call (fixRunView.js unknownWhy).
+export const callsUnmeasured = (options) =>
+  options.defaults.agent_calls_unmeasured === true;
+
+export const UNMEASURED_NOTE =
+  "This agent calls its model in a way Epoch can't measure, such as another SDK or a direct HTTP request. The model lock and the cost limit will show “Unknown”. Route its calls through the OpenAI or Anthropic SDK, or add traceAI tracing.";
+
 // The limit on the agent's spend per conversation, in US dollars: null when
 // left empty, NaN when it is not a number above 0.
 export function costLimitOf(text) {

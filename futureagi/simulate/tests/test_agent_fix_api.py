@@ -1009,6 +1009,7 @@ class TestUserApi:
             "max_minutes": 180,
             "allowed_models": [],
             "agent_cost_metered": False,
+            "agent_calls_unmeasured": False,
             "reply_latency_margin_pct": 25,
             "cost_margin_pct": 25,
         }

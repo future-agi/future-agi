@@ -407,6 +407,9 @@ class LaunchDefaults(BaseModel):
     # Whether the run's spans exported the agent's model calls, so a fix can measure
     # their cost even when they name no model.
     agent_cost_metered: bool
+    # Whether the sandbox could measure none of those calls (another SDK or a direct
+    # HTTP request), so their cost is unknown however a fix runs.
+    agent_calls_unmeasured: bool = False
     reply_latency_margin_pct: int
     cost_margin_pct: int
 

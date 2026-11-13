@@ -538,6 +538,7 @@ export function fixtureLaunchOptions(sourceRunId) {
       max_minutes: 150,
       allowed_models: [],
       agent_cost_metered: false,
+      agent_calls_unmeasured: false,
       reply_latency_margin_pct: 25,
       cost_margin_pct: 25,
     },

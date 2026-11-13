@@ -2532,7 +2532,34 @@ class TestLaunchConstraints:
         with patch(TRACED, _usage(usage)):
             defaults = launch_options(source_run).defaults
 
-        assert (defaults.allowed_models, defaults.agent_cost_metered) == ([], True)
+        assert (
+            defaults.allowed_models,
+            defaults.agent_cost_metered,
+            defaults.agent_calls_unmeasured,
+        ) == ([], True, False)
+
+    def test_a_form_whose_every_call_went_unmeasured_says_their_cost_is_unknown(
+        self, source_run
+    ):
+        # Every model call went through something the sandbox can't read: spans say
+        # so, and none carries a cost.
+        partial = CallUsage(models=[], llm_spans=0, cost_usd=None, partial=True)
+        every = self._source_usage(source_run, [partial, partial])
+        some = self._source_usage(
+            source_run, [partial, CallUsage(models=[], llm_spans=1, cost_usd=0.01)]
+        )
+
+        def unmeasured(usage):
+            with patch(TRACED, _usage(usage)):
+                defaults = launch_options(source_run).defaults
+            return defaults.agent_cost_metered, defaults.agent_calls_unmeasured
+
+        # One measured call still measures the agent's cost.
+        assert (unmeasured(every), unmeasured(some), unmeasured(None)) == (
+            (True, True),
+            (True, False),
+            (False, False),
+        )
 
     def test_a_form_whose_run_s_traces_cannot_be_read_says_so_instead_of_untraced(
         self, source_run
