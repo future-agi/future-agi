@@ -22,6 +22,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { ROLES } from "src/utils/rolePermissionMapping";
 import { useMetricsList } from "./api";
 import { metricWindow } from "./metricTime";
+import useCoverageReanchor from "./useCoverageReanchor";
 import MetricList from "./MetricList";
 import MetricProjectSelect from "./MetricProjectSelect";
 
@@ -100,6 +101,13 @@ function WorkspaceMetricsList({ scope, canCreate }) {
       }),
     },
   });
+  // A preset list window moves forward when a forward-only metric's first
+  // whole bucket ends, so its read begins without requiring a page reload.
+  useCoverageReanchor(
+    window,
+    definitions.data?.results?.map((metric) => metric.definition) || [],
+    () => setWindow(metricWindow(days)),
+  );
   const projects = useQuery({
     queryKey: [
       "metrics-project-picker",

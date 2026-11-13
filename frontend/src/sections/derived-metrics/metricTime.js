@@ -96,20 +96,6 @@ export function metricWindow(days, now = new Date()) {
   };
 }
 
-/** A metric that started with no history (history_mode "forward") has values
- * only from its coverage_start. Reads start there instead of asking for a
- * window that was never calculated. A window wholly before coverage_start is
- * kept as chosen, so the server can say it is not calculated.
- */
-export function coverageWindow(window, definition) {
-  if (definition?.history_mode !== "forward") return window;
-  const from = metricDate(definition.coverage_start);
-  const start = metricDate(window?.window_start);
-  const end = metricDate(window?.window_end);
-  if (!from || !start || start >= from || (end && from >= end)) return window;
-  return { ...window, window_start: from.toISOString() };
-}
-
 const BUCKET_MS = 15 * 60000;
 
 /** The window the server reads or saves for a request: both ends rounded down
@@ -127,6 +113,65 @@ export function metricBucketWindow(window) {
     window_start: floor(window?.window_start),
     window_end: floor(window?.window_end),
   };
+}
+
+const ceilBucket = (date) =>
+  new Date(Math.ceil(date.getTime() / BUCKET_MS) * BUCKET_MS);
+
+/** The first 15-minute UTC boundary at or after an instant. A metric that
+ * started with no history computes only units starting at or after its
+ * coverage_start, so the bucket holding coverage_start is partial: its
+ * values begin here, the earliest window start the server calls calculated.
+ */
+export function firstValuesInstant(coverageStart) {
+  const coverage = metricDate(coverageStart);
+  return coverage ? ceilBucket(coverage) : null;
+}
+
+/** firstValuesInstant of a metric that started with no history
+ * (history_mode "forward"); null for any other metric. */
+export function forwardValuesStart(definition) {
+  if (definition?.history_mode !== "forward") return null;
+  return firstValuesInstant(definition.coverage_start);
+}
+
+/** The window to read for a metric that started with no history: it begins
+ * where values begin instead of asking for a window that was never calculated.
+ * A window already starting there, or wholly before coverage_start, stays as
+ * chosen (the server then says it is not calculated). */
+export function coverageWindow(window, definition) {
+  const first = forwardValuesStart(definition);
+  if (!first) return window;
+  const start = metricDate(window?.window_start);
+  const end = metricDate(window?.window_end);
+  const coverage = metricDate(definition.coverage_start);
+  if (!start || start >= first || (end && end <= coverage)) return window;
+  return { ...window, window_start: first.toISOString() };
+}
+
+/** True while the window reaches past coverage_start but holds no full
+ * 15-minute bucket of values yet, which the server cannot read (it floors
+ * both ends to a bucket and needs at least one bucket between them). No read
+ * is sent; the page says when the first values appear. */
+export function coveragePending(window, definition) {
+  const first = forwardValuesStart(definition);
+  const end = metricDate(window?.window_end);
+  if (!first || !end) return false;
+  // The effective-window reader floors both ends. Until window_end reaches
+  // the end of the first whole bucket, a window clamped to `first` would be
+  // empty (activation can happen just after its mount-time end).
+  return end < new Date(first.getTime() + BUCKET_MS);
+}
+
+/** When the first bucket of values ends: a preset window ending before this
+ * instant is pending, or stale if its metric arrived after the deadline. */
+export function coverageReadableAt(window, definition) {
+  const first = forwardValuesStart(definition);
+  const end = metricDate(window?.window_end);
+  const readable = first && new Date(first.getTime() + BUCKET_MS);
+  // Also return a past deadline for a stale preset window whose metric arrived
+  // after the first bucket had already completed; the hook re-anchors it now.
+  return readable && end && end < readable ? readable : null;
 }
 
 /** Pass provenance.updated_at, never definition.updated_at, for read freshness.

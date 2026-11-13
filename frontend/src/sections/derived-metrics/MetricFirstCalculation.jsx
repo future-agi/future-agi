@@ -17,7 +17,7 @@ import {
   summarizeAttempts,
 } from "./metricCalculationState";
 import { formatMetricTime, formatRelativeMetricTime } from "./metricTime";
-import MetricStatusLine from "./MetricStatusLine";
+import MetricStatusLine, { MetricCoverageLine } from "./MetricStatusLine";
 
 // How often a metric waiting for its first calculation is read again while
 // its Overview is open. Polling pauses while the browser tab is hidden.
@@ -240,6 +240,8 @@ export default function MetricFirstCalculation({
         <Fact label="First calculation">
           <Stack spacing={1}>
             <StatusBadge {...calculation} variant="dot" />
+            {/* Started with no history: say where values will begin. */}
+            <MetricCoverageLine definition={draft} />
             {/* Progress only, when reported; never an estimate. */}
             {Number.isSafeInteger(draft?.backfill_days_total) &&
               draft.backfill_days_total > 0 && (

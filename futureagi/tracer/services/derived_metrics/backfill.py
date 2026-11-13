@@ -36,6 +36,7 @@ from tracer.services.derived_metrics.bounded_reads import (
     merge_bindings,
 )
 from tracer.services.derived_metrics.deletion_protocol import serialized_project
+from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
@@ -114,9 +115,11 @@ def forward_coverage_start(definition):
 def forward_floor(definitions):
     """Earliest coverage start when EVERY working version is forward-only.
 
-    A repair or overflow sweep for such a project only needs [floor, ceiling):
-    no version computes a unit that starts earlier. Any history (or legacy,
-    undecided) version keeps the full retained-history sweep.
+    Source reconciliation for such a project need not visit spans starting
+    earlier: no version computes a unit there. Any history (or legacy,
+    undecided) version keeps the full retained-history source sweep. A bounded
+    overflow burst additionally skips committed phases; a pre-existing full
+    repair continues to preserve its older dependency/lifecycle debt.
     """
     starts = [forward_coverage_start(d) for d in definitions]
     if not starts or any(start is None for start in starts):
@@ -139,11 +142,15 @@ def enter_backfill(lease, analytics, *, retention_days, limit=None):
     Runs inside the writer's fenced pass, for the first enrollment and for every
     later version. The project size is measured once, cheaply and bounded; at
     most ``limit`` spans in the history window keeps today's backfill. Above it
-    each version is forward-only: it records coverage_start (its enrollment
-    time, never after this pass), activates without a history backfill and is
-    computed only from coverage_start onward. A fresh forward-only project's
-    change watermarks start at that time instead of the epoch, so the first
-    discovery reads new arrivals only. Returns {version id: history mode}.
+    each version is forward-only: it records coverage_start and skips the
+    history backfill. coverage_start is its enrollment time, never after this
+    pass and never before arrivals the project already consumed without it
+    (forward_coverage_start_for). It stays unserved (status running) until the
+    first publication that computes it consumes arrivals: apply_publication
+    activates it in that head switch, so a read is never pinned to a head that
+    lacks it. A fresh forward-only project's change watermarks start at that
+    time instead of the epoch, so the first discovery reads new arrivals only.
+    Returns {version id: history mode}.
     """
     project_id = lease.project_id
     if not _undecided(project_id).exists():
@@ -158,12 +165,12 @@ def enter_backfill(lease, analytics, *, retention_days, limit=None):
         limit=limit,
     )
     mode = FORWARD if size > limit else HISTORY
-    from tracer.services.derived_metrics.errors import MetricInputError
     from tracer.services.derived_metrics.spec import require_computable
 
     decided = {}
     with transaction.atomic():
         state = MetricProjectRefresh._locked(project_id, **lease.check())
+        sweeping = _sweep_in_progress(state, project_id)
         for definition in _undecided(project_id).select_for_update(of=("self",)):
             try:
                 require_computable(definition)
@@ -178,23 +185,19 @@ def enter_backfill(lease, analytics, *, retention_days, limit=None):
                 )
                 decided[str(definition.id)] = HISTORY
                 continue
-            coverage = min(changes.utc(definition.created_at), changes.utc(now))
+            coverage = forward_coverage_start_for(
+                definition, state, now=now, sweeping=sweeping
+            )
             # Moving the progress token fences any sealed initial intent that
             # still expects this version's empty, pending progress.
             DerivedMetricVersion.objects.filter(id=definition.id).update(
                 history_mode=FORWARD,
                 coverage_start=coverage,
-                backfill_status=DerivedMetricVersion.BackfillStatus.COMPLETE,
+                backfill_status=DerivedMetricVersion.BackfillStatus.RUNNING,
                 backfill_cursor=None,
                 backfill_days_done=0,
                 backfill_days_total=0,
                 backfill_updated_at=_progress_time(definition.backfill_updated_at, now),
-            )
-            DerivedMetric.activate_version(
-                definition.metric_id,
-                definition.id,
-                expected_active_id=definition.metric.active_version_id,
-                now=now,
             )
             decided[str(definition.id)] = FORWARD
         working = working_definitions(project_id)
@@ -218,8 +221,41 @@ def enter_backfill(lease, analytics, *, retention_days, limit=None):
     return decided
 
 
+def _sweep_in_progress(state, project_id):
+    """Whether a paged sweep that started before now has yet to complete."""
+    cursor = state.reconciliation_cursor
+    return (
+        state.pending_repair
+        and isinstance(cursor, dict)
+        and cursor.get("phase") != "complete"
+    ) or sweep_participants(project_id) is not None
+
+
+def forward_coverage_start_for(definition, state, *, now, sweeping):
+    """The first instant a forward-only version can claim every unit from.
+
+    Its enrollment time, never after this pass. Every publication from this
+    pass on computes the version, but arrivals already consumed were discovered
+    without it: a unit starting before the consumed cursors would never be
+    computed, so coverage starts no earlier than they do. A sweep that started
+    before this pass consumes arrivals up to its own start when it completes,
+    although its earlier pages never computed this version: coverage then
+    starts at this pass, whose later arrivals every discovery still reads.
+    """
+    if sweeping:
+        return changes.utc(now)
+    coverage = min(changes.utc(definition.created_at), changes.utc(now))
+    consumed = max(getattr(state, f) for f in MetricProjectRefresh.MONOTONE_FIELDS)
+    return max(coverage, changes.from_ns(consumed)) if consumed > 0 else coverage
+
+
 def pending_versions(project_id):
-    """Only the newest draft can activate; superseded drafts are not work."""
+    """Only the newest draft can activate; superseded drafts are not work.
+
+    A forward-only version has no history to backfill, so it is never pending
+    here (see awaiting_forward_versions): no history chunk or sweep may start
+    for it.
+    """
     return (
         DerivedMetricVersion.objects.filter(
             metric__project_id=project_id,
@@ -228,12 +264,33 @@ def pending_versions(project_id):
             pins_revoked_at__isnull=True,
             backfill_status__in=["pending", "running"],
         )
+        .exclude(history_mode=FORWARD)
         .exclude(
             Q(metric__active_version_id__isnull=False)
             & Q(id=F("metric__active_version_id"))
         )
         .select_related("metric")
         .order_by(F("backfill_updated_at").asc(nulls_first=True), "created_at", "id")
+    )
+
+
+def awaiting_forward_versions(project_id):
+    """Forward-only versions decided but not yet served: they activate with the
+    first publication that computes them (apply_publication), exactly like a
+    history version activates in its completing head switch. Until then reads
+    keep the previous active version, or say "not calculated yet"."""
+    return (
+        DerivedMetricVersion.objects.filter(
+            metric__project_id=project_id,
+            metric__deleted=False,
+            metric__current_version=F("version"),
+            pins_revoked_at__isnull=True,
+            history_mode=FORWARD,
+            backfill_status=DerivedMetricVersion.BackfillStatus.RUNNING,
+            activated_at__isnull=True,
+        )
+        .select_related("metric")
+        .order_by("created_at", "id")
     )
 
 
@@ -313,7 +370,8 @@ def working_definitions(project_id, definitions=()):
         if MetricProjectRefresh.for_project(project_id).pending_backfill
         else ()
     )
-    for definition in (*active, *pending):
+    awaiting = awaiting_forward_versions(project_id)
+    for definition in (*active, *awaiting, *pending):
         versions[str(definition.id)] = definition
     return list(versions.values())
 
@@ -1160,6 +1218,17 @@ def merge_changes(*batches):
     )
 
 
+def _eval_config_ids(definitions):
+    return sorted(
+        {
+            str(item["config_id"])
+            for d in definitions
+            for item in d.inputs
+            if item.get("source") == "eval" and item.get("config_id")
+        }
+    )
+
+
 def incremental_changes(analytics, writer, head, definitions, *, now):
     definitions = list(definitions)
     state = MetricProjectRefresh.for_project(writer.lease.project_id)
@@ -1175,14 +1244,7 @@ def incremental_changes(analytics, writer, head, definitions, *, now):
             eval_watermark_ns=state.eval_watermark_ns,
             remap_cursor_ns=state.remap_cursor_ns,
             ceiling=now,
-            eval_config_ids=sorted(
-                {
-                    str(item["config_id"])
-                    for d in definitions
-                    for item in d.inputs
-                    if item.get("source") == "eval" and item.get("config_id")
-                }
-            ),
+            eval_config_ids=_eval_config_ids(definitions),
         )
     except changes.arrivals.ContinuousCandidateOverflow:
         raise
@@ -1280,23 +1342,151 @@ def apply_publication(writer, attempt, control):
             pending_backfill=pending_versions(writer.lease.project_id).exists(),
             backfill_last_progress_at=now,
         )
+    activate_forward_versions(writer, attempt, control)
 
 
-def queue_bulk_change(project_id, *, now):
+def activate_forward_versions(writer, attempt, control):
+    """Serve forward-only versions in the head switch that first computes them.
+
+    Only a publication that consumed arrivals (its frozen cursors move the
+    watermark) proves [coverage_start, its ceiling) was computed; a partial
+    sweep page or a compaction does not. Only versions this very attempt was
+    prepared with, and that are still the current version of a live metric, are
+    activated: anything else is skipped, never raised, because a failure here
+    would roll back every publication of the project.
+    """
+    if "watermark_ns" not in (control.get("cursors") or {}):
+        return []
+    prepared = {str(item["id"]) for item in attempt.metric_versions}
+    activated = []
+    for definition in awaiting_forward_versions(writer.lease.project_id).filter(
+        id__in=prepared
+    ):
+        now = writer.lease.clock()
+        try:
+            with transaction.atomic():
+                DerivedMetricVersion.objects.filter(id=definition.id).update(
+                    backfill_status=DerivedMetricVersion.BackfillStatus.COMPLETE,
+                    backfill_updated_at=_progress_time(
+                        definition.backfill_updated_at, now
+                    ),
+                )
+                DerivedMetric.activate_version(
+                    definition.metric_id,
+                    definition.id,
+                    expected_active_id=definition.metric.active_version_id,
+                    now=now,
+                )
+        except (MetricStateConflict, MetricInputError):
+            continue
+        activated.append(definition.id)
+    return activated
+
+
+def queue_bulk_change(project_id, *, now, burst=None):
     """Reroute large invalidations to a persisted FULL coverage sweep.
 
     Resetting its cursor is explicit, serialized invalidation, never an implicit
     yesterday-only repair. A publication planned before this reset fails its CAS.
+    ``burst`` (a burst ReconciliationCheckpoint) queues that sweep instead.
     """
     with serialized_project(project_id):
         state = MetricProjectRefresh.for_project(project_id)
         MetricProjectRefresh.objects.filter(project_id=project_id).update(
             pending_repair=True,
-            reconciliation_cursor=None,
-            reconciliation_started_at=_progress_time(
-                state.reconciliation_started_at, now
+            reconciliation_cursor=burst.to_dict() if burst else None,
+            reconciliation_started_at=(
+                burst.started_at
+                if burst
+                else _progress_time(state.reconciliation_started_at, now)
             ),
-            reconciliation_completed_at=None,
+            reconciliation_completed_at=burst.completed_at if burst else None,
+        )
+
+
+def _burst_floor(analytics, writer, head, definitions, state, *, now):
+    """Where a forward-only burst sweep starts, or None to keep a full sweep."""
+    coverage = forward_floor(definitions)
+    if coverage is None:
+        return None
+    try:
+        first = changes.arrival_start_floor(
+            analytics,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            committed_attempts=[str(a) for _, a in head.allowed_attempts()]
+            if head
+            else [],
+            watermark_ns=state.watermark_ns,
+            eval_watermark_ns=state.eval_watermark_ns,
+            remap_cursor_ns=state.remap_cursor_ns,
+            ceiling=now,
+            eval_config_ids=_eval_config_ids(definitions),
+        )
+    except changes.arrivals.ContinuousCandidateOverflow:
+        return None
+    except changes.arrivals.ContinuousCandidateReadError as exc:
+        if not changes.memory_limit_exceeded(exc):
+            raise
+        return None
+    # Nothing arrived: the sweep has only the arrivals after it started to see.
+    return max(coverage, changes.utc(now) if first is None else first)
+
+
+def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
+    """Send an arrival window too large for discovery to the durable sweep.
+
+    A sweep already pending continues: completing it consumes arrivals up to
+    its start, and later arrivals are discovered afterwards. With none pending,
+    a project with any history version queues today's full sweep. A project
+    whose every working version is forward-only sweeps only the burst instead:
+    from the earliest start its unconsumed arrivals touch (never before its
+    coverage start), source phase only, so the work follows the burst and not
+    the time since enrollment. An already-pending full sweep, including one
+    without a cursor yet, is never replaced: it may own older ambiguous work.
+    If the burst cannot be dated, the full sweep continues.
+    """
+    project_id = writer.lease.project_id
+    state = MetricProjectRefresh.for_project(project_id)
+    current = (
+        changes.ReconciliationCheckpoint.from_dict(state.reconciliation_cursor)
+        if state.reconciliation_cursor
+        else None
+    )
+    bursting = (
+        state.pending_repair
+        and current is not None
+        and current.floor is not None
+        and current.phase != "complete"
+    )
+    # Never replace a full sweep that already owns missed/ambiguous arrivals.
+    # A burst checkpoint is installed only when no existing repair cursor must
+    # be preserved; otherwise its completion will consume the sweep's own start.
+    preserving_full = state.pending_repair and (
+        current is None or (current.floor is None and current.phase != "complete")
+    )
+    floor = (
+        None
+        if bursting or preserving_full
+        else _burst_floor(analytics, writer, head, definitions, state, now=now)
+    )
+    with transaction.atomic():
+        locked = MetricProjectRefresh._locked(project_id, **writer.lease.check())
+        if floor is None:
+            if not locked.pending_repair:
+                queue_bulk_change(project_id, now=now)
+            return
+        sweep_started = _progress_time(state.reconciliation_started_at, now)
+        queue_bulk_change(
+            project_id,
+            now=sweep_started,
+            burst=changes.ReconciliationCheckpoint(
+                started_at=sweep_started,
+                completed_at=current.completed_at if current else None,
+                completed_passes=current.completed_passes if current else 0,
+                covered_through=current.covered_through if current else None,
+                floor=floor,
+            ),
         )
 
 
@@ -1660,6 +1850,10 @@ class BackfillRunner:
             now=now,
             checkpoint=_retained_repair_checkpoint(checkpoint, cutoff=cutoff),
             page_size=self.page_size,
+            # The history this sweep promises is the persisted bounded window
+            # (the same one the size gate counted and reads treat as
+            # calculated), never every retained day of the project.
+            floor=_moment(cursor["start"]),
         )
         proposed = page.checkpoint
         if cursor["sweep"]["empty_head"] and proposed.phase in {
@@ -1741,8 +1935,9 @@ class BackfillRunner:
         head = state.head_manifest
         committed = [str(a) for _, a in head.allowed_attempts()] if head else []
         definitions = working_definitions(writer.lease.project_id)
-        # A forward-only project sweeps [earliest coverage start, now) only:
-        # never the epoch or the 90-day window it chose not to backfill.
+        # Bound normal source repair to the earliest forward coverage. Overflow
+        # burst cursors carry a narrower floor and reconcile_page skips their
+        # committed phases; an already-pending full sweep keeps its debt.
         floor = forward_floor(definitions)
         page = changes.reconcile_page(
             self.analytics,

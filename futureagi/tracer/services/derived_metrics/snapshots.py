@@ -28,6 +28,7 @@ from tracer.models.derived_metric import (
     DerivedMetricRun,
     MetricErasureRequest,
     MetricGenerationPin,
+    MetricProjectRefresh,
     MetricStateConflict,
 )
 from tracer.services.derived_metrics.deletion_protocol import (
@@ -142,11 +143,19 @@ def request_snapshot(metric, data, user):
                 )
             return DerivedMetricRunSerializer(previous).data
         from tracer.services.derived_metrics.erasure import capture_blocked
+        from tracer.services.derived_metrics.reads import (
+            require_forward_definition_published,
+        )
 
         if capture_blocked(metric):
             raise MetricBusyError(
                 "Data erasure is in progress. Retry after cleanup completes."
             )
+        # request_snapshot holds the project's serialization lock, so this is
+        # the same head capture_pin would take below. Refuse a legacy forward
+        # version whose head predates its calculation without creating a pin.
+        head = MetricProjectRefresh.for_project(metric.project_id).head_manifest
+        require_forward_definition_published(head, metric.active_version)
         supported, reason = snapshot_support(metric.active_version)
         if not supported:
             raise SnapshotNotSupportedError(reason)

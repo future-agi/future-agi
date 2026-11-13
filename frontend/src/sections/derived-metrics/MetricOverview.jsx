@@ -1,14 +1,18 @@
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 import { useMetricKpi, useMetricTrend } from "./api";
 import MetricFirstCalculation from "./MetricFirstCalculation";
-import { metricCopy, metricCountCopy } from "./copy";
+import { forwardPendingCopy, metricCopy, metricCountCopy } from "./copy";
 import { formatMetricInterval, formatMetricValue } from "./formatMetricValue";
-import { formatMetricWindow } from "./metricTime";
+import { coveragePending, formatMetricWindow } from "./metricTime";
 import { pointValueState } from "./unitValueState";
 import MetricValueCell from "./MetricValueCell";
-import MetricStatusLine, { MetricReadNotice } from "./MetricStatusLine";
+import MetricStatusLine, {
+  MetricCoverageLine,
+  MetricReadNotice,
+} from "./MetricStatusLine";
 import MetricTrendChart from "./MetricTrendChart";
 
 import { formatMetricDifference, sameMetricRead } from "./metricPageValues";
@@ -118,12 +122,15 @@ export default function MetricOverview({
     version: metric?.definition?.version,
     params: window,
   };
+  // A metric that started with no history has no full 15-minute period to
+  // read yet; the server cannot read less, so no read is sent.
+  const waiting = coveragePending(window, metric?.definition);
   const available =
     Boolean(metric?.definition) && metric.definition.level !== "user";
-  const kpi = useMetricKpi({ ...args, enabled: available });
+  const kpi = useMetricKpi({ ...args, enabled: available && !waiting });
   const trend = useMetricTrend({
     ...args,
-    enabled: available,
+    enabled: available && !waiting,
     params: { ...window, points: 30 },
   });
   if (metric?.definition?.level === "user")
@@ -141,6 +148,20 @@ export default function MetricOverview({
         onViewHistory={onViewHistory}
       />
     );
+  if (waiting)
+    return (
+      <Stack spacing={1.5} data-testid="metric-coverage-pending">
+        <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+          <EmptyState
+            variant="no-results"
+            icon="solar:clock-circle-linear"
+            title="Not calculated yet"
+            description={forwardPendingCopy(metric.definition)}
+          />
+        </Box>
+        <MetricCoverageLine definition={metric.definition} />
+      </Stack>
+    );
   const data = kpi.data;
   const state = pointValueState(data?.current);
   const hasValue = state.state === "value";
@@ -148,7 +169,14 @@ export default function MetricOverview({
   const mismatch = data && trend.data && !sameMetricRead(data, trend.data);
   return (
     <Stack spacing={2.5}>
-      <MetricReadNotice query={kpi} label="Metric value" />
+      <MetricReadNotice
+        query={kpi}
+        label="Metric value"
+        definition={metric?.definition}
+      />
+      {/* With values the coverage line sits in the status footer below;
+          without them it still says where values begin. */}
+      {!data && <MetricCoverageLine definition={metric?.definition} />}
       {data && (
         <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
           <Box
@@ -246,7 +274,11 @@ export default function MetricOverview({
         </Box>
       )}
       <Box>
-        <MetricReadNotice query={trend} label="Trend" />
+        <MetricReadNotice
+          query={trend}
+          label="Trend"
+          definition={metric?.definition}
+        />
         {mismatch && (
           <Alert
             severity="info"

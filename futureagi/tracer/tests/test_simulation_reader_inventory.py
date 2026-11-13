@@ -1973,6 +1973,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "arrival_start_floor": filed(
+            ROW_DRIVEN,
+            why=(
+                "a forward-only overflow dates its refresh-row project's span "
+                "arrivals (one min(start_time) aggregate) to bound its burst "
+                "sweep; not authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
     },
     "tracer.services.derived_metrics.compaction_ranges": {
         "destination_select": filed(
@@ -3898,9 +3907,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
     record_property,
 ):
     from django.apps import apps
+
     from simulate.models.run_test import RunTest
     from simulate.models.test_execution import CallExecution, TestExecution
-
     from tracer.models.project import Project
     from tracer.services.simulation_project import ensure_simulation_project
 

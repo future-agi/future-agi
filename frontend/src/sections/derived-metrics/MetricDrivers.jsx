@@ -18,7 +18,8 @@ import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 import { useMetricDrivers, useMetricFields, useMetricKpi } from "./api";
 import { formatMetricValue } from "./formatMetricValue";
-import { formatMetricWindow } from "./metricTime";
+import { coveragePending, formatMetricWindow } from "./metricTime";
+import { forwardPendingCopy } from "./copy";
 import { unitValueState } from "./unitValueState";
 import {
   formatMetricDifference,
@@ -60,8 +61,11 @@ export default function MetricDrivers({ metric, scope, window }) {
   const [cursors, setCursors] = useState([null]);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(null);
+  const waiting = coveragePending(window, definition);
   const supported =
-    Boolean(definition) && !["user", "span"].includes(definition.level);
+    Boolean(definition) &&
+    !["user", "span"].includes(definition.level) &&
+    !waiting;
   const args = {
     scope,
     metricId: metric?.id,
@@ -157,6 +161,17 @@ export default function MetricDrivers({ metric, scope, window }) {
         />
       </Box>
     );
+  if (waiting)
+    return (
+      <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+        <EmptyState
+          variant="no-results"
+          icon="solar:clock-circle-linear"
+          title="Not calculated yet"
+          description={forwardPendingCopy(definition)}
+        />
+      </Box>
+    );
   const canOpen = ["conversation", "trace"].includes(definition.level);
   const inputs = definition.field_spec?.inputs?.length
     ? definition.field_spec.inputs
@@ -173,7 +188,7 @@ export default function MetricDrivers({ metric, scope, window }) {
           unit.
         </Typography>
       </Box>
-      <MetricReadNotice query={query} label="Drivers" />
+      <MetricReadNotice query={query} label="Drivers" definition={definition} />
       <MetricReadNotice query={fields} label="Field metadata" />
       {query.data && fields.data && (
         <>

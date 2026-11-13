@@ -4,6 +4,10 @@ import {
   formatMetricTime,
   formatMetricTimeRange,
   formatMetricWindow,
+  firstValuesInstant,
+  forwardValuesStart,
+  coveragePending,
+  coverageWindow,
   formatRelativeMetricTime,
   localTime,
   metricBucketWindow,
@@ -108,5 +112,64 @@ describe("time ranges in a UTC column", () => {
     expect(formatMetricTimeRange(null, "2026-11-11T00:10:00Z")).toBe(
       "Unavailable – 11 Nov 2026, 00:10:00",
     );
+  });
+});
+
+describe("forward-only metric windows", () => {
+  const definition = {
+    history_mode: "forward",
+    coverage_start: "2026-11-08T10:07:30.000Z",
+  };
+
+  it("starts at the first complete 15-minute bucket, not the partial one", () => {
+    expect(firstValuesInstant(definition.coverage_start).toISOString()).toBe(
+      "2026-11-08T10:15:00.000Z",
+    );
+    expect(forwardValuesStart(definition).toISOString()).toBe(
+      "2026-11-08T10:15:00.000Z",
+    );
+    const window = {
+      window_start: "2026-11-01T10:00:00.000Z",
+      window_end: "2026-11-08T10:22:00.000Z",
+    };
+    expect(coverageWindow(window, definition)).toEqual({
+      ...window,
+      window_start: "2026-11-08T10:15:00.000Z",
+    });
+  });
+
+  it("does not read within the coverage bucket or before the first full bucket ends", () => {
+    const window = {
+      window_start: "2026-11-01T10:00:00.000Z",
+      window_end: "2026-11-08T10:14:59.000Z",
+    };
+    expect(coveragePending(window, definition)).toBe(true);
+    expect(
+      coveragePending(
+        { ...window, window_end: "2026-11-08T10:15:00.000Z" },
+        definition,
+      ),
+    ).toBe(true);
+    expect(
+      coveragePending(
+        { ...window, window_end: "2026-11-08T10:30:00.000Z" },
+        definition,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps an activation after mount pending without inventing an empty window", () => {
+    const mounted = {
+      window_start: "2026-11-01T10:00:00.000Z",
+      window_end: "2026-11-08T10:03:00.000Z",
+    };
+    const activated = {
+      history_mode: "forward",
+      coverage_start: "2026-11-08T10:03:05.000Z",
+    };
+    expect(coveragePending(mounted, activated)).toBe(true);
+    // The mount-time end precedes coverage_start, so keep the user's closed
+    // window as-is; the page skips the read until its preset can re-anchor.
+    expect(coverageWindow(mounted, activated)).toBe(mounted);
   });
 });

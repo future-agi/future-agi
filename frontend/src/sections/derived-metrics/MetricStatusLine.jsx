@@ -12,7 +12,7 @@ import { forwardCoverageCopy } from "./copy";
 
 import { metricReadMessage } from "./metricPageValues";
 
-export function MetricReadNotice({ query, label }) {
+export function MetricReadNotice({ query, label, definition }) {
   if (["loading", "idle"].includes(query.readState)) {
     return (
       <Typography role="status" variant="body2" color="text.secondary">
@@ -32,13 +32,36 @@ export function MetricReadNotice({ query, label }) {
         ) : undefined
       }
     >
-      {metricReadMessage(query.error, label)}
+      {metricReadMessage(query.error, label, definition)}
     </Alert>
   );
 }
 MetricReadNotice.propTypes = {
   query: PropTypes.object.isRequired,
   label: PropTypes.string.isRequired,
+  definition: PropTypes.object,
+};
+
+/** Where values begin for a metric that started with no history, from the
+ * read's provenance or the definition. Nothing for any other metric. */
+export function MetricCoverageLine({ provenance, definition }) {
+  const historyMode = provenance?.history_mode ?? definition?.history_mode;
+  const coverageStart =
+    provenance?.coverage_start ?? definition?.coverage_start;
+  if (historyMode !== "forward" || !coverageStart) return null;
+  return (
+    <Typography
+      variant="body2"
+      color="text.secondary"
+      data-testid="metric-coverage"
+    >
+      {forwardCoverageCopy(coverageStart)}
+    </Typography>
+  );
+}
+MetricCoverageLine.propTypes = {
+  provenance: PropTypes.object,
+  definition: PropTypes.object,
 };
 
 export default function MetricStatusLine({
@@ -57,22 +80,10 @@ export default function MetricStatusLine({
     done <= total;
   const progressing = hasProgress && done < total;
   const failed = definition?.backfill_status === "failed";
-  // Started with no history: say where values begin instead of a progress bar.
-  const historyMode = provenance?.history_mode ?? definition?.history_mode;
-  const coverageStart =
-    provenance?.coverage_start ?? definition?.coverage_start;
-  const forward = historyMode === "forward" && Boolean(coverageStart);
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-      {forward && (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          data-testid="metric-coverage"
-        >
-          {forwardCoverageCopy(coverageStart)}
-        </Typography>
-      )}
+      {/* Started with no history: say where values begin. */}
+      <MetricCoverageLine provenance={provenance} definition={definition} />
       {failed && (
         <Alert severity="warning">
           History recalculation failed. Previously committed values have not

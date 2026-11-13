@@ -108,7 +108,8 @@ def store():
             INDEX idx_id id TYPE bloom_filter(0.001) GRANULARITY 1,
             INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
             INDEX idx_trace_session_id trace_session_id TYPE bloom_filter(0.001) GRANULARITY 1,
-            INDEX idx_end_user_id end_user_id TYPE bloom_filter(0.001) GRANULARITY 1
+            INDEX idx_end_user_id end_user_id TYPE bloom_filter(0.001) GRANULARITY 1,
+            INDEX auto_minmax_index__version _version TYPE minmax GRANULARITY 1
         ) ENGINE = ReplacingMergeTree(_version, is_deleted)
         PARTITION BY toDate(start_time)
         PRIMARY KEY (project_id, observation_type, service_name, toStartOfHour(start_time))

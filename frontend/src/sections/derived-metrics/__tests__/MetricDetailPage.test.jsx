@@ -1594,13 +1594,16 @@ it("starts a forward-only metric's KPI, trend and chart at its coverage start an
   // Two days ago, inside the default 7-day window.
   const coverage = new Date(Date.now() - 2 * 86400000).toISOString();
   const forward = { history_mode: "forward", coverage_start: coverage };
+  const first = new Date(
+    Math.ceil(Date.parse(coverage) / (15 * 60 * 1000)) * 15 * 60 * 1000,
+  ).toISOString();
   responses.detail = structuredClone({
     ...metric,
     definition: { ...metric.definition, ...forward },
   });
   const effective = {
     ...kpi.effective_window,
-    window_start: coverage,
+    window_start: first,
     window_end: new Date().toISOString(),
   };
   responses.kpi = {
@@ -1620,13 +1623,121 @@ it("starts a forward-only metric's KPI, trend and chart at its coverage start an
   // The reads begin where values exist, not 7 days back.
   for (const kind of ["kpi", "trend"]) {
     const [, config] = calls(kind).at(-1);
-    expect(config.params.window_start).toBe(coverage);
+    expect(config.params.window_start).toBe(first);
     expect(Date.parse(config.params.window_end)).toBeGreaterThan(
-      Date.parse(coverage),
+      Date.parse(first),
     );
   }
   expect(screen.getByTestId("metric-coverage")).toHaveTextContent(
-    `Values from ${formatMetricTime(coverage)}. History isn't computed for projects this large yet.`,
+    `Values from ${formatMetricTime(first)}. History isn't computed for projects this large yet.`,
   );
   expect(screen.getByText("Previous period unavailable")).toBeVisible();
+});
+
+it("does not read or allow a snapshot while coverage starts inside the current bucket", async () => {
+  const coverage = new Date(Date.now() - 5000).toISOString();
+  responses.detail = structuredClone({
+    ...metric,
+    definition: {
+      ...metric.definition,
+      history_mode: "forward",
+      coverage_start: coverage,
+    },
+  });
+  const defaultGet = mock.get.getMockImplementation();
+  mock.get.mockImplementation(async (url, config) => {
+    if (url.endsWith("/kpi") || url.endsWith("/trend")) {
+      const floor = (value) => Math.floor(Date.parse(value) / 900000);
+      if (floor(config.params.window_start) === floor(config.params.window_end))
+        throw { statusCode: 400 };
+    }
+    return defaultGet(url, config);
+  });
+  mount();
+  expect(await screen.findByTestId("metric-coverage-pending")).toBeVisible();
+  expect(screen.getByText("Not calculated yet")).toBeVisible();
+  expect(screen.getByTestId("metric-coverage")).toHaveTextContent(
+    "Values from ",
+  );
+  expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument();
+  expect(calls("kpi")).toHaveLength(0);
+  expect(calls("trend")).toHaveLength(0);
+  expect(screen.getByRole("button", { name: "Save snapshot" })).toBeDisabled();
+});
+
+it("handles forward activation after mount without a bad read, then reanchors after the first full bucket", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.setSystemTime(new Date("2026-11-13T10:03:00.000Z"));
+    mount();
+    expect(await screen.findByTestId("metric-hero")).toBeVisible();
+    expect(calls("kpi")).toHaveLength(1);
+
+    // The definition activates five seconds after the page's window was fixed.
+    responses.detail = structuredClone({
+      ...metric,
+      definition: {
+        ...metric.definition,
+        history_mode: "forward",
+        coverage_start: "2026-11-13T10:03:05.000Z",
+      },
+    });
+    await refetchResource("detail");
+    expect(await screen.findByTestId("metric-coverage-pending")).toBeVisible();
+    expect(screen.getByTestId("metric-coverage")).toHaveTextContent(
+      "Values from 13 Nov 2026, 10:15:00 UTC.",
+    );
+    // The fixed mount-time window ends before activation; it is skipped rather
+    // than sent as a sub-bucket request or left in a retryable 400 state.
+    expect(calls("kpi")).toHaveLength(1);
+    expect(calls("trend")).toHaveLength(1);
+    expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument();
+
+    // The preset window re-anchors after the first whole bucket ends, with a
+    // short jitter allowance, so it can be read without a manual reload.
+    await act(() => vi.advanceTimersByTimeAsync(27 * 60 * 1000 + 2500));
+    expect(await screen.findByTestId("metric-hero")).toBeVisible();
+    expect(calls("kpi")).toHaveLength(2);
+    const [, request] = calls("kpi").at(-1);
+    expect(request.params.window_start).toBe("2026-11-13T10:15:00.000Z");
+    expect(Date.parse(request.params.window_end)).toBeGreaterThan(
+      Date.parse("2026-11-13T10:30:00.000Z"),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("explains a recalculating forward definition truthfully and keeps coverage visible without KPI data", async () => {
+  const coverage = new Date(Date.now() - 2 * 86400000).toISOString();
+  responses.detail = structuredClone({
+    ...metric,
+    definition: {
+      ...metric.definition,
+      history_mode: "forward",
+      coverage_start: coverage,
+    },
+  });
+  mock.get.mockImplementation(async (url) => {
+    const kind = url.split("/").at(-1);
+    if (kind === "kpi" || kind === "trend")
+      throw {
+        statusCode: 503,
+        code: "metric_recalculating",
+        retryable: true,
+      };
+    if (!responses[kind]) throw new Error(`Unexpected read ${url}`);
+    return { data: responses[kind] };
+  });
+  mount();
+  expect(
+    await screen.findAllByText(/Not calculated yet\. Values from/),
+  ).toHaveLength(2);
+  expect(screen.getByTestId("metric-coverage")).toHaveTextContent(
+    "Values from ",
+  );
+  expect(
+    screen.queryByText(/completed active definition is not available/i),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByTestId("metric-hero")).not.toBeInTheDocument();
 });

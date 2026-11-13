@@ -15,9 +15,10 @@ import {
 import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import { settledMetricRead, useCreateMetricSnapshot } from "./api";
-import { metricCountCopy } from "./copy";
+import { forwardPendingCopy, metricCountCopy } from "./copy";
 import { formatMetricValue } from "./formatMetricValue";
 import {
+  coveragePending,
   formatMetricClock,
   formatMetricTime,
   metricBucketWindow,
@@ -104,7 +105,9 @@ export default function SaveSnapshot({
         : !metric.snapshot_supported
           ? metric.snapshot_unsupported_reason ||
             "Snapshots are not available for this metric."
-          : "";
+          : coveragePending(window, metric.definition)
+            ? `Nothing to save yet. ${forwardPendingCopy(metric.definition)}`
+            : "";
   const submit = async () => {
     try {
       await save.mutateAsync(request);

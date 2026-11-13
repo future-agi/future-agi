@@ -18,6 +18,7 @@ import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricKpi } from "./api";
+import { forwardPendingCopy } from "./copy";
 import MetricValueCell from "./MetricValueCell";
 import { firstCalculationBadge } from "./metricCalculationState";
 import { isMetricFirstUse } from "./metricPresentation";
@@ -26,6 +27,7 @@ import {
   useMetricProjectNames,
 } from "./useMetricProjectNames";
 import {
+  coveragePending,
   coverageWindow,
   formatMetricTime,
   formatMetricWindow,
@@ -63,6 +65,9 @@ const line = {
 };
 
 function MetricReadCell({ metric, scope, window, freshness = false }) {
+  // No full 15-minute period exists yet for a metric that started with no
+  // history: the server cannot read less, so no read is sent.
+  const waiting = Boolean(window) && coveragePending(window, metric.definition);
   const query = useMetricKpi({
     scope: { ...scope, projectId: metric.project_id },
     metricId: metric.id,
@@ -70,8 +75,32 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     version: metric.definition?.version,
     // A metric that started with no history is read from its coverage start.
     params: window && coverageWindow(window, metric.definition),
-    enabled: Boolean(metric.definition && window),
+    enabled: Boolean(metric.definition && window) && !waiting,
   });
+  if (waiting) {
+    // Not calculated yet: say when the first values appear, never a load error.
+    const pending = forwardPendingCopy(metric.definition);
+    return freshness ? (
+      <Tooltip title={pending} placement="top-start">
+        <Typography variant="body2" color="text.secondary" sx={line}>
+          <span aria-hidden="true">—</span>
+          <Box component="span" sx={visuallyHidden}>
+            {pending}
+          </Box>
+        </Typography>
+      </Tooltip>
+    ) : (
+      <Tooltip title={pending} placement="top-start">
+        <span>
+          <StatusBadge
+            status="pending"
+            label="Not calculated yet"
+            variant="dot"
+          />
+        </span>
+      </Tooltip>
+    );
+  }
   if (!metric.definition) {
     // The Value column already says "Not calculated yet". Freshness says when
     // the definition was saved, which is all that is known; without a saved

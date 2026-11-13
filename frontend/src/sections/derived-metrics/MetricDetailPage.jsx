@@ -57,6 +57,7 @@ import MetricHistory from "./MetricHistory";
 import MetricDefinition from "./MetricDefinition";
 import SaveSnapshot from "./SaveSnapshot";
 import { definitionSummary } from "./metricPresentation";
+import useCoverageReanchor from "./useCoverageReanchor";
 import {
   metricProjectLabel,
   useMetricProjectNames,
@@ -243,6 +244,14 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
   const reanchor = () => {
     if (range !== "custom") setWindow(metricWindow(range));
   };
+  // A metric that started with no history has no whole 15-minute period to
+  // read right after it starts (or activates while the page is open). A preset
+  // window moves on by itself once that period ends; a custom one stays.
+  useCoverageReanchor(
+    window,
+    [identity?.definition],
+    range === "custom" ? null : reanchor,
+  );
   const refreshValues = () => {
     setReadRevision((value) => value + 1);
     if (range === "custom") reload();

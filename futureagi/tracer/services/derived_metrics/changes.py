@@ -530,6 +530,90 @@ def _batch(
     )
 
 
+def _arrival_floor(cursor):
+    return max(EPOCH, from_ns(cursor) - OVERLAP)
+
+
+def _relation_refs(
+    analytics,
+    source,
+    params,
+    *,
+    eval_watermark_ns: int,
+    remap_cursor_ns: int,
+    ceiling: datetime,
+    eval_config_ids: Sequence[str],
+    budget: MetricReadBudget,
+):
+    """Eval and id-remap arrivals of one window: (refs, alias dependency keys).
+
+    The refs are project spans (trace, span, physical session); the alias keys
+    are committed dependencies of every remapped session or user alias.
+    """
+    end = ns(ceiling)
+    refs = []
+    configs = tuple(str(UUID(str(v))) for v in eval_config_ids)
+    if configs:
+        table, _ = eval_logger_source()
+        v2 = table.endswith("_v2")
+        arrival_column = "_version" if v2 else "_peerdb_synced_at"
+        floor = _arrival_floor(eval_watermark_ns)
+        bounds = {
+            "metric_eval_config_ids": configs,
+            "metric_floor": ns(floor) if v2 else floor,
+            "metric_ceiling": end if v2 else ceiling,
+        }
+        refs.extend(
+            arrivals._read_relation_refs_paged(
+                source,
+                project_id=params["project_id"],
+                table=table,
+                arrival_column=arrival_column,
+                arrival_predicate=(
+                    f"{arrival_column} >= %(metric_floor)s "
+                    f"AND {arrival_column} < %(metric_ceiling)s"
+                ),
+                bounds=bounds,
+                project_predicate="AND custom_eval_config_id IN %(metric_eval_config_ids)s",
+                budget=budget,
+            )
+        )
+    sessions, users = [], []
+    for table, target in (
+        ("trace_session_id_remap", sessions),
+        ("end_user_id_remap", users),
+    ):
+        changed = arrivals._read_changed_remap_ids(
+            source,
+            table=table,
+            floor=_arrival_floor(remap_cursor_ns),
+            ceiling=ceiling,
+            budget=budget,
+        )
+        target.extend(_remap_aliases(analytics, table, changed, budget))
+    if sessions:
+        refs.extend(
+            arrivals._expand_relation_ref_page(
+                source,
+                project_id=params["project_id"],
+                refs=[("", "", v) for v in sessions],
+                budget=budget,
+            )
+        )
+    if users:
+        refs.extend(
+            arrivals._expand_end_user_ids(
+                source,
+                project_id=params["project_id"],
+                end_user_ids=tuple(users),
+                budget=budget,
+            )
+        )
+    return refs, _dependency_keys_for_aliases(
+        analytics, params, sessions, users, budget
+    )
+
+
 def discover_changes(
     analytics,
     *,
@@ -558,83 +642,30 @@ def discover_changes(
     ):
         raise ValueError("metric change cursors cannot move backwards")
     source = _BudgetedAnalytics(analytics, budget)
-
-    def floor(cursor):
-        return max(EPOCH, from_ns(cursor) - OVERLAP)
-
     identities = arrivals._read_changed_span_identities(
         source,
         project_id=params["project_id"],
-        floor_ns=ns(floor(watermark_ns)),
+        floor_ns=ns(_arrival_floor(watermark_ns)),
         ceiling_ns=end,
         budget=budget,
     )
     refs = arrivals._expand_changed_span_identities(
         source, project_id=params["project_id"], identities=identities, budget=budget
     )
-    configs = tuple(str(UUID(str(v))) for v in eval_config_ids)
-    if configs:
-        table, _ = eval_logger_source()
-        v2 = table.endswith("_v2")
-        arrival_column = "_version" if v2 else "_peerdb_synced_at"
-        bounds = {
-            "metric_eval_config_ids": configs,
-            "metric_floor": (
-                ns(floor(eval_watermark_ns)) if v2 else floor(eval_watermark_ns)
-            ),
-            "metric_ceiling": end if v2 else ceiling,
-        }
-        refs.extend(
-            arrivals._read_relation_refs_paged(
-                source,
-                project_id=params["project_id"],
-                table=table,
-                arrival_column=arrival_column,
-                arrival_predicate=(
-                    f"{arrival_column} >= %(metric_floor)s "
-                    f"AND {arrival_column} < %(metric_ceiling)s"
-                ),
-                bounds=bounds,
-                project_predicate="AND custom_eval_config_id IN %(metric_eval_config_ids)s",
-                budget=budget,
-            )
-        )
-    sessions, users = [], []
-    for table, target in (
-        ("trace_session_id_remap", sessions),
-        ("end_user_id_remap", users),
-    ):
-        changed = arrivals._read_changed_remap_ids(
-            source,
-            table=table,
-            floor=floor(remap_cursor_ns),
-            ceiling=ceiling,
-            budget=budget,
-        )
-        target.extend(_remap_aliases(analytics, table, changed, budget))
-    if sessions:
-        refs.extend(
-            arrivals._expand_relation_ref_page(
-                source,
-                project_id=params["project_id"],
-                refs=[("", "", v) for v in sessions],
-                budget=budget,
-            )
-        )
-    if users:
-        refs.extend(
-            arrivals._expand_end_user_ids(
-                source,
-                project_id=params["project_id"],
-                end_user_ids=tuple(users),
-                budget=budget,
-            )
-        )
+    relation_refs, alias_keys = _relation_refs(
+        analytics,
+        source,
+        params,
+        eval_watermark_ns=eval_watermark_ns,
+        remap_cursor_ns=remap_cursor_ns,
+        ceiling=ceiling,
+        eval_config_ids=eval_config_ids,
+        budget=budget,
+    )
+    refs.extend(relation_refs)
     keys = {SourceKey(t, s) for t, s, _ in refs}
     keys.update(SourceKey(t, s) for t, s, _ in identities)
-    keys.update(
-        _dependency_keys_for_aliases(analytics, params, sessions, users, budget)
-    )
+    keys.update(alias_keys)
     # Physical (possibly superseded) session ids are an opportunistic
     # before-image. Units are keyed by the canonical survivor-old id.
     raw_sessions = {_nonempty(s) for _, _, s in refs} - {""}
@@ -650,6 +681,77 @@ def discover_changes(
         {"watermark_ns": end, "eval_watermark_ns": end, "remap_cursor_ns": end},
         extra_units=extra_units,
     )
+
+
+def arrival_start_floor(
+    analytics,
+    *,
+    org_id: str,
+    project_id: str,
+    committed_attempts: Sequence[str],
+    watermark_ns: int,
+    eval_watermark_ns: int,
+    remap_cursor_ns: int,
+    ceiling: datetime,
+    eval_config_ids: Sequence[str] = (),
+    budget: MetricReadBudget | None = None,
+) -> datetime | None:
+    """Earliest span start any arrival of discovery's own windows can touch.
+
+    The same three arrival windows discover_changes proves, each from its
+    cursor minus the overlap up to ``ceiling``. Span arrivals are reduced to
+    min(start_time) in one aggregate, so a burst too large for discovery to
+    buffer is still dated cheaply. Eval and remap arrivals are resolved to keys
+    by discovery's own reads and dated by their latest physical and committed
+    start. A source sweep visiting every physical span from the returned
+    instant onward therefore nominates every key discovery would have, so it
+    can consume the same windows. None: nothing arrived. Raises
+    ContinuousCandidateOverflow when the eval/remap keys exceed discovery's cap
+    or a nominated key has no physical span row (only a full sweep visits it).
+    """
+    budget = budget or MetricReadBudget()
+    params = _scope(org_id, project_id, committed_attempts)
+    ceiling = utc(ceiling)
+    end = ns(ceiling)
+    if min(watermark_ns, eval_watermark_ns, remap_cursor_ns) < 0 or end < max(
+        watermark_ns, eval_watermark_ns, remap_cursor_ns
+    ):
+        raise ValueError("metric change cursors cannot move backwards")
+    rows = read(
+        analytics,
+        """SELECT count() AS arrivals, min(start_time) AS first_start
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+            AND _version >= %(arrival_floor_ns)s
+            AND _version < %(arrival_ceiling_ns)s""",
+        {
+            "project_id": params["project_id"],
+            "arrival_floor_ns": ns(_arrival_floor(watermark_ns)),
+            "arrival_ceiling_ns": end,
+        },
+        budget,
+    )
+    starts = [utc(rows[0]["first_start"])] if int(rows[0]["arrivals"]) else []
+    refs, alias_keys = _relation_refs(
+        analytics,
+        _BudgetedAnalytics(analytics, budget),
+        params,
+        eval_watermark_ns=eval_watermark_ns,
+        remap_cursor_ns=remap_cursor_ns,
+        ceiling=ceiling,
+        eval_config_ids=eval_config_ids,
+        budget=budget,
+    )
+    keys = _limit({SourceKey(t, s) for t, s, _ in refs} | set(alias_keys))
+    if keys:
+        physical = _latest_membership(analytics, keys, params, budget)
+        if set(keys) - physical.keys():
+            raise arrivals.ContinuousCandidateOverflow(
+                "a changed metric key has no physical span row"
+            )
+        committed = _dependencies(analytics, keys, params, budget)
+        starts.extend(d.unit_start for d in (*physical.values(), *committed.values()))
+    return min(starts) if starts else None
 
 
 PHASES = ("sources", "dependencies", "units", "complete")
@@ -668,6 +770,13 @@ class ReconciliationCheckpoint:
     the start of the last complete pass: any write visible before it was
     visited, except a key whose sort position changed mid-pass, which the fast
     path or the next complete pass visits (so the bound is two passes).
+
+    ``floor`` marks a burst sweep of a forward-only project: it replaces one
+    overflowing arrival window, not a full pass. Its source phase starts at the
+    earliest span start that window's arrivals touch (arrival_start_floor), it
+    has no committed phases, and completing it consumes the window without
+    counting as a complete pass (completed_at, completed_passes and
+    covered_through stay those of the last full pass).
     """
 
     started_at: datetime
@@ -679,10 +788,13 @@ class ReconciliationCheckpoint:
     day: date | None = None
     last_day: date | None = None
     covered_through: datetime | None = None
+    floor: datetime | None = None
 
     def __post_init__(self):
         if self.phase not in PHASES or self.scanned < 0:
             raise ValueError("invalid metric reconciliation checkpoint")
+        if self.floor is not None and self.phase != "sources":
+            raise ValueError("a burst sweep has only a source phase")
         width = {"sources": 5, "dependencies": 2, "units": 2}.get(self.phase)
         if self.after is not None and len(self.after) != width:
             raise ValueError("invalid reconciliation keyset")
@@ -707,6 +819,8 @@ class ReconciliationCheckpoint:
             "day": iso(self.day),
             "last_day": iso(self.last_day),
             "covered_through": iso(self.covered_through and utc(self.covered_through)),
+            # Only a burst sweep has the key: every other cursor is unchanged.
+            **({"floor": iso(utc(self.floor))} if self.floor is not None else {}),
         }
 
     @classmethod
@@ -729,6 +843,7 @@ class ReconciliationCheckpoint:
             day=day("day"),
             last_day=day("last_day"),
             covered_through=moment("covered_through"),
+            floor=moment("floor"),
         )
 
     def coverage_status(self, now: datetime):
@@ -900,9 +1015,11 @@ def reconcile_page(
     this is what repairs eval arrivals delayed beyond the overlap. New keys
     appearing behind a keyset are visited on the next complete pass. No
     retention/date cutoff, source version minimum or sampling is applied.
-    ``floor`` is only for projects whose every version is forward-only: their
-    source sweep visits start_time >= floor, since no version owns an earlier
-    unit. Committed dependency/lifecycle phases are unchanged.
+    ``floor`` bounds the source sweep to start_time >= floor: a forward-only
+    project's coverage start (no version owns an earlier unit), or the bounded
+    history window of an initial history sweep. Committed dependency/lifecycle
+    phases are unchanged. A burst checkpoint (its own ``floor``) sweeps only
+    its sources, from the later of both floors, and then completes.
     """
     if not 1 <= page_size <= MAX_KEYS:
         raise ValueError("invalid metric reconciliation page size")
@@ -917,6 +1034,9 @@ def reconcile_page(
             completed_passes=cp.completed_passes,
             covered_through=cp.covered_through,
         )
+    burst = cp.floor is not None
+    if burst:
+        floor = cp.floor if floor is None else max(utc(floor), utc(cp.floor))
     phase, after, day, last_day = cp.phase, cp.after, cp.day, cp.last_day
     source_keys: tuple[SourceKey, ...] = ()
     extra_units: tuple[UnitKey, ...] = ()
@@ -935,7 +1055,11 @@ def reconcile_page(
         )
         if finished:
             phase, day, last_day = "dependencies", None, None
-    elif phase in {"dependencies", "units"} and params["committed_attempts"]:
+    elif (
+        phase in {"dependencies", "units"}
+        and params["committed_attempts"]
+        and not burst
+    ):
         if phase == "dependencies":
             table, columns = "metric_source_dependencies", ("trace_id", "span_id")
         else:
@@ -953,17 +1077,23 @@ def reconcile_page(
     elif phase in {"dependencies", "units"}:
         # An empty manifest has no committed dependency or lifecycle rows.
         phase, after = "complete", None
+    if burst and phase in {"dependencies", "units"}:
+        # A burst sweep's source phase is its whole proof: every arrival of
+        # its window is a physical span starting at or after its floor.
+        phase, after = "complete", None
     complete = phase == "complete"
+    full = complete and not burst
     proposed = ReconciliationCheckpoint(
         started_at=cp.started_at,
-        completed_at=now if complete else cp.completed_at,
+        completed_at=now if full else cp.completed_at,
         phase=phase,
         after=None if complete else after,
         scanned=cp.scanned + scanned,
-        completed_passes=cp.completed_passes + int(complete),
+        completed_passes=cp.completed_passes + int(full),
         day=day if phase == "sources" else None,
         last_day=last_day if phase == "sources" else None,
-        covered_through=cp.started_at if complete else cp.covered_through,
+        covered_through=cp.started_at if full else cp.covered_through,
+        floor=None if complete else cp.floor,
     )
     changes = _batch(
         analytics,

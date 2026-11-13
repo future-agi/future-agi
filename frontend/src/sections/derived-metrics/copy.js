@@ -1,4 +1,8 @@
-import { formatMetricTime } from "./metricTime";
+import {
+  firstValuesInstant,
+  formatMetricClock,
+  formatMetricTime,
+} from "./metricTime";
 
 /** Semantic copy, not example measurements. Missing inputs never mean zero. */
 export const metricCopy = {
@@ -52,9 +56,21 @@ const intervalReasons = {
   not_computed: "not computed",
 };
 
-/** A metric on a project above the backfill size limit starts with no history. */
+/** A metric on a project above the backfill size limit starts with no
+ * history. Its values begin at the first whole 15-minute period. */
 export const forwardCoverageCopy = (coverageStart) =>
-  `Values from ${formatMetricTime(coverageStart)}. History isn't computed for projects this large yet.`;
+  `Values from ${formatMetricTime(firstValuesInstant(coverageStart))}. History isn't computed for projects this large yet.`;
+
+/** A window that holds no whole 15-minute period of a forward metric's values
+ * yet (coverageReadableAt says when it will). */
+export function forwardPendingCopy(definition, now = new Date()) {
+  const first = firstValuesInstant(definition?.coverage_start);
+  if (!first) return "Values are not calculated yet.";
+  const readable = new Date(first.getTime() + 15 * 60000);
+  return now < readable
+    ? `Values start at ${formatMetricClock(first)}. They appear here after ${formatMetricClock(readable)}, when that first 15-minute period ends.`
+    : `This window ends before ${formatMetricTime(readable)}, when the first 15-minute period of values ended. Choose a window that ends later.`;
+}
 
 export function noValueCopy(reason) {
   return Object.hasOwn(noValueReasons, reason)

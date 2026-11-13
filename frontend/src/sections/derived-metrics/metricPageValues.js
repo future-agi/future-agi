@@ -1,6 +1,7 @@
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { windowNotCalculatedCopy } from "./copy";
 import { formatMetricValue } from "./formatMetricValue";
+import { formatMetricTime, forwardValuesStart } from "./metricTime";
 import { pointValueState } from "./unitValueState";
 
 // A returned difference is in metric units, not relative percent change.
@@ -94,8 +95,13 @@ export function metricActionMessage(error, failure) {
   return getSafeActionErrorMessage(error, `${failure} Try again.`);
 }
 
-/** Error codes are part of the wire contract. Never turn a failed read into no data. */
-export function metricReadMessage(error, label) {
+/** Error codes are part of the wire contract. Never turn a failed read into no data.
+ * The read's definition, when known, keeps "not calculated yet" true for a
+ * metric that started with no history: it says where its values begin. */
+export function metricReadMessage(error, label, definition) {
+  const first = forwardValuesStart(definition);
+  if (error?.code === "metric_recalculating" && first)
+    return `Not calculated yet. Values from ${formatMetricTime(first)} appear after the next calculation.`;
   return (
     unavailableMessages[error?.code] ||
     (error?.statusCode === 403

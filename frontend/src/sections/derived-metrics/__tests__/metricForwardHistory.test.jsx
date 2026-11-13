@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "src/utils/test-utils";
 import MetricStatusLine from "../MetricStatusLine";
 import { forwardCoverageCopy } from "../copy";
-import { coverageWindow, formatMetricTime } from "../metricTime";
+import {
+  coveragePending,
+  coverageWindow,
+  firstValuesInstant,
+  formatMetricTime,
+} from "../metricTime";
 import { provenance } from "./metricPageFixtures";
 
 afterEach(cleanup);
@@ -18,8 +23,9 @@ const forward = {
 
 describe("a metric that started with no history", () => {
   it("reads from its coverage start instead of the chosen window start", () => {
+    const first = firstValuesInstant(forward.coverage_start).toISOString();
     expect(coverageWindow(window, forward)).toEqual({
-      window_start: forward.coverage_start,
+      window_start: first,
       window_end: window.window_end,
     });
   });
@@ -47,12 +53,13 @@ describe("a metric that started with no history", () => {
         definition={{ backfill_status: "complete" }}
       />,
     );
-    const copy = `Values from ${formatMetricTime(forward.coverage_start)}. History isn't computed for projects this large yet.`;
+    const first = firstValuesInstant(forward.coverage_start).toISOString();
+    const copy = `Values from ${formatMetricTime(first)}. History isn't computed for projects this large yet.`;
     expect(forwardCoverageCopy(forward.coverage_start)).toBe(copy);
     expect(screen.getByTestId("metric-coverage")).toHaveTextContent(copy);
     expect(
       screen.getByText(
-        "Values from 05 Nov 2026, 09:12:00 UTC. History isn't computed for projects this large yet.",
+        "Values from 05 Nov 2026, 09:15:00 UTC. History isn't computed for projects this large yet.",
       ),
     ).toBeVisible();
     // No history recalculation is pending, so no progress bar is shown.
@@ -67,5 +74,19 @@ describe("a metric that started with no history", () => {
       />,
     );
     expect(screen.queryByTestId("metric-coverage")).not.toBeInTheDocument();
+  });
+});
+
+it("treats a forward window inside the coverage-start bucket as pending", () => {
+  const currentBucket = {
+    window_start: "2026-11-05T09:00:00.000Z",
+    window_end: "2026-11-05T09:12:10.000Z",
+  };
+  expect(
+    coveragePending(currentBucket, forward, "2026-11-05T09:12:10.000Z"),
+  ).toBe(true);
+  expect(coverageWindow(currentBucket, forward)).toEqual({
+    ...currentBucket,
+    window_start: "2026-11-05T09:15:00.000Z",
   });
 });

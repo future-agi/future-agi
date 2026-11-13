@@ -22,6 +22,7 @@ from tracer.services.derived_metrics.changes import (
     ChangeBatch,
     Dependency,
     MetricReadBudget,
+    ReconciliationCheckpoint,
     SourceKey,
     UnitKey,
 )
@@ -36,6 +37,7 @@ from tracer.tests.test_derived_metric_changes_clickhouse import (  # noqa: F401
     complete_repair,
     discover,
     query_reads,
+    seed_dependency,
     store,
 )
 from tracer.tests.test_derived_metric_changes_clickhouse import (
@@ -305,7 +307,10 @@ def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
         "ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''"
     )
     definition = definition_for(writer, workspace, observe_project)
-    enrolled = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=3)
+    # Off a 15-minute boundary: the bucket holding it is only partly computed.
+    hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    enrolled = hour - timedelta(hours=3) + timedelta(minutes=7, seconds=30)
+    first_bucket = enrolled + timedelta(minutes=7, seconds=30)
     DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
     sessions = {}
     for name, start, arrival, value in (
@@ -341,7 +346,9 @@ def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
     metric = DerivedMetric.objects.select_related("project", "active_version").get(
         pk=definition.metric_id
     )
-    window = {"window_start": enrolled, "window_end": datetime.now(UTC)}
+    # Decided, not computed: nothing is served yet.
+    assert metric.active_version_id is None
+    window = {"window_start": first_bucket, "window_end": datetime.now(UTC)}
     with pytest.raises(MetricUnavailableError) as early:
         reads.read_kpi(metric, window, store=writer.store)
     assert early.value.code == "metric_recalculating"
@@ -351,6 +358,12 @@ def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
     state = MetricProjectRefresh.for_project(observe_project.id)
     assert state.head_manifest_id is not None
     assert state.watermark_ns > changes.ns(enrolled)
+    # Served by the very head switch that first computed it.
+    definition.refresh_from_db()
+    assert definition.backfill_status == "complete" and definition.activated_at
+    assert str(definition.id) in {
+        item["id"] for item in state.head_manifest.published_by.metric_versions
+    }
     assert _version_fields(writer, state.head_manifest, definition) == [
         (str(sessions["after"]), 8.0)
     ]
@@ -364,10 +377,285 @@ def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
     assert kpi["provenance"]["manifest_id"] == state.head_manifest_id
     assert kpi["provenance"]["history_mode"] == "forward"
     assert kpi["provenance"]["coverage_start"] == enrolled
-    with pytest.raises(MetricUnavailableError) as before_coverage:
-        reads.read_kpi(
-            metric,
-            {**window, "window_start": enrolled - timedelta(days=1)},
-            store=writer.store,
+    for start in (enrolled - timedelta(days=1), first_bucket - timedelta(minutes=15)):
+        # Before coverage, and the partial bucket holding the coverage start.
+        with pytest.raises(MetricUnavailableError) as before_coverage:
+            reads.read_kpi(
+                metric, {**window, "window_start": start}, store=writer.store
+            )
+        assert before_coverage.value.code == "window_not_calculated"
+
+
+@pytest.mark.integration
+def test_burst_sweep_starts_at_the_arrivals_and_visits_only_the_burst(store, settings):
+    """Work follows the burst, not the time since enrollment.
+
+    arrival_start_floor dates the unconsumed windows (span, eval and remap
+    arrivals) with the same overlap as discovery; a burst checkpoint from that
+    floor visits only spans starting there, has no committed phases, and does
+    not count as a full pass.
+    """
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    coverage = NOW - timedelta(days=3)
+    watermark = changes.ns(NOW - timedelta(minutes=4))
+
+    def floor(**kwargs):
+        return changes.arrival_start_floor(
+            store.analytics,
+            org_id=store.org,
+            project_id=store.project,
+            committed_attempts=(store.attempt,),
+            watermark_ns=watermark,
+            eval_watermark_ns=watermark,
+            remap_cursor_ns=watermark,
+            ceiling=NOW,
+            **kwargs,
         )
-    assert before_coverage.value.code == "window_not_calculated"
+
+    assert floor() is None  # nothing arrived
+    # A large retained project with a min/max skip index: its already-consumed
+    # arrivals must be pruned while the burst floor is dated.
+    _seed_rows(store, store.project, NOW - timedelta(days=2), 20_000, "retained-")
+    store.analytics.calls.clear()
+    store.analytics.query_ids.clear()
+    assert floor() is None
+    source_query = next(
+        index
+        for index, (query, _, _) in enumerate(store.analytics.calls)
+        if "count() AS arrivals" in query
+    )
+    read_rows = query_reads(store, store.analytics.query_ids[source_query])
+    assert read_rows < 1000, read_rows
+    # Enrolled three days ago: two days of spans already consumed long ago.
+    for i in range(30):
+        start = NOW - timedelta(days=2) + timedelta(hours=i)
+        seed_source_span(
+            store,
+            span=f"old-{i}",
+            start=start,
+            version=changes.ns(start + timedelta(seconds=1)),
+        )
+        seed_dependency(store, span=f"old-{i}")
+    burst_start = NOW - timedelta(minutes=20)
+    burst = {f"burst-{i}" for i in range(12)}
+    for i in range(12):
+        seed_source_span(
+            store,
+            span=f"burst-{i}",
+            start=burst_start + timedelta(seconds=30 * i),
+            version=changes.ns(NOW - timedelta(minutes=1)),
+        )
+    # Arrivals in the overlap tail before the watermark count, as in discovery;
+    # an earlier arrival was consumed and does not, however recent its start.
+    tail_start = NOW - timedelta(minutes=25)
+    seed_source_span(
+        store,
+        span="overlap-tail",
+        start=tail_start,
+        version=changes.ns(NOW - timedelta(minutes=6)),
+    )
+    burst.add("overlap-tail")
+    seed_source_span(
+        store,
+        span="consumed",
+        start=NOW - timedelta(minutes=30),
+        version=changes.ns(NOW - timedelta(minutes=10)),
+    )
+    burst_start = tail_start
+    assert floor() == burst_start
+    # An eval arriving now for a six-hour-old span reaches back to that span
+    # (and, as discovery nominates them, every span of its trace and session).
+    evaluated, evaluated_trace = NOW - timedelta(hours=6), str(uuid4())
+    seed_source_span(
+        store,
+        span="evaluated",
+        trace=evaluated_trace,
+        session=store.b,
+        start=evaluated,
+        version=changes.ns(evaluated + timedelta(seconds=1)),
+    )
+    store.client.execute(
+        "INSERT INTO tracer_eval_logger_v2 (id, trace_id, observation_span_id, "
+        "trace_session_id, custom_eval_config_id, created_at, _version) VALUES",
+        [
+            (
+                str(uuid4()),
+                evaluated_trace,
+                "evaluated",
+                store.b,
+                store.config,
+                evaluated,
+                changes.ns(NOW - timedelta(seconds=30)),
+            )
+        ],
+    )
+    assert floor() == burst_start  # this project's metrics use no eval config
+    assert floor(eval_config_ids=(store.config,)) == evaluated
+    # A session remap arriving now reaches every span of both sessions.
+    remapped = NOW - timedelta(hours=3)
+    old_id, new_id = sorted((str(uuid4()), str(uuid4())))
+    seed_source_span(
+        store,
+        span="remapped",
+        trace=str(uuid4()),
+        session=old_id,
+        start=remapped,
+        version=changes.ns(remapped + timedelta(seconds=1)),
+    )
+    store.client.execute(
+        "INSERT INTO trace_session_id_remap (old_id, new_id, version) VALUES",
+        [(old_id, new_id, NOW - timedelta(seconds=30))],
+    )
+    assert floor() == remapped
+    assert floor(eval_config_ids=(store.config,)) == evaluated
+
+    # The burst sweep itself: span arrivals only (no remap/eval in its window).
+    store.client.execute("TRUNCATE TABLE trace_session_id_remap")
+    first = floor()
+    assert first == burst_start
+    last_pass = NOW - timedelta(days=1)
+    checkpoint = ReconciliationCheckpoint(
+        NOW,
+        completed_at=last_pass,
+        completed_passes=4,
+        covered_through=last_pass - timedelta(hours=1),
+        floor=first,
+    )
+    store.analytics.calls.clear()
+    pages = complete_repair(store, checkpoint, floor=coverage, page_size=5)
+    swept = {k.span_id for page in pages for k in page.changes.source_keys}
+    assert swept == burst
+    assert len(pages) == 3 and pages[-1].checkpoint.scanned == len(burst)
+    assert {page.checkpoint.phase for page in pages} == {"sources", "complete"}
+    for query, params, _ in store.analytics.calls:
+        assert "metric_unit_state" not in query
+        if "toStartOfHour(start_time) AS hour" in query:
+            lower = datetime.fromisoformat(params["day_start"]).replace(tzinfo=UTC)
+            assert lower >= first, params["day_start"]
+    done = pages[-1].checkpoint
+    # Consumes its window (the caller moves arrivals to started_at) but is not
+    # a full pass: the routine full repair stays due.
+    assert (done.started_at, done.floor) == (NOW, None)
+    assert (done.completed_at, done.completed_passes, done.covered_through) == (
+        last_pass,
+        4,
+        last_pass - timedelta(hours=1),
+    )
+    assert pages[-1].changes.cursor_updates["reconciliation_completed_at"] == (
+        last_pass
+    )
+    # The same project's full sweep from the coverage start reads everything
+    # since enrollment, then the committed phases.
+    full = complete_repair(store, floor=coverage, page_size=1000)
+    assert len(full) > 3 * len(pages)
+    assert {f"old-{i}" for i in range(30)} <= {
+        k.span_id for page in full for k in page.changes.source_keys
+    }
+    assert full[-1].checkpoint.completed_passes == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("enabled_metrics")
+def test_forward_overflow_long_after_enrollment_sweeps_only_the_bursts(
+    live_writer, workspace, observe_project, settings
+):
+    """Sustained ingest crosses an overflow hours after enrollment.
+
+    Real enrollment, discovery, overflow, burst sweep and publication: each
+    overflowing window is swept from its own arrivals (never the spans consumed
+    since enrollment), completes in one page, consumes its window and leaves the
+    routine full repair due.
+    """
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    writer.store.execute(
+        "ALTER TABLE spans ADD COLUMN IF NOT EXISTS observation_type String DEFAULT ''"
+    )
+    definition = definition_for(writer, workspace, observe_project)
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        settle_minutes=1
+    )
+    enrolled = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=3)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
+    analytics = Analytics(writer.store.client)
+    sessions = {}
+
+    def seed(name, start, arrival, value):
+        sessions[name] = uuid4()
+        seed_span_revision(
+            writer,
+            scope,
+            uuid4(),
+            name,
+            sessions[name],
+            start,
+            value,
+            revision=changes.ns(arrival),
+            arrival=arrival,
+        )
+        return name
+
+    old = {
+        seed(f"old-{i}", at, at + timedelta(seconds=1), 2)
+        for i in range(8)
+        for at in [enrolled + timedelta(minutes=5 + 10 * i)]
+    }
+    settings.METRICS_BACKFILL_MAX_SPANS = 2
+    assert backfill.enter_backfill(
+        writer.lease, analytics, retention_days=lambda: 0
+    ) == {str(definition.id): "forward"}
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    admission.run_incremental(writer, analytics, scope, state)
+    metric = DerivedMetric.objects.get(id=definition.metric_id)
+    assert metric.active_version_id == definition.id
+    head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
+    assert len(_version_fields(writer, head, definition)) == len(old)
+
+    published = []
+    publish = writer.refresh
+
+    def refresh(change, definitions, scope_, **kwargs):
+        if kwargs.get("purpose") == "repair":
+            # run_repair_page uses RefreshWriter's default unless the scheduler
+            # wrapper supplies the enrolled project's settle interval.
+            kwargs.setdefault("settle_minutes", 1)
+        published.append(
+            (kwargs.get("purpose"), {k.span_id for k in change.source_keys})
+        )
+        return publish(change, definitions, scope_, **kwargs)
+
+    writer.refresh = refresh
+    writer.incremental_unit_limit = 3
+    bursts = set()
+    for round_no in range(2):
+        consumed = MetricProjectRefresh.for_project(observe_project.id).watermark_ns
+        at = changes.from_ns(consumed)
+        # Five already-settled conversations arriving in the overlap tail,
+        # more than the cap of three.
+        bursts |= {
+            seed(
+                f"burst{round_no}-{i}",
+                at - timedelta(minutes=40) + timedelta(seconds=i),
+                at - timedelta(minutes=2) + timedelta(seconds=i),
+                8,
+            )
+            for i in range(5)
+        }
+        published.clear()
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        admission.run_incremental(writer, analytics, scope, state)
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        # One pass: the burst sweep's single page completes and publishes.
+        assert [purpose for purpose, _ in published] == ["repair"]
+        ((_, swept),) = published
+        assert swept <= bursts and not swept & old
+        assert {f"burst{round_no}-{i}" for i in range(5)} <= swept
+        assert not state.pending_repair
+        cursor = state.reconciliation_cursor
+        assert cursor["phase"] == "complete" and "floor" not in cursor
+        assert cursor["completed_passes"] == 0 and cursor["covered_through"] is None
+        assert state.reconciliation_completed_at is None  # routine repair due
+        assert state.watermark_ns > consumed
+        values = dict(_version_fields(writer, state.head_manifest, definition))
+        assert {str(sessions[name]) for name in bursts} <= values.keys()
+        assert values[str(sessions[f"burst{round_no}-0"])] == pytest.approx(8.0)

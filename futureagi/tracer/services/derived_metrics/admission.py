@@ -795,14 +795,11 @@ def run_incremental(writer, analytics, scope, state) -> None:
     except changes.arrivals.ContinuousCandidateOverflow:
         # The same unconsumed interval overflows again on incremental turns.
         # Do not invalidate a sweep already covering it: only a complete repair
-        # may consume that sweep's start ceiling. Read under the current fence,
-        # not from the potentially stale state captured before discovery.
-        with transaction.atomic():
-            current = MetricProjectRefresh._locked(
-                scope.project, **writer.lease.check()
-            )
-            if not current.pending_repair:
-                backfill.queue_bulk_change(scope.project, now=now)
+        # may consume that sweep's start ceiling. A forward-only project sweeps
+        # only the burst (queue_overflow_sweep), never its whole enrollment.
+        backfill.queue_overflow_sweep(
+            analytics, writer, state.head_manifest, definitions, now=now
+        )
         backfill.BackfillRunner(writer, analytics, scope).run_repair_page(
             skip_incremental=True
         )

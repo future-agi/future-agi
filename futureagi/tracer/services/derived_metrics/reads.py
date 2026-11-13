@@ -157,6 +157,42 @@ def _check_metric(metric):
         )
 
 
+def forward_definition_published(manifest, definition):
+    """Whether this pinned head actually computed an active forward version.
+
+    A forward-only version normally activates atomically with its first
+    computing publication. This second guard also handles older persisted
+    versions that were activated before that publication: a project head from
+    before activation contains neither its values nor proof they are empty.
+    """
+    if (
+        getattr(definition, "history_mode", None)
+        != DerivedMetricVersion.HistoryMode.FORWARD
+    ):
+        return True
+    if manifest is None:
+        return False
+    attempt = manifest.published_by
+    prepared = {
+        str(item.get("id"))
+        for item in (getattr(attempt, "metric_versions", None) or ())
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    if str(definition.id) in prepared:
+        return True
+    activated = getattr(definition, "activated_at", None)
+    committed = getattr(attempt, "committed_at", None)
+    return bool(activated and committed and committed >= activated)
+
+
+def require_forward_definition_published(manifest, definition):
+    if not forward_definition_published(manifest, definition):
+        raise MetricUnavailableError(
+            "metric_recalculating",
+            "This forward-only definition is waiting for its first calculation.",
+        )
+
+
 @contextmanager
 def metric_read(metric, *, store=None):
     _check_metric(metric)
@@ -171,12 +207,7 @@ def metric_read(metric, *, store=None):
             project_id=metric.project_id, head_manifest__isnull=False
         ).exists()
     ):
-        # A forward-only version activates before its project's first
-        # publication: nothing is calculated yet, which is not a read failure.
-        # Any other active version without a head stays metric_unavailable.
-        raise MetricUnavailableError(
-            "metric_recalculating", "No committed refresh is available yet."
-        )
+        require_forward_definition_published(None, metric.active_version)
     with nullcontext(store) if store is not None else read_store() as connection:
         with pinned_read(connection, metric.project_id, metric_id=metric.id) as (
             manifest,
@@ -187,6 +218,7 @@ def metric_read(metric, *, store=None):
                     message="The committed definition is unavailable."
                 )
             require_materialized(definition)
+            require_forward_definition_published(manifest, definition)
             yield connection, manifest, definition
 
 
@@ -386,11 +418,17 @@ def window_is_calculated(definition, window):
 
     coverage = forward_coverage_start(definition)
     if coverage is not None:
-        # Start with no history: values exist from the coverage start's own
-        # 15-minute bucket onward, the bucket an effective window floors to.
-        return window["window_start"] >= coverage.replace(
+        # Start with no history: only units starting at or after coverage_start
+        # are computed, so its containing bucket holds only part of its units.
+        # effective_window floors window_start to a bucket start; the earliest
+        # fully computed window therefore starts at the first 15-minute boundary
+        # at or after coverage_start. At an exact boundary that bucket is whole.
+        boundary = coverage.replace(
             minute=coverage.minute // 15 * 15, second=0, microsecond=0
         )
+        if boundary < coverage:
+            boundary += QUARTER
+        return window["window_start"] >= boundary
     cursor = getattr(definition, "backfill_cursor", None) or {}
     if not cursor.get("start"):
         return True  # legacy versions have no bounded-backfill cursor
