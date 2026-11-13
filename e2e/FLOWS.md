@@ -323,6 +323,29 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
 ### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
 
 **Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
@@ -346,6 +369,26 @@
 - no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
 - the access token left in the tab after B signs in resolves to B's user and organization
 - no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
@@ -884,6 +927,54 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — dataset PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the dataset document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
+### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the experiment document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -1292,7 +1383,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
@@ -1436,6 +1527,28 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
 
 ## observe
 
@@ -2508,6 +2621,27 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2531,6 +2665,30 @@
 - no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
@@ -2579,6 +2737,33 @@
 - an atomic replace on the host is seen by the container without restarting anything
 - with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
 - POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 

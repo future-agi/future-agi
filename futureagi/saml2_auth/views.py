@@ -699,7 +699,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+from saml2_auth.google_oauth import verify_google_id_token  # noqa: E402
 
 
 class Auth0LoginView(APIView):
@@ -843,18 +843,15 @@ class Auth0CallbackView(APIView):
                 status_code=response.status_code,
             )
 
+            if response.status_code != 200:
+                raise ValueError("Google token exchange failed")
             tokens = response.json()
             id_token = tokens.get("id_token")
 
-            # Decode the ID token
             if id_token:
                 access_token = tokens.get("access_token")
-                decoded = jwt.decode(
-                    id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
-                    audience=AUTH0_CLIENT_ID,
-                    access_token=access_token,
+                decoded = verify_google_id_token(
+                    id_token, AUTH0_CLIENT_ID, access_token
                 )
                 logger.info("oauth_identity_decoded", provider="auth0")
 
@@ -865,10 +862,13 @@ class Auth0CallbackView(APIView):
 
                 name = decoded.get("name")
                 if not name:
-                    get_name_google = (
-                        f"{GOOGLE_USERINFO_API}?alt=json&access_token={access_token}"
+                    # Keep credentials out of URLs, including HTTP debug logs.
+                    user_info_response = requests.get(
+                        GOOGLE_USERINFO_API,
+                        params={"alt": "json"},
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=10,
                     )
-                    user_info_response = requests.get(get_name_google, timeout=10)
                     logger.info(
                         "oauth_profile_exchange_completed",
                         provider="google",

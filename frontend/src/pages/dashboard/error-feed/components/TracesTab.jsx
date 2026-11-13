@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";

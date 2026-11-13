@@ -416,6 +416,10 @@ export function palette(mode) {
         ? "rgba(124, 77, 255, 0.06)"
         : "rgba(124, 77, 255, 0.12)",
     },
+    // The default spinner colour (MuiCircularProgress defaultProps): grey,
+    // the same as the shared Loader. A spinner that passes color="primary"
+    // keeps the brand colour.
+    loader: { main: ds.text.secondary },
     border: {
       ...ds.border,
       active: ds.action.active,
