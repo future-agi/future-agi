@@ -926,9 +926,9 @@ bump could compare between the pinned and the new backend digest.
 - The callout script change ships in the same PR as `release-autopilot.yml`.
   It must reach main no later than that workflow, and before
   `RELEASE_AUTOPILOT` is turned on. Promotions merge all of dev, so both
-  arrive together unless one is reverted or picked alone. On the first
-  release PR after that promotion, check the callout run from the `opened`
-  event:
+  arrive together unless one is reverted or picked alone. Before
+  `RELEASE_AUTOPILOT` is turned on, on the first release PR after that
+  promotion, check the callout run from the `opened` event:
   1. Its `check` job log must contain the line
      `Added migrations: N (<base> -> <head>)`. The script prints it
      (`.github/scripts/migrations_callout.py:128`) after it has read
@@ -950,13 +950,41 @@ bump could compare between the pinned and the new backend digest.
      this error). A person adds the callout after the version heading
      and inside the `---` delimiters; the `check` job of the `edited` run
      must then pass.
-  4. In either case, once a `check` job has passed on the head, the
-     autopilot's run summary must stop giving "the migrations-callout
-     workflow has not passed on this head". The gate's two reads, a run's
-     `pull_requests` and its jobs, have not yet run with the workflow
-     token. If either comes back empty, the release waits with a green run
-     and nothing is posted on the PR. If the summary still gives that
-     reason with `check` green, set `RELEASE_AUTOPILOT` off and report it.
+
+  If a release PR was already open when the promotion merged, the promotion
+  only updates it, and no `opened` run follows. Check parts 1 to 3 on the
+  first callout run created after the promotion merged, on the updated
+  head: release-please's push and body edit start runs there (on 5 and
+  15 Oct, two runs in the same second after a promotion updated an open
+  release PR; the event types are inferred from the timeline). If no such
+  run exists, close the release PR and reopen it at once, which starts a
+  `reopened` run (`.github/workflows/migrations-callout-check.yml:9`). Do
+  not push to the release branch: a person's push leaves the release to a
+  person (see "Who pushed"). Ignore that PR's earlier `opened` run, which
+  ran main's previous workflow and prints no `Added migrations:` line. The
+  script reads `GITHUB_SHA` the same way on every PR event
+  (`pr_merge_preview`, `.github/scripts/migrations_callout.py:63-87`, called
+  at line 102 whatever the event's action), so check part 1 once more
+  on the next release PR's `opened` run. The switch need not wait for that:
+  a failed read fails `check`, the callout gate then does not pass
+  (`callout_passed`, `scripts/release_autopilot.py:337-357`), and the
+  release waits for a person.
+- On the first release PR after `RELEASE_AUTOPILOT` is on, which may not be
+  the first after the promotion, read the autopilot's run summary. This is
+  also the first live merge attempt: there is no report-only mode. The
+  gate's two reads, a run's `pull_requests` and its jobs, have not yet run
+  with the workflow token. If either comes back empty, the release waits
+  with a green run and nothing is posted on the PR.
+  - Pass: once the callout `check` job is green on the head and the
+    required checks and the cooldown have passed, the summary gives a
+    reason that the code reaches only after the callout gate
+    (`scripts/release_autopilot.py:378-396`), such as "migrations-callout
+    passed and the release PR is current with main" or "main moved
+    recently; waiting for the release PR to catch up". A merge by the
+    autopilot also shows it.
+  - Fail: the summary keeps giving "the migrations-callout workflow has not
+    passed on this head" with `check` green. Set `RELEASE_AUTOPILOT` off
+    and report it.
 - First merge with both variables unset. Verify labels, App permissions, the
   approver App live check, environment protections, default-branch/main
   availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
