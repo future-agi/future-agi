@@ -45,6 +45,7 @@ from tracer.tests.test_instant_eval_scale import (
     SUMMARY,
     _control,
     _credit_cap,
+    _question,
     _start,
     _summary,
 )
@@ -331,6 +332,35 @@ def test_r4_3_plain_instant_task_created_after_freeze_loads_with_its_question(
     assert list(summary["counts"]) == [str(yes_no.id)]
     run = InstantEvalRun.objects.get(eval_task=task)
     assert (run.questions, summary["total"]) == (1, 2)
+
+
+# -- R5: starting a run with a question saved a moment ago --------------------
+
+
+def test_r5_start_with_a_question_saved_after_freeze(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    observe_project,
+    eval_template,
+    fake_view,  # noqa: F811
+    started,  # noqa: F811
+):
+    """The Ask page saves a new question and starts the run straight away:
+    the start finds it, not 'Those questions aren't saved in this project.'"""
+    lagging_replica.freeze()
+    question = _question(observe_project, eval_template, "Was the refund issued?")
+    assert not CustomEvalConfig.objects.filter(pk=question.pk).exists()
+
+    response = _start(auth_client, observe_project, [question], sample_size=5)
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    task = EvalTask.objects.get(id=response.json()["result"]["task_id"])
+    assert list(
+        CustomEvalConfig.objects.using("default")
+        .filter(eval_tasks=task)
+        .values_list("id", flat=True)
+    ) == [question.id]
+    assert len(started) == 1
 
 
 # -- D25: retrying a failure the replica has not applied -----------------------

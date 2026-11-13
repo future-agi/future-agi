@@ -408,8 +408,10 @@ seconds old while the replica catches up. Reads that must see a fresh write
 stay on the primary, so they shed no load: the eval-task logs, the eval-task
 engine, the span evaluation scan and the experiment eval runner it starts, an
 eval config opened, edited or re-run (and the evaluation that re-run starts),
-the SDK's eval config check, a task's eval list on its detail page, and an
-Instant eval task's questions when the run is read.
+the SDK's eval config check, a task's eval list on its detail page, an
+Instant eval task's questions when the run is started or read, feedback on an
+eval result and its recalculate, and the config check in front of an eval
+result's details.
 
 ```yaml
 postgres:

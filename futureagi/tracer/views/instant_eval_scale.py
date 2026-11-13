@@ -1022,11 +1022,13 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
         org = _org(request)
         unit = data["unit"]
         wanted = [str(c) for c in data["config_ids"]]
+        # Primary: the Ask page saves a new question and starts the run
+        # straight away, before a replica has the question.
         configs = {
             str(c.id): c
-            for c in CustomEvalConfig.objects.filter(
-                id__in=wanted, project=project, deleted=False
-            ).select_related("eval_template")
+            for c in CustomEvalConfig.objects.using("default")
+            .filter(id__in=wanted, project=project, deleted=False)
+            .select_related("eval_template")
         }
         if len(configs) != len(set(wanted)) or not all(
             (c.config or {}).get("instant_eval") for c in configs.values()

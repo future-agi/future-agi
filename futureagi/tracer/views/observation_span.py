@@ -55,6 +55,7 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
+from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
@@ -1698,7 +1699,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Span data could not be loaded")
 
+    # Primary for the whole request: the result the user gives feedback on is
+    # shown from ClickHouse, which can be ahead of a lagging replica, so its
+    # span, trace and config may be seconds old.
     @action(detail=False, methods=["post"])
+    @primary_required
     def submit_feedback(self, request, *args, **kwargs):
         try:
             serializer = SubmitFeedbackSerializer(data=request.data)
@@ -1811,7 +1816,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
+    # Primary for the whole request, as submit_feedback: the recalculate it
+    # runs in place reads the same fresh span and config.
     @action(detail=False, methods=["post"])
+    @primary_required
     def submit_feedback_action_type(self, request, *args, **kwargs):
         try:
             serializer = SubmitFeedbackActionTypeSerializer(data=request.data)
@@ -4071,8 +4079,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # telemetry read, then pass that project anchor into the CH selector.
             # Use one generic absence response so foreign config UUIDs do not
             # become an existence oracle.
+            # Primary: the result is read from ClickHouse, which can be ahead
+            # of a lagging replica, so its config may be seconds old.
             config_scope = (
-                CustomEvalConfig.no_workspace_objects.filter(
+                CustomEvalConfig.no_workspace_objects.using("default")
+                .filter(
                     _project_workspace_scope_q(self.request),
                     id=custom_eval_config_id,
                     project__organization=_get_request_organization(self.request),

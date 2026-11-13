@@ -32,6 +32,7 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset
 from model_hub.models.evals_metric import Feedback
+from tfc.routers import force_primary
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
@@ -281,6 +282,148 @@ def test_d28_recalculate_result_created_after_freeze(
     assert Feedback.objects.using("default").get(pk=feedback.pk).action_type == (
         "recalculate"
     )
+
+
+# -- R5: feedback and result details on a span or config the replica lacks ---
+
+
+def _after_freeze_span_and_config(project, eval_template):
+    """A trace, its span and an eval config written after the freeze: on the
+    primary only, as when the result is shown from ClickHouse before the
+    replica has applied them."""
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    trace = Trace.objects.create(project=project, name="fresh trace")
+    span = ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="fresh span",
+        observation_type="llm",
+        input={"messages": [{"role": "user", "content": "Hello"}]},
+        output={"choices": [{"message": {"content": "Hi there"}}]},
+    )
+    config = CustomEvalConfig.objects.create(
+        name=f"fresh-{uuid.uuid4().hex[:8]}",
+        project=project,
+        eval_template=eval_template,
+        config={},
+        mapping={"input": "input", "output": "output"},
+        filters={},
+    )
+    assert not ObservationSpan.objects.filter(pk=span.pk).exists()
+    assert not Trace.objects.filter(pk=trace.pk).exists()
+    assert not CustomEvalConfig.objects.filter(pk=config.pk).exists()
+    return trace, span, config
+
+
+def test_r5_feedback_on_span_trace_and_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    no_embeddings,
+    auth_client,
+    user,
+    project,
+    eval_template,
+):
+    """Feedback reads the span, its config and its trace: all of them may be
+    newer than the replica, not only the result."""
+    lagging_replica.freeze()
+    trace, span, config = _after_freeze_span_and_config(project, eval_template)
+    # The eval run that wrote the result ran on the primary.
+    with force_primary():
+        _result(trace, span, config)
+
+    response = _submit_feedback(auth_client, span, config)
+
+    assert response.status_code == 200, response.data
+    feedback = Feedback.objects.using("default").get(
+        pk=response.data["result"]["feedback_id"]
+    )
+    assert (feedback.source_id, feedback.custom_eval_config_id) == (
+        span.id,
+        config.id,
+    )
+    assert len(no_embeddings.stored) == 1
+
+
+def test_r5_recalculate_on_span_and_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    no_embeddings,
+    auth_client,
+    user,
+    project,
+    eval_template,
+    stub_run_eval,
+    stub_cost_log,
+):
+    lagging_replica.freeze()
+    trace, span, config = _after_freeze_span_and_config(project, eval_template)
+    with force_primary():
+        fresh = _result(trace, span, config)
+    feedback = Feedback.objects.create(
+        source=FeedbackSourceChoices.OBSERVE.value,
+        source_id=str(span.id),
+        value="Passed",
+        eval_template=eval_template,
+        user=user,
+        custom_eval_config_id=config.id,
+        organization=project.organization,
+        workspace=project.workspace,
+    )
+
+    response = auth_client.post(
+        "/tracer/observation-span/submit_feedback_action_type/",
+        {
+            "observation_span_id": span.id,
+            "action_type": "recalculate",
+            "custom_eval_config_id": str(config.id),
+            "feedback_id": str(feedback.id),
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert EvalLogger.all_objects.using("default").get(pk=fresh.pk).deleted is True
+    live = EvalLogger.objects.using("default").filter(
+        observation_span=span, custom_eval_config=config
+    )
+    assert live.count() == 1
+    assert len(stub_run_eval.requests) == 1
+
+
+def test_r5_result_details_for_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    eval_template,
+    monkeypatch,
+):
+    """Opening a result's details checks its config on the primary before the
+    ClickHouse read: no 'No eval logger found' 400 for a fresh config."""
+    from tracer.views import observation_span as span_views
+
+    asked = []
+    monkeypatch.setattr(span_views, "V2AnalyticsQueryService", lambda: None)
+    monkeypatch.setattr(
+        span_views.ObservationSpanView,
+        "_get_evaluation_details_clickhouse",
+        lambda self, span_id, config_id, project_id, analytics: (
+            asked.append((span_id, config_id, project_id))
+            or self._gm.success_response({"ok": True})
+        ),
+    )
+    lagging_replica.freeze()
+    _trace, span, config = _after_freeze_span_and_config(project, eval_template)
+
+    response = auth_client.get(
+        "/tracer/observation-span/get_evaluation_details/",
+        {"observation_span_id": span.id, "custom_eval_config_id": str(config.id)},
+    )
+
+    assert response.status_code == 200, response.content
+    assert asked == [(span.id, str(config.id), str(project.id))]
 
 
 # -- D16: eval results copied into a dataset ----------------------------------
