@@ -170,3 +170,33 @@ def test_guest_request_bodies_publish_in_the_skills_schema_namespace(name):
     # serializer name would publish as an unrelated top-level schema.
     serializer = getattr(guest_serializers, name)()
     assert get_serializer_ref_name(serializer) == f"SkillsContext{name}"
+
+
+GUEST_REFUSALS = {400, 401, 403, 404, 409, 413, 422}
+
+
+@pytest.mark.parametrize(
+    ("view", "output", "reply"),
+    [
+        (NativeGuestHealthView, "GuestAccepted", {"accepted": True}),
+        (
+            NativeGuestObservationView,
+            "GuestObservationAccepted",
+            {"accepted": True, "received": 2, "planned": 4},
+        ),
+        (NativeGuestFailureView, "GuestAccepted", {"accepted": True}),
+    ],
+)
+def test_guest_routes_document_their_reply_and_every_refusal(view, output, reply):
+    # The published contract describes what the guest really receives: a 200
+    # envelope with the service's reply and the common error envelope for each
+    # refusal, never a 201 that echoes the request body.
+    responses = view.post._swagger_auto_schema["responses"]
+    assert set(responses) == {200, *GUEST_REFUSALS}
+    envelope = responses[200]
+    assert get_serializer_ref_name(envelope()) == f"Skills{output}Response"
+    result = envelope().fields["result"]
+    assert get_serializer_ref_name(result) == f"SkillsContext{output}"
+    checked = envelope(data={"status": True, "result": reply})
+    assert checked.is_valid(), checked.errors
+    assert checked.validated_data["result"] == reply

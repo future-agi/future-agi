@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from model_hub.selectors.skills_hub_v12 import get_resource
+from model_hub.serializers import skills_hub as hub_serializers
 from model_hub.serializers import skills_native_runs as s
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.r3 import native_evidence, native_runs
@@ -217,6 +218,23 @@ def _attempt(request: Request) -> HostedHarnessAttempt:
     return attempt
 
 
+def _guest_responses(output) -> dict:
+    """The guest channel's documented replies: the envelope and every refusal it can send.
+
+    Refusals come from the attempt bearer/fence (401, 403, 404, 409), the shape checks
+    (400, 422) and the services (400, 409, 413, 422), all in the common error envelope.
+    """
+    responses = dict.fromkeys((400, 401, 403, 404, 413), hub_serializers.SkillsError)
+    responses.update(
+        {
+            409: hub_serializers.SkillsConflictError,
+            422: hub_serializers.SkillsChecksError,
+            200: hub_serializers.envelope(output),
+        }
+    )
+    return responses
+
+
 def _guest_refusal(code: str, message: str, status: int):
     """A malformed guest body is refused with the same code the service uses."""
 
@@ -232,6 +250,7 @@ def _guest_refusal(code: str, message: str, status: int):
 class NativeGuestHealthView(NativeGuestView):
     @validated_request(
         request_serializer=s.GuestHealthInput,
+        responses=_guest_responses(s.GuestAccepted),
         reject_unknown_fields=True,
         validation_error_response=_guest_refusal(
             "runtime_incompatible",
@@ -251,6 +270,7 @@ class NativeGuestHealthView(NativeGuestView):
 class NativeGuestObservationView(NativeGuestView):
     @validated_request(
         request_serializer=s.GuestObservationInput,
+        responses=_guest_responses(s.GuestObservationAccepted),
         reject_unknown_fields=True,
         validation_error_response=_guest_refusal(
             "invalid_receipt", "Use the exact native observation.", 400
@@ -268,7 +288,9 @@ class NativeGuestObservationView(NativeGuestView):
 class NativeGuestFailureView(NativeGuestView):
     # Any reason is accepted; the service records an unrecognized one as guest_failed.
     @validated_request(
-        request_serializer=s.GuestFailureInput, strict_request_validation=False
+        request_serializer=s.GuestFailureInput,
+        responses=_guest_responses(s.GuestAccepted),
+        strict_request_validation=False,
     )
     def post(self, request: Request, attempt_id: UUID) -> Response:
         reason = request.data.get("reason") if isinstance(request.data, dict) else None

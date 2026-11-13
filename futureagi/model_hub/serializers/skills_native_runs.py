@@ -187,3 +187,17 @@ class GuestFailureInput(s.Serializer):
         ref_name = "SkillsContextGuestFailureInput"
 
     reason = s.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+# --- Authenticated guest channel responses ---
+# Health and failure reports are acknowledged; an observation also reports how
+# many of the planned cells have arrived.
+
+
+class GuestAccepted(ContextSerializer):
+    accepted = s.BooleanField()
+
+
+class GuestObservationAccepted(GuestAccepted):
+    received = Integer(min_value=0)
+    planned = Integer(min_value=0)
