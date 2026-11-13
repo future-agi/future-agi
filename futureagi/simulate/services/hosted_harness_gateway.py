@@ -4735,10 +4735,10 @@ class HostedHarnessGateway:
                     else f"guest entrypoint exited {exit_code}"
                 )
             )
+            # Kept as a diagnostic only: the tested agent runs as the same OS user and can
+            # write the record, so it never becomes the stored cause or decides anything.
             record = self._failure_record(attempt)
-            # ALK's own redacted line when it wrote one; the log's last typed line can
-            # be the agent's printing.
-            cause = record["message"] if record else guest_failure_cause(guest_logs)
+            cause = guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",

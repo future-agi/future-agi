@@ -866,6 +866,18 @@ def failure_record(sandbox: Any) -> dict[str, Any] | None:
     }
 
 
+REPORTED_PREFIX = "Reported by the sandbox's failure record: "
+
+
+def reported_excerpt(failure: dict[str, Any]) -> str | None:
+    """The failure record's message as a reader may see it: labelled as the sandbox's report. The tested agent can
+    write that file, so its text is never shown as the harness's own line and never decides whose failure it is."""
+    message = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+        "message"
+    )
+    return f"{REPORTED_PREFIX}{message}" if message else None
+
+
 TOOL_ROUTING_PATH = "/work/authoring/generic-harness/tool-routing-observations.json"
 
 
@@ -1270,11 +1282,8 @@ def mark_failed(
         }
         if failed_actions is not None:
             error["failed_actions"] = failed_actions
-        excerpt = ((failure.get("details") or {}).get("harness_failure") or {}).get(
-            "message"
-        )
+        excerpt = reported_excerpt(failure)
         if excerpt:
-            # The harness's own redacted line; the message above may quote the log.
             error["excerpt"] = excerpt
         if certify_only(job):
             error["source"] = FAILURE_SOURCE
