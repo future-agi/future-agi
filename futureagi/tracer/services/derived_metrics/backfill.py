@@ -1423,11 +1423,10 @@ def _burst_floor(analytics, writer, head, definitions, state, *, now):
             ceiling=now,
             eval_config_ids=_eval_config_ids(definitions),
         )
-    except changes.arrivals.ContinuousCandidateOverflow:
-        return None
-    except changes.arrivals.ContinuousCandidateReadError as exc:
-        if not changes.memory_limit_exceeded(exc):
-            raise
+    except changes.arrivals.ContinuousCandidateReadError:
+        # Too many eval/remap keys, a key without a physical row, a memory
+        # limit, a timeout or an exhausted budget: the burst cannot be dated,
+        # and the full sweep (with its committed phases) still covers it.
         return None
     # Nothing arrived: the sweep has only the arrivals after it started to see.
     return max(coverage, changes.utc(now) if first is None else first)
@@ -1442,9 +1441,13 @@ def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
     whose every working version is forward-only sweeps only the burst instead:
     from the earliest start its unconsumed arrivals touch (never before its
     coverage start), source phase only, so the work follows the burst and not
-    the time since enrollment. An already-pending full sweep, including one
-    without a cursor yet, is never replaced: it may own older ambiguous work.
-    If the burst cannot be dated, the full sweep continues.
+    the time since enrollment. A pending full sweep (a routine repair, which
+    is due again after every burst, or an invalidation) is replaced by the
+    burst: watermarks have not moved past its arrivals, so the burst covers
+    them too, and the burst keeps the last complete pass, so the routine repair
+    restarts once the burst completes. Under sustained overflow that routine
+    full repair can therefore keep restarting; freshness comes first. If the
+    burst cannot be dated, the pending full sweep continues (or one is queued).
     """
     project_id = writer.lease.project_id
     state = MetricProjectRefresh.for_project(project_id)
@@ -1459,17 +1462,9 @@ def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
         and current.floor is not None
         and current.phase != "complete"
     )
-    # Never replace a full sweep that already owns missed/ambiguous arrivals.
-    # A burst checkpoint is installed only when no existing repair cursor must
-    # be preserved; otherwise its completion will consume the sweep's own start.
-    preserving_full = state.pending_repair and (
-        current is None or (current.floor is None and current.phase != "complete")
-    )
-    floor = (
-        None
-        if bursting or preserving_full
-        else _burst_floor(analytics, writer, head, definitions, state, now=now)
-    )
+    if bursting:
+        return
+    floor = _burst_floor(analytics, writer, head, definitions, state, now=now)
     with transaction.atomic():
         locked = MetricProjectRefresh._locked(project_id, **writer.lease.check())
         if floor is None:
@@ -1937,8 +1932,22 @@ class BackfillRunner:
         definitions = working_definitions(writer.lease.project_id)
         # Bound normal source repair to the earliest forward coverage. Overflow
         # burst cursors carry a narrower floor and reconcile_page skips their
-        # committed phases; an already-pending full sweep keeps its debt.
+        # committed phases.
         floor = forward_floor(definitions)
+        incremental = changes.ChangeBatch((), (), (), (), (), {})
+        discovered = skip_incremental
+        if floor is not None and not skip_incremental:
+            # A forward-only project discovers first: an overflow then sweeps
+            # only the burst, instead of a page of a sweep since enrollment.
+            discovered = True
+            try:
+                incremental = incremental_changes(
+                    self.analytics, writer, head, definitions, now=now
+                )
+            except changes.arrivals.ContinuousCandidateOverflow:
+                queue_overflow_sweep(self.analytics, writer, head, definitions, now=now)
+                state = MetricProjectRefresh.for_project(writer.lease.project_id)
+                skip_incremental = True
         page = changes.reconcile_page(
             self.analytics,
             org_id=writer.org_id,
@@ -1956,8 +1965,7 @@ class BackfillRunner:
             page_size=self.page_size,
             floor=floor,
         )
-        incremental = changes.ChangeBatch((), (), (), (), (), {})
-        if not skip_incremental:
+        if not discovered:
             try:
                 incremental = incremental_changes(
                     self.analytics, writer, head, definitions, now=now

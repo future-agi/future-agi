@@ -627,9 +627,37 @@ def test_forward_overflow_long_after_enrollment_sweeps_only_the_bursts(
     writer.refresh = refresh
     writer.incremental_unit_limit = 3
     bursts = set()
-    for round_no in range(2):
+    # Each overflow lands on a different repair state: none pending, a queued
+    # full repair with no cursor yet, a full sweep since enrollment in flight
+    # (routine repair is due again after every burst), and that same state on
+    # the repair lane. None of them may sweep the spans consumed long ago.
+    rounds = (
+        (None, "incremental"),
+        ("queued", "incremental"),
+        ("midflight", "incremental"),
+        ("midflight", "repair"),
+    )
+    for round_no, (pending, lane) in enumerate(rounds):
         consumed = MetricProjectRefresh.for_project(observe_project.id).watermark_ns
         at = changes.from_ns(consumed)
+        if pending:
+            full = (
+                None
+                if pending == "queued"
+                else ReconciliationCheckpoint(
+                    started_at=at - timedelta(minutes=1),
+                    phase="sources",
+                    scanned=3,
+                    day=enrolled.date(),
+                    last_day=at.date(),
+                ).to_dict()
+            )
+            MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+                pending_repair=True,
+                reconciliation_cursor=full,
+                reconciliation_started_at=at - timedelta(minutes=1),
+                reconciliation_completed_at=None,
+            )
         # Five already-settled conversations arriving in the overlap tail,
         # more than the cap of three.
         bursts |= {
@@ -643,7 +671,10 @@ def test_forward_overflow_long_after_enrollment_sweeps_only_the_bursts(
         }
         published.clear()
         state = MetricProjectRefresh.for_project(observe_project.id)
-        admission.run_incremental(writer, analytics, scope, state)
+        if lane == "incremental":
+            admission.run_incremental(writer, analytics, scope, state)
+        else:
+            backfill.BackfillRunner(writer, analytics, scope).run_repair_page()
         state = MetricProjectRefresh.for_project(observe_project.id)
         # One pass: the burst sweep's single page completes and publishes.
         assert [purpose for purpose, _ in published] == ["repair"]

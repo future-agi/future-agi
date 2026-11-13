@@ -434,57 +434,94 @@ def test_forward_overflow_sweeps_only_the_burst_never_since_enrollment(
 
 
 @pytest.mark.django_db
-def test_forward_overflow_preserves_an_existing_full_sweep(
-    setup_runner, observe_project, workspace, monkeypatch
+@pytest.mark.parametrize("pending", ["queued", "routine", "midflight"])
+@pytest.mark.parametrize("lane", ["incremental", "repair"])
+def test_forward_overflow_replaces_a_pending_full_sweep_keeping_its_last_pass(
+    setup_runner, observe_project, workspace, monkeypatch, pending, lane
 ):
-    """An existing full sweep owns earlier ambiguous arrivals and cannot be
-    replaced by a dateable burst: the burst watermark would skip that debt."""
+    """A routine or queued full repair must not carry the burst.
+
+    Routine repair is due again after every burst (a burst is not a full
+    pass), so a full sweep is usually pending when the next overflow lands.
+    Riding it would freeze watermarks for a sweep of everything since
+    enrollment. On either lane the overflow replaces it with a burst sweep
+    that keeps the last complete pass, so the routine repair stays due.
+    """
     runner, clock = setup_runner
-    _, coverage = _overflowing_forward_project(
-        runner, observe_project, workspace, monkeypatch
-    )
-    full = changes.ReconciliationCheckpoint(
-        started_at=NOW + timedelta(seconds=30),
-        completed_at=NOW - timedelta(days=2),
-        phase="sources",
-        after=("", "", "2026-10-31 06:00:00", "private-trace", "private-span"),
-        scanned=7,
-        completed_passes=3,
-        day=NOW.date(),
-        last_day=NOW.date(),
-        covered_through=NOW - timedelta(days=2, hours=1),
-    )
+    _overflowing_forward_project(runner, observe_project, workspace, monkeypatch)
+    last_pass = NOW - timedelta(days=2)
+    covered = last_pass - timedelta(hours=1)
+    cursor = {
+        "queued": None,
+        "routine": changes.ReconciliationCheckpoint(
+            started_at=covered,
+            completed_at=last_pass,
+            phase="complete",
+            completed_passes=3,
+            covered_through=covered,
+        ),
+        "midflight": changes.ReconciliationCheckpoint(
+            started_at=NOW - timedelta(minutes=20),
+            completed_at=last_pass,
+            phase="sources",
+            after=("", "", "2026-10-31 06:00:00", "private-trace", "private-span"),
+            scanned=7,
+            completed_passes=3,
+            day=NOW.date(),
+            last_day=NOW.date(),
+            covered_through=covered,
+        ),
+    }[pending]
     MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
         pending_repair=True,
-        reconciliation_cursor=full.to_dict(),
-        reconciliation_started_at=full.started_at,
-        reconciliation_completed_at=full.completed_at,
+        reconciliation_cursor=cursor.to_dict() if cursor else None,
+        reconciliation_started_at=NOW - timedelta(minutes=20),
+        reconciliation_completed_at=cursor.completed_at if cursor else None,
     )
-    monkeypatch.setattr(changes, "arrival_start_floor", _forbid, raising=False)
+    burst = NOW - timedelta(minutes=10)
     calls = []
-    page = _two_page_sweep([])
-
-    def reconcile(analytics, **kwargs):
-        calls.append((kwargs["checkpoint"], kwargs["floor"]))
-        return page(analytics, **kwargs)
-
-    monkeypatch.setattr(changes, "reconcile_page", reconcile)
+    monkeypatch.setattr(changes, "arrival_start_floor", _dated(burst), raising=False)
+    monkeypatch.setattr(changes, "reconcile_page", _burst_sweep(calls))
     clock[0] = NOW + timedelta(minutes=1)
-    state = MetricProjectRefresh.for_project(observe_project.id)
-    admission.run_incremental(runner.writer, object(), runner.scope, state)
-    checkpoint, floor = calls[0]
-    assert checkpoint == full and floor == coverage
+    if lane == "incremental":
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        admission.run_incremental(runner.writer, object(), runner.scope, state)
+    else:
+        runner.run_repair_page()
+    assert len(calls) == 1
+    planned, floor = calls[0]
+    assert (planned.floor, planned.started_at, planned.phase) == (
+        burst,
+        clock[0],
+        "sources",
+    )
+    assert planned.after is None and planned.day is None and planned.scanned == 0
+    expected = (last_pass, 3, covered) if cursor else (None, 0, None)
+    assert (
+        planned.completed_at,
+        planned.completed_passes,
+        planned.covered_through,
+    ) == expected
     state = MetricProjectRefresh.for_project(observe_project.id)
     assert not state.pending_repair
-    # The existing sweep's own start, not the new burst's start, is consumed.
-    assert _watermarks(observe_project.id) == (changes.ns(full.started_at),) * 3
-    assert state.reconciliation_cursor["completed_passes"] == 1
+    assert state.reconciliation_completed_at == expected[0]
+    # The burst consumed arrivals to its own start: freshness moved on.
+    assert _watermarks(observe_project.id) == (changes.ns(clock[0]),) * 3
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda: arrivals.ContinuousCandidateOverflow("metric candidate cap exceeded"),
+        lambda: _read_error(159),
+        lambda: changes.MetricChangeReadError("metric query budget exceeded"),
+    ],
+    ids=["cap", "timeout_159", "budget"],
+)
 def test_forward_overflow_that_cannot_be_dated_keeps_todays_full_sweep(
-    setup_runner, observe_project, workspace, monkeypatch, pending
+    setup_runner, observe_project, workspace, monkeypatch, pending, failure
 ):
     runner, clock = setup_runner
     _, coverage = _overflowing_forward_project(
@@ -503,7 +540,8 @@ def test_forward_overflow_that_cannot_be_dated_keeps_todays_full_sweep(
         )
 
     def too_many(analytics, **kwargs):
-        raise arrivals.ContinuousCandidateOverflow("metric candidate cap exceeded")
+        # Never a failed pass: the old full sweep still makes progress.
+        raise failure()
 
     planned = []
 
