@@ -9,11 +9,14 @@ class CallActorTrigger(TypedDict, total=False):
     """When an actor enters a call; the harness writes only the keys its kind uses."""
 
     kind: str
+    seconds: float
     turn: int
     tool: str
     on_call: int
     words: list[str]
     p: float
+    collection: str
+    where: dict[str, object]
 
 
 class ScenarioCallActor(TypedDict):
@@ -27,21 +30,6 @@ class ScenarioCallActor(TypedDict):
     actions: NotRequired[list[dict[str, object]]]
 
 
-class CallActorPersona(TypedDict, total=False):
-    """The caller persona fields an actor's voice is chosen from."""
-
-    name: str
-    gender: str
-    age_group: str
-    occupation: str
-    location: str
-    personality: str
-    communication_style: str
-    initial_message: str
-    languages: list[str]
-    accent: str
-
-
 class CallActor(TypedDict):
     """One entry of the environment's actor list."""
 
@@ -49,8 +37,9 @@ class CallActor(TypedDict):
     name: str
     role: str
     channel: str
-    persona: CallActorPersona
-    loudness_ratio: NotRequired[float]
+    # The caller persona's fields, any the runtime keeps included.
+    persona: dict[str, object]
+    loudness_ratio: NotRequired[float | None]
 
 
 class ContractCallActor(CallActor):

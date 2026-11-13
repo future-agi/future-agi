@@ -960,7 +960,7 @@ class AnalyticsQueryService:
         )
         if not result.data:
             return None
-        row = result.data[0]
+        row: dict = result.data[0]
         # CDC stores JSONFields as strings. Decode at the read boundary so the
         # detail view can expose localization written by the worker.
         metadata = row.get("output_metadata")

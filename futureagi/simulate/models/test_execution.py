@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from django.db import models  # type: ignore[import-not-found]
 from django.utils import timezone  # type: ignore[import-not-found]
@@ -737,6 +738,18 @@ class CallTranscript(BaseModel):
     @actor_id.setter
     def actor_id(self, value) -> None:
         self._set_actor_turn("actor_id", value or None)
+
+    @classmethod
+    def spoken(
+        cls, *, speaker_name: str = "", actor_id: str | None = None, **fields: Any
+    ) -> "CallTranscript":
+        """An unsaved row and, on an actor's turn, who spoke it; `create_actor_turns` stores that once it is saved."""
+        row = cls(**fields)
+        if speaker_name:
+            row.speaker_name = speaker_name
+        if actor_id:
+            row.actor_id = actor_id
+        return row
 
     @classmethod
     def create_actor_turns(cls, rows) -> None:

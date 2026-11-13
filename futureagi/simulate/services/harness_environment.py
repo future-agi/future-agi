@@ -16,7 +16,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from django.db.models import (
@@ -903,7 +903,10 @@ def _call_actor_list(listing: object, scenario_docs: object) -> list[ContractCal
                 included[str(one["id"])] = included.get(str(one["id"]), 0) + 1
     entries = listing.get("call_actors") if isinstance(listing, dict) else None
     return [
-        {**entry, "scenarios_count": included.get(str(entry["id"]), 0)}
+        cast(
+            ContractCallActor,
+            {**entry, "scenarios_count": included.get(str(entry["id"]), 0)},
+        )
         for entry in entries or []
         if isinstance(entry, dict) and entry.get("id")
     ]

@@ -5,7 +5,7 @@ import json
 import logging
 import tempfile
 from datetime import datetime, timedelta
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -53,7 +53,7 @@ _ACTOR_LIMIT_KEYS = (
 
 def _actor_limits(limits: dict) -> dict:
     """The known actor limits, each a number, a short model name or unset."""
-    kept = {}
+    kept: dict[str, Any] = {}
     for key in _ACTOR_LIMIT_KEYS:
         value = limits.get(key)
         if value is None or (
@@ -1244,11 +1244,11 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
         and not decided
     ):
         return "no_score"
-    return body["status"]
+    return str(body["status"])
 
 
 # A sub-goal's pass or fail as `passed`; any other result has no pass or fail.
-SUB_GOAL_PASSED = {"pass": True, "fail": False}
+SUB_GOAL_PASSED: dict[str | None, bool] = {"pass": True, "fail": False}
 
 
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
@@ -1407,10 +1407,14 @@ def _call_actor_record(raw: object) -> CallCallActors | None:
     """The transcript's actor record, keeping only the entries of its three lists."""
     if not isinstance(raw, dict):
         return None
-    record: CallCallActors = {}
-    for key in ("resolved", "summary", "events"):
-        if isinstance(raw.get(key), list):
-            record[key] = _entries(raw[key])
+    record = cast(
+        CallCallActors,
+        {
+            key: _entries(raw[key])
+            for key in ("resolved", "summary", "events")
+            if isinstance(raw.get(key), list)
+        },
+    )
     return record or None
 
 
@@ -1463,7 +1467,7 @@ def _ingest_hosted_transcript(
                 metadata[WORLD_ACTIONS_KEY] = actions
             else:
                 metadata.pop(WORLD_ACTIONS_KEY, None)
-            trial = {
+            trial: dict[str, Any] = {
                 key: _entries(world.get(key))
                 for key in ("state_changes", "decisions", "approvals", "usage")
                 if isinstance(world, dict) and isinstance(world.get(key), list)
@@ -1634,7 +1638,7 @@ def _ingest_hosted_transcript(
                     start_ms = index
                     end_ms = index
                 rows.append(
-                    CallTranscript(
+                    CallTranscript.spoken(
                         call_execution=call,
                         speaker_role=role if role in valid_roles else "unknown",
                         speaker_name=(

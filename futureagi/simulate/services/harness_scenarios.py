@@ -6,7 +6,7 @@ import copy
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import count
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from django.contrib.postgres.expressions import ArraySubquery
@@ -519,25 +519,28 @@ def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
     trigger stays missing (the actor's own activation then applies), never stored as an empty one.
     """
     entries: list[ScenarioCallActor] = [
-        {
-            "id": str(one["id"]),
-            "instruction": str(one.get("instruction") or ""),
-            **(
-                {"trigger": one["trigger"]}
-                if isinstance(one.get("trigger"), dict) and one["trigger"]
-                else {}
-            ),
-            **(
-                {"knowledge": one["knowledge"]}
-                if isinstance(one.get("knowledge"), list)
-                else {}
-            ),
-            **(
-                {"actions": one["actions"]}
-                if isinstance(one.get("actions"), list)
-                else {}
-            ),
-        }
+        cast(
+            ScenarioCallActor,
+            {
+                "id": str(one["id"]),
+                "instruction": str(one.get("instruction") or ""),
+                **(
+                    {"trigger": one["trigger"]}
+                    if isinstance(one.get("trigger"), dict) and one["trigger"]
+                    else {}
+                ),
+                **(
+                    {"knowledge": one["knowledge"]}
+                    if isinstance(one.get("knowledge"), list)
+                    else {}
+                ),
+                **(
+                    {"actions": one["actions"]}
+                    if isinstance(one.get("actions"), list)
+                    else {}
+                ),
+            },
+        )
         for one in (raw if isinstance(raw, list) else [])
         if isinstance(one, dict) and one.get("id")
     ]

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "e62459a8ffcbe99b49a634378fb8d903d2ff0a59ec105fc84825e64d8cc4ff8d",
+  "source_contract_sha256": "de289fe646bb987d160efa2463ab09b72b9511f99e0c8d8a4470fea946c38218",
   "tool_count": 111,
   "tools": [
     {
@@ -197,7 +197,7 @@
           },
           "search": {
             "type": "string",
-            "default": {}
+            "default": "{}"
           },
           "page_size": {
             "type": "integer",
@@ -5310,7 +5310,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -5332,6 +5332,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -5343,6 +5344,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -5351,6 +5353,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -8817,6 +8820,7 @@
           "simulation_type": {
             "type": "string",
             "enum": [
+              "",
               "agent_definition",
               "prompt"
             ],
@@ -10799,7 +10803,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -10821,6 +10825,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -10832,6 +10837,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -10840,6 +10846,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",

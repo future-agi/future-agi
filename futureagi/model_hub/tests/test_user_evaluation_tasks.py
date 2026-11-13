@@ -922,6 +922,7 @@ class TestErrorLocalizerGateE2E:
             task_id=str(task.id),
             source_id=str(task.source_id),
             failure_code=code,
+            error_type="LocalizationFailure" if typed else "RuntimeError",
         )
         assert "private" not in str(mock_logger.mock_calls)
         mock_refund.assert_called_once_with(mock_cost.return_value)
