@@ -104,7 +104,7 @@ def _due(event, limit):
 def drain_outbox(*, storage=None, limits=None):
     """Run every due outbox row once, per kind, within ``limits``. Returns counts."""
     limits = {**DRAIN_LIMITS, **(limits or {})}
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     storage_error = None
     for event, consumer in CONSUMERS.items():
         if event in NEEDS_STORAGE and storage is None and storage_error is None:
@@ -178,7 +178,7 @@ def audit_retention():
 def sweep(*, now=None):
     """One bounded pass of every time-based cleanup. Returns counts."""
     now = now or timezone.now()
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     _isolated(counts, "reservations_expired", accounting.expire_reservations)
     for scope_id, enabled in AttachmentScope.objects.values_list("pk", "enabled"):
         _isolated(
@@ -309,7 +309,7 @@ def sweep_orphans(
     by_project = defaultdict(list)
     for row in rows:
         by_project[(row["scope_id"], row["scope__project_id"])].append(row)
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     for (scope_id, project_id), group in by_project.items():
         try:
             live = span_reader(project_id, {row["span_id"] for row in group})

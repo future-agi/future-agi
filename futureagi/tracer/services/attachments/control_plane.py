@@ -56,7 +56,11 @@ from tracer.services.attachments.binding import (
     reconcile_pending,
 )
 from tracer.services.attachments.contract import AttachmentError
-from tracer.services.attachments.reads import MAX_PER_PARENT, AuthorizedStatus
+from tracer.services.attachments.reads import (
+    MAX_PER_PARENT,
+    AuthorizedStatus,
+    ReadTarget,
+)
 from tracer.services.attachments.references import (
     REFS,
     InvalidReference,
@@ -138,7 +142,7 @@ def source_state(scope, parent, span, *, retention=retention_for):
     Mirrors ``LiveAuthority.source`` field for field (minus the viewer-only
     ``writable``): the bound row must equal what every later read derives.
     """
-    if span is None or getattr(span, "is_deleted", 1):
+    if span is None or getattr(span, "is_deleted", True):
         return None
     try:
         trace = UUID(str(span.trace_id))
@@ -228,7 +232,7 @@ class OccurrenceBindingStore:
 
     def __init__(self):
         self.claimed = set()
-        self.per_scope = Counter()
+        self.per_scope: Counter[object] = Counter()
 
     def _claim_ids(self, limit):
         """``[(id, scope_id)]`` in claim order, at most ``limit``."""
@@ -254,8 +258,9 @@ class OccurrenceBindingStore:
 
     def claim_pending(self, now, limit):
         ids = self._claim_ids(limit)
-        rows = AttachmentOccurrence.objects.select_related("attachment", "scope")
-        rows = rows.in_bulk([row_id for row_id, _ in ids])
+        rows = AttachmentOccurrence.objects.select_related(
+            "attachment", "scope"
+        ).in_bulk([row_id for row_id, _ in ids])
         links = []
         for row_id, scope_id in ids:
             if self.per_scope[scope_id] >= PER_SCOPE_TICK_CAP:
@@ -352,7 +357,7 @@ class ClickHouseParentReader:
         ``BIND_CLOCK_SLACK`` after the newest), so a growing backlog never
         widens a FINAL merge to the whole project.
         """
-        groups = {}
+        groups: dict[tuple[object, str], list[PendingLink]] = {}
         for link in links:
             groups.setdefault((link.scope_id, link.scope.project_id), []).append(link)
         scopes = AttachmentScope.objects.in_bulk([scope_id for scope_id, _ in groups])
@@ -544,7 +549,7 @@ class ControlPlaneReader:
         """
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False) or not targets:
             return []
-        groups = {}
+        groups: dict[Scope, list[ReadTarget]] = {}
         for target in targets:
             groups.setdefault(target.scope, []).append(target)
         statuses, budget = [], MAX_READ_ROWS
@@ -555,7 +560,7 @@ class ControlPlaneReader:
             parents = self._parents(group)
             if app_viewer is None or not parents:
                 continue
-            spans = {}
+            spans: dict[str, SimpleNamespace] = {}
             authority = _BatchSources(self._memo(spans), spans, Retention())
             try:
                 scope = occurrences.scope_for(app_viewer, authority)

@@ -12,7 +12,7 @@ import struct
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from django.conf import settings
@@ -42,8 +42,9 @@ class Viewer:
     user_id: UUID
     application_session_id: UUID
     organization_id: UUID
-    workspace_id: UUID
-    project_id: UUID
+    # None only for the media-session exchange, which carries no project.
+    workspace_id: UUID | None
+    project_id: UUID | None
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,8 @@ def scope_for(viewer, authority, *, write=False):
     if not getattr(
         settings, "FI_ATTACHMENTS_ENABLED", False
     ) or not authority.session_is_live(viewer):
+        raise not_found()
+    if viewer.project_id is None or viewer.workspace_id is None:
         raise not_found()
     scope = (
         AttachmentScope.objects.select_related("workspace", "organization")
@@ -213,6 +216,8 @@ def get_occurrence(
         )
         .first()
     )
+    if row is None:
+        raise not_found()
     check_readable(row, scope, state, timezone.now(), ready=ready)
     return row, scope, min(row.expires_at, row.source_expires_at, state.expires_at)
 
@@ -312,6 +317,7 @@ def list_occurrences(
     if after:
         query = query.filter(id__gt=after)
     # A cursor must refer only to an authorized item, never the last denied child.
+    items: list[dict[str, Any]]
     items, last = [], None
     candidates = list(query.order_by("id")[:501])
     for candidate in candidates[:500]:
