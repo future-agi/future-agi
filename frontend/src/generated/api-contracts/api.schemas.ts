@@ -19262,18 +19262,7 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
-export interface HarnessEnvironmentCallActorPersonaApi {
-  name?: string;
-  gender?: string;
-  age_group?: string;
-  occupation?: string;
-  location?: string;
-  personality?: string;
-  communication_style?: string;
-  initial_message?: string;
-  languages?: string[];
-  accent?: string;
-}
+export type HarnessEnvironmentCallActorApiPersona = { [key: string]: unknown };
 
 export interface HarnessEnvironmentCallActorApi {
   /** @minLength 1 */
@@ -19283,7 +19272,7 @@ export interface HarnessEnvironmentCallActorApi {
   role: string;
   /** @minLength 1 */
   channel: string;
-  persona: HarnessEnvironmentCallActorPersonaApi;
+  persona: HarnessEnvironmentCallActorApiPersona;
   loudness_ratio?: number;
   scenarios_count: number;
 }
@@ -19415,28 +19404,6 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
-export type HarnessEnvironmentScenarioActorKnowledgeApiKind =
-  (typeof HarnessEnvironmentScenarioActorKnowledgeApiKind)[keyof typeof HarnessEnvironmentScenarioActorKnowledgeApiKind];
-
-export const HarnessEnvironmentScenarioActorKnowledgeApiKind = {
-  facts: "facts",
-  files: "files",
-  records: "records",
-} as const;
-
-export type HarnessEnvironmentScenarioActorKnowledgeApiWhere = {
-  [key: string]: unknown;
-};
-
-export interface HarnessEnvironmentScenarioActorKnowledgeApi {
-  kind: HarnessEnvironmentScenarioActorKnowledgeApiKind;
-  text?: string;
-  paths?: string[];
-  store?: string;
-  collection?: string;
-  where?: HarnessEnvironmentScenarioActorKnowledgeApiWhere;
-}
-
 export type HarnessEnvironmentCallActorTriggerApiKind =
   (typeof HarnessEnvironmentCallActorTriggerApiKind)[keyof typeof HarnessEnvironmentCallActorTriggerApiKind];
 
@@ -19478,11 +19445,15 @@ export interface HarnessEnvironmentScenarioActorActionApi {
   trigger?: HarnessEnvironmentCallActorTriggerApi;
 }
 
+export type HarnessEnvironmentScenarioCallActorApiKnowledgeItem = {
+  [key: string]: unknown;
+};
+
 export interface HarnessEnvironmentScenarioCallActorApi {
   /** @minLength 1 */
   id: string;
   instruction?: string;
-  knowledge?: HarnessEnvironmentScenarioActorKnowledgeApi[];
+  knowledge?: HarnessEnvironmentScenarioCallActorApiKnowledgeItem[];
   trigger?: HarnessEnvironmentCallActorTriggerApi;
   actions?: HarnessEnvironmentScenarioActorActionApi[];
 }

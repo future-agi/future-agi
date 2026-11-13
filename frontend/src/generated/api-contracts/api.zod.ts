@@ -38622,18 +38622,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         name: zod.string().min(1),
         role: zod.string(),
         channel: zod.string().min(1),
-        persona: zod.object({
-          name: zod.string().optional(),
-          gender: zod.string().optional(),
-          age_group: zod.string().optional(),
-          occupation: zod.string().optional(),
-          location: zod.string().optional(),
-          personality: zod.string().optional(),
-          communication_style: zod.string().optional(),
-          initial_message: zod.string().optional(),
-          languages: zod.array(zod.string().min(1)).optional(),
-          accent: zod.string().optional(),
-        }),
+        persona: zod.record(zod.string(), zod.unknown()),
         loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
@@ -38702,16 +38691,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           id: zod.string().min(1),
           instruction: zod.string().optional(),
           knowledge: zod
-            .array(
-              zod.object({
-                kind: zod.enum(["facts", "files", "records"]),
-                text: zod.string().optional(),
-                paths: zod.array(zod.string().min(1)).optional(),
-                store: zod.string().optional(),
-                collection: zod.string().optional(),
-                where: zod.object({}).passthrough().optional(),
-              }),
-            )
+            .array(zod.record(zod.string(), zod.unknown()))
             .optional(),
           trigger: zod
             .object({
@@ -38927,18 +38907,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         name: zod.string().min(1),
         role: zod.string(),
         channel: zod.string().min(1),
-        persona: zod.object({
-          name: zod.string().optional(),
-          gender: zod.string().optional(),
-          age_group: zod.string().optional(),
-          occupation: zod.string().optional(),
-          location: zod.string().optional(),
-          personality: zod.string().optional(),
-          communication_style: zod.string().optional(),
-          initial_message: zod.string().optional(),
-          languages: zod.array(zod.string().min(1)).optional(),
-          accent: zod.string().optional(),
-        }),
+        persona: zod.record(zod.string(), zod.unknown()),
         loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
@@ -39007,16 +38976,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           id: zod.string().min(1),
           instruction: zod.string().optional(),
           knowledge: zod
-            .array(
-              zod.object({
-                kind: zod.enum(["facts", "files", "records"]),
-                text: zod.string().optional(),
-                paths: zod.array(zod.string().min(1)).optional(),
-                store: zod.string().optional(),
-                collection: zod.string().optional(),
-                where: zod.object({}).passthrough().optional(),
-              }),
-            )
+            .array(zod.record(zod.string(), zod.unknown()))
             .optional(),
           trigger: zod
             .object({
@@ -40428,18 +40388,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           name: zod.string().min(1),
           role: zod.string(),
           channel: zod.string().min(1),
-          persona: zod.object({
-            name: zod.string().optional(),
-            gender: zod.string().optional(),
-            age_group: zod.string().optional(),
-            occupation: zod.string().optional(),
-            location: zod.string().optional(),
-            personality: zod.string().optional(),
-            communication_style: zod.string().optional(),
-            initial_message: zod.string().optional(),
-            languages: zod.array(zod.string().min(1)).optional(),
-            accent: zod.string().optional(),
-          }),
+          persona: zod.record(zod.string(), zod.unknown()),
           loudness_ratio: zod.number().optional(),
           scenarios_count: zod.number(),
         }),
@@ -40508,16 +40457,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             id: zod.string().min(1),
             instruction: zod.string().optional(),
             knowledge: zod
-              .array(
-                zod.object({
-                  kind: zod.enum(["facts", "files", "records"]),
-                  text: zod.string().optional(),
-                  paths: zod.array(zod.string().min(1)).optional(),
-                  store: zod.string().optional(),
-                  collection: zod.string().optional(),
-                  where: zod.object({}).passthrough().optional(),
-                }),
-              )
+              .array(zod.record(zod.string(), zod.unknown()))
               .optional(),
             trigger: zod
               .object({

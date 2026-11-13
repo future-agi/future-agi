@@ -1980,8 +1980,25 @@ SCENARIO_ACTOR_PAYLOAD = {
             **SCENARIO_ACTOR_PAYLOAD,
             "trigger": {"kind": "on_tool", "tool": "book_ride", "on_call": 2},
         },
+        # ALK's `ScenarioActor.knowledge` takes any object and `read_knowledge` keeps an unknown one as written.
+        {
+            "id": "friend",
+            "knowledge": [
+                {"text": "local fact"},
+                {"kind": "facts", "text": "Paid by card.", "source": "crm-note"},
+                {"kind": "records", "store": "crm", "collection": "deals", "limit": 5},
+            ],
+        },
+        {"id": "friend", "instruction": "  Say it twice.\n"},
     ],
-    ids=["full", "id-only", "null-trigger", "own-trigger"],
+    ids=[
+        "full",
+        "id-only",
+        "null-trigger",
+        "own-trigger",
+        "knowledge-any-shape",
+        "instruction-as-written",
+    ],
 )
 def test_the_scenario_actor_contract_reads_what_the_runtime_writes(payload):
     from simulate.serializers.harness_environment import (
@@ -1991,6 +2008,44 @@ def test_the_scenario_actor_contract_reads_what_the_runtime_writes(payload):
     contract = HarnessEnvironmentScenarioCallActorSerializer(data=payload)
     assert contract.is_valid(), contract.errors
     # Nothing the runtime wrote is dropped or reshaped, nested arguments and triggers included.
+    assert json.loads(json.dumps(contract.validated_data)) == payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "id": "sister",
+            "name": "Ana",
+            "role": "",
+            "channel": "audio_mix",
+            "persona": {},
+            "scenarios_count": 0,
+        },
+        # The runtime keeps any persona field the caller's persona has, and an unset loudness may be null.
+        {
+            "id": "sister",
+            "name": "Ana",
+            "role": "the caller's sister",
+            "channel": "audio_mix",
+            "persona": {
+                "name": "Ana",
+                "multilingual": True,
+                "metadata": {"tier": "gold"},
+            },
+            "loudness_ratio": None,
+            "scenarios_count": 2,
+        },
+    ],
+    ids=["bare", "persona-extras-null-loudness"],
+)
+def test_the_actor_list_contract_reads_what_the_runtime_writes(payload):
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentCallActorSerializer,
+    )
+
+    contract = HarnessEnvironmentCallActorSerializer(data=payload)
+    assert contract.is_valid(), contract.errors
     assert json.loads(json.dumps(contract.validated_data)) == payload
 
 

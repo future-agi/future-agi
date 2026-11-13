@@ -123552,11 +123552,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
         persona: {
-          $ref: "#/definitions/HarnessEnvironmentCallActorPersona",
+          title: "Persona",
+          type: "object",
+          additionalProperties: true,
         },
         loudness_ratio: {
           title: "Loudness ratio",
           type: "number",
+          "x-nullable": true,
         },
         scenarios_count: {
           title: "Scenarios count",
@@ -123875,7 +123878,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         knowledge: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessEnvironmentScenarioActorKnowledge",
+            type: "object",
+            additionalProperties: true,
           },
         },
         trigger: {
@@ -132406,54 +132410,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentCallActorPersona: {
-      type: "object",
-      properties: {
-        name: {
-          title: "Name",
-          type: "string",
-        },
-        gender: {
-          title: "Gender",
-          type: "string",
-        },
-        age_group: {
-          title: "Age group",
-          type: "string",
-        },
-        occupation: {
-          title: "Occupation",
-          type: "string",
-        },
-        location: {
-          title: "Location",
-          type: "string",
-        },
-        personality: {
-          title: "Personality",
-          type: "string",
-        },
-        communication_style: {
-          title: "Communication style",
-          type: "string",
-        },
-        initial_message: {
-          title: "Initial message",
-          type: "string",
-        },
-        languages: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        accent: {
-          title: "Accent",
-          type: "string",
-        },
-      },
-    },
     HarnessEnvironmentCallActorTrigger: {
       type: "object",
       properties: {
@@ -132524,40 +132480,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trigger: {
           $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
-        },
-      },
-    },
-    HarnessEnvironmentScenarioActorKnowledge: {
-      required: ["kind"],
-      type: "object",
-      properties: {
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["facts", "files", "records"],
-        },
-        text: {
-          title: "Text",
-          type: "string",
-        },
-        paths: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        store: {
-          title: "Store",
-          type: "string",
-        },
-        collection: {
-          title: "Collection",
-          type: "string",
-        },
-        where: {
-          title: "Where",
-          type: "object",
         },
       },
     },
