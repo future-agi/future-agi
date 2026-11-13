@@ -120,7 +120,9 @@ def _certification_files(
     if not readable:
         return {**files, "unreadable": True}
     key_field = (
-        "object_key" if isinstance(row, HarnessAssembledBundle) else "archive_object_key"
+        "object_key"
+        if isinstance(row, HarnessAssembledBundle)
+        else "archive_object_key"
     )
     type(row)._base_manager.filter(id=row.id, **{key_field: object_key}).update(
         certification_files={"object_key": object_key, **files}
