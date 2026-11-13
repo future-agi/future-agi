@@ -80,6 +80,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
 		parseMetadataHeader(meta, rc)
 	}
+	applyCacheHeaders(rc, r)
 
 	// Read request body.
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
