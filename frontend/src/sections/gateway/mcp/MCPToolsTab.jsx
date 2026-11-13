@@ -312,7 +312,7 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                               fontWeight={600}
                               sx={{
                                 fontFamily: "monospace",
-                                fontSize: 13,
+                                fontSize: 12,
                                 textDecoration: tool.deprecated
                                   ? "line-through"
                                   : "none",

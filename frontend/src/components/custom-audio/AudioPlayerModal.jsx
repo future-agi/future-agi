@@ -520,7 +520,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                         maxWidth: "400px",
                       }}
                       fontWeight={500}
-                      fontSize="13px"
+                      fontSize="12px"
                     >
                       {audioData?.fileName}
                     </Typography>

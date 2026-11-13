@@ -1,4 +1,4 @@
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import { useApiKeysStatus } from "src/api/model/api-keys";
 import PropTypes from "prop-types";
@@ -11,6 +11,7 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { LoadingButton } from "@mui/lab";
 import SvgColor from "../svg-color";
+import { LoadingScreen } from "src/components/loading-screen";
 
 export default function ConfigureKeysContent({
   shouldFetch,
@@ -56,7 +57,7 @@ export default function ConfigureKeysContent({
   return (
     <Stack direction={"column"}>
       {isLoading ? (
-        <LinearProgress />
+        <LoadingScreen compact />
       ) : (
         <>
           <FormSearchField
