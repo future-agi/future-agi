@@ -32,8 +32,8 @@ logger = structlog.get_logger(__name__)
 # 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
 # 29: contains_any / contains_none ignore blank keywords and regex_pii_detection
 # rejects unsupported detect_types instead of silently narrowing the scan.
-# 30: link checks ignore prose and require operator-approved public destinations.
-# They landed after 29, so they ship as 30.
+# After 29: link checks ignore prose and require operator-approved public
+# destinations. They need any version above 29; the number is set only here.
 SYSTEM_EVALS_VERSION = 30
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
