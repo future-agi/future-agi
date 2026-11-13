@@ -1,4 +1,4 @@
-import { getRandomId } from "src/utils/utils";
+import { getRandomId } from "src/utils/getRandomId";
 import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 
