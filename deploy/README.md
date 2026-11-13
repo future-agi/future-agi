@@ -513,8 +513,12 @@ $COMPOSE pull
 # Before enabling the new trace/span tag editor, compare PG legacy tags against
 # curated CH tags, review the count, then apply the one-time reconciliation.
 # Run both commands after migrations and native CH setup, while stores are up.
-$COMPOSE run --rm --no-deps --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
-$COMPOSE run --rm --no-deps --entrypoint python backend manage.py reconcile_legacy_trace_tags
+# Like step 1 it writes data, so it needs the operator authorization pair, or
+# Django's startup guard refuses it.
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
 # Release the new editor only after reconciliation completes; do not expose it
 # with the frontend pin before these commands have finished.
 $COMPOSE up -d --no-build --wait --wait-timeout 1200

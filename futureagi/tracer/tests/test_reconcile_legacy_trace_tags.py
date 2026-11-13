@@ -344,3 +344,28 @@ def test_only_tags_change_and_deleted_traces_stay_deleted(stores):
     assert latest(renamed) == ["pg"]
     assert latest.column(renamed, "name") == "name written to CH only"
     assert version(deleted) == before
+
+
+def test_operators_may_run_the_reconcile_under_mutation_free_startup(monkeypatch):
+    """The deploy step runs it with the operator pair (deploy/README.md); the
+    startup guard must let exactly that through, and refuse it otherwise."""
+    from model_hub.apps import (
+        explicit_management_mutation_authorized,
+        guarded_management_command,
+    )
+
+    argv = ["manage.py", "reconcile_legacy_trace_tags", "--dry-run"]
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    monkeypatch.delenv("SERVICE_TYPE", raising=False)
+    monkeypatch.delenv("STARTUP_DB_MUTATION_MODE", raising=False)
+    assert guarded_management_command(argv) == "reconcile_legacy_trace_tags"
+    assert explicit_management_mutation_authorized(argv) is False
+
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    assert explicit_management_mutation_authorized(argv) is True
+    guide = (Path(__file__).resolve().parents[3] / "deploy/README.md").read_text()
+    assert (
+        "-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \\\n"
+        "  --entrypoint python backend manage.py reconcile_legacy_trace_tags"
+    ) in guide
