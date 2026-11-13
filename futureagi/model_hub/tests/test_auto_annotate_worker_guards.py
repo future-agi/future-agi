@@ -255,6 +255,7 @@ def test_reset_does_not_touch_out_of_scope_cells(tenants, model_boundaries, mism
         column=sentinel_column,
         value="Untouched",
         status="pass",
+        feedback_info={"annotation": {"verified": False}},
     )
     if mismatch == "column_deleted":
         sentinel_column.delete()
@@ -265,6 +266,46 @@ def test_reset_does_not_touch_out_of_scope_cells(tenants, model_boundaries, mism
     assert (
         Cell.objects.get(dataset=own.dataset, row=own.row, column=output).value == "Yes"
     )
+
+
+@pytest.mark.parametrize(
+    "mismatch", ["cell_dataset", "column_dataset", "column_deleted"]
+)
+def test_rag_revalidates_inputs_changed_since_payload_read(
+    tenants, model_boundaries, mismatch
+):
+    own, foreign, _ = tenants
+    annotation, output = _annotation(own)
+    column = _output_column(own.dataset, "input")
+    cell = Cell.objects.create(
+        dataset=own.dataset, row=own.row, column=column, value="Input"
+    )
+    own.label.settings.update(inputs=[str(column.id)], strategy=auto_annotate.RAG_TXT)
+    own.label.save()
+
+    def change_stored_relationship(_inputs):
+        # Simulate a concurrent edit between the first payload read and the RAG
+        # read, at the external embedding boundary, without mocking any ORM call.
+        if mismatch == "cell_dataset":
+            Cell.objects.filter(pk=cell.pk).update(dataset=foreign.dataset)
+        elif mismatch == "column_dataset":
+            Column.objects.filter(pk=column.pk).update(dataset=foreign.dataset)
+        else:
+            column.delete()
+        return ["text"]
+
+    embeddings = Mock()
+    embeddings.inputs_type_list.side_effect = change_stored_relationship
+    embeddings.process_examples.return_value = []
+    with (
+        patch.object(auto_annotate, "EmbeddingManager", return_value=embeddings),
+        patch.object(auto_annotate, "log_and_deduct_cost_for_api_request"),
+        patch.object(auto_annotate, "count_tiktoken_tokens", return_value=1),
+    ):
+        _run(own, annotation)
+    model_boundaries[0].evaluate.assert_not_called()
+    embeddings.retrieve_avg_rag_based_examples.assert_not_called()
+    assert Cell.objects.get(column=output, row=own.row).status == "error"
 
 
 def test_run_model_rejects_foreign_row_when_called_directly(tenants):

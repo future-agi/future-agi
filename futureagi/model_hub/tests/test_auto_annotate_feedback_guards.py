@@ -200,6 +200,45 @@ def test_feedback_ignores_review_in_foreign_cell_dataset(tenants):
     assert sentinel.value == "Foreign review"
 
 
+def test_feedback_revalidates_column_returned_by_allocation(tenants):
+    own, foreign, _ = tenants
+    annotation, output = _annotation(own)
+    annotation.assigned_users.add(own.user)
+    annotation.responses = 2
+    annotation.save()
+    Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=output,
+        value="Other reviewer",
+        feedback_info={"annotation": {"user_id": str(foreign.user.id)}},
+    )
+    foreign_column = _output_column(foreign.dataset, output.source_id)
+    sentinel = Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=foreign_column,
+        value="Untouched",
+        feedback_info={"annotation": {"user_id": str(own.user.id)}},
+    )
+    with (
+        patch.object(
+            auto_annotate.generate_annotations_task, "apply_async"
+        ) as dispatch,
+        patch("model_hub.views.develop_annotations.EmbeddingManager"),
+    ):
+        response = own.client.post(
+            f"/model-hub/annotations/{annotation.id}/update_cells/",
+            {"label_values": [_update(own, output)]},
+            format="json",
+        )
+    assert response.status_code == 404, response.content
+    clear_workspace_context()
+    sentinel.refresh_from_db()
+    assert sentinel.value == "Untouched"
+    dispatch.assert_not_called()
+
+
 @pytest.mark.parametrize("mismatch", ["column_dataset", "column_deleted"])
 def test_feedback_rag_excludes_inconsistent_input_columns(tenants, mismatch):
     own, foreign, _ = tenants
