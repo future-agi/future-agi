@@ -7,6 +7,7 @@ Outputs: issues[] + key_moments[] + meta{}
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
     _OK_STATUS,
     _get_span_kind,
+    _tool_names_from_definitions,
     attribute_key_moments,
     build_trace_payload,
     extract_programmatic_metadata,
@@ -247,24 +249,29 @@ _STATUS_WORD = re.compile(r"[a-z0-9_]+")
 # Where a quote is split into sentences: one passage per cite when a quote has
 # no per-cite passages, and one checked sentence at a time within a passage.
 _PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
-# Words of a quote with punctuation and casing set aside.
+# Words of a quote with punctuation and casing set aside. An apostrophe inside
+# a word is punctuation too: "can't", "can’t" and "cant" are one word.
 _WORD = re.compile(r"\w+")
+_INWORD_APOSTROPHE = re.compile(r"(?<=\w)['\u2019](?=\w)")
 # An optional label in front of a quote of the tools list, as the prompt shows it.
 _TOOLS_LABEL = re.compile(r"^tools available\s*:\s*")
 # Attributes a trace records a called tool's name under: the tool span's own
 # name (``tool.name``, ``gen_ai.tool.name``) and the function name of a tool
 # call on the span that made it (``...tool_calls.N.tool_call.function.name``).
-# The tool definitions sent to the model (``llm.tools.N...``) name the tools
-# available, not the ones called.
+# The tool definitions sent to the model (``llm.tools.N...``, under any
+# prefix) name the tools available, not the ones called.
 _TOOL_NAME_KEY = re.compile(
-    r"(?:^|\.)(?:tool\.name|tool_call\.function\.name|function_call\.name)$"
+    r"(?:^|[._])(?:tool[._]name|tool_call\.function\.name|function_call\.name)$"
 )
-_TOOL_DEFINITION_KEY = re.compile(r"^llm\.tools\.|tool\.definitions")
+_TOOL_DEFINITION_KEY = re.compile(r"(?:^|\.)llm\.tools\.|tool[._]definitions")
 # Words a tool span's name can carry besides the tool's own name. A span name
-# made only of these ("Tool", "tool_call") does not say which tool ran.
+# with "tool" in it ("Tool #1", "execute_tool") or made only of these words
+# ("run", "function_call") does not say which tool ran.
 _TOOL_SPAN_WORDS = frozenset(
     {"tool", "tools", "call", "calls", "function", "execute", "run", "invoke"}
 )
+_TOOL_LABEL_WORDS = frozenset({"tool", "tools"})
+_TOOL_KINDS = {"Tool", "TOOL"}
 
 
 def _cites(verdict: dict[str, Any]):
@@ -386,45 +393,61 @@ def _recorded_tool_names(attrs) -> set[str]:
 
 
 def _names_listed_tool(span_name: str, listed: str) -> bool:
-    """Does a tool span's name carry this listed tool name as a whole name?"""
-    return bool(
-        listed
-        and re.search(rf"(?<![a-z0-9_]){re.escape(listed)}(?![a-z0-9_])", span_name)
-    )
+    """Does a tool span's name carry this tool name as a whole name?"""
+    if not listed or listed not in span_name:
+        return False
+    whole = rf"(?<![a-z0-9_]){re.escape(listed)}(?![a-z0-9_])"
+    return re.search(whole, span_name) is not None
 
 
-def _only_generic_words(span_name: str) -> bool:
-    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", span_name).casefold()
-    return set(re.findall(r"[a-z0-9]+", words)) <= _TOOL_SPAN_WORDS
+def _span_name_words(span_name: str) -> set[str]:
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", span_name).casefold()
+    return set(re.findall(r"[a-z0-9]+", spaced))
 
 
-def _called_tool_names(trace, listed: list[str]) -> set[str] | None:
+def _span_name_is_a_tool_name(span_name: str) -> bool:
+    """Can a tool span's own name be read as the name of the tool it ran?"""
+    words = _span_name_words(span_name)
+    return bool(words - _TOOL_SPAN_WORDS) and not words & _TOOL_LABEL_WORDS
+
+
+def _called_tool_names(trace) -> set[str] | None:
     """Names of the tools the trace recorded a call to, or None when it
     recorded a tool call whose tool cannot be named.
 
     A tool span (by the prefilter's rule) is a call of the tool its name
-    attribute names, of its own span name, and of every listed tool whose
-    name appears in that span name as a whole name ("Tool issue_refund" is a
-    call of issue_refund). A tool call recorded on the span that made it
-    counts too. A tool span with no name attribute and a span name such as
-    "Tool" could be a call of any listed tool, so nothing is known to be
-    uncalled. ``listed`` are the shown tool names, normalised for matching.
+    attribute names, of every declared tool whose name appears in its span
+    name as a whole name ("Tool issue_refund" is a call of issue_refund), and
+    of its own span name. A tool call recorded on the span that made it counts
+    too. A tool span named by none of these ("Tool #1", "run") could be a call
+    of any listed tool, so nothing is known to be uncalled; a span whose kind
+    says it is not a tool ("Tool Calls" on an LLM span) is not a call.
     """
+    spans = [
+        span
+        for top in (trace or {}).get("spans") or []
+        for span, _depth in flatten_spans(top)
+    ]
+    declared = set()
+    for span in spans:
+        names = _tool_names_from_definitions(span.get("span_attributes") or {})
+        declared |= {_norm_for_match(neutralize(n)) for n in names}
     called = set()
-    for top in (trace or {}).get("spans") or []:
-        for span, _depth in flatten_spans(top):
-            attrs = span.get("span_attributes") or {}
-            recorded = _recorded_tool_names(attrs)
-            called |= recorded
-            raw_name = str(span.get("span_name") or "")
-            kind = _get_span_kind(attrs)
-            if not (kind in {"Tool", "TOOL"} or "Tool" in raw_name):
-                continue
-            name = _norm_for_match(neutralize(raw_name))
-            called.add(name)
-            called |= {n for n in listed if _names_listed_tool(name, n)}
-            if not recorded and _only_generic_words(raw_name):
-                return None
+    for span in spans:
+        attrs = span.get("span_attributes") or {}
+        recorded = _recorded_tool_names(attrs)
+        called |= recorded
+        raw_name = str(span.get("span_name") or "")
+        kind = _get_span_kind(attrs)
+        if not (kind in _TOOL_KINDS or "Tool" in raw_name):
+            continue
+        name = _norm_for_match(neutralize(raw_name))
+        named = {n for n in declared if _names_listed_tool(name, n)}
+        called |= named | {name}
+        if recorded or named or _span_name_is_a_tool_name(raw_name):
+            continue
+        if not kind or kind in _TOOL_KINDS:
+            return None
     return called
 
 
@@ -475,35 +498,46 @@ def _passage_names_tools(passage: str, names: list[str], trace) -> bool:
     )
     if not in_order:
         return False
-    called = _called_tool_names(trace, listed)
+    called = _called_tool_names(trace)
     return called is not None and any(i not in called for i in items)
 
 
 def _words(text) -> str:
-    """A quote's words, space-separated and padded, with punctuation and casing
-    set aside, so a word sequence is matched on word boundaries."""
-    return f" {' '.join(_WORD.findall(str(text or '').casefold()))} "
+    """A quote's words, space-separated and padded, with punctuation, casing
+    and Unicode composition set aside, so a word sequence is matched on word
+    boundaries."""
+    folded = unicodedata.normalize("NFC", str(text or "").casefold())
+    return f" {' '.join(_WORD.findall(_INWORD_APOSTROPHE.sub('', folded)))} "
 
 
-def _sentence_is_quoted(sentence: str, fields: list[str]) -> bool:
-    """One sentence of a passage, found in the cited field on its own.
+def _sentence_is_quoted(sentence: str, first: bool, last: bool, recorded) -> bool:
+    """One sentence of a passage of several, found in one recorded sentence.
 
-    ``fields`` are the field copies as ``_words``. The sentence's words must
-    appear in the field as one run, in order: punctuation, casing and
-    whitespace may differ, but no word inside it may be changed, added or
-    left out.
+    ``recorded`` are the cited field's sentences as ``_words``. The sentence's
+    words must be that sentence's words, in order, with punctuation, casing
+    and whitespace set aside. A sentence break inside the passage must be one
+    in the field: the first sentence may start inside a recorded sentence but
+    ends where it ends, the last starts where one starts but may stop early,
+    and any sentence between them is a whole recorded sentence. A break the
+    passage adds cannot join words recorded in different places.
     """
     words = _words(sentence)
-    return not words.strip() or any(words in f for f in fields)
+    if not words.strip():
+        return True
+    if first:
+        return any(r.endswith(words) for r in recorded)
+    if last:
+        return any(r.startswith(words) for r in recorded)
+    return words in recorded
 
 
 def _passage_in_field(passage: str, values: list[str]) -> bool:
     """Is this passage a quote of the cited span field?
 
-    Punctuation and casing a model rewrites are set aside, but one passage is
-    one quote: unless its words appear in the field in order, every sentence
-    in it has to be found in the field on its own, so a real sentence cannot
-    carry an added one.
+    Punctuation, casing and whitespace a model rewrites are set aside, but no
+    word may be changed, added or left out: the passage's words must appear in
+    the field in order, or each of its sentences must be found in the field
+    on its own, joined at the field's own sentence breaks.
     """
     said = _norm_for_match(passage)
     fields = [_norm_for_match(v) for v in values]
@@ -518,7 +552,14 @@ def _passage_in_field(passage: str, values: list[str]) -> bool:
     if _words(said).strip() and any(_words(said) in f for f in field_words):
         return True
     sentences = [s for s in _PASSAGE_BREAK.split(said) if s]
-    return all(_sentence_is_quoted(s, field_words) for s in sentences)
+    if len(sentences) < 2:
+        return False
+    recorded = [_words(s) for f in fields for s in _PASSAGE_BREAK.split(f)]
+    last = len(sentences) - 1
+    return all(
+        _sentence_is_quoted(s, i == 0, i == last, recorded)
+        for i, s in enumerate(sentences)
+    )
 
 
 def _leading_quote(evidence: str, values: list[str]) -> str | None:

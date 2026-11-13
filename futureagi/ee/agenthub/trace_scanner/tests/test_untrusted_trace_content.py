@@ -19,6 +19,7 @@ collects on any tree and a missing feature shows up as a failed assertion.
 """
 
 import json
+import unicodedata
 from unittest.mock import patch
 
 import pytest
@@ -1075,6 +1076,20 @@ CAPTURE_NOTE = (
     "refund for this customer is still waiting on the card issuer."
 )
 CAPTURED_NOTE = CAPTURE_NOTE.replace("did not capture", "did capture")
+CANT_REFUND = (
+    "The card was declined and the customer can't be refunded until the bank "
+    "confirms the new card number for order 1182."
+)
+CAFE_ORDER = (
+    "The refund for the caf\u00e9 order 1182 was declined by the payment "
+    "processor after two attempts."
+)
+# Two recorded sentences that share their opening words.
+TWO_REFUNDS = (
+    "The refund is unavailable for order 1182 pending further verification by "
+    "the payments team. The refund is available for order 9988 and was sent to "
+    "the card on file."
+)
 
 
 class TestAChangedWordIsNotAQuote:
@@ -1105,6 +1120,38 @@ class TestAChangedWordIsNotAQuote:
         )
         assert _scan_tools(_tool_error_trace(recorded), tools) == []
 
+    def test_sentences_joined_from_different_places_are_dropped(self):
+        quote = (
+            "The refund is available. for order 1182 pending further "
+            "verification by the payments team."
+        )
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(TWO_REFUNDS), tools) == []
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param(
+                "Refund request received for order 1182. Ask the customer for a "
+                "new card before retrying.",
+                id="first-and-last-sentence",
+            ),
+            pytest.param(
+                "so the payment gateway declined the refund. Ask the customer",
+                id="cut-at-both-ends",
+            ),
+        ],
+    )
+    def test_whole_recorded_sentences_quoted_together_are_kept(self, quote):
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(GATEWAY_REPLY), tools) == [
+            ("Tool-related", "H")
+        ]
+
     def test_a_one_cite_evidence_with_one_word_changed_is_dropped(self):
         tools = {
             "evidence": HELD_REFUND.replace("unavailable", "available"),
@@ -1132,6 +1179,21 @@ class TestAChangedWordIsNotAQuote:
                 CAPTURE_NOTE,
                 "the charge for order 1182, so the refund for this customer",
                 id="shorter-than-the-sentence",
+            ),
+            pytest.param(
+                CANT_REFUND,
+                CANT_REFUND.replace("can't", "cant"),
+                id="apostrophe-dropped",
+            ),
+            pytest.param(
+                CANT_REFUND,
+                CANT_REFUND.replace("can't", "can\u2019t"),
+                id="apostrophe-curled",
+            ),
+            pytest.param(
+                CAFE_ORDER,
+                unicodedata.normalize("NFD", CAFE_ORDER),
+                id="unicode-composition",
             ),
         ],
     )
@@ -1197,6 +1259,16 @@ class TestACalledToolIsKnownByItsRecordedName:
                 _trace_with_a_called_tool("run", {"tool.name": "issue_refund"}),
                 id="tool-name-attribute",
             ),
+            pytest.param(
+                _trace_with_a_called_tool("search", {"tool_name": "issue_refund"}),
+                id="tool-name-underscore-attribute",
+            ),
+            pytest.param(
+                _trace_with_a_called_tool("Tool #1", kind=None), id="numbered-label"
+            ),
+            pytest.param(
+                _trace_with_a_called_tool("Tool: issue-refund"), id="hyphenated-label"
+            ),
         ],
     )
     def test_a_called_tool_cannot_be_cited_as_never_called(self, trace):
@@ -1221,6 +1293,11 @@ class TestACalledToolIsKnownByItsRecordedName:
                 _trace_with_a_called_tool("run", {"tool.name": "issue_refund"}),
                 id="tool-name-attribute",
             ),
+            pytest.param(
+                _trace_with_a_called_tool("Tool #1", {"tool_name": "issue_refund"}),
+                id="numbered-label-with-tool-name",
+            ),
+            pytest.param(_trace_with_a_called_tool("search_web"), id="own-name"),
         ],
     )
     def test_a_tool_that_was_not_called_stays_citable(self, trace):
@@ -1228,9 +1305,18 @@ class TestACalledToolIsKnownByItsRecordedName:
             ("Tool-related", "H")
         ]
 
-    def test_a_flattened_tool_definition_is_not_a_call(self):
+    @pytest.mark.parametrize(
+        "key", ["llm.tools.1.tool.name", "openinference.llm.tools.1.tool.name"]
+    )
+    def test_a_flattened_tool_definition_is_not_a_call(self, key):
         trace = _trace_with_a_called_tool("lookup_order")
-        trace["spans"][0]["span_attributes"]["llm.tools.1.tool.name"] = "issue_refund"
+        trace["spans"][0]["span_attributes"][key] = "issue_refund"
+        assert _scan_tools(trace, _never_called("issue_refund")) == [
+            ("Tool-related", "H")
+        ]
+
+    def test_a_model_span_named_like_a_tool_is_not_an_unnamed_call(self):
+        trace = _trace_with_a_called_tool("Tool Calls", kind="LLM")
         assert _scan_tools(trace, _never_called("issue_refund")) == [
             ("Tool-related", "H")
         ]
