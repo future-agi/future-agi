@@ -41,6 +41,9 @@ func New(cfg map[string]interface{}) *TopicGuardrail {
 func (g *TopicGuardrail) Name() string           { return "topic-restriction" }
 func (g *TopicGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// ChecksRequestTextOnly marks that Check reads only request messages.
+func (g *TopicGuardrail) ChecksRequestTextOnly() {}
+
 // Check enforces topic restrictions.
 func (g *TopicGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || input.Request == nil {

@@ -437,14 +437,15 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false
+#   allow_credentials: false              # cannot be true while allowed_origins is ["*"] or empty (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   # Proxy hops in front of the gateway that append to X-Forwarded-For. Video
-#   # routes (/v1/videos*) take the client address from the entry this many
-#   # hops from the right, and ignore X-Forwarded-For when 0 (the default).
+#   # Proxy hops in front of the gateway that append to X-Forwarded-For. The
+#   # client address (ip_acl, per-key allowed_ips, audit) is the entry this many
+#   # hops from the right; X-Forwarded-For is ignored when 0 (the default) and
+#   # X-Real-IP is never trusted.
 #   # Google Cloud external Application Load Balancer: 2. One nginx hop: 1.
 #   trusted_proxies: 1
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
