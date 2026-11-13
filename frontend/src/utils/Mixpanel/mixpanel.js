@@ -196,10 +196,33 @@ export const PropertyName = {
   goals: "goals",
 };
 
+const CUSTOM_MODEL_PROVIDERS = new Set([
+  "azure",
+  "openai",
+  "vertex_ai",
+  "custom",
+  "bedrock",
+  "sagemaker",
+]);
+
+// A custom-provider configuration can contain arbitrary credential field names.
+// Do not inspect, serialize, or forward its form/payload at this analytics boundary.
+const safeCustomModelProperties = (properties) => ({
+  model_provider: CUSTOM_MODEL_PROVIDERS.has(properties?.model_provider)
+    ? properties.model_provider
+    : "other",
+  operation: properties?.operation === "edit" ? "edit" : "create",
+});
+
 export const trackEvent = (eventName, properties) => {
   if (!MIXPANEL_ENABLED) return;
   try {
-    mixpanel.track(eventName, properties);
+    mixpanel.track(
+      eventName,
+      eventName === Events.customModelAdded
+        ? safeCustomModelProperties(properties)
+        : properties,
+    );
   } catch (error) {
     logger.error("Failed to track event:", error);
   }

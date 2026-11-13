@@ -135,7 +135,9 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
  * mail key. Distributed checks them with the opt-in only; Standalone always.
  */
 export function requiredMockValues(topology: MockTopology, evalBackground: boolean): Record<string, string> {
-  const pins = { ...gatewayValues(topology).allowed, FUTURE_AGI_TELEMETRY_DISABLED: 'true' };
+  // Opt-out still permits a minimal registration ping. Keep that ping local too.
+  const pins = { ...gatewayValues(topology).allowed, FUTURE_AGI_TELEMETRY_DISABLED: 'true',
+    FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9' };
   if (!evalBackground) return pins;
   return { ...pins, MODEL_SERVING_URL: MOCK_SERVING_BASE, ENV_TYPE: 'local', EE_LICENSE_KEY: '',
     NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false', TEMPORAL_HOST: topology.temporal,
@@ -148,6 +150,11 @@ export function requiredMockValues(topology: MockTopology, evalBackground: boole
 export function validateMockEnvironment(service: string, env: Record<string, string>, evalBackground = false,
   mounts: Container['Mounts'] = []): void {
   validateEnvironmentEntries(service, env, DISTRIBUTED, evalBackground, mounts);
+  // Registration happens on ordinary startup, not just background eval runs.
+  if (['backend', 'worker'].includes(service)) {
+    requireSafe(env.FUTURE_AGI_TELEMETRY_URL === requiredMockValues(DISTRIBUTED, false).FUTURE_AGI_TELEMETRY_URL,
+      `required ${service} FUTURE_AGI_TELEMETRY_URL mismatch`);
+  }
   if (!evalBackground) return;
   const { allowed } = gatewayValues(DISTRIBUTED);
   if (service === 'agentcc-gateway') {

@@ -264,6 +264,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Set up async inference support.
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
+	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
+	handlers.resultIPACL = cfg.IPACL
 
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
@@ -1142,6 +1144,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
+		return
+	}
 	// Limit batch request body to 10MB to prevent OOM.
 	const maxBatchBodySize = 10 << 20
 	limited := io.LimitReader(r.Body, maxBatchBodySize+1)
@@ -1183,6 +1190,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1237,6 +1249,11 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")

@@ -113265,6 +113265,30 @@
                 }
             }
         },
+        "AnnotationTaskAssignee": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "readOnly": true,
+                    "minLength": 1
+                }
+            }
+        },
         "AnnotationTask": {
             "required": [
                 "task_name"
@@ -113280,7 +113304,7 @@
                 "assigned_users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/User"
+                        "$ref": "#/definitions/AnnotationTaskAssignee"
                     },
                     "readOnly": true
                 },

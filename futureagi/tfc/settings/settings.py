@@ -164,7 +164,8 @@ REDIS_CACHE_SOCKET_TIMEOUT_SECONDS = float(
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
+# Technical error pages require an explicit DEBUG opt-in in every environment.
+DEBUG = os.getenv("DEBUG", "False").lower() in (
     "true",
     "1",
     "t",

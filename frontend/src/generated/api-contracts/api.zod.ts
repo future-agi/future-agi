@@ -17924,21 +17924,6 @@ export const ModelHubAnnotationTasksListQueryParams = zod.object({
     .describe("Optional AI model id to filter annotation tasks."),
 });
 
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemEmailMax = 254;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemNameMax = 255;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationNameMax = 255;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationDisplayNameMax = 255;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRegionMax = 16;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRequire2faGracePeriodDaysMin = 0;
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRequire2faGracePeriodDaysMax = 32767;
-
-export const modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemRoleMax = 255;
-
 export const modelHubAnnotationTasksListResponseResultsItemAiModelMonitorsItemNameMax = 255;
 
 export const modelHubAnnotationTasksListResponseResultsItemAiModelMonitorsItemDimensionMax = 255;
@@ -17964,87 +17949,8 @@ export const ModelHubAnnotationTasksListResponse = zod.object({
         .array(
           zod.object({
             id: zod.string().uuid().optional(),
-            email: zod
-              .string()
-              .email()
-              .min(1)
-              .max(
-                modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemEmailMax,
-              ),
-            name: zod
-              .string()
-              .min(1)
-              .max(
-                modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemNameMax,
-              ),
-            organization_role: zod
-              .enum([
-                "Owner",
-                "Admin",
-                "Member",
-                "Viewer",
-                "workspace_admin",
-                "workspace_member",
-                "workspace_viewer",
-              ])
-              .optional(),
-            organization: zod
-              .object({
-                id: zod.string().uuid().optional(),
-                created_at: zod.string().datetime({ offset: true }).optional(),
-                name: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationNameMax,
-                  ),
-                display_name: zod
-                  .string()
-                  .max(
-                    modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationDisplayNameMax,
-                  )
-                  .optional(),
-                is_new: zod.boolean().optional(),
-                ws_enabled: zod.boolean().optional(),
-                region: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRegionMax,
-                  )
-                  .optional(),
-                require_2fa: zod.boolean().optional(),
-                require_2fa_grace_period_days: zod
-                  .number()
-                  .min(
-                    modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRequire2faGracePeriodDaysMin,
-                  )
-                  .max(
-                    modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemOrganizationRequire2faGracePeriodDaysMax,
-                  )
-                  .optional(),
-                require_2fa_enforced_at: zod
-                  .string()
-                  .datetime({ offset: true })
-                  .optional(),
-              })
-              .optional(),
-            created_at: zod.string().datetime({ offset: true }).optional(),
-            status: zod.string().optional(),
-            role: zod
-              .string()
-              .max(
-                modelHubAnnotationTasksListResponseResultsItemAssignedUsersItemRoleMax,
-              )
-              .optional()
-              .describe(
-                "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-              ),
-            goals: zod
-              .object({})
-              .passthrough()
-              .optional()
-              .describe("List of user's goals for using the platform"),
+            name: zod.string().min(1).optional(),
+            email: zod.string().email().min(1).optional(),
           }),
         )
         .optional(),
@@ -18155,21 +18061,6 @@ export const ModelHubAnnotationTasksReadParams = zod.object({
   id: zod.string(),
 });
 
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemEmailMax = 254;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemNameMax = 255;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationNameMax = 255;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationDisplayNameMax = 255;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRegionMax = 16;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRequire2faGracePeriodDaysMin = 0;
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRequire2faGracePeriodDaysMax = 32767;
-
-export const modelHubAnnotationTasksReadResponseAssignedUsersItemRoleMax = 255;
-
 export const modelHubAnnotationTasksReadResponseAiModelMonitorsItemNameMax = 255;
 
 export const modelHubAnnotationTasksReadResponseAiModelMonitorsItemDimensionMax = 255;
@@ -18189,81 +18080,8 @@ export const ModelHubAnnotationTasksReadResponse = zod.object({
     .array(
       zod.object({
         id: zod.string().uuid().optional(),
-        email: zod
-          .string()
-          .email()
-          .min(1)
-          .max(modelHubAnnotationTasksReadResponseAssignedUsersItemEmailMax),
-        name: zod
-          .string()
-          .min(1)
-          .max(modelHubAnnotationTasksReadResponseAssignedUsersItemNameMax),
-        organization_role: zod
-          .enum([
-            "Owner",
-            "Admin",
-            "Member",
-            "Viewer",
-            "workspace_admin",
-            "workspace_member",
-            "workspace_viewer",
-          ])
-          .optional(),
-        organization: zod
-          .object({
-            id: zod.string().uuid().optional(),
-            created_at: zod.string().datetime({ offset: true }).optional(),
-            name: zod
-              .string()
-              .min(1)
-              .max(
-                modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationNameMax,
-              ),
-            display_name: zod
-              .string()
-              .max(
-                modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationDisplayNameMax,
-              )
-              .optional(),
-            is_new: zod.boolean().optional(),
-            ws_enabled: zod.boolean().optional(),
-            region: zod
-              .string()
-              .min(1)
-              .max(
-                modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRegionMax,
-              )
-              .optional(),
-            require_2fa: zod.boolean().optional(),
-            require_2fa_grace_period_days: zod
-              .number()
-              .min(
-                modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRequire2faGracePeriodDaysMin,
-              )
-              .max(
-                modelHubAnnotationTasksReadResponseAssignedUsersItemOrganizationRequire2faGracePeriodDaysMax,
-              )
-              .optional(),
-            require_2fa_enforced_at: zod
-              .string()
-              .datetime({ offset: true })
-              .optional(),
-          })
-          .optional(),
-        created_at: zod.string().datetime({ offset: true }).optional(),
-        status: zod.string().optional(),
-        role: zod
-          .string()
-          .max(modelHubAnnotationTasksReadResponseAssignedUsersItemRoleMax)
-          .optional()
-          .describe(
-            "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-          ),
-        goals: zod
-          .object({})
-          .passthrough()
-          .optional()
-          .describe("List of user's goals for using the platform"),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
       }),
     )
     .optional(),
