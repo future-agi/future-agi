@@ -39,6 +39,8 @@ from simulate.services.hosted_harness import HostedHarnessError
 logger = structlog.get_logger(__name__)
 
 CERTIFICATE = "runtime-validation.json"
+TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
+ACTION_CERTIFICATION = "generic-harness/action-certification.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
@@ -69,6 +71,7 @@ _RESET = {
     "size": None,
     "bundle_digest": None,
     "certificate": None,
+    "certification_files": None,
     "built_by_attempt": None,
     "error": None,
 }
@@ -196,6 +199,21 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
+    """The per-tool and per-action certification among a sealed bundle's files, with
+    the key of the archive they are kept with."""
+
+    def items(path: str, name: str) -> list[dict[str, Any]]:
+        values = (_json_object(files.get(path)) or {}).get(name)
+        return [one for one in values or [] if isinstance(one, dict)]
+
+    return {
+        "object_key": object_key,
+        "tools": items(TOOL_CERTIFICATION, "tools"),
+        "actions": items(ACTION_CERTIFICATION, "actions"),
+    }
+
+
 def manifest_facts(sealed: Mapping[str, bytes]) -> tuple[str | None, str | None]:
     """The sealed bundle's digest and the source fingerprint it was built from."""
     manifest = _json_object(sealed.get(SEALED_MANIFEST)) or {}
@@ -305,6 +323,7 @@ def seed_ready_bundle(
         "sha256": sha256,
         "size": size,
         "certificate": certificate,
+        "certification_files": certification_files(sealed, object_key),
         "warnings": [],
         "error": None,
     }
@@ -1114,6 +1133,7 @@ def fill_bundle(
                 size=len(body),
                 bundle_digest=digest,
                 certificate=certificate,
+                certification_files=certification_files(sealed, object_key),
                 warnings=certify_warnings(sandbox),
                 built_by_attempt_id=attempt.id,
                 error=None,
