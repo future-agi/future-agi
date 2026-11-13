@@ -31,7 +31,9 @@ def routes(settings):
     ]
 
 
-def test_context_suite_isolated_from_leaf_and_other_scope(admin, other_scope, context, hub_skill):
+def test_context_suite_isolated_from_leaf_and_other_scope(
+    admin, other_scope, context, hub_skill
+):
     url = f"/model-hub/skills/contexts/{context.pk}/tests/"
     response = admin.get(url)
     assert response.status_code == 200, response.data
@@ -40,25 +42,39 @@ def test_context_suite_isolated_from_leaf_and_other_scope(admin, other_scope, co
     assert response.data["result"]["cases"] == []
     assert other_scope.get(url).status_code == 404
     assert admin.get(f"/model-hub/skills/{context.pk}/tests/").status_code == 404
-    assert admin.get(f"/model-hub/skills/contexts/{hub_skill.pk}/tests/").status_code == 404
+    assert (
+        admin.get(f"/model-hub/skills/contexts/{hub_skill.pk}/tests/").status_code
+        == 404
+    )
 
 
 def test_context_capture_read_edit_cas_and_lineage(admin, other_scope, context, trace):
     root = f"/model-hub/skills/contexts/{context.pk}/"
-    source = admin.post(root + "captures/source/", {"trace_ref": trace[0]}, format="json")
+    source = admin.post(
+        root + "captures/source/", {"trace_ref": trace[0]}, format="json"
+    )
     assert source.status_code == 200, source.data
-    preview = admin.post(root + "captures/preview/", {
-        "trace_ref": source.data["result"]["trace_ref"],
-        "selected_segment_ids": [source.data["result"]["segments"][0]["id"]],
-    }, format="json")
+    preview = admin.post(
+        root + "captures/preview/",
+        {
+            "trace_ref": source.data["result"]["trace_ref"],
+            "selected_segment_ids": [source.data["result"]["segments"][0]["id"]],
+        },
+        format="json",
+    )
     assert preview.status_code == 200, preview.data
     packet = preview.data["result"]
-    result = admin.post(root + f"captures/{packet['capture_id']}/accept/", {
-        "source_fingerprint": packet["source_fingerprint"],
-        "suite_revision": 0,
-        "case": capture_tests.case_input(),
-        "acknowledge_workspace_sharing": True,
-    }, format="json", HTTP_IDEMPOTENCY_KEY=str(uuid4()))
+    result = admin.post(
+        root + f"captures/{packet['capture_id']}/accept/",
+        {
+            "source_fingerprint": packet["source_fingerprint"],
+            "suite_revision": 0,
+            "case": capture_tests.case_input(),
+            "acknowledge_workspace_sharing": True,
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
     assert result.status_code == 200, result.data
     suite = admin.get(root + "tests/").data["result"]
     assert suite == result.data["result"]
@@ -69,9 +85,24 @@ def test_context_capture_read_edit_cas_and_lineage(admin, other_scope, context, 
     assert capture.selected_text is None
     cases = [{**suite["cases"][0], "title": "Reviewed refund after capture"}]
     # Read-only response annotations are not accepted as authored case fields.
-    cases = [{key: value for key, value in item.items() if key in {
-        "id", "source_group_id", "title", "prompt", "fixtures", "expected_trigger", "checks", "reviewed"
-    }} for item in cases]
+    cases = [
+        {
+            key: value
+            for key, value in item.items()
+            if key
+            in {
+                "id",
+                "source_group_id",
+                "title",
+                "prompt",
+                "fixtures",
+                "expected_trigger",
+                "checks",
+                "reviewed",
+            }
+        }
+        for item in cases
+    ]
     body = {"revision": suite["revision"], "cases": cases}
     assert other_scope.put(root + "tests/", body, format="json").status_code == 404
     saved = admin.put(root + "tests/", body, format="json")
@@ -89,24 +120,40 @@ def test_context_capture_read_edit_cas_and_lineage(admin, other_scope, context, 
 def test_capture_selection_keeps_source_order(admin, context, trace, selection):
     """Checkbox click order must not rewrite the captured conversation/fixtures."""
     ref, row, *_ = trace
-    row["input"] = json.dumps({"messages": [
-        {"role": "user", "content": "First check whether this order is refundable."},
-        {"role": "tool", "content": "The order is refundable."},
-        {"role": "user", "content": "Correction: do not refund; check shipping instead."},
-        {"role": "tool", "content": "The package is in transit."},
-    ]})
+    row["input"] = json.dumps(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "First check whether this order is refundable.",
+                },
+                {"role": "tool", "content": "The order is refundable."},
+                {
+                    "role": "user",
+                    "content": "Correction: do not refund; check shipping instead.",
+                },
+                {"role": "tool", "content": "The package is in transit."},
+            ]
+        }
+    )
     root = f"/model-hub/skills/contexts/{context.pk}/"
     source = admin.post(root + "captures/source/", {"trace_ref": ref}, format="json")
     assert source.status_code == 200, source.data
     segments = source.data["result"]["segments"]
-    response = admin.post(root + "captures/preview/", {
-        "trace_ref": source.data["result"]["trace_ref"],
-        "selected_segment_ids": [segments[index]["id"] for index in selection],
-    }, format="json")
+    response = admin.post(
+        root + "captures/preview/",
+        {
+            "trace_ref": source.data["result"]["trace_ref"],
+            "selected_segment_ids": [segments[index]["id"] for index in selection],
+        },
+        format="json",
+    )
     assert response.status_code == 200, response.data
     expected = [segments[index] for index in sorted(selection)]
     assert response.data["result"]["segments"] == expected
-    capture = HubSkillContextCapture.objects.get(pk=response.data["result"]["capture_id"])
+    capture = HubSkillContextCapture.objects.get(
+        pk=response.data["result"]["capture_id"]
+    )
     assert [
         {key: item[key] for key in ("id", "kind", "text")}
         for item in capture.selected_text
@@ -116,18 +163,29 @@ def test_capture_selection_keeps_source_order(admin, context, trace, selection):
 
 def test_capture_reads_real_collector_scalar_identity(principal, context, trace):
     ref, row, _, calls, _ = trace
-    expected = {"id": str(context.pk), "version_id": str(uuid4()), "digest": "sha256:" + "a" * 64}
-    row["scalar_attributes"] = {f"fi.context.{key}": value for key, value in expected.items()}
+    expected = {
+        "id": str(context.pk),
+        "version_id": str(uuid4()),
+        "digest": "sha256:" + "a" * 64,
+    }
+    row["scalar_attributes"] = {
+        f"fi.context.{key}": value for key, value in expected.items()
+    }
     result = read_trace_source(principal=principal, trace_ref=ref)
     assert result["recorded_context"] == expected
     assert "attrs_string" in calls[0][0]
     # A changed identity must change the independently bound source fingerprint.
     row["scalar_attributes"]["fi.context.version_id"] = str(uuid4())
-    assert read_trace_source(principal=principal, trace_ref=ref)["source_fingerprint"] != result["source_fingerprint"]
+    assert (
+        read_trace_source(principal=principal, trace_ref=ref)["source_fingerprint"]
+        != result["source_fingerprint"]
+    )
 
 
 @pytest.mark.parametrize("conflict", ["different", {"invalid": "object"}])
-def test_capture_does_not_resolve_conflicting_identity_by_precedence(principal, trace, conflict):
+def test_capture_does_not_resolve_conflicting_identity_by_precedence(
+    principal, trace, conflict
+):
     ref, row, *_ = trace
     row["scalar_attributes"] = {"fi.context.id": "recorded"}
     row["span_attributes"] = {"fi.context.id": conflict}

@@ -13,7 +13,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from model_hub.services.skills_hub.checks import (
     parse_frontmatter,
@@ -30,7 +30,9 @@ from model_hub.services.skills_hub.limits import (
     MAX_ZIP_ENTRIES,
 )
 from model_hub.services.skills_hub.packages import manifest_digest
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v12.compiler import compile_context
+from model_hub.services.skills_hub.v12.types import LinkInput, LockedLink
 
 # Input inspection is bounded independently from the much smaller compiled limit.
 MAX_INPUT_BYTES = MAX_UNZIPPED_BYTES
@@ -137,7 +139,8 @@ def _row(path: str, raw: bytes) -> tuple[dict, str | None]:
 def _member(
     key: str, root: str, entries: list[tuple[str, bytes]], source: dict | None = None
 ) -> dict:
-    rows, files = [], []
+    rows: list[dict] = []
+    files: list[FileInput] = []
     for path, raw in entries:
         row, text = _row(path, raw)
         rows.append(row)
@@ -350,8 +353,10 @@ def _exchange(path: Path, prefix: str, sink: list | None = None) -> list[dict]:
     return members
 
 
-def _compile(members: list[dict], name: str, description: str, owned: list[dict]):
-    links, locked, snapshots = [], [], {}
+def _compile(members: list[dict], name: str, description: str, owned: list[FileInput]):
+    links: list[LinkInput] = []
+    locked: list[LockedLink] = []
+    snapshots: dict[UUID, list[FileInput]] = {}
     for member in members:
         identity = str(uuid5(NAMESPACE_URL, "local-preview/skill/" + member["key"]))
         version = uuid5(NAMESPACE_URL, "local-preview/version/" + member["key"])
@@ -376,7 +381,7 @@ def _compile(members: list[dict], name: str, description: str, owned: list[dict]
     )
 
 
-def _closure(included: list[dict], name: str, description: str, owned: list[dict]):
+def _closure(included: list[dict], name: str, description: str, owned: list[FileInput]):
     closure = {
         "fits": False,
         "identity_kind": "unpublished-version-1-projection",
@@ -439,8 +444,9 @@ def inventory(
                 or any(ord(c) < 32 for c in value)
             ):
                 raise ValueError("Invalid local source identity")
-    members, unowned = [], []
-    folder_identities = {}
+    members: list[dict] = []
+    unowned: list[dict] = []
+    folder_identities: dict[str, dict] = {}
 
     def check_budget():
         if (
@@ -454,11 +460,11 @@ def inventory(
                 "Complete collection exceeds bounded intake; no partial result"
             )
 
-    sources = [] if capture is not None else None
+    sources: list[dict] | None = [] if capture is not None else None
     for index, folder in enumerate(folders):
-        entries = [] if capture is not None else None
+        entries: list | None = [] if capture is not None else None
         found, others = _folder(folder, f"folder-{index}", entries)
-        identities = {}
+        identities: dict[str, dict] = {}
         members.extend(found)
         unowned.extend(others)
         if local_source is not None:
@@ -495,10 +501,10 @@ def inventory(
                 }
             )
     for index, exchange in enumerate(exchanges):
-        exports = [] if capture is not None else None
+        exports: list | None = [] if capture is not None else None
         members.extend(_exchange(exchange, f"exchange-{index}", exports))
         check_budget()
-        if sources is not None:
+        if sources is not None and exports is not None:
             sources.append({"kind": "langfuse", "export": exports[0]})
     if not members:
         raise ValueError("No SKILL.md roots found")
@@ -528,7 +534,7 @@ def inventory(
         else [member for member in members if member["key"] in selected]
     )
     root = read_local_file(agents, MAX_FILE_BYTES).decode("utf-8")
-    owned = [{"path": "AGENTS.md", "content": root}]
+    owned: list[FileInput] = [{"path": "AGENTS.md", "content": root}]
     closure = _closure(included, name, description, owned)
     # Without an explicit selection, also project the closure of every member
     # that has no blocker. This is a proposal shown for review, never an

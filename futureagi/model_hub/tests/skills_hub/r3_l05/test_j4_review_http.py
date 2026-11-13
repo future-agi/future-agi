@@ -12,13 +12,18 @@ from model_hub.models.skills_hub_v12 import HubSkillContextBinding
 from model_hub.services.skills_hub.v12.credentials import canonical_digest
 from model_hub.tests.skills_hub import test_i2_integration as http_fixtures
 from model_hub.tests.skills_hub.r3_l04 import conftest as native_fixtures
+from model_hub.tests.skills_hub.r3_l04 import test_native_privacy as privacy
+from model_hub.tests.skills_hub.r3_l05 import test_release_requests as fixtures
 
 
 def stored_native(configuration):
     """Native evidence identity as production stores it."""
-    return {"schema": 1, "digest": canonical_digest(configuration), "native": configuration}
-from model_hub.tests.skills_hub.r3_l04 import test_native_privacy as privacy
-from model_hub.tests.skills_hub.r3_l05 import test_release_requests as fixtures
+    return {
+        "schema": 1,
+        "digest": canonical_digest(configuration),
+        "native": configuration,
+    }
+
 
 admin = http_fixtures.admin
 actors = fixtures.actors

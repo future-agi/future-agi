@@ -937,7 +937,16 @@ class _ExactJSONMember(Func):
     arity = 2
     output_field = BooleanField()
 
-    def as_sql(self, compiler, connection, **extra_context):
+    def as_sql(
+        self,
+        compiler,
+        connection,
+        function=None,
+        template=None,
+        arg_joiner=None,
+        **extra_context,
+    ):
+        # The fixed SQL shape ignores Func's function/template/joiner overrides.
         member, member_params = compiler.compile(self.source_expressions[0])
         array, array_params = compiler.compile(self.source_expressions[1])
         return (
@@ -1146,9 +1155,7 @@ def _observation(
                 else (
                     "observe_runtime"
                     if "unknown" in states
-                    else "check_reporter"
-                    if "stale_observation" in states
-                    else "none"
+                    else "check_reporter" if "stale_observation" in states else "none"
                 )
             )
         )

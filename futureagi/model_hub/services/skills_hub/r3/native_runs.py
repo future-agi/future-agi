@@ -45,6 +45,7 @@ from model_hub.services.skills_hub.r3.native_evidence import (
 from model_hub.services.skills_hub.r3.native_reducer import (
     NativeCheck,
     NativeTrial,
+    Verdict,
     planned_matrix,
     reduce_native_results,
 )
@@ -305,7 +306,7 @@ def qualify_application_target(
 # --- Planning ----------------------------------------------------------------
 
 
-def _version(context, number: int) -> HubSkillVersion:
+def _version(context, number: object) -> HubSkillVersion:
     if type(number) is not int or number < 1:
         raise _error("version_not_found", "Choose a published version.", 404)
     version = (
@@ -387,7 +388,8 @@ def parse_expectations(case: dict) -> dict | None:
 
 
 def _state_key(configuration: dict) -> str:
-    return configuration["state_schema"].split("/", 1)[0]
+    schema: str = configuration["state_schema"]
+    return schema.split("/", 1)[0]
 
 
 def _state_fixture(case: dict, key: str) -> bool:
@@ -965,7 +967,7 @@ def grade_observation(*, control: dict, case: dict, variant: str, body: dict) ->
     attempted = sorted({row.get("action") for row in operations})
     answer = application.get("output") if completed else None
 
-    def verdict(value: bool) -> str:
+    def verdict(value: bool) -> Verdict:
         return "pass" if value else "fail"
 
     checks = []
@@ -1155,15 +1157,17 @@ def ingest_observation(*, attempt: HostedHarnessAttempt, body: dict) -> dict:
     return {"accepted": True, "received": received, "planned": len(spec.matrix)}
 
 
-def report_guest_failure(*, attempt: HostedHarnessAttempt, reason: str) -> dict:
-    code = reason if re.fullmatch(r"[a-z0-9_]{1,64}", str(reason)) else "guest_failed"
+def report_guest_failure(*, attempt: HostedHarnessAttempt, reason: object) -> dict:
+    text = str(reason)
+    code = text if re.fullmatch(r"[a-z0-9_]{1,64}", text) else "guest_failed"
     _finish(attempt.job_id, attempt.pk, failure=code)
     return {"accepted": True}
 
 
 def _control_cases(job: HostedHarnessJob) -> list[dict]:
     # Frozen reviewed cases (checks/expectations) stay evaluator-side only.
-    return job.payload["skills_native_control"]["cases"]
+    cases: list[dict] = job.payload["skills_native_control"]["cases"]
+    return cases
 
 
 def _finish(job_id: UUID, attempt_id: UUID, *, failure: str | None) -> None:
@@ -1211,6 +1215,9 @@ def _finish(job_id: UUID, attempt_id: UUID, *, failure: str | None) -> None:
 def _scope(job: HostedHarnessJob):
     from model_hub.services.skills_hub.v11.types import SkillScope
 
+    if job.workspace_id is None:
+        # Native Skills jobs are only ever created inside a workspace scope.
+        raise _error("resource_not_found", "The native run is unavailable.", 404)
     return SkillScope(
         organization_id=job.organization_id, workspace_id=job.workspace_id
     )
@@ -1219,7 +1226,7 @@ def _scope(job: HostedHarnessJob):
 # --- Reader ------------------------------------------------------------------
 
 
-def _reduce(job: HostedHarnessJob) -> tuple[dict, dict[str, dict]]:
+def _reduce(job: HostedHarnessJob) -> tuple[dict, dict[str, HostedHarnessReceipt]]:
     control = job.payload["skills_native_control"]
     spec = _spec(job)
     receipts = {

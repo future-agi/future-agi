@@ -245,9 +245,7 @@ def read_trace_source(*, principal: SkillPrincipal, trace_ref: dict) -> dict:
     # JSON overflow. Retain legacy metadata support without silently resolving
     # conflicting physical-source identities by precedence.
     scalar_attributes = _decode(row.get("scalar_attributes"))
-    scalar_attributes = (
-        scalar_attributes if isinstance(scalar_attributes, dict) else {}
-    )
+    scalar_attributes = scalar_attributes if isinstance(scalar_attributes, dict) else {}
     identity = {}
     for key in (
         "fi.context.id",
@@ -262,7 +260,9 @@ def read_trace_source(*, principal: SkillPrincipal, trace_ref: dict) -> dict:
         ]
         if any(not isinstance(value, str) for value in values) or len(set(values)) > 1:
             raise SkillsHubError(
-                "capture_unsafe", "The recorded source identity is ambiguous.", status=422
+                "capture_unsafe",
+                "The recorded source identity is ambiguous.",
+                status=422,
             )
         identity[key] = values[0] if values else None
     recorded = {
