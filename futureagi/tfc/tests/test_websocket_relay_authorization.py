@@ -437,8 +437,8 @@ def test_removed_member_socket_receives_no_former_org_traffic(
                 send_message_to_channel(org.pk, message)
             # The organization's own subscriber is the positive control.
             assert json.loads(own.recv(timeout=10)) == message
-            leaked = receive_optional(removed) if removed is not None else None
-            assert (status, leaked) == (403, None)
+            delivered = receive_optional(removed) if removed is not None else None
+            assert (status, delivered) == (403, None)
 
 
 def test_client_frames_never_reach_stream_subscribers(relay_server):
@@ -460,7 +460,7 @@ def test_client_frames_never_reach_stream_subscribers(relay_server):
         with socket_or_refusal(url) as (removed, status):
             if removed is not None:
                 subscribe(removed, target)
-                frame = {"type": "injected", "uuid": target, "data": {"text": "x"}}
+                frame = {"type": "client_stream", "uuid": target, "data": {"text": "x"}}
                 removed.send(json.dumps(frame))
             assert (status, receive_optional(own)) == (403, None)
 
