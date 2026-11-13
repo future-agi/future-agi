@@ -370,6 +370,26 @@
 - the access token left in the tab after B signs in resolves to B's user and organization
 - no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
 
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
@@ -2601,6 +2621,27 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2624,6 +2665,30 @@
 - no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
