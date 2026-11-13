@@ -19,6 +19,9 @@ from rest_framework.test import APIRequestFactory
 from tracer.models.entity_tag_assignment import EntityTagAssignment
 from tracer.services.clickhouse import graph_dispatch
 from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
+from tracer.services.clickhouse.query_builders.agent_graph import (
+    AgentGraphQueryBuilder,
+)
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
@@ -696,3 +699,135 @@ def test_trace_graph_tag_ignores_a_tagged_child_outside_the_window(
     total = sum(int(row["total_tokens"]) for row in graph_rows(stores, "trace", item))
     graphed = {t for t in ("alpha", "beta") if total & _tokens(t, "root")}
     assert graphed == expected
+
+
+AGENT_GRAPH_HOUR_PRUNE = "AND toStartOfHour(start_time) >= toStartOfHour("
+
+
+def agent_graph_query(stores, *leaves, traces=TRACES):
+    """The Agent Graph statement and the traces whose spans it counted."""
+    builder = AgentGraphQueryBuilder(project_id=PROJECT, filters=filters(*leaves))
+    sql, params = builder.build()
+    assert not any(isinstance(v, EffectiveTagRelation) for v in params.values())
+    assert set(re.findall(r"%\((\w+)\)s", sql)) <= set(params)
+    rows = stores.execute(sql, params)
+    total = sum(int(row["total_tokens"]) for row in rows if row["row_kind"] == "node")
+    return sql, {trace for trace in traces if total & _tokens(trace, "root")}
+
+
+def agent_graph_traces(stores, item, traces=TRACES):
+    """The traces whose spans the Observe Agent Graph counted under ``item``."""
+    return agent_graph_query(stores, item, traces=traces)[1]
+
+
+@pytest.mark.parametrize(
+    "column,operation,value,expected",
+    TRACE_CASES,
+    ids=[f"{c}-{o}-{v}" for c, o, v, _ in TRACE_CASES],
+)
+def test_agent_graph_matches_the_trace_list(stores, column, operation, value, expected):
+    tagged_project(stores)
+    item = leaf(column, value, operation)
+    listed = {row["trace_id"] for row in classify(stores, item, ids=TRACES)}
+    assert listed == expected
+    assert agent_graph_traces(stores, item) == expected
+
+
+@pytest.mark.parametrize(
+    "operation,value,expected",
+    [
+        ("equals", "late", set()),
+        ("not_equals", "late", {"alpha", "beta"}),
+        ("equals", "early", set()),
+        ("not_equals", "early", {"alpha", "beta"}),
+        ("equals", "inside", {"beta"}),
+        ("not_equals", "inside", {"alpha"}),
+    ],
+)
+def test_agent_graph_tag_ignores_a_tagged_child_outside_the_window(
+    stores, operation, value, expected
+):
+    """The Agent Graph's Tag leaf reads the same event-time window as the list.
+
+    Both roots are in the window. alpha's only tagged spans start after
+    (``late``) or before (``early``) it; beta's child carries ``inside`` within
+    it. The list does not match alpha on an out-of-window tag, so neither may
+    the Agent Graph, positively or negatively.
+    """
+    for trace in ("alpha", "beta"):
+        seed(stores, trace, span="root", total_tokens=_tokens(trace, "root"))
+    for span, start, tag in (
+        ("late", END + timedelta(minutes=30), "late"),
+        ("early", BEGIN - timedelta(hours=3), "early"),
+    ):
+        seed(
+            stores,
+            "alpha",
+            span=span,
+            parent_span_id="root",
+            start_time=start,
+            total_tokens=_tokens("alpha", "child"),
+            attrs_string={"tag.tags": f'["{tag}"]'},
+        )
+    seed(
+        stores,
+        "beta",
+        span="child",
+        parent_span_id="root",
+        total_tokens=_tokens("beta", "child"),
+        attrs_string={"tag.tags": '["inside"]'},
+    )
+    item = leaf("tag", value, operation)
+    listed = {row["trace_id"] for row in classify(stores, item, ids=("alpha", "beta"))}
+    assert listed == expected
+    assert agent_graph_traces(stores, item, ("alpha", "beta")) == expected
+
+
+def test_agent_graph_tag_window_leaves_other_leaves_unbounded(stores):
+    """Only the Tag witness is windowed; the read stays pruned only for Tags.
+
+    alpha's in-window root carries the SDK tag; its only ``customer=acme``
+    span starts three hours after the window. An attribute leaf is witnessed
+    by any span at any time, with or without a Tag leaf beside it, exactly as
+    in the trace list (see test_tag_leaf_does_not_hour_bound_other_any_span_leaves).
+    """
+    seed(
+        stores,
+        "alpha",
+        total_tokens=_tokens("alpha", "root"),
+        attrs_string={"tag.tags": '["sdk"]'},
+    )
+    seed(
+        stores,
+        "alpha",
+        span="late-child",
+        parent_span_id="root",
+        start_time=END + timedelta(hours=3),
+        total_tokens=_tokens("alpha", "child"),
+        attrs_string={"customer": "acme"},
+    )
+    seed(
+        stores,
+        "beta",
+        total_tokens=_tokens("beta", "root"),
+        attrs_string={"tag.tags": '["sdk"]'},
+    )
+    attribute = {
+        "column_id": "customer",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "acme",
+        },
+    }
+    traces = ("alpha", "beta")
+    sql, graphed = agent_graph_query(
+        stores, leaf("tag", "sdk"), attribute, traces=traces
+    )
+    assert graphed == {"alpha"}
+    assert AGENT_GRAPH_HOUR_PRUNE not in sql
+    # A Tag leaf alone reads only the window's physical hours.
+    sql, graphed = agent_graph_query(stores, leaf("tag", "sdk"), traces=traces)
+    assert graphed == {"alpha", "beta"}
+    assert AGENT_GRAPH_HOUR_PRUNE in sql

@@ -105,6 +105,11 @@ class ExactGraphRowPredicatePlan:
     # trace's root. Until ClickHouse merges them, a re-polled root has several
     # live physical versions, and a raw read must count that call once.
     root_contribution: bool = False
+    # Predicates whose witness must start inside the requested event-time
+    # window in every graph, including the Agent Graph, whose other membership
+    # witnesses are unbounded. Today only the effective Tag leaf: the list's tag
+    # relation reads that window, so a span tagged outside it never matches.
+    event_window_only: tuple[bool, ...] = ()
 
 
 def _filter_parts(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -816,6 +821,7 @@ def compile_exact_graph_row_predicates(
 
     predicates: list[str] = []
     output_window_only: list[bool] = []
+    event_window_only: list[bool] = []
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
@@ -924,6 +930,7 @@ def compile_exact_graph_row_predicates(
                 # window, as the list's tag relation is; other relations keep
                 # the wider witness envelope.
                 output_window_only.append(effective_tag_leaf)
+                event_window_only.append(effective_tag_leaf)
                 required_matches.append(required)
             annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (
@@ -1051,6 +1058,7 @@ def compile_exact_graph_row_predicates(
             root_contribution = True
         predicates.append(predicate)
         output_window_only.append(structured_attribute)
+        event_window_only.append(False)
         required_matches.append(True)
         match_condition_groups.append(((len(predicates) - 1, True),))
 
@@ -1076,6 +1084,7 @@ def compile_exact_graph_row_predicates(
         contribution_predicates=tuple(contribution_predicates),
         params=bound_params,
         root_contribution=root_contribution,
+        event_window_only=tuple(event_window_only),
     )
 
 

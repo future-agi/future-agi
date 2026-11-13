@@ -181,10 +181,16 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         contribution_condition = " AND ".join(
             f"({term})" for term in contribution_terms
         )
+        if len(plan.event_window_only) != len(plan.predicates):
+            raise AssertionError("agent graph predicate scopes must align")
         match_columns = []
         match_having = []
         for index in range(len(plan.predicates)):
             match_condition = f"graph_row_match_{index} = 1"
+            if plan.event_window_only[index]:
+                # A Tag witness counts only inside the requested window, as
+                # in the trace list and the Observe trace graph.
+                match_condition = f"({match_condition}) AND ({output_window})"
             match_columns.append(
                 "            max(toUInt8(ifNull(("
                 f"{match_condition}), 0))) AS graph_match_{index}"
@@ -205,6 +211,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # relation, Map, and JSON membership may be witnessed by any current
         # descendant at any timestamp. Keep the graph contribution array
         # request-window bounded, but never time-bound those membership flags.
+        # The effective Tag leaf is the exception (``event_window_only``).
         root_window_column = (
             "            max(toUInt8(ifNull(((parent_span_id IS NULL OR "
             "parent_span_id = '') AND ("
@@ -227,8 +234,11 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # must then replay candidate membership across all child timestamps;
         # ``groupArrayIf`` below still prevents those remote witnesses from
         # becoming graph nodes or edges.
+        # When every membership predicate is itself window-bounded (Tag leaves
+        # only), no row outside the window can contribute, be the in-window
+        # root, or witness membership, so the same pruned read stays exact.
         physical_window = ""
-        if not plan.predicates:
+        if all(plan.event_window_only):
             physical_window = (
                 "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
                 "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
