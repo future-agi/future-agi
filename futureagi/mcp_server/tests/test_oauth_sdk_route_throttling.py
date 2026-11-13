@@ -287,7 +287,7 @@ async def test_sdk_token_concurrent_burst_gets_at_most_the_limit(monkeypatch):
 
 
 @override_settings(**{**LOCKOUT_SETTINGS, "MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK": False})
-async def test_sdk_token_fails_closed_when_redis_is_unavailable(monkeypatch):
+async def test_sdk_token_is_refused_while_redis_is_unavailable(monkeypatch):
     def failing_script(**kwargs):
         raise RedisError("redis unavailable")
 
