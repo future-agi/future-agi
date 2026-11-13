@@ -1,5 +1,5 @@
 import { startTransition } from "react";
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { devtools } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
