@@ -54,6 +54,8 @@ def consume_settlement(event_id):
     event = AttachmentOutbox.objects.select_for_update().get(
         pk=event_id, event="settled"
     )
+    if event.upload_id is None:  # a settlement event always names its upload
+        raise AttachmentUpload.DoesNotExist
     upload = AttachmentUpload.objects.get(pk=event.upload_id, scope=event.scope)
     if not UploadReservation.objects.filter(
         upload=upload, scope=event.scope, settled_at__isnull=False
@@ -148,7 +150,7 @@ def expire_reservations(*, limit=100):
         # READY publication may have preceded a worker crash. Reconcile verified
         # storage rather than reporting already-stored bytes as expired/free.
         upload = AttachmentUpload.objects.get(pk=row.upload_id, scope_id=row.scope_id)
-        outcome = (
+        outcome: str = (
             AttachmentState.READY
             if upload.state == AttachmentState.READY
             else AttachmentState.EXPIRED

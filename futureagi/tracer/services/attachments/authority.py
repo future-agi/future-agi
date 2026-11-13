@@ -112,7 +112,7 @@ class LiveAuthority:
         if row["auth_origin"] == AuthTokenOrigin.SAML:
             try:
                 validate_saml_credential(
-                    row, str(viewer.user_id), now=now, transport="http"
+                    dict(row), str(viewer.user_id), now=now, transport="http"
                 )
             except SamlCredentialInvalid:
                 return False
@@ -126,7 +126,7 @@ class LiveAuthority:
                 "attachment_source_unavailable", project_id=str(scope.project_id)
             )
             return None
-        if span is None or getattr(span, "is_deleted", 1):
+        if span is None or getattr(span, "is_deleted", True):
             return None
         try:
             trace = UUID(str(span.trace_id))

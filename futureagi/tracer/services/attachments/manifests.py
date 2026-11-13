@@ -177,7 +177,7 @@ def read_manifest(viewer, authority, *, recording_id, parent):
         deletion_generation=scope.deletion_generation,
         manifest__isnull=False,
     ).first()
-    if recording is None:
+    if recording is None or recording.manifest is None:
         raise not_found()
     manifest = dict(recording.manifest)
     live = {
