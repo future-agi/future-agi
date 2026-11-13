@@ -33,7 +33,7 @@ test('knowledge-base download authorization and input boundaries', async ({ scop
       ['anonymous', {}, params, 401],
       ['object-selector', knowledgeHeaders(scopes.ownerA), { file_id: '../other' }, 400],
       ['encoded-selector', knowledgeHeaders(scopes.ownerA), { file_id: '..%2Fother' }, 400],
-      ['filename-injection', knowledgeHeaders(scopes.ownerA), { ...params, file_name: 'other.txt' }, 400],
+      ['unexpected-filename-parameter', knowledgeHeaders(scopes.ownerA), { ...params, file_name: 'other.txt' }, 400],
       ['missing-file', knowledgeHeaders(scopes.ownerA), {}, 400],
       ['unknown-file', knowledgeHeaders(scopes.ownerA), { file_id: '00000000-0000-0000-0000-000000000001' }, 404],
     ] as const) {

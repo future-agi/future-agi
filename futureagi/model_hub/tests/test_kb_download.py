@@ -174,13 +174,13 @@ def test_viewer_has_existing_read_permission(download_case):
     response.close()
 
 
-def test_header_filename_is_safe(download_case):
+def test_header_filename_normalizes_paths_and_control_characters(download_case):
     c = download_case
-    c.file.name = "../folder\\report\r\nInjected.txt"
+    c.file.name = "../folder\\report\r\nSuffix.txt"
     c.file.save()
     response = download_knowledge_base_file(c.request, c.kb.id, c.file.id)
     assert (
-        response["Content-Disposition"] == 'attachment; filename="reportInjected.txt"'
+        response["Content-Disposition"] == 'attachment; filename="reportSuffix.txt"'
     )
     response.close()
 
