@@ -525,16 +525,22 @@ class EvalLogger(BaseModel):
 
 
 class EvalRecalculation(models.Model):
-    """A Recalculate on an eval-task result that has not finished yet.
+    """A Recalculate that has not finished yet.
 
-    Recalculate retires the result (``previous``) and runs a new entry for the
-    same row and config (``replacement``) inside the user's request. This row
-    is written in the same transaction, and removed in the transaction that
-    finishes the recalculation: the replacement kept and the previous result's
-    Error Feed memberships retired, or the replacement retired and the
-    previous result put back. A row that outlives its request (the worker was
-    killed mid-eval) is finished by the eval-task sweep
+    Recalculate retires the span's live result for the config (``previous``)
+    and computes a new one inside the user's request. This row is written in
+    the same transaction as the retirement, and removed in the transaction
+    that finishes the recalculation: the new result kept and the previous
+    result's Error Feed memberships retired, or the previous result put back.
+    A row that outlives its request (the worker was killed mid-eval) is
+    finished by the eval-task sweep
     (``tracer.services.eval_tasks.recalculate.recover_stale_recalculations``).
+
+    ``replacement`` is the entry Recalculate inserted for a result an eval
+    task produced (one live entry per task, row and config). It is empty for
+    a result with no task (an inline Observe eval, an experiment span): the
+    per-span eval writes the new result itself, so the sweep finds it by the
+    previous result's span and config.
 
     Kept apart from ``tracer_eval_logger`` so the sweep reads a table that only
     holds recalculations in flight, not every result.
@@ -543,7 +549,8 @@ class EvalRecalculation(models.Model):
     replacement = models.OneToOneField(
         EvalLogger,
         on_delete=models.CASCADE,
-        primary_key=True,
+        null=True,
+        blank=True,
         related_name="+",
     )
     previous = models.ForeignKey(

@@ -172,20 +172,20 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
-from tracer.services.eval_tasks.entries import (
-    finish_retirement,
-    restore_retired,
-    retire_pending_replacement,
-)
 from tracer.services.eval_tasks.recalculate import (
     HANDED_TO_TASK,
+    KEPT,
     LEFT_RETIRED,
     RESTORED,
+    TERMINAL_STATUSES,
     RecalculationRefused,
     abandon_recalculation,
     begin_recalculation,
+    begin_untasked_recalculation,
+    close_untasked_recalculation,
     keep_replacement,
     refuse_unfinished,
+    refuse_while_untasked_runs,
 )
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
@@ -715,12 +715,20 @@ class _RecalculateLeftNoResult(Exception):
     (``tracer.services.eval_tasks.recalculate``): ``RESTORED`` (live again),
     ``LEFT_RETIRED`` (the task was deleted or rerun meanwhile, or a newer
     entry holds its slot) or ``HANDED_TO_TASK`` (the task's engine took the
-    recompute over).
+    recompute over). ``unfinished`` is set when the previous result had not
+    finished evaluating, so there was no earlier result to keep.
     """
 
-    def __init__(self, outcome: str = RESTORED):
+    def __init__(self, outcome: str = RESTORED, *, unfinished: bool = False):
         super().__init__()
         self.outcome = outcome
+        self.unfinished = unfinished
+
+    @property
+    def message(self) -> str:
+        if self.outcome == LEFT_RETIRED and self.unfinished:
+            return _LEFT_NO_RESULT_UNFINISHED_MESSAGE
+        return _LEFT_NO_RESULT_MESSAGES[self.outcome]
 
 
 _LEFT_NO_RESULT_MESSAGES = {
@@ -737,33 +745,39 @@ _LEFT_NO_RESULT_MESSAGES = {
     ),
 }
 
+_LEFT_NO_RESULT_UNFINISHED_MESSAGE = (
+    "The evaluation could not be recalculated. This result had not finished "
+    "evaluating, so there was no earlier result to keep."
+)
 
-def _recompute_task_result(previous, feedback_id):
-    """Recompute one eval-task result (Recalculate on an Observe result).
+
+def _recompute_task_result(previous, entry, feedback_id):
+    """Run a Recalculate on an eval-task result that ``begin_recalculation``
+    started (Recalculate on an Observe result).
 
     The result is an entry of the task's engine: at most one live entry per
-    (task, row, config), written by ``run_entry``. Only a finished result is
-    recomputed; one still pending or running (the task's run, or another
-    Recalculate's) is refused with ``RecalculationRefused`` and nothing
-    changes. In one transaction the previous result is retired, a new entry
-    for the same row and config takes its place, and the pair is recorded
-    (``EvalRecalculation``), so the row never has two live results nor none,
-    and a request that dies mid-eval is finished by the eval-task sweep. The
-    new entry is then run synchronously through ``run_entry``, the same eval
-    core the engine's workers use. Only a completed run keeps it. Otherwise
-    (the eval errored or was skipped, or the run raised) the new entry is
-    retired, the previous result is put back and ``_RecalculateLeftNoResult``
-    is raised; an exception from the run is re-raised after the same restore.
-    If something else retired the new entry meanwhile (the task was deleted,
-    Delete & rerun), that retirement stands and the previous result stays
-    retired too. If the task's engine took the new entry over (its reaper or
-    a pause requeued it), it is left to the engine and the sweep.
+    (task, row, config), written by ``run_entry``. A finished result, or one
+    its task will never finish (the task is paused, finished or failed), is
+    recomputed; one the task's run, or another Recalculate, still owns was
+    refused before this. In one transaction the previous result was retired,
+    ``entry`` took its place for the same row and config, and the pair was
+    recorded (``EvalRecalculation``), so the row never has two live results
+    nor none, and a request that dies mid-eval is finished by the eval-task
+    sweep. ``entry`` is now run synchronously through ``run_entry``, the same
+    eval core the engine's workers use. Only a completed run keeps it.
+    Otherwise (the eval errored or was skipped, or the run raised) the new
+    entry is retired, the previous result is put back (only a finished one)
+    and ``_RecalculateLeftNoResult`` is raised; an exception from the run is
+    re-raised after the same restore. If something else retired the new
+    entry meanwhile (the task was deleted, Delete & rerun), that retirement
+    stands and the previous result stays retired too. If the task's engine
+    took the new entry over (its reaper or a pause requeued it), it is left
+    to the engine and the sweep.
 
     See ``tracer.services.eval_tasks.recalculate``.
     """
     from tracer.services.eval_tasks.run_entry import run_entry
 
-    entry = begin_recalculation(previous)
     try:
         status = run_entry(entry, feedback_id=feedback_id)
     except Exception:
@@ -786,9 +800,16 @@ def _recompute_task_result(previous, feedback_id):
             if status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED)
             else (EvalEntryStatus.RUNNING if status == "deleted" else None),
         )
-        raise _RecalculateLeftNoResult(outcome)
+        raise _RecalculateLeftNoResult(
+            outcome, unfinished=previous.status not in TERMINAL_STATUSES
+        )
     keep_replacement(entry, previous)
     return True
+
+
+def _record_action_type(feedback, action_type) -> None:
+    feedback.action_type = action_type
+    feedback.save(update_fields=["action_type"])
 
 
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
@@ -1917,14 +1938,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
-    def _recalculate(self, request, observation_span, custom_eval_config, feedback_id):
+    def _recalculate(
+        self, request, observation_span, custom_eval_config, feedback, action_type
+    ):
         """Retire the span's live result for the config and recompute it.
-        Raises _RecalculateLeftNoResult, after putting the retired result
-        back, when the recompute leaves no live result.
+        Raises ``RecalculationRefused`` before writing anything (the
+        feedback's action type included) when the result may not be replaced
+        now, and ``_RecalculateLeftNoResult``, after putting the retired
+        result back where it can, when the recompute leaves no live result.
 
         Not one transaction: the eval activities close the request's
         connection when called (close_old_connections), which would end it.
-        The retirement is undone explicitly instead."""
+        Each recalculation is recorded instead (``EvalRecalculation``), so the
+        request finishes it, or the eval-task sweep does if the request dies.
+        """
+        feedback_id = str(feedback.id)
         try:
             # Primary: the live result may be newer than a lagging
             # replica (a fresh eval, or the previous recalculate's).
@@ -1934,11 +1962,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             )
         except EvalLogger.DoesNotExist:
+            # Retired by a Recalculate of a result with no task that is still
+            # evaluating: say so, rather than that the span has no eval.
+            refuse_while_untasked_runs(observation_span.id, custom_eval_config.id)
             raise Exception("No eval associated with this span")  # noqa: B904
         task_id = eval_logger.eval_task_id
-        if task_id and not observation_span.project_version:
-            # Still pending or running: the task's run, or another
-            # Recalculate's, owns it.
+        task_result = bool(task_id) and not observation_span.project_version
+        if task_result:
+            # Still pending or running in a task that will finish it, or
+            # another Recalculate's: that run owns it.
             refuse_unfinished(eval_logger)
 
         properties = get_mixpanel_properties(
@@ -1948,23 +1980,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             count=1,
             type=MixpanelTypes.FEEDBACK.value,
         )
-        track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-        if task_id and not observation_span.project_version:
+        if task_result:
             # A result an eval task produced is an entry of that task's
             # engine. The per-span activity refuses task work (it only
             # re-wakes the task), so recompute the entry the way the engine
             # does.
-            return _recompute_task_result(eval_logger, feedback_id)
+            entry = begin_recalculation(eval_logger)
+            _record_action_type(feedback, action_type)
+            track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
+            return _recompute_task_result(eval_logger, entry, feedback_id)
 
         # Two-phase: the result keeps its Error Feed memberships until its
         # replacement exists, so a recompute that fails puts it back whole.
-        this_result = EvalLogger.all_objects.using("default").filter(pk=eval_logger.pk)
-        retire_pending_replacement(this_result)
-
-        def put_back():
-            restore_retired(this_result)
-
+        # Conditional on it still being live: a second request is refused
+        # here instead of evaluating alongside this one.
+        journal = begin_untasked_recalculation(eval_logger)
+        _record_action_type(feedback, action_type)
+        track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
         try:
             if observation_span.project_version:
                 # Experiment spans: results carry no eval task, and the
@@ -1982,21 +2015,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     feedback_id,
                 )
         except Exception:
-            put_back()
+            # Keeps a result the eval wrote before it raised, or puts the
+            # previous one back; never both.
+            close_untasked_recalculation(journal)
             raise
-        # Primary: the replacement was written moments ago.
-        if (
-            not EvalLogger.objects.using("default")
-            .filter(
-                observation_span=observation_span,
-                custom_eval_config=custom_eval_config,
-                deleted=False,
-            )
-            .exists()
-        ):
-            put_back()
-            raise _RecalculateLeftNoResult()
-        finish_retirement(this_result)
+        outcome = close_untasked_recalculation(journal)
+        if outcome != KEPT:
+            raise _RecalculateLeftNoResult(outcome)
         return status
 
     # Primary for the whole request, as submit_feedback: the recalculate it
@@ -2018,11 +2043,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 feedback = Feedback.objects.get(
                     id=feedback_id, user=request.user, source_id=observation_span_id
                 )
-                previous_action_type = feedback.action_type
-                feedback.action_type = action_type
-                feedback.save(update_fields=["action_type"])
             except Feedback.DoesNotExist:
                 raise Exception("Feedback not found")  # noqa: B904
+            if action_type != "recalculate":
+                # A Recalculate records it once it is accepted: a refused
+                # duplicate must not overwrite what the winning request wrote.
+                _record_action_type(feedback, action_type)
 
             try:
                 observation_span = ObservationSpan.objects.get(
@@ -2055,15 +2081,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         request,
                         observation_span,
                         custom_eval_config,
-                        feedback_id,
+                        feedback,
+                        action_type,
                     )
                 except RecalculationRefused as refused:
                     # Refused before anything changed: the feedback too.
-                    feedback.action_type = previous_action_type
-                    feedback.save(update_fields=["action_type"])
                     return self._gm.bad_request(refused.message)
                 except _RecalculateLeftNoResult as left:
-                    return self._gm.bad_request(_LEFT_NO_RESULT_MESSAGES[left.outcome])
+                    return self._gm.bad_request(left.message)
 
                 if status:
                     count = 1

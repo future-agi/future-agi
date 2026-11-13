@@ -1,21 +1,35 @@
-"""Recalculate on an eval-task result, and its recovery when the request dies.
+"""Recalculate on an eval result, and its recovery when the request dies.
+
+Recalculate retires the span's live result for the config (``previous``) and
+computes a new one inside the user's request. Every recalculation in flight is
+recorded in ``EvalRecalculation``, written in the transaction that retires the
+previous result and removed in the one that finishes the recalculation.
 
 A result an eval task produced is an entry of that task's engine: at most one
 live entry per (task, row, config). Recalculate replaces it in three steps:
 
 1. ``begin_recalculation``: in one transaction, retire the previous result,
    insert a ``RUNNING`` replacement for the same row and config, and record
-   both in ``EvalRecalculation``. Only a finished (terminal) result is
-   replaced. A ``PENDING`` or ``RUNNING`` one belongs to a run in flight, the
-   task's or another Recalculate's, and is refused without writing anything.
+   both. A ``PENDING`` or ``RUNNING`` result the task's engine will still
+   claim (the task is draining), or another Recalculate's replacement, is
+   refused (``refuse_unfinished``) without writing anything. One the task
+   will never finish (it is paused, finished or failed) is replaced. The
+   retirement is fenced on the status and stamp the request read, so a
+   requeue or claim that lands in between refuses it.
 2. The caller runs the replacement in the request (``run_entry``).
 3. ``keep_replacement`` or ``abandon_recalculation`` finishes it and removes
    the ``EvalRecalculation`` row in the same transaction.
 
-If the process dies during step 2 (a deploy's SIGKILL, an OOM), the row is
+A result with no task (an inline Observe eval, an experiment span) is
+recomputed by the per-span eval, which writes the new result itself.
+``begin_untasked_recalculation`` retires the previous result, only if it is
+still live (a second request is refused), and records it with no
+replacement; ``close_untasked_recalculation`` keeps whatever live result the
+span and config hold, or puts the previous result back when there is none.
+
+If the process dies during the eval (a deploy's SIGKILL, an OOM), the row is
 left behind. ``recover_stale_recalculations`` (scheduled with the eval-task
-sweep) finishes such a row once it is older than ``RECOVER_AFTER_SECONDS``,
-with the same logic the request uses.
+sweep) finishes it with the same rules the request uses.
 
 Error Feed invariant: an issue never keeps a trace whose eval no longer
 exists. The previous result keeps its memberships while it may still come
@@ -29,7 +43,8 @@ from datetime import timedelta
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q, TextField
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 from tfc.settings.runtime_setting_specs import LONGEST_RUNNING_ENTRY_SECONDS
@@ -47,7 +62,7 @@ from tracer.services.eval_tasks.entries import (
 
 logger = structlog.get_logger(__name__)
 
-# The statuses a run leaves behind. Only these may be recalculated or put back.
+# The statuses a run leaves behind. Only these are ever put back.
 TERMINAL_STATUSES = (
     EvalEntryStatus.COMPLETED,
     EvalEntryStatus.ERRORED,
@@ -56,16 +71,29 @@ TERMINAL_STATUSES = (
 
 _UNFINISHED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
 
-# How old a recalculation must be before the sweep finishes it, and how long
-# its replacement must have been ``RUNNING`` without a new stamp before the
-# sweep treats that run as dead. It is the bound the engine's own blind reap
-# uses (``reaper.MIN_STALE_RUNNING_SECONDS``): the longest an entry's run may
-# legitimately last. That covers the request that started the run, which ends
-# long before, and the engine, which may run the replacement itself after its
-# reaper requeued it. A run that is still alive past it anyway cannot land a
-# result: its writes are fenced on the replacement still being ``RUNNING``
-# and live.
+# How old a recalculation must be before the sweep treats the request's own
+# run as dead: a replacement still ``RUNNING`` under the request's claim (no
+# engine attempt on it), or a result with no task whose span and config hold
+# no live result. It is the bound the engine's own blind reap uses
+# (``reaper.MIN_STALE_RUNNING_SECONDS``): the longest an entry's run may
+# legitimately last, far longer than any request. A run that is still alive
+# past it anyway cannot land a result on a task entry: its writes are fenced
+# on the replacement still being ``RUNNING`` and live.
+#
+# It does not judge the engine's runs. A replacement the engine took over
+# (its reaper or a pause requeued it: ``PENDING``, or ``RUNNING`` with
+# ``attempts`` > 0) waits for as long as the task drains; the engine's reaper
+# and the stranded-task sweep look after that run. Only once the task stops
+# draining does the bound apply to it.
 RECOVER_AFTER_SECONDS = LONGEST_RUNNING_ENTRY_SECONDS + 1
+
+# How old a recalculation must be before the sweep finishes one that has an
+# answer already: a replacement that reached a terminal status, or a result
+# with no task whose span and config hold a live result again. Nothing is
+# left to wait for, and finishing it twice is harmless (the request and the
+# sweep both lock the row and act once), so this only keeps the sweep from
+# racing a request that is about to finish it itself.
+RECOVER_ANSWERED_AFTER_SECONDS = 120
 
 # How many recalculations one sweep tick finishes at most.
 RECOVER_BATCH = 200
@@ -97,24 +125,53 @@ def _journal():
     return EvalRecalculation.objects.using("default")
 
 
-def _refusal_for_unfinished(result_id) -> RecalculationRefused:
+def _task_is_draining(task_id) -> bool:
+    """Whether the task's engine will claim a ``PENDING`` entry of it."""
+    from tracer.models.eval_task import EvalTask
+    from tracer.selectors.eval_tasks.stranded import sweepable_statuses
+
+    return (
+        EvalTask.no_workspace_objects.filter(
+            id=task_id, status__in=sweepable_statuses()
+        ).exists()
+        if task_id
+        else False
+    )
+
+
+def _refusal_for_unfinished(result_id, task_id) -> RecalculationRefused | None:
+    """Why a ``PENDING`` or ``RUNNING`` result cannot be recalculated now, or
+    ``None`` when it can: its task is not draining, so nothing will finish it.
+    """
     if _journal().filter(replacement_id=result_id).exists():
         return RecalculationRefused(ALREADY_RUNNING)
-    return RecalculationRefused(STILL_EVALUATING)
+    if _task_is_draining(task_id):
+        return RecalculationRefused(STILL_EVALUATING)
+    return None
 
 
 def refuse_unfinished(result: EvalLogger) -> None:
-    """Raise ``RecalculationRefused`` unless ``result`` is terminal."""
-    if result.status not in TERMINAL_STATUSES:
-        raise _refusal_for_unfinished(result.pk)
+    """Raise ``RecalculationRefused`` if ``result`` may not be replaced now.
+
+    A terminal result may. So may a ``PENDING`` or ``RUNNING`` one whose task
+    is not draining (paused, finished, failed): the task will never finish it,
+    and refusing would tell the user to wait for nothing. One the task's
+    engine will still claim, or another Recalculate's replacement, may not.
+    """
+    if result.status in TERMINAL_STATUSES:
+        return
+    refused = _refusal_for_unfinished(result.pk, result.eval_task_id)
+    if refused is not None:
+        raise refused
 
 
 def begin_recalculation(previous: EvalLogger) -> EvalLogger:
     """Retire ``previous`` and insert its ``RUNNING`` replacement, as one unit.
 
-    The retirement is conditional on ``previous`` still being live and
-    terminal, so a request that read it before a concurrent Recalculate (or
-    the engine) took it over is refused here rather than replacing a run in
+    The retirement is conditional on ``previous`` still being live, with the
+    status and ``updated_at`` stamp the caller read: a request that read it
+    before a concurrent Recalculate, the engine's claim, a requeue or a run's
+    terminal write changed it is refused here rather than replacing a run in
     flight. Returns the replacement.
     """
     selection = (
@@ -125,7 +182,12 @@ def begin_recalculation(previous: EvalLogger) -> EvalLogger:
     now = timezone.now()
     with transaction.atomic(using="default"):
         retired = retire_pending_replacement(
-            _rows().filter(pk=previous.pk, deleted=False, status__in=TERMINAL_STATUSES)
+            _rows().filter(
+                pk=previous.pk,
+                deleted=False,
+                status=previous.status,
+                updated_at=previous.updated_at,
+            )
         )
         if not retired:
             raise _refusal_for_race(previous.pk)
@@ -159,10 +221,19 @@ def begin_recalculation(previous: EvalLogger) -> EvalLogger:
 
 def _refusal_for_race(previous_id) -> RecalculationRefused:
     """Why the conditional retirement of ``previous_id`` changed nothing."""
-    current = _rows().filter(pk=previous_id).values("deleted", "status").first()
+    current = (
+        _rows()
+        .filter(pk=previous_id)
+        .values("deleted", "status", "eval_task_id")
+        .first()
+    )
     if current is not None and not current["deleted"]:
-        # Live but no longer terminal: the engine requeued it meanwhile.
-        return _refusal_for_unfinished(previous_id)
+        if current["status"] not in TERMINAL_STATUSES:
+            # The engine requeued or claimed it meanwhile.
+            refused = _refusal_for_unfinished(previous_id, current["eval_task_id"])
+            if refused is not None:
+                return refused
+        return RecalculationRefused(CHANGED_MEANWHILE)
     if _journal().filter(previous_id=previous_id).exists():
         # Another Recalculate retired it a moment ago and is running.
         return RecalculationRefused(ALREADY_RUNNING)
@@ -226,10 +297,11 @@ def _previous_is_live(previous_id) -> bool:
     return bool(_rows().filter(pk=previous_id, deleted=False).exists())
 
 
-# What ``abandon_recalculation`` did with the previous result.
+# What a finished recalculation did with the previous result.
 RESTORED = "restored"
 LEFT_RETIRED = "left_retired"
 HANDED_TO_TASK = "handed_to_task"
+KEPT = "kept"
 
 
 def keep_replacement(entry: EvalLogger, previous: EvalLogger) -> None:
@@ -254,8 +326,9 @@ def abandon_recalculation(
     * ``RESTORED``: the replacement, still as this run left it, is retired
       and the previous result is live again;
     * ``LEFT_RETIRED``: something else retired the replacement (the task was
-      deleted or rerun), or a newer entry holds the row's live slot; the
-      previous result stays retired;
+      deleted or rerun), a newer entry holds the row's live slot, or the
+      previous result had not finished evaluating (there is no earlier
+      result to keep); the previous result stays retired;
     * ``HANDED_TO_TASK``: the task's engine took the replacement over (its
       reaper requeued it, a pause requeued it, or Edit -> Save requeued the
       errored entry). It is left to the engine, and the
@@ -265,7 +338,8 @@ def abandon_recalculation(
     with transaction.atomic(using="default"):
         journal = _lock_journal(entry.pk)
         if journal is None:
-            # The sweep finished this recalculation meanwhile.
+            # The sweep or the reconciler finished this recalculation
+            # meanwhile.
             return RESTORED if _previous_is_live(previous.pk) else LEFT_RETIRED
         retired = left_as is not None and soft_delete_eval_results(
             _rows().filter(pk=entry.pk, deleted=False, status=left_as, attempts=0)
@@ -293,35 +367,254 @@ def abandon_recalculation(
     return outcome
 
 
+def put_back_dropped_replacements(dropped_ids) -> int:
+    """The reconciler is dropping these ``PENDING`` entries: retire each that
+    is a Recalculate's replacement, and bring its previous result back.
+
+    The reconciler drops a pending entry whose config left the task or whose
+    row left the task's scope. That is not a Delete & rerun: it keeps such a
+    row's finished result, so the result the replacement was standing in for
+    comes back, as when the replacement fails. It stays retired only when its
+    config was deleted, or a newer live entry holds its slot.
+
+    Runs in the reconciler's transaction and locks the ``EvalRecalculation``
+    rows before the entries, as the request and the sweep do. Returns how
+    many of ``dropped_ids`` it retired; the caller retires the rest."""
+    from tracer.models.custom_eval_config import CustomEvalConfig
+
+    dropped_ids = list(dropped_ids)
+    if not dropped_ids:
+        return 0
+    journals = list(
+        _journal()
+        .select_for_update()
+        .filter(replacement_id__in=dropped_ids)
+        .order_by("pk")
+    )
+    retired = 0
+    for journal in journals:
+        retired += soft_delete_eval_results(
+            _rows().filter(pk=journal.replacement_id, deleted=False)
+        )
+        config_live = CustomEvalConfig._base_manager.using("default").filter(
+            pk__in=_rows()
+            .filter(pk=journal.previous_id)
+            .values("custom_eval_config_id"),
+            deleted=False,
+        )
+        if config_live.exists() and _put_previous_back(journal):
+            outcome = RESTORED
+        else:
+            _retire_for_good(journal.previous_id)
+            outcome = LEFT_RETIRED
+        journal.delete()
+        logger.info(
+            "recalculate_replacement_dropped_by_reconcile",
+            outcome=outcome,
+            replacement_id=str(journal.replacement_id),
+            eval_logger_id=str(journal.previous_id),
+            eval_task_id=journal.eval_task_id,
+        )
+    return retired
+
+
+# -- results with no eval task ------------------------------------------------
+
+
+def _slot_has_live_result(previous_id) -> bool:
+    """Whether the span and config of ``previous_id`` hold a live result
+    other than it (the recompute's, or a newer one)."""
+    return _other_live_results(previous_id).exists()
+
+
+def _other_live_results(previous_id):
+    slot = _rows().filter(pk=previous_id)
+    return (
+        _rows()
+        .filter(
+            observation_span_id__in=slot.values("observation_span_id"),
+            custom_eval_config_id__in=slot.values("custom_eval_config_id"),
+            deleted=False,
+        )
+        .exclude(pk=previous_id)
+    )
+
+
+def _put_untasked_previous_back(journal: EvalRecalculation) -> bool:
+    """Bring a result with no task back, unless its span and config hold a
+    live result again: no unique index guards that slot, so the condition is
+    part of the update itself. Returns whether it is live again; when it is
+    not, its retirement is made final."""
+    restored = restore_retired(
+        _rows()
+        .filter(pk=journal.previous_id)
+        .filter(~Exists(_other_live_results(journal.previous_id)))
+    )
+    if not restored:
+        _retire_for_good(journal.previous_id)
+    return bool(restored)
+
+
+def begin_untasked_recalculation(previous: EvalLogger) -> EvalRecalculation:
+    """Retire a result with no eval task while the per-span eval recomputes
+    it, and record the recalculation, as one unit.
+
+    The retirement is conditional on the result still being live: of two
+    requests that both read it, the second is refused here, so they cannot
+    both evaluate and leave two live results. Returns the record that
+    ``close_untasked_recalculation`` takes."""
+    with transaction.atomic(using="default"):
+        if not retire_pending_replacement(
+            _rows().filter(pk=previous.pk, deleted=False)
+        ):
+            if _journal().filter(previous_id=previous.pk).exists():
+                raise RecalculationRefused(ALREADY_RUNNING)
+            raise RecalculationRefused(CHANGED_MEANWHILE)
+        return _journal().create(
+            replacement=None,
+            previous_id=previous.pk,
+            eval_task_id=str(previous.eval_task_id or ""),
+            started_at=timezone.now(),
+        )
+
+
+def refuse_while_untasked_runs(span_id, config_id) -> None:
+    """Raise ``RecalculationRefused`` when the span and config have no live
+    result because a Recalculate of a result with no task has retired it and
+    is still evaluating (or died, and the sweep has not finished it yet).
+
+    A task result's recalculation leaves its ``RUNNING`` replacement live,
+    so a second request finds that and is refused; with no task there is
+    nothing live meanwhile, and the request would fail as if the span had no
+    eval at all."""
+    if (
+        _journal()
+        .filter(
+            replacement__isnull=True,
+            previous__observation_span_id=span_id,
+            previous__custom_eval_config_id=config_id,
+        )
+        .exists()
+    ):
+        raise RecalculationRefused(ALREADY_RUNNING)
+
+
+def _close_untasked(journal: EvalRecalculation) -> str:
+    """Finish ``journal`` (locked by the caller) by what its slot holds."""
+    if _slot_has_live_result(journal.previous_id):
+        _retire_for_good(journal.previous_id)
+        outcome = KEPT
+    elif _put_untasked_previous_back(journal):
+        outcome = RESTORED
+    else:
+        outcome = LEFT_RETIRED
+    journal.delete()
+    return outcome
+
+
+def close_untasked_recalculation(journal: EvalRecalculation) -> str:
+    """The request's per-span eval returned or raised: finish the
+    recalculation by what the span and config hold now.
+
+    * ``KEPT``: a live result is there (the recompute wrote it): the previous
+      result is retired for good;
+    * ``RESTORED``: none is: the previous result is live again;
+    * ``LEFT_RETIRED``: the sweep finished it meanwhile and the previous
+      result stayed retired.
+    """
+    with transaction.atomic(using="default"):
+        locked = _journal().select_for_update().filter(pk=journal.pk).first()
+        if locked is None:
+            # The sweep finished it meanwhile.
+            if _previous_is_live(journal.previous_id):
+                return RESTORED
+            return (
+                KEPT if _slot_has_live_result(journal.previous_id) else (LEFT_RETIRED)
+            )
+        return _close_untasked(locked)
+
+
+# -- the sweep ------------------------------------------------------------------
+
+
+def _draining_task(task_id_ref):
+    """Whether the task named by ``task_id_ref`` (its id as text) drains."""
+    from tracer.models.eval_task import EvalTask
+    from tracer.selectors.eval_tasks.stranded import sweepable_statuses
+
+    return Exists(
+        EvalTask.no_workspace_objects.filter(status__in=sweepable_statuses())
+        .annotate(id_text=Cast("id", output_field=TextField()))
+        .filter(id_text=task_id_ref)
+        .order_by()
+    )
+
+
+def _engine_owned() -> Q:
+    """A replacement the task's engine took over from the request."""
+    return Q(replacement__status=EvalEntryStatus.PENDING) | Q(
+        replacement__status=EvalEntryStatus.RUNNING, replacement__attempts__gt=0
+    )
+
+
+def _actionable(cutoff, answered_cutoff) -> Q:
+    """The recalculations a sweep tick can finish now; never one it would
+    only answer "waiting" for, so those cannot fill every tick's batch."""
+    retired = Q(replacement__deleted=True)
+    answered = (
+        Q(started_at__lt=answered_cutoff)
+        & Q(replacement__deleted=False)
+        & Q(replacement__status__in=TERMINAL_STATUSES)
+    )
+    abandoned = (
+        Q(started_at__lt=cutoff)
+        & Q(replacement__deleted=False)
+        & Q(replacement__status__in=_UNFINISHED)
+        & Q(replacement__updated_at__lt=cutoff)
+        & ~(_engine_owned() & Q(engine_drains=True))
+    )
+    untasked = Q(replacement__isnull=True) & (
+        Q(started_at__lt=cutoff)
+        | (Q(started_at__lt=answered_cutoff) & Q(slot_answered=True))
+    )
+    return retired | answered | abandoned | untasked
+
+
 def recover_stale_recalculations(
     *,
     older_than_seconds: int = RECOVER_AFTER_SECONDS,
+    answered_after_seconds: int = RECOVER_ANSWERED_AFTER_SECONDS,
     limit: int = RECOVER_BATCH,
 ) -> dict:
     """Finish recalculations whose request died. Counts only.
 
-    For each ``EvalRecalculation`` older than ``older_than_seconds`` (or of
-    any age once its replacement was retired), by what its replacement
-    shows:
+    For each ``EvalRecalculation``, by what its replacement shows (or, for a
+    result with no task, by what its span and config hold):
 
     * ``kept``: it completed (the request died after the run, or the task's
-      engine ran it): the previous result is retired for good, as the request
-      would have done;
-    * ``restored``: it errored or was skipped, or is still ``RUNNING`` with a
-      stamp older than ``older_than_seconds`` (the run died with the
-      request), or is ``PENDING`` that long in a task that is not draining
-      (paused, finished, failed): it is retired and the previous result put
-      back;
+      engine ran it), or the span and config hold a live result: the
+      previous result is retired for good, as the request would have done.
+      Once ``answered_after_seconds`` old;
+    * ``restored``: it errored or was skipped (once ``answered_after_seconds``
+      old), or is still unfinished ``older_than_seconds`` after its last
+      stamp: ``RUNNING`` under the request's claim (the run died with the
+      request), or taken over by the engine of a task that is no longer
+      draining (paused, finished, failed). A result with no task whose span
+      and config are still empty that long counts here too. It is retired
+      and the previous result put back;
     * ``left_retired``: as ``restored``, but the previous result could not
-      come back (a newer entry holds the row's slot), or something else
-      already retired the replacement (Delete & rerun, the task deleted). The
-      previous result's Error Feed memberships are retired;
-    * ``waiting``: the task's engine holds it (``PENDING`` in a draining
-      task), or it changed while the tick read it; a later tick finishes it.
-      A replacement ``RUNNING`` under a recent stamp is not read at all;
+      come back (a newer entry holds the row's slot, or it had not finished
+      evaluating), or something else already retired the replacement (Delete
+      & rerun, the task deleted). The previous result's Error Feed
+      memberships are retired;
+    * ``waiting``: it changed while the tick read it; a later tick finishes
+      it. A replacement the engine of a draining task holds, or one still
+      within its bound, is not read at all;
     * ``busy``: the request is finishing it right now.
     """
-    cutoff = timezone.now() - timedelta(seconds=older_than_seconds)
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=older_than_seconds)
+    answered_cutoff = now - timedelta(seconds=answered_after_seconds)
     counts = {
         "kept": 0,
         "restored": 0,
@@ -330,62 +623,61 @@ def recover_stale_recalculations(
         "busy": 0,
         "errors": 0,
     }
-    # Only rows there is something to do for, so a replacement a run holds
-    # cannot fill every tick's batch. A retired replacement needs no wait:
-    # nothing can bring it back, and the previous result's memberships must
-    # not outlive it.
-    stale = Q(started_at__lt=cutoff) & (
-        ~Q(replacement__status__in=_UNFINISHED) | Q(replacement__updated_at__lt=cutoff)
-    )
-    replacement_ids = list(
+    journal_ids = list(
         _journal()
-        .filter(Q(replacement__deleted=True) | stale)
+        .annotate(
+            engine_drains=_draining_task(OuterRef("eval_task_id")),
+            slot_answered=Exists(
+                EvalLogger._base_manager.filter(
+                    observation_span_id=OuterRef("previous__observation_span_id"),
+                    custom_eval_config_id=OuterRef("previous__custom_eval_config_id"),
+                    deleted=False,
+                ).exclude(pk=OuterRef("previous_id"))
+            ),
+        )
+        .filter(_actionable(cutoff, answered_cutoff))
         .order_by("started_at")
-        .values_list("replacement_id", flat=True)[:limit]
+        .values_list("pk", flat=True)[:limit]
     )
-    for replacement_id in replacement_ids:
+    for journal_id in journal_ids:
         try:
-            outcome = _recover_one(replacement_id, cutoff)
+            outcome = _recover_one(journal_id, cutoff, answered_cutoff)
         except Exception:
-            logger.exception(
-                "recalculate_recovery_failed", replacement_id=str(replacement_id)
-            )
+            logger.exception("recalculate_recovery_failed", journal_id=journal_id)
             counts["errors"] += 1
             continue
         counts[outcome] += 1
     return counts
 
 
-def _task_is_draining(task_id) -> bool:
-    """Whether the task's engine will claim a ``PENDING`` entry of it."""
-    from tracer.models.eval_task import EvalTask
-    from tracer.selectors.eval_tasks.stranded import sweepable_statuses
-
-    return (
-        EvalTask.no_workspace_objects.filter(
-            id=task_id, status__in=sweepable_statuses()
-        ).exists()
-        if task_id
-        else False
-    )
-
-
-def _recover_one(replacement_id, cutoff) -> str:
+def _recover_one(journal_id, cutoff, answered_cutoff) -> str:
     with transaction.atomic(using="default"):
-        journal = _lock_journal(replacement_id, skip_locked=True)
+        journal = (
+            _journal().select_for_update(skip_locked=True).filter(pk=journal_id).first()
+        )
         if journal is None:
             return "busy"
-        replacement = _rows().filter(pk=replacement_id).first()
+        if journal.replacement_id is None:
+            return _recover_untasked(journal, cutoff, answered_cutoff)
+        replacement = _rows().filter(pk=journal.replacement_id).first()
         if replacement is None or replacement.deleted:
             _retire_for_good(journal.previous_id)
             outcome = "left_retired"
+        elif replacement.status in TERMINAL_STATUSES and (
+            journal.started_at >= answered_cutoff
+        ):
+            return "waiting"
         elif replacement.status == EvalEntryStatus.COMPLETED:
             _retire_for_good(journal.previous_id)
             outcome = "kept"
         elif replacement.status in _UNFINISHED and (
             replacement.updated_at >= cutoff
+            or journal.started_at >= cutoff
             or (
-                replacement.status == EvalEntryStatus.PENDING
+                (
+                    replacement.status == EvalEntryStatus.PENDING
+                    or replacement.attempts > 0
+                )
                 and _task_is_draining(journal.eval_task_id)
             )
         ):
@@ -405,28 +697,50 @@ def _recover_one(replacement_id, cutoff) -> str:
                 return "waiting"
             outcome = "restored" if _put_previous_back(journal) else "left_retired"
         journal.delete()
+    _log_recovered(journal, outcome)
+    return outcome
+
+
+def _recover_untasked(journal, cutoff, answered_cutoff) -> str:
+    """A recalculation of a result with no task, its row locked."""
+    if _slot_has_live_result(journal.previous_id):
+        if journal.started_at >= answered_cutoff:
+            return "waiting"
+    elif journal.started_at >= cutoff:
+        return "waiting"
+    outcome = _close_untasked(journal)
+    _log_recovered(journal, outcome)
+    return outcome
+
+
+def _log_recovered(journal, outcome) -> None:
     logger.info(
         "recalculate_recovered",
         outcome=outcome,
-        replacement_id=str(replacement_id),
+        replacement_id=str(journal.replacement_id),
         eval_logger_id=str(journal.previous_id),
         eval_task_id=journal.eval_task_id,
     )
-    return outcome
 
 
 __all__ = [
     "ALREADY_RUNNING",
     "HANDED_TO_TASK",
+    "KEPT",
     "LEFT_RETIRED",
     "RECOVER_AFTER_SECONDS",
+    "RECOVER_ANSWERED_AFTER_SECONDS",
     "RESTORED",
     "RecalculationRefused",
     "STILL_EVALUATING",
     "TERMINAL_STATUSES",
     "abandon_recalculation",
     "begin_recalculation",
+    "begin_untasked_recalculation",
+    "close_untasked_recalculation",
     "keep_replacement",
+    "put_back_dropped_replacements",
     "recover_stale_recalculations",
     "refuse_unfinished",
+    "refuse_while_untasked_runs",
 ]

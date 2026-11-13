@@ -30,6 +30,7 @@ from tracer.services.eval_tasks.entries import (
     materialize_pending,
     soft_delete_eval_results,
 )
+from tracer.services.eval_tasks.recalculate import put_back_dropped_replacements
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -316,7 +317,10 @@ def _requeue_and_drop(
             )
     dropped = 0
     if drop_ids:
-        dropped = soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
+        # A dropped entry may be a Recalculate's replacement the engine took
+        # over: its previous result comes back rather than staying retired.
+        dropped = put_back_dropped_replacements(drop_ids)
+        dropped += soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
     return requeued, dropped
 
 
