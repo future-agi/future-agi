@@ -1,0 +1,173 @@
+name: Python types (advisory)
+
+# Whole-repo mypy against the committed baseline, futureagi/mypy-baseline.txt,
+# the way PostHog ran it: known errors are listed with their line numbers set
+# to 0, and an error beyond the baseline's count for its file, message and code
+# fails the job. It also catches errors a change causes in files it did not
+# touch. See scripts/mypy_baseline.py.
+#
+# Advisory for now: "Python Types Pass" is not a required check. It reports on
+# every PR (no workflow-level paths filter), so it can be made required later
+# without changes here. A PR that changes none of the paths in the changes job
+# skips mypy, and the summary still passes.
+#
+# Every push to dev runs mypy too (no paths filter), so a merge that adds errors
+# without syncing the baseline shows up as a failed run on dev. It is advisory
+# there as well.
+#
+# mypy's Django plugin imports tfc.settings.settings ([tool.django-stubs] in
+# futureagi/pyproject.toml) to build the model registry. EE_LICENSE_KEY on the
+# mypy step is a placeholder, not a key: any non-empty value registers
+# ee.falcon_ai, as in EE, Cloud and the pytest shards.
+#
+# No .mypy_cache is restored: every run is a cold whole-repo run, so a stale
+# cache can never hide an error.
+#
+# No branches filter on pull_request: stacked PRs into feature branches get the
+# check too. An "edited" event runs the check only when the base changes: that
+# event checks the new merge commit. Ordinary body/title edits skip every job
+# and use an isolated concurrency group, leaving an active check alone.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pushes and retargets share the PR group; ordinary edits cannot cancel them.
+  # Pushes to dev get one group per commit, so later merges cannot cancel them.
+  group: python-types-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The mypy in futureagi/uv.lock; a test checks they match. The baseline is
+  # only valid for this mypy and the stubs locked with it.
+  MYPY_VERSION: "1.19.1"
+
+jobs:
+  changes:
+    if: github.event.action != 'edited' || github.event.changes.base
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny/paths-filter reads the PR's file list
+    outputs:
+      # Pushes to dev and retargets always run mypy, even for a docs-only PR.
+      python: ${{ (github.event_name == 'push' || github.event.changes.base) && 'true' || steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - 'futureagi/**/*.py'
+              - 'futureagi/pyproject.toml'
+              - 'futureagi/uv.lock'
+              - 'futureagi/mypy-baseline.txt'
+              - 'scripts/mypy_baseline.py'
+              - 'scripts/test_mypy_baseline.py'
+              - '.github/workflows/python-types.yml'
+
+  mypy-baseline:
+    name: Mypy (baseline)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # On a PR, the merge commit (the default): the code and the baseline as
+      # they would be after merging, so an error that only appears in
+      # combination with the current base is caught too. On a push, the
+      # pushed dev commit.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install backend and typing dependencies
+        working-directory: futureagi
+        # Same frozen OSS install as backend-ci, plus its typing extra. No ML
+        # extras or test services. futureagi/ee/cloud is never present here.
+        run: uv sync --frozen --no-dev --extra dev
+      - name: Self-test the baseline script
+        env:
+          # The real-mypy tests run this mypy on throwaway projects.
+          MYPY_BIN: futureagi/.venv/bin/mypy
+        run: python3 -I scripts/test_mypy_baseline.py
+      - name: Check the mypy version
+        working-directory: futureagi
+        run: |
+          version="$(.venv/bin/mypy --version)"
+          echo "$version"
+          case "$version" in
+            "mypy ${MYPY_VERSION} "*) ;;
+            *) echo "::error::Expected mypy ${MYPY_VERSION}, found: $version"; exit 1 ;;
+          esac
+      - name: Run mypy and compare with the baseline
+        working-directory: futureagi
+        env:
+          # A placeholder, not a license key: any non-empty value makes
+          # tfc.settings.settings register ee.falcon_ai. Nothing else is set;
+          # settings import needs no database or secret. Its log lines go to
+          # stderr, which stays out of mypy-output.txt.
+          EE_LICENSE_KEY: mypy-placeholder
+        run: |
+          started=$SECONDS
+          status=0
+          .venv/bin/mypy . > "$RUNNER_TEMP/mypy-output.txt" || status=$?
+          echo "mypy exited $status after $((SECONDS - started))s"
+          python3 -I ../scripts/mypy_baseline.py filter \
+            --mypy-exit-code "$status" --input "$RUNNER_TEMP/mypy-output.txt"
+      - name: Upload mypy's output
+        # The output to sync the baseline from: download it and run
+        # scripts/mypy_baseline.py sync --input <file> in futureagi/.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypy-output
+          path: ${{ runner.temp }}/mypy-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  python-types-pass:
+    name: Python Types Pass
+    needs: [changes, mypy-baseline]
+    if: always() && (github.event.action != 'edited' || github.event.changes.base)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless the change check ran and mypy passed or was not needed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
+          MYPY: ${{ needs.mypy-baseline.result }}
+        run: |
+          echo "changes: $CHANGES, python paths changed: ${PYTHON_CHANGED:-<none>}, mypy-baseline: $MYPY"
+          # Stricter than "every dependency succeeded or was skipped": a skipped
+          # or failed changes job, or a mypy skip that changes did not ask for,
+          # fails the check.
+          if [ "$CHANGES" != success ]; then
+            echo "::error::The changes job did not succeed ($CHANGES)."
+            exit 1
+          fi
+          if [ "$MYPY" = success ]; then
+            echo "mypy found no errors beyond the baseline."
+          elif [ "$MYPY" = skipped ] && [ "$PYTHON_CHANGED" = false ]; then
+            echo "No Python type paths changed, so mypy was not needed."
+          else
+            echo "::error::mypy did not pass (mypy-baseline: $MYPY, python paths changed: ${PYTHON_CHANGED:-<none>})."
+            exit 1
+          fi
