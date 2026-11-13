@@ -264,7 +264,7 @@ func TestSpeechGuardrailsRefuseUninspectableBeforeDial(t *testing.T) {
 	}
 }
 
-func TestSpeechGuardrailsOverrideAndTenantIsolation(t *testing.T) {
+func TestSpeechGuardrailsPolicySelection(t *testing.T) {
 	for _, tc := range []struct {
 		name, source, action string
 		header               http.Header
@@ -272,7 +272,7 @@ func TestSpeechGuardrailsOverrideAndTenantIsolation(t *testing.T) {
 	}{
 		{"unauthorized override", "managed", "block", http.Header{"Authorization": {"Bearer sk-voice-test"}, "X-Guardrail-Policy": {"disabled"}}, 403},
 		{"invalid key", "managed", "block", http.Header{"Authorization": {"Bearer invalid"}}, 401},
-		{"other tenant does not bind", "other-org", "block", nil, 101},
+		{"nonmatching org configuration", "other-org", "block", nil, 101},
 		{"warn does not refuse audio", "managed", "warn", nil, 101},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -288,7 +288,7 @@ func TestSpeechGuardrailsOverrideAndTenantIsolation(t *testing.T) {
 				f.mu.Lock()
 				defer f.mu.Unlock()
 				if f.dials != 0 {
-					t.Errorf("denied caller reached vendor")
+					t.Errorf("provider dials=%d, want 0", f.dials)
 				}
 			}
 		})

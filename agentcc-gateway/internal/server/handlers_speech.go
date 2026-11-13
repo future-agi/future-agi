@@ -133,9 +133,9 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		}
 		plugin, ok := h.engine.Plugin("guardrails").(*guardrails.GuardrailPlugin)
 		if !ok {
-			// A disabled/missing plugin is not permission to ignore an org's
-			// configured blocking check. Bind what is available and refuse
-			// unresolved implementations before opening the upstream session.
+			// Bind configured speech checks when the pipeline plugin is
+			// unavailable. Resolve implementations before opening the upstream
+			// session.
 			plugin = guardrails.NewPlugin(h.guardrailEngine, nil, nil, h.policyStore, h.tenantStore)
 		}
 		var policyErr *models.APIError
@@ -144,7 +144,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 			return policyErr
 		}
 		// Audio cannot be inspected as text before transcription or after synthesis.
-		// Refuse before the vendor dial, not after protected audio has already left.
+		// Validate the supported direction before opening the vendor connection.
 		if (session.Kind == speech.Transcription && speechPolicy.Blocking(guardrails.StagePre)) ||
 			(session.Kind == speech.Synthesis && speechPolicy.Blocking(guardrails.StagePost)) ||
 			(path == "/stt/turns/websocket" && speechPolicy.Blocking(guardrails.StagePost)) {

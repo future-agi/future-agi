@@ -28,9 +28,8 @@ type RealtimePolicy struct {
 	model    string
 }
 
-// BindRealtime uses the same authenticated org/key/request policy precedence as chat.
-// It also resolves managed checks before dialing, so a missing implementation cannot
-// silently turn a configured blocking check into an unguarded speech session.
+// BindRealtime uses the same authenticated org/key/request policy precedence as chat
+// and resolves configured checks before opening the speech session.
 func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePolicy, *models.APIError) {
 	merged, requested, err := p.resolvePolicy(rc)
 	if err != nil {

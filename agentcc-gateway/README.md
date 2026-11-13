@@ -487,15 +487,13 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 Speech routes authenticate server-side SDK clients; browser origins remain refused.
 Each session binds the authenticated organization's managed checks and static rules,
 then applies the key policy and authorized `X-Guardrail-Policy` override using the
-same precedence as chat. Reconnect after a policy change. A disabled guardrail plugin
-cannot silently ignore a configured blocking check: unavailable implementations
-refuse the session before connecting to the vendor. Missing evaluation credentials,
+same precedence as chat. Reconnect after a policy change. Configured blocking checks
+must be available before the session connects to the vendor. Missing evaluation credentials,
 missing/duplicate evaluation IDs and an invalid webhook URL return HTTP 503 with
 error type `guardrail_error` and code `guardrail_unavailable` before vendor dial:
 these are unavailable supported checkers, not unsupported speech directions.
-External-provider adapters without an explicit validated realtime
-verdict contract are not supported for blocking speech checks; these configurations
-refuse admission rather than interpreting legacy fallback results as approvals.
+External-provider adapters are unsupported for blocking speech checks until they
+implement the realtime verdict contract.
 Malformed or missing expressions and validation patterns that cannot compile are
 also unsupported for blocking speech checks: admission returns HTTP 403
 `realtime_guardrail_unsupported`, with no vendor dial. Legacy HTTP checker behavior
@@ -512,10 +510,12 @@ A blocking pre-stage check on transcription cannot inspect the incoming audio. A
 blocking post-stage check on synthesis cannot inspect the outgoing audio. These
 sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, return
 HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
-`/v1/realtime` remains 501 `realtime_not_supported`; implementing a provider URL
-interface alone does not enable an unguarded generic relay.
+`/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
+documented vendor speech route.
 
 Supported text units are checked synchronously before any held frame is released.
+Pre-stage checks see the text as a request message; post-stage checks see it once,
+as the response, with the model on the request.
 Execution failure is separate from the score: a checker HTTP error, malformed or
 missing verdict, incomplete evaluation results or invalid score cannot approve
 speech, even with a threshold of 1. A genuine scored decision still follows the

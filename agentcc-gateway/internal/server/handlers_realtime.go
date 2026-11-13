@@ -134,8 +134,8 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// No shipped provider implements a supported generic realtime protocol. Do not
-	// activate an unchecked relay just because a provider implements the URL interface.
+	// No shipped provider implements a supported generic realtime protocol. A
+	// provider URL interface alone does not establish protocol support.
 	rh.tracker.Release(orgID)
 	models.WriteError(w, &models.APIError{Status: http.StatusNotImplemented,
 		Type: models.ErrTypeServer, Code: "realtime_not_supported",
