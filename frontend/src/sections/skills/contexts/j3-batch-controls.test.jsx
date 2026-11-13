@@ -28,8 +28,8 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   expect(screen.getByRole('checkbox', { name: 'Select b v1 for update' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Select c v1 for update' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  expect(await screen.findAllByText('policy · Version changes')).toHaveLength(2);
-  expect(screen.getAllByText('v8', { exact: true })).toHaveLength(2);
+  expect(await screen.findByText('policy v7 → v8 in a · 0 skills unchanged · production stays as is')).toBeVisible();
+  expect(screen.getByText('policy v7 → v8 in b · 0 skills unchanged · production stays as is')).toBeVisible();
   expect(state.prepare).toHaveBeenCalledWith([{ contextId: 'a', name: 'a', version: 1 }, { contextId: 'b', name: 'b', version: 1 }]);
 });
 
@@ -79,9 +79,9 @@ it('invalidates the prepared set and acknowledgement when selection changes, inc
   fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
   expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
-  expect(screen.queryByRole('button', { name: /Apply selected updates/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
-  expect(screen.queryByRole('button', { name: /Apply selected updates/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
   expect(state.apply).not.toHaveBeenCalled();
 });
 
@@ -104,7 +104,7 @@ it('invalidates reviewed plans when the source release changes', async () => {
   fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these exact resolved versions/ }));
   view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} sourceRelease="v9" /></MemoryRouter>);
   expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
-  expect(screen.queryByRole('button', { name: /Apply selected updates/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
 });
 
 const available = [{ id: 'one', name: 'one', kind: 'skill', latestVersion: 7 }, { id: 'two', name: 'two', kind: 'skill', latestVersion: 7 }, { id: 'three', name: 'three', kind: 'skill', latestVersion: 7 }];

@@ -10,6 +10,7 @@ import { CustomTabs, SegmentedTabs } from 'src/components/tabs/tabs';
 import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
 import IdentityChip from '../components/IdentityChip';
+import TechnicalDetails from '../components/TechnicalDetails';
 import FileTree from '../components/FileTree';
 import SkillMarkdownPreview from '../components/SkillMarkdownPreview';
 import ContextIdentityStrip from './ContextIdentityStrip';
@@ -20,14 +21,15 @@ const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests',
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
   const [fileMode, setFileMode] = useState(() => { try { return localStorage.getItem('context-file-view') === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } });
-  const tabs = TABS.filter(([value]) => ['context', 'links'].includes(value) || sections[value]);
+  const unpublished = query.data?.context?.latestVersion == null && !params.get('version');
+  const tabs = TABS.filter(([value]) => unpublished ? value === 'context' : ['context', 'links'].includes(value) || sections[value]);
   const requestedTab = params.get('tab') || initialTab || 'context';
   const available = tabs.some(([value]) => value === requestedTab);
   const tab = available ? requestedTab : 'context';
   const selectTab = (value) => setParams((current) => { const next = new URLSearchParams(current); next.set('tab', value); return next; });
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || (!query.data && query.isLoading)) return <ContentSkeleton variant="page" />;
-  if (state === 'denied' || [401, 403].includes(query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus)) return <Stack spacing={1.5}><ErrorState title="You can't open this context" detail="It may belong to another workspace, or your access changed." /><Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="contained" sx={{ alignSelf: 'flex-start' }}>Back to agent contexts</Button></Stack>;
+  if (state === 'denied' || [401, 403].includes(query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus)) return <EmptyState icon="solar:lock-keyhole-linear" title="You can't open this context" description="It may belong to another workspace, or your access changed." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to agent contexts</Button>} />;
   if (query.error) return <ErrorState title="Couldn't load this context" detail="Check your connection and try again." onRetry={query.refetch} />;
   const context = query.data?.context;
   if (!context) return <ErrorState title="Context not found" detail="Choose an authorized context in this workspace." />;
@@ -39,8 +41,8 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
   const editPrimary = ['context', 'links'].includes(tab);
-  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
+  return <Stack spacing={{ xs: 1, sm: 1.5 }} sx={{ minWidth: 0 }}>
+    <ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: { xs: 'none', sm: 'block' } } }} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack spacing={0.5}>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
           {query.data.ownDraft && <Button variant={editPrimary ? 'contained' : 'outlined'} disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
@@ -55,7 +57,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
           {!viewed && <MenuItem value="">{versionQuery.error ? 'Release unavailable' : 'Loading release…'}</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
         </TextField>}
         extra={<>
-          {sections.consumers && <Link component="button" variant="s3" color="text.secondary" underline="hover" onClick={() => selectTab('consumers')}>Delivery: see Consumers</Link>}
+          {sections.consumers && <Link component={RouterLink} to={`?${new URLSearchParams({ ...Object.fromEntries(params), tab: 'consumers' })}`} variant="s3" underline="always">Delivery: see Consumers</Link>}
           {(query.isFetching || versionQuery.isFetching) && !versionQuery.isLoading && <StatusBadge status="checking" label="Updating…" />}
         </>} />}
       tabs={<CustomTabs value={tab} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile onChange={(_, value) => selectTab(value)} aria-label="Context detail sections">
@@ -63,7 +65,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
       </CustomTabs>} />
     {!available && <Typography variant="s3" color="text.secondary">That section isn&apos;t available here. Showing Instructions.</Typography>}
     <Box role="tabpanel" id={`context-panel-${tab}`} aria-labelledby={`context-tab-${tab}`} sx={{ minWidth: 0 }}>
-      {versionQuery.isLoading || state === 'loading' ? <ContentSkeleton variant="panel" /> : versionQuery.error || state === 'error' ? <ErrorState title={`Couldn't load ${params.get('version') ? `v${params.get('version')}` : 'this release'}`} detail="The release request failed. Check your connection and try again." onRetry={versionQuery.refetch} /> : noRelease || state === 'empty' ? <EmptyState title="No published files" description="Publish your draft to inspect its instructions and locked skills." /> : <>
+      {versionQuery.isLoading || state === 'loading' ? <ContentSkeleton variant="panel" /> : versionQuery.error || state === 'error' ? <ErrorState title={`Couldn't load ${params.get('version') ? `v${params.get('version')}` : 'this release'}`} detail="The release request failed. Check your connection and try again." onRetry={versionQuery.refetch} /> : noRelease || state === 'empty' ? <EmptyState title="No published files" description="Open your draft to review and publish it." action={onReviewDraft && query.data.ownDraft ? <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button> : undefined} /> : <>
         {tab === 'context' && <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ minWidth: 0, minHeight: { md: 480 } }}>
           <Box sx={{ width: { xs: '100%', md: 240 }, flexShrink: 0, minWidth: 0 }}><FileTree files={manifest} pinned={['AGENTS.md']} generatedFolders={['.futureagi']} selectedPath={selectedPath} onSelect={openFile} readOnly /></Box>
           <Stack spacing={1.5} sx={{ flex: 1, minWidth: 0 }}>
@@ -75,6 +77,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
           </Stack>
         </Stack>}
         {tab === 'links' && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}
+        {tab === 'versions' && viewed?.digest && <TechnicalDetails title="Release details"><IdentityChip value={viewed.digest} label="Digest" /></TechnicalDetails>}
         {sections[tab]}
       </>}
     </Box>

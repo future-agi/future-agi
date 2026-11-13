@@ -154,7 +154,7 @@ function DetailContent({ skill, preview }) {
               Use skill
             </Button>
             <Button
-              variant={tab === "tests" ? "outlined" : "contained"}
+              variant={['tests', 'dependents'].includes(tab) ? 'outlined' : 'contained'}
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
@@ -173,7 +173,7 @@ function DetailContent({ skill, preview }) {
         }
       />
       <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>
-        Viewed {downloadNumber ? `v${downloadNumber}` : 'not available'} · Production {production ? `v${production.version}` : 'unassigned'} · Latest {skill.latestVersion ? `v${skill.latestVersion}` : 'unpublished'}. {skill.hasDraft ? 'Continue draft retains its original content basis.' : 'The current legacy editor starts from latest; it does not silently use the viewed release.'}
+        Viewed {downloadNumber ? `v${downloadNumber}` : 'not available'} · Production {production ? `v${production.version}` : 'unassigned'} · Latest {skill.latestVersion ? `v${skill.latestVersion}` : 'unpublished'}. {skill.hasDraft ? 'Continue draft retains its original content basis.' : 'Editing starts from the latest release, not the version you are viewing.'}
       </Typography>
       {otherDrafts.length > 0 && (
         <Alert severity="info" sx={{ mb: 1.5 }}>

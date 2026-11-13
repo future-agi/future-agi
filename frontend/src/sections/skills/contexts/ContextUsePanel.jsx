@@ -2,6 +2,7 @@ import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Link, Stack, Tab, TextField, Typography } from '@mui/material';
 import Section from 'src/components/section';
+import CodeBlock from 'src/components/code-block';
 import { SegmentedTabs } from 'src/components/tabs/tabs';
 import { ReviewState } from '../review/ReleaseReviewBody';
 import IdentityChip from '../components/IdentityChip';
@@ -10,6 +11,7 @@ import TechnicalDetails from '../components/TechnicalDetails';
 const quote = (value) => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 const safeValue = (value) => typeof value === 'string' && value.length > 0 && [...value].every((char) => char.codePointAt(0) >= 32 && char.codePointAt(0) !== 127);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const applyCommand = "python -m fi.context apply --plan 'context-plan.json' --quiescent";
 const loopback = (host) => ['localhost', '127.0.0.1'].includes(host);
 
 // Preview is explicit, not a qualification claim. Never install an invented package
@@ -46,11 +48,22 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
     try { command = buildContextPlan({ snapshot, origin, organizationId, workspaceId, profile: profile || { id: profileId }, packageVersion: qualification?.packageVersion, project, preview }); }
     catch (error) { problem = error.message; }
   }
+  const copyCommand = async (text) => {
+    setCopyBusy(true); setCopyError(''); setCopied(null);
+    try { if (!navigator.clipboard?.writeText) throw new Error('Unavailable'); await navigator.clipboard.writeText(text); setCopied(text); }
+    catch { setCopyError('Could not copy. Copy the command manually; include Environment variables when copying the plan.'); }
+    finally { setCopyBusy(false); }
+  };
   const environment = command.split('\n').filter((line) => /^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
   const visibleCommand = command.split('\n').filter((line) => !/^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
   return <Stack spacing={3} sx={{ minWidth: 0 }}>
     <Section title={`Install ${snapshot.name} v${snapshot.version}`}>
       <Stack spacing={2} sx={{ minWidth: 0 }}>
+        <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
+          {onViewFiles && <Link component="button" variant="s3" onClick={onViewFiles}>View published files</Link>}
+          {onViewFiles && onOpenLinks && <Typography variant="s3" color="text.secondary">·</Typography>}
+          {onOpenLinks && <Link component="button" variant="s3" onClick={onOpenLinks}>Open linked skills</Link>}
+        </Stack>
         <Typography variant="s3" color="text.secondary">{preview ? 'Preview installer' : 'Installer'} — writes AGENTS.md and {profileId === 'codex' ? '.agents/skills/' : '.claude/skills/'} only after you review the plan.</Typography>
         <Stack spacing={1}>
           <Typography variant="m3" component="h3">1. Choose your client</Typography>
@@ -59,31 +72,24 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
         </Stack>
         <Stack spacing={1}>
           <Typography variant="m3" component="h3">2. Set a credential</Typography>
-          <Typography variant="s3" color="text.secondary">Create a consume credential in <Link href="#context-runtime-access" color="inherit">Runtime access</Link>, or use an existing one for this version. Set FI_CONTEXT_CREDENTIAL securely in your terminal; never paste it into the command.</Typography>
+          <Typography variant="s3" color="text.secondary">Use a consume credential for this version. Set FI_CONTEXT_CREDENTIAL securely in your terminal; never paste it into the command.</Typography>
           <Box id="context-runtime-access" sx={{ minWidth: 0 }}>{runtimeAccess}</Box>
         </Stack>
         <Typography variant="m3" component="h3">3. Plan and inspect</Typography>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
-          <Box component="pre" tabIndex={0} aria-label="Context install plan command" sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre', overflowX: 'auto', maxWidth: 1 }}>{visibleCommand}</Box>
+          <CodeBlock label="Context install plan command" code={visibleCommand} action={<Button variant="contained" size="small" disabled={copyBusy} onClick={() => copyCommand(command)}>Copy plan command</Button>} />
           <TechnicalDetails title="Environment variables"><Typography variant="s3" color="text.secondary">Included when you copy the plan command.</Typography><Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box></TechnicalDetails>
-          <Button variant="contained" sx={{ alignSelf: 'flex-start' }} disabled={copyBusy} onClick={async () => {
-            setCopyBusy(true); setCopyError(''); setCopied(null);
-            try { if (!navigator.clipboard?.writeText) throw new Error('Unavailable'); await navigator.clipboard.writeText(command); setCopied(command); }
-            catch { setCopyError('Could not copy. Expand Environment variables, copy those exports first, then copy the plan command.'); }
-            finally { setCopyBusy(false); }
-          }}>Copy plan command</Button>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
           {copyError && <Alert severity="error">{copyError}</Alert>}
-          <TechnicalDetails title="Apply only after reviewing the plan">
-            <Typography variant="s1">Inspect every file change and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding client before applying. This page does not run commands.</Typography>
-            <Box component="pre" sx={{ typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{"python -m fi.context apply --plan 'context-plan.json' --quiescent"}</Box>
-          </TechnicalDetails>
+          <Stack spacing={1}>
+            <Typography variant="m3" component="h3">4. Apply after you review the plan</Typography>
+            <Typography variant="s3" color="text.secondary">Inspect every file change and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding client before applying. This page does not run commands.</Typography>
+            <CodeBlock label="Context apply command" code={applyCommand} action={<Button variant="outlined" size="small" disabled={copyBusy} onClick={() => copyCommand(applyCommand)}>Copy apply command</Button>} />
+            {copied === applyCommand && <Typography variant="s3" role="status">Copied the apply command.</Typography>}
+          </Stack>
         </>}
-        <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {onViewFiles && <Button variant="outlined" onClick={onViewFiles}>View published files</Button>}
-          {onOpenLinks && <Button variant="outlined" onClick={onOpenLinks}>Open linked skills</Button>}
-        </Stack>
+
       </Stack>
     </Section>
     <TechnicalDetails title="Installation requirements">

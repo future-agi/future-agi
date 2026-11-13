@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hooks = vi.hoisted(() => ({
@@ -54,12 +54,12 @@ describe("pilot credential input", () => {
 describe("ContextPilotCredentials", () => {
   it("issues with a stable idempotency key and never renders the secret", () => {
     const { rerender } = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
-    fireEvent.click(screen.getByRole("button", { name: "Issue pilot credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
     expect(hooks.issue.mutate).toHaveBeenCalledTimes(1);
     const [input] = hooks.issue.mutate.mock.calls[0];
     expect(input.grants[0]).toEqual({ kind: "agent_context", resourceId: CONTEXT, labels: [], versionIds: [VERSION] });
     expect(input.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
-    fireEvent.click(screen.getByRole("button", { name: "Issue pilot credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
     expect(hooks.issue.mutate.mock.calls[1][0].idempotencyKey).toBe(input.idempotencyKey);
     hooks.issue = { ...hooks.issue, data: { id: CONTEXT, secret: "secret-value-not-shown", secretAvailable: true } };
     rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
@@ -91,6 +91,22 @@ describe("ContextPilotCredentials", () => {
   });
   it("does not offer issuance without the admin permission", () => {
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue={false} />);
-    expect(screen.queryByRole("button", { name: "Issue pilot credential" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create credential" })).toBeNull();
   });
+});
+
+it('gives a non-admin a copyable request without claiming issuance', async () => {
+  const writeText = vi.fn().mockResolvedValue();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue={false} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Ask a workspace admin' }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Request copied'));
+  expect(writeText).toHaveBeenCalledWith(expect.stringContaining('pilot v1'));
+  expect(hooks.issue.mutate).not.toHaveBeenCalled();
+});
+it('lists only credentials granting the viewed version', () => {
+  hooks.list.data.results = [credential(CONTEXT, CONTEXT), credential(OTHER, CONTEXT, { grants: [{ kind: 'agent_context', resourceId: CONTEXT, labels: [], versionIds: [OTHER] }] })];
+  render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+  expect(screen.getAllByRole('row')).toHaveLength(2);
+  expect(screen.queryByText('22222222')).not.toBeInTheDocument();
 });

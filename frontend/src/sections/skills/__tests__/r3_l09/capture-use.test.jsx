@@ -302,6 +302,16 @@ describe("qualified exact install handoff", () => {
     expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
     expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
   });
+  it('keeps the reviewed apply step visible and copies its command separately', async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: write } });
+    render(<ContextUsePanel {...useProps} />);
+    expect(screen.getByRole('heading', { name: '4. Apply after you review the plan' })).toBeVisible();
+    click('Copy apply command');
+    await screen.findByText('Copied the apply command.');
+    expect(write).toHaveBeenCalledWith("python -m fi.context apply --plan 'context-plan.json' --quiescent");
+    expect(screen.queryByText('Copied the complete plan command.')).not.toBeInTheDocument();
+  });
   it('fails closed when the public API origin is not configured', () => {
     render(<ContextUsePanel {...useProps} origin={null} originError="not_https" />);
     expect(screen.getByText(/no public HTTPS API address configured/)).toBeVisible();

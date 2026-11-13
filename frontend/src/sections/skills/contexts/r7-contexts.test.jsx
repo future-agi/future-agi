@@ -66,7 +66,7 @@ it('shows each followed label against the locked version and never calls failed 
   render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
   const table = screen.getByRole('table', { name: 'Linked skills' });
   expect(within(table).getByText('v2 available')).toBeVisible();
-  expect(within(table).getByText('Pinned')).toBeVisible();
+  expect(within(table).getByText('Pinned intentionally')).toBeVisible();
   expect(within(table).getByText("Couldn't check")).toBeVisible();
   expect(within(table).queryByText('Up to date')).not.toBeInTheDocument();
   fireEvent.click(within(table).getByRole('button', { name: 'Retry' }));
@@ -105,4 +105,18 @@ it('removes inaccessible library actions and filters, and offers a way back from
   view.unmount();
   render(<MemoryRouter><ContextDetailView {...detail} state="denied" /></MemoryRouter>);
   expect(screen.getByRole('link', { name: 'Back to agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
+});
+
+it('keeps release selection named and moves the digest to version details', () => {
+  render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
+  expect(screen.getByRole('combobox', { name: 'Viewed release' })).toBeVisible();
+  expect(screen.queryByText('Digest')).not.toBeInTheDocument();
+});
+it('omits release-only tabs before publishing and offers review from the empty state', () => {
+  const review = vi.fn();
+  render(<MemoryRouter><ContextDetailView {...detail} query={{ scopeKey, data: { context: { name: 'new-agent', latestVersion: null }, ownDraft: { revision: 1 } } }} versionQuery={{ scopeKey }} fileQuery={{ scopeKey }} onReviewDraft={review} /></MemoryRouter>);
+  expect(screen.queryByRole('tab', { name: 'Tests' })).not.toBeInTheDocument();
+  const panel = screen.getByRole('tabpanel');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Review saved draft' }));
+  expect(review).toHaveBeenCalledOnce();
 });

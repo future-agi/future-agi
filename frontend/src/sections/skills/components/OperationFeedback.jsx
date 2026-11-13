@@ -11,7 +11,8 @@ const staleCodes = new Set([
   'review_stale', 'review_conflict', 'revision_changed', 'revision_conflict',
 ]);
 
-export default function OperationFeedback({ error, onRefresh, onRetry, onReconcile, action = 'complete this action' }) {
+export default function OperationFeedback({ error, onRefresh, onRetry, onReconcile, action = 'complete this action', success, children }) {
+  if (!error && success) return <Alert severity="success" role="status"><Stack spacing={1}><Typography variant="s1">{success}</Typography>{children}</Stack></Alert>;
   if (!error) return null;
   const code = getSkillErrorCode(error);
   const status = operationStatus(error);
@@ -62,6 +63,8 @@ export default function OperationFeedback({ error, onRefresh, onRetry, onReconci
 }
 
 OperationFeedback.propTypes = {
+  success: PropTypes.string,
+  children: PropTypes.node,
   error: PropTypes.any,
   onRefresh: PropTypes.func,
   onRetry: PropTypes.func,

@@ -34,7 +34,7 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
 it("never replaces already accepted links with proposals", async () => {
   render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} />);
   expect(screen.queryByText(/from your migration are proposed/)).not.toBeInTheDocument();
-  fireEvent.mouseOver(screen.getByText('Not yet accepted', { exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Lock details' }));
   expect(await screen.findByText('kept…')).toBeVisible();
 });
 

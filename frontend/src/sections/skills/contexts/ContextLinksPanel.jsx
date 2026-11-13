@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from 'react-router-dom';
-import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography, useMediaQuery } from "@mui/material";
+import { useTheme } from '@mui/material/styles';
 import { paths } from 'src/routes/paths';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import StatusBadge from 'src/components/status-badge';
@@ -22,6 +23,8 @@ const seedLinks = (accepted, proposed) => (accepted.length || !Array.isArray(pro
   : proposed.filter((link, index) => typeof link?.skillId === "string" && Number.isSafeInteger(link.version) && link.version > 0 && proposed.findIndex((other) => other.skillId === link.skillId) === index)
     .slice(0, 20).map((link) => ({ skillId: link.skillId, selector: { version: link.version } })));
 function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPreview, onApply, proposedLinks, readOnly = false }) {
+  const theme = useTheme();
+  const compact = useMediaQuery(theme.breakpoints.down('md'));
   const accepted = session.contextSpec?.links || [];
   const [links, setLinks] = useState(() => seedLinks(accepted, proposedLinks));
   const upstreamQueries = useLinkedSkillUpstream(links);
@@ -67,16 +70,27 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     autoPreviewed.current = true;
     prepare();
   });
+  const availableUpdates = links.flatMap((link) => {
+    const included = lock.find((entry) => entry.skillId === link.skillId);
+    const query = upstreamQueries[link.skillId];
+    const latest = query?.data?.labels?.find((label) => label.name === link.selector.label) || upstream[link.skillId];
+    return !link.selector.version && included && latest && !query?.isError && (latest.version !== included.version || (latest.versionId && included.versionId && latest.versionId !== included.versionId))
+      ? [`${query?.data?.name || included.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'A linked skill'} has v${latest.version} available`] : [];
+  });
+  const Container = compact ? Stack : TableContainer;
+  const Collection = compact ? Stack : Table;
+  const Rows = compact ? Stack : TableBody;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Linked skills ({lock.length})</Typography>
-    <Typography variant="s1">Each skill is locked to one version. Skills that follow production can be updated; pinned skills stay put.</Typography>
+    <Typography variant="s1">{availableUpdates.length ? `${availableUpdates.join('; ')}. Review the update before changing this lock.` : 'Each skill is locked to one version.'}</Typography>
+    <Typography variant="s3" color="text.secondary">Each skill is locked to one version. Skills that follow production can be updated; pinned skills stay put.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
     {!links.length && <Typography variant="s3">No linked skills. AGENTS.md remains standing context.</Typography>}
     {proposed && !readOnly && <Alert severity="info">{links.length} skills from your migration are proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
-    {links.length > 0 && <TableContainer sx={{ maxWidth: 1, overflowX: 'auto' }}><Table size="small" aria-label="Linked skills">
-      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update policy', 'Locked version', 'Update status', 'Actions'].map((heading) => <TableCell key={heading} align={heading === 'Actions' ? 'right' : 'left'}>{heading}</TableCell>)}</TableRow></TableHead>
-      <TableBody>{links.map((link) => {
+    {links.length > 0 && <Container sx={{ maxWidth: 1 }}><Collection {...(compact ? { spacing: 1.5, role: 'list' } : { size: 'small' })} aria-label="Linked skills">
+      {!compact && <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update policy', 'Locked version', 'Update status', 'Actions'].map((heading) => <TableCell key={heading} align={heading === 'Actions' ? 'right' : 'left'}>{heading}</TableCell>)}</TableRow></TableHead>}
+      <Rows>{links.map((link) => {
         const included = lock.find((entry) => entry.skillId === link.skillId);
         const query = upstreamQueries[link.skillId];
         const skill = availableSkills.find((entry) => entry.id === link.skillId) || query?.data;
@@ -86,22 +100,28 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         const unavailable = !pinned && (query?.isError || !newer);
         const changed = !pinned && !unavailable && included && (newer.version !== included.version || (newer.versionId && included.versionId && newer.versionId !== included.versionId));
         const name = skill?.name || included?.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'Linked skill';
-        return <TableRow hover key={link.skillId} sx={{ height: ROW_HEIGHT.default }}>
-          <TableCell sx={{ position: { xs: 'sticky', sm: 'static' }, left: 0, bgcolor: 'background.paper', zIndex: 1, minWidth: 130 }}><Typography variant="s1" display="block">{name}</Typography><Typography variant="s3" display="block" color="text.secondary">{included?.mount || 'Mount assigned on acceptance'}</Typography></TableCell>
+        const status = <Stack direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}><StatusBadge status={pinned ? 'pinned' : checking ? 'checking' : unavailable ? 'unavailable' : changed ? 'update_available' : included ? 'up_to_date' : 'draft'} label={pinned ? 'Pinned intentionally' : checking ? 'Checking…' : unavailable ? "Couldn't check" : changed ? `v${newer.version} available` : included ? 'Up to date' : 'Preview required'} />
+          {unavailable && !checking && query?.refetch && <Button variant="outlined" size="small" onClick={() => query.refetch()}>Retry</Button>}
+        </Stack>;
+        const identity = <><Typography variant="s1" display="block">{name}</Typography><Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{included?.mount || 'Mount assigned on acceptance'}</Typography></>;
+        const details = <TechnicalDetails title="Lock details"><IdentityChip value={link.skillId} kind="id" label="Skill" />{included?.digest && <IdentityChip value={included.digest} label="Locked digest" />}{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Locked version" />}</TechnicalDetails>;
+        const actions = readOnly ? changed && <Button fullWidth={compact} variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Review update</Button> : <>
+          {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
+          <Button disabled={operation.pending || Boolean(session.mutationError)} onClick={() => { setLinks(links.filter((entry) => entry.skillId !== link.skillId)); setRefresh(refresh.filter((id) => id !== link.skillId)); invalidate(); }}>Remove from context</Button>
+        </>;
+        return compact ? <Stack key={link.skillId} role="listitem" spacing={1} sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+          {identity}
+          <Typography variant="s3" color="text.secondary">{selectorLabel(link.selector)} · {included ? `locked v${included.version}` : 'Not yet accepted'}</Typography>
+          {status}{actions}{details}
+        </Stack> : <TableRow hover key={link.skillId} sx={{ height: ROW_HEIGHT.default }}>
+          <TableCell>{identity}{details}</TableCell>
           <TableCell>{selectorLabel(link.selector)}</TableCell>
-          <TableCell><Tooltip title={<Stack spacing={1}><IdentityChip value={link.skillId} kind="id" label="Skill" />{included?.digest && <IdentityChip value={included.digest} label="Locked digest" />}</Stack>}><Typography component="span" variant="s1" tabIndex={0}>{included ? `v${included.version}` : 'Not yet accepted'}</Typography></Tooltip></TableCell>
-          <TableCell><StatusBadge status={pinned ? 'pinned' : checking ? 'checking' : unavailable ? 'unavailable' : changed ? 'update_available' : included ? 'up_to_date' : 'draft'} label={pinned ? 'Pinned' : checking ? 'Checking…' : unavailable ? "Couldn't check" : changed ? `v${newer.version} available` : included ? 'Up to date' : 'Preview required'} />
-            {unavailable && !checking && query?.refetch && <Button size="small" onClick={() => query.refetch()}>Retry</Button>}
-          </TableCell>
-          <TableCell align="right"><Stack spacing={0.5} alignItems="flex-end">
-            {readOnly ? changed && <Button variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Review update</Button> : <>
-              {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
-              <Button disabled={operation.pending || Boolean(session.mutationError)} onClick={() => { setLinks(links.filter((entry) => entry.skillId !== link.skillId)); setRefresh(refresh.filter((id) => id !== link.skillId)); invalidate(); }}>Remove from context</Button>
-            </>}
-          </Stack></TableCell>
+          <TableCell>{included ? `v${included.version}` : 'Not yet accepted'}</TableCell>
+          <TableCell>{status}</TableCell>
+          <TableCell align="right"><Stack spacing={0.5} alignItems="flex-end">{actions}</Stack></TableCell>
         </TableRow>;
-      })}</TableBody>
-    </Table></TableContainer>}
+      })}</Rows>
+    </Collection></Container>}
     {!readOnly && <>
       <TechnicalDetails title="Changing update policies"><Typography variant="s3">Remove from this context; keep the shared skill. To change a selector, remove and re-add the skill before previewing.</Typography></TechnicalDetails>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
