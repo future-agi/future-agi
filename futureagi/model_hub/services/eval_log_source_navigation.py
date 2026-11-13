@@ -1,6 +1,7 @@
 """Resolve an eval log's exact, currently authorized Observe source."""
 
 from dataclasses import dataclass
+from typing import TypeGuard
 from uuid import UUID
 
 import structlog
@@ -29,7 +30,7 @@ class _Candidate:
     project_id: str | None
 
 
-def _is_uuid(value) -> bool:
+def _is_uuid(value: object) -> TypeGuard[str]:
     if not isinstance(value, str):
         return False
     try:
@@ -78,7 +79,8 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
         return SourceNavigation("no_reference")
     if trace_absent != span_absent:
         return SourceNavigation("incomplete_reference")
-    if not (_is_uuid(trace_id) and is_span_id(span_id)):
+    # is_span_id already requires a str; the isinstance only narrows the type.
+    if not (_is_uuid(trace_id) and isinstance(span_id, str) and is_span_id(span_id)):
         return SourceNavigation("invalid_reference")
     config_id = config.get("custom_eval_config_id")
     if config_id in (None, ""):
@@ -168,8 +170,12 @@ def resolve_eval_log_source_navigation(
         if isinstance(candidate, SourceNavigation):
             result = candidate
         else:
-            project_ids, result = _resolve_project_scope(request, log_row, candidate)
-            if result is None:
+            project_ids, scope_result = _resolve_project_scope(
+                request, log_row, candidate
+            )
+            if scope_result is not None:
+                result = scope_result
+            else:
                 detail = (read_detail or read_trace_detail)(
                     analytics=analytics or V2AnalyticsQueryService(),
                     project_ids=project_ids,

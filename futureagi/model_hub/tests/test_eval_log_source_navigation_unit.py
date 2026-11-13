@@ -414,3 +414,63 @@ def test_u35_legacy_log_with_no_readable_project_is_unavailable(legacy):
     scope.order_by.return_value.values_list.return_value = []
     assert legacy(_config(project_id=None)).status == "unavailable"
     legacy.reader.assert_not_called()
+
+
+# Task 761: the typing-only changes in _classify_reference and the scope branch
+# must keep every outcome. Each malformed shape maps to one exact status.
+@pytest.mark.parametrize(
+    "changes,status",
+    [
+        ({"trace_id": 123}, "invalid_reference"),
+        ({"trace_id": 0}, "invalid_reference"),
+        ({"trace_id": False}, "invalid_reference"),
+        ({"trace_id": []}, "invalid_reference"),
+        ({"trace_id": {}}, "invalid_reference"),
+        ({"trace_id": "not-a-uuid"}, "invalid_reference"),
+        ({"span_id": 123}, "invalid_reference"),
+        ({"span_id": ["abcdef0123456789"]}, "invalid_reference"),
+        ({"span_id": {"id": SPAN}}, "invalid_reference"),
+        ({"span_id": True}, "invalid_reference"),
+        ({"trace_id": None, "span_id": 123}, "incomplete_reference"),
+        ({"trace_id": 123, "span_id": None}, "incomplete_reference"),
+        ({"trace_id": None, "span_id": None}, "no_reference"),
+        ({"custom_eval_config_id": 123}, "invalid_reference"),
+        ({"custom_eval_config_id": []}, "invalid_reference"),
+        ({"custom_eval_config_id": "not-a-uuid"}, "invalid_reference"),
+        ({"custom_eval_config_id": ""}, "incomplete_reference"),
+        ({"custom_eval_config_id": None}, "incomplete_reference"),
+        ({"project_id": 123}, "invalid_reference"),
+    ],
+)
+def test_t761_malformed_ids_keep_their_exact_status(resolve, changes, status):
+    assert resolve(_config(**changes)).as_dict() == {
+        "status": status,
+        "kind": None,
+        "project_id": None,
+        "trace_id": None,
+        "span_id": None,
+        "retryable": False,
+    }
+    resolve.reader.assert_not_called()
+
+
+def test_t761_upper_case_ids_are_read_lower_case(resolve):
+    result = resolve(
+        _config(
+            trace_id=TRACE.upper(),
+            custom_eval_config_id=CONFIG.upper(),
+            project_id=PROJECT.upper(),
+        )
+    )
+    assert result.status == "ready"
+    assert result.trace_id == TRACE
+    assert resolve.reader.call_args.kwargs["trace_id"] == TRACE
+    assert resolve.manager.filter.return_value.filter.call_args.kwargs == {
+        "id": PROJECT
+    }
+
+
+def test_t761_terminal_scope_result_skips_the_read(resolve):
+    resolve.manager.filter.return_value.first.return_value = None
+    assert resolve().as_dict()["status"] == "unavailable"
+    resolve.reader.assert_not_called()
