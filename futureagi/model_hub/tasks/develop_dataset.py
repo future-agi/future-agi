@@ -1,8 +1,6 @@
 import asyncio
 import json
-import os
 import random
-import stat
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,7 +9,10 @@ import numpy as np
 import structlog
 
 from accounts.models.organization import Organization
-from model_hub.utils.compare_cleanup import cleanup_compare_folder
+from model_hub.utils.compare_cleanup import (
+    sweep_local_compare_root,
+    sweep_remote_compare_prefixes,
+)
 
 # Activity-aware stub: invocations raise a Temporal non-retryable
 # ApplicationError (these tasks run inside Temporal evaluation activities).
@@ -48,9 +49,6 @@ from model_hub.utils.kb_helpers import is_kb_deleted_or_cancelled
 from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from tfc.temporal import temporal_activity
-from tfc.utils.storage import (
-    get_compare_local_root,
-)
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
@@ -883,33 +881,16 @@ def remove_kb_files(files, org, kb_id):
         return None
 
 
-@temporal_activity(time_limit=60, queue="default")
-def delete_unused_compare_folder():
-    compare_folder_path = get_compare_local_root()
-    try:
-        folders = os.listdir(compare_folder_path)
-    except FileNotFoundError:
-        return
-    except OSError:
-        logger.error(
-            "Error deleting unused compare folder",
-            compare_root=compare_folder_path,
-            exc_info=True,
-        )
-        return
+# The remote sweep stops starting deletions two minutes before the time limit.
+_REMOTE_SWEEP_BUDGET_SECONDS = 8 * 60
 
-    for folder in folders:
-        folder_path = os.path.join(compare_folder_path, folder)
-        try:
-            try:
-                folder_stat = os.stat(folder_path, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISDIR(folder_stat.st_mode):
-                continue
-            if (time.time() - folder_stat.st_ctime) > 7200:
-                cleanup_compare_folder(folder)
-                logger.info("Deleted compare folder", folder_path=folder_path)
-        except Exception:
-            # Keep failed markers for the next schedule; continue other folders.
-            logger.error("Error deleting compare folder", folder=folder, exc_info=True)
+
+@temporal_activity(time_limit=10 * 60, queue="default")
+def delete_unused_compare_folder():
+    deadline = time.monotonic() + _REMOTE_SWEEP_BUDGET_SECONDS
+    # Markers are visible here only when this worker shares the API's root
+    # (standalone, or a shared volume); API processes sweep their own roots.
+    sweep_local_compare_root()
+    # Pages are reachable from any process, including those whose marker
+    # lives in another container or was lost with it.
+    sweep_remote_compare_prefixes(deadline=deadline)
