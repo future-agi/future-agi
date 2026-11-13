@@ -6,11 +6,14 @@ dataset rows."""
 from __future__ import annotations
 
 import uuid
+from unittest.mock import patch
 
 import pytest
+from django.db import IntegrityError
 from rest_framework import status
 
-from simulate.models import EvidenceImportCase
+from simulate.models import EvidenceImport, EvidenceImportCase
+from simulate.selectors.evidence_import import RETRIED_LATER
 from simulate.services.evidence_import import (
     TranscriptInput,
     create_transcript_import,
@@ -196,6 +199,102 @@ class TestDataset:
         ).json()
 
         assert [one["status"] for one in made["cases"]] == ["pending", "pending"]
+
+
+BLOCKED_BECAUSE = "The draft changed the environment beyond new checks."
+
+
+def _block(made):
+    EvidenceImportCase.objects.filter(evidence_import_id=made["id"]).update(
+        status=EvidenceImportCase.Status.BLOCKED, reason=BLOCKED_BECAUSE
+    )
+
+
+class TestRetry:
+    """A blocked case is retried by importing its source again; the new case
+    supersedes it, so one source shows one row."""
+
+    def test_a_retry_supersedes_the_blocked_case(self, client, environment, project):
+        found = {SESSION: _evidence()}
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        again = _sessions(client, environment, project, found, [SESSION])
+
+        [case] = again["cases"]
+        assert case["status"] == "pending"
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+        # Only the retry is left to finish.
+        assert [one["id"] for one in _list(client, environment)] == [again["id"]]
+        # The old import's review says why, not that a person discarded it.
+        [shown] = _review(client, environment, first, found)["cases"]
+        assert (shown["status"], shown["reason"]) == ("discarded", RETRIED_LATER)
+
+    def test_the_same_conversation_retries_a_blocked_transcript(
+        self, client, environment
+    ):
+        first = _post_transcripts(client, environment, _transcript()).json()
+        _block(first)
+
+        again = _post_transcripts(
+            client, environment, _transcript(name="Same chat, new name")
+        ).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_a_retry_that_fails_to_save_leaves_the_blocked_case(
+        self, environment, user
+    ):
+        chat = "User: Where is my parcel?\nAgent: It left the depot today."
+        first = create_transcript_import(
+            environment=environment,
+            transcripts=[TranscriptInput("first", "text", chat)],
+            production=True,
+            user=user,
+        )
+        first.cases.update(
+            status=EvidenceImportCase.Status.BLOCKED, reason=BLOCKED_BECAUSE
+        )
+
+        with (
+            patch.object(
+                EvidenceImportCase.objects,
+                "bulk_create",
+                side_effect=IntegrityError("refused"),
+            ),
+            pytest.raises(IntegrityError),
+        ):
+            create_transcript_import(
+                environment=environment,
+                transcripts=[TranscriptInput("retry", "text", chat)],
+                production=True,
+                user=user,
+            )
+
+        [old] = first.cases.all()
+        assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
+        assert (
+            EvidenceImport.no_workspace_objects.filter(environment=environment).count()
+            == 1
+        )
+
+    def test_a_blocked_case_of_another_source_stays_blocked(
+        self, client, environment, project
+    ):
+        found = {
+            SESSION: _evidence(),
+            OTHER: _evidence(OTHER, turns=_evidence().turns[:1]),
+        }
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        _sessions(client, environment, project, found, [OTHER])
+
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
 
 
 class TestDiscard:
