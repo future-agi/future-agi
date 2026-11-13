@@ -60,6 +60,37 @@ def membership_organization(user):
     return None
 
 
+def organization_membership_is_active(user_id, organization_id):
+    """Return whether the user still belongs to the socket's organization.
+
+    The rule connect applies: an active membership row for the organization,
+    or the legacy FK for an account with no membership rows at all. An
+    inactive user belongs to no organization. Synchronous; call it from a
+    database thread.
+    """
+
+    if user_id is None or organization_id is None:
+        return False
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+
+    user = (
+        User.objects.filter(pk=user_id, is_active=True)
+        .values("organization_id")
+        .first()
+    )
+    if user is None:
+        return False
+    memberships = OrganizationMembership.no_workspace_objects.filter(user_id=user_id)
+    if memberships.filter(organization_id=organization_id, is_active=True).exists():
+        return True
+    return (
+        user["organization_id"] is not None
+        and str(user["organization_id"]) == str(organization_id)
+        and not memberships.exists()
+    )
+
+
 @database_sync_to_async
 def _resolve_requested_socket_organization(user, organization_id):
     from accounts.models import Organization

@@ -1,6 +1,9 @@
+import time
+
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 from sockets.targets import normalize_socket_target
@@ -13,7 +16,10 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.current_subscription = None
         self.user = None
+        self.organization_id = None
+        self.user_group_name = None
         self._guard = SamlSocketGuard(self)
+        self._membership = MembershipSocketGuard(self)
 
     async def connect(self):
         self.user = self.scope["user"]
@@ -22,6 +28,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             return
 
         try:
+            resolved_at = time.monotonic()
             # Get room group name asynchronously
             self.room_group_name = await self.get_room_group_name()
 
@@ -34,7 +41,11 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 await self.close(code=4002)
                 return
 
+            # The per-user group lets membership changes close this socket.
+            self.user_group_name = user_socket_group(self.user.id)
+            await self.channel_layer.group_add(self.user_group_name, self.channel_name)
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            self._membership.mark_validated(resolved_at)
             await self.accept()
 
         except Exception as e:
@@ -49,6 +60,8 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
     async def receive(self, text_data=None, bytes_data=None):
         """Guard raw frames so subclasses cannot bypass SAML revalidation."""
 
+        if self._membership.closed:
+            return
         if not await self._guard.ensure_live(inbound=True):
             return
         await super().receive(text_data=text_data, bytes_data=bytes_data)
@@ -137,40 +150,19 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def handle_message(self, content):
-        message_type = content.get("type")
-        data = content.get("data", {})
-        target_uuid = content.get("uuid")
-
-        if message_type == "ping":
+        # Clients only keep the connection alive; stream frames come from the
+        # server-side relay, never from other clients.
+        if content.get("type") == "ping":
             await self.send_json({"type": "pong"})
-
-        if target_uuid:
-            channel_name = self._uuid_group_name(target_uuid)
-            if channel_name == self.current_subscription:
-                await self.channel_layer.group_send(
-                    channel_name,
-                    {
-                        "type": "send_data",
-                        "data": {
-                            "type": message_type,
-                            "data": data,
-                            "uuid": target_uuid,
-                        },
-                    },
-                )
-            else:
-                logger.error(
-                    f"websocket: User {self.user.id} attempted to send message to {target_uuid} without being subscribed"
-                )
-
-                await self.send_json(
-                    {
-                        "type": "error",
-                        "message": f"Not subscribed to {target_uuid}. Please subscribe first.",
-                    }
-                )
+            return
+        await self.send_json({"type": "error", "message": "Unsupported message type."})
 
     async def disconnect(self, close_code):
+        if self.user_group_name:
+            await self.channel_layer.group_discard(
+                self.user_group_name, self.channel_name
+            )
+
         # Cleanup base group
         if getattr(self, "room_group_name", None):
             await self.channel_layer.group_discard(
@@ -192,13 +184,22 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         if not await self._guard.ensure_live(inbound=False):
             return
-        if not uuid or self._uuid_group_name(uuid) == self.current_subscription:
-            try:
-                await self.send_json(data)
-            except Exception:
-                logger.exception("websocket_send_failed")
-        else:
-            pass
+        if uuid and self._uuid_group_name(uuid) != self.current_subscription:
+            return
+        if not await self._membership.ensure_member():
+            return
+        try:
+            await self.send_json(data)
+        except Exception:
+            logger.exception("websocket_send_failed")
+
+    async def membership_changed(self, event):
+        """Revalidate now; one of this user's memberships has changed."""
+
+        organization_id = event.get("organization_id")
+        if organization_id is not None and organization_id != self.organization_id:
+            return
+        await self._membership.ensure_member(force=True)
 
     def _uuid_group_name(self, uuid):
         try:
@@ -216,4 +217,5 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         org_id = await resolve_socket_organization(self.scope, self.user)
         if org_id is None:
             return None
+        self.organization_id = str(org_id)
         return f"org_{org_id}"

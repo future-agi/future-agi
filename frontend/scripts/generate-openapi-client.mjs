@@ -132,19 +132,27 @@ function normalizeHostStatusSpec(spec) {
           if (name.startsWith("HostUpdateStatusResponse")) {
             return [name, normalizeHostStatusSchema(schema)];
           }
-          if (name === "ObservabilityProvider" && schema.properties?.configuration_health) {
+          if (
+            name === "ObservabilityProvider" &&
+            schema.properties?.configuration_health
+          ) {
             // Preserve the nullable read-only health field without changing the
             // legacy generation of the provider's other properties.
-            return [name, {
-              ...schema,
-              properties: {
-                ...schema.properties,
-                configuration_health: {
-                  ...normalizeHostStatusSchema(schema.properties.configuration_health),
-                  readOnly: true,
+            return [
+              name,
+              {
+                ...schema,
+                properties: {
+                  ...schema.properties,
+                  configuration_health: {
+                    ...normalizeHostStatusSchema(
+                      schema.properties.configuration_health,
+                    ),
+                    readOnly: true,
+                  },
                 },
               },
-            }];
+            ];
           }
           return [name, schema];
         }),
@@ -1665,7 +1673,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],

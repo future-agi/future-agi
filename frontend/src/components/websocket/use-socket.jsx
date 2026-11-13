@@ -19,6 +19,12 @@ const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
 const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
 
+// Close codes the server sends when this credential or organization no longer
+// authorizes the socket (sockets/consumer.py, sockets/membership.py,
+// tfc/middleware/jwt_auth.py). The same credential would be refused again, so
+// these never reconnect; a new token or organization opens a fresh socket.
+const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002, 4003]);
+
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
   const [isConnected, setIsConnected] = useState(false);
@@ -32,6 +38,10 @@ export const WebSocketProvider = ({ children }) => {
   const accessToken = useRef(null);
   const socketOrganizationId = useRef(null);
   const organizationId = user?.organization?.id;
+  // An org-less session (removed from its organization) has no socket to open.
+  const requiresOrgSetup = Boolean(user?.requires_org_setup);
+  // Set to the { token, organizationId } the server refused; cleared when either changes.
+  const authorizationRefusedRef = useRef(null);
   const createWebSocketConnectionRef = useRef(null);
   const messageListenersRef = useRef(new Set());
 
@@ -99,6 +109,11 @@ export const WebSocketProvider = ({ children }) => {
   }, [authenticated, closeConnection]);
 
   const attemptReconnect = useCallback(() => {
+    // The server refused this credential; only a new token or organization retries.
+    if (authorizationRefusedRef.current) {
+      return;
+    }
+
     // Don't attempt to reconnect if already trying or if connection is already open
     if (
       reconnectTimeoutRef.current ||
@@ -242,6 +257,23 @@ export const WebSocketProvider = ({ children }) => {
       socketRef.current = null;
       stopHeartbeat();
 
+      if (AUTHORIZATION_CLOSE_CODES.has(event.code)) {
+        authorizationRefusedRef.current = {
+          token: accessToken.current,
+          organizationId: socketOrganizationId.current,
+        };
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+        logger.addBreadcrumb({
+          category: "websocket",
+          level: "info",
+          message: `WebSocket closed by the server (${event.code}); not reconnecting`,
+        });
+        return;
+      }
+
       if (event.code === 1006) {
         logger.debug("WebSocket closed with 1006 - skipping reconnect");
         return;
@@ -311,8 +343,18 @@ export const WebSocketProvider = ({ children }) => {
 
   // Consolidated authentication state handling
   useEffect(() => {
-    if (authenticated && user?.accessToken) {
+    if (authenticated && user?.accessToken && !requiresOrgSetup) {
       accessToken.current = user?.accessToken;
+
+      const refused = authorizationRefusedRef.current;
+      if (
+        refused &&
+        refused.token === user?.accessToken &&
+        refused.organizationId === organizationId
+      ) {
+        return;
+      }
+      authorizationRefusedRef.current = null;
 
       if (
         !socketRef.current ||
@@ -329,6 +371,7 @@ export const WebSocketProvider = ({ children }) => {
     authenticated,
     user?.accessToken,
     organizationId,
+    requiresOrgSetup,
     createWebSocketConnection,
     closeConnection,
   ]);
