@@ -13,9 +13,10 @@ it('renders a metadata-only receipt without requiring retained packet contents',
   expect(screen.getByText('Release receipt')).toBeVisible();
   expect(screen.getByText('Production moved to v2')).toBeVisible();
   expect(screen.queryByText('Recorded preconditions')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Audit details' }));
+  // Before/after state is the receipt's evidence and is visible without a disclosure.
   expect(screen.getByText('Currentness before the move')).toBeVisible();
   expect(screen.getByText('Pointer state after the move')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Audit details' }));
   expect(screen.getByText(/"release_revision": 1/)).toBeVisible();
   expect(screen.getByText(/"releaseRevision": 2/)).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();

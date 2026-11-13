@@ -96,10 +96,14 @@ describe("typed release evidence", () => {
     );
     expect(screen.getByText("Text comparison · v7 vs v4")).toBeVisible();
     expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
-    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
+    // The evidence row itself names grading completeness; Inspect adds the full record.
     expect(
       screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
     ).toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
+    expect(
+      screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
+    ).toHaveLength(2);
     expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();
     expect(screen.getAllByText(/Result not recorded; inspect before relying on it/)).toHaveLength(1);
