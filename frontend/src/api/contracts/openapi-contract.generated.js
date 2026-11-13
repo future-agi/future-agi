@@ -54499,7 +54499,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         assigned_users: {
           type: "array",
           items: {
-            $ref: "#/definitions/User",
+            $ref: "#/definitions/AnnotationTaskAssignee",
           },
           readOnly: true,
         },
@@ -95517,8 +95517,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    User: {
-      required: ["email", "name"],
+    AnnotationTaskAssignee: {
       type: "object",
       properties: {
         id: {
@@ -95527,60 +95526,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
         email: {
           title: "Email",
           type: "string",
           format: "email",
-          maxLength: 254,
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        organization_role: {
-          title: "Organization role",
-          type: "string",
-          enum: [
-            "Owner",
-            "Admin",
-            "Member",
-            "Viewer",
-            "workspace_admin",
-            "workspace_member",
-            "workspace_viewer",
-          ],
-          "x-nullable": true,
-        },
-        organization: {
-          $ref: "#/definitions/Organization",
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
           readOnly: true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          readOnly: true,
-        },
-        role: {
-          title: "Role",
-          description:
-            "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-          type: "string",
-          maxLength: 255,
-          "x-nullable": true,
-        },
-        goals: {
-          title: "Goals",
-          description: "List of user's goals for using the platform",
-          type: "object",
-          "x-nullable": true,
+          minLength: 1,
         },
       },
     },
@@ -97866,6 +97823,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total: {
           title: "Total",
           type: "integer",
+        },
+      },
+    },
+    User: {
+      required: ["email", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          maxLength: 254,
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        organization_role: {
+          title: "Organization role",
+          type: "string",
+          enum: [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer",
+          ],
+          "x-nullable": true,
+        },
+        organization: {
+          $ref: "#/definitions/Organization",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+        },
+        role: {
+          title: "Role",
+          description:
+            "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        goals: {
+          title: "Goals",
+          description: "List of user's goals for using the platform",
+          type: "object",
+          "x-nullable": true,
         },
       },
     },
@@ -119269,65 +119293,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    Organization: {
-      required: ["name"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        display_name: {
-          title: "Display name",
-          type: "string",
-          maxLength: 255,
-        },
-        is_new: {
-          title: "Is new",
-          type: "boolean",
-        },
-        ws_enabled: {
-          title: "Ws enabled",
-          type: "boolean",
-        },
-        region: {
-          title: "Region",
-          type: "string",
-          maxLength: 16,
-          minLength: 1,
-        },
-        require_2fa: {
-          title: "Require 2fa",
-          type: "boolean",
-        },
-        require_2fa_grace_period_days: {
-          title: "Require 2fa grace period days",
-          type: "integer",
-          maximum: 32767,
-          minimum: 0,
-        },
-        require_2fa_enforced_at: {
-          title: "Require 2fa enforced at",
-          type: "string",
-          format: "date-time",
-          "x-nullable": true,
-        },
-      },
-    },
     AutomationRuleScope: {
       type: "object",
       properties: {
@@ -119853,6 +119818,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Payment type",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    Organization: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        display_name: {
+          title: "Display name",
+          type: "string",
+          maxLength: 255,
+        },
+        is_new: {
+          title: "Is new",
+          type: "boolean",
+        },
+        ws_enabled: {
+          title: "Ws enabled",
+          type: "boolean",
+        },
+        region: {
+          title: "Region",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        require_2fa: {
+          title: "Require 2fa",
+          type: "boolean",
+        },
+        require_2fa_grace_period_days: {
+          title: "Require 2fa grace period days",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        require_2fa_enforced_at: {
+          title: "Require 2fa enforced at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
