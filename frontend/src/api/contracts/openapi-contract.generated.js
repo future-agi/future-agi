@@ -130422,6 +130422,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 1,
         },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        subject_id: {
+          title: "Subject id",
+          type: "string",
+          format: "uuid",
+        },
+        subject_kind: {
+          title: "Subject kind",
+          type: "string",
+          minLength: 1,
+        },
+        executed_by_name: {
+          title: "Executed by name",
+          type: "string",
+          minLength: 1,
+        },
+        approved_by_name: {
+          title: "Approved by name",
+          type: "string",
+          minLength: 1,
+        },
+        executed_at: {
+          title: "Executed at",
+          type: "string",
+          format: "date-time",
+        },
+        previous_version: {
+          title: "Previous version",
+          type: "integer",
+          "x-nullable": true,
+        },
         request_id: {
           title: "Request id",
           type: "string",
@@ -132400,6 +132435,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "status",
         "packet",
         "fingerprint",
+        "name",
+        "author_name",
+        "decided_by_name",
+        "decision",
+        "recipients",
+        "updated_at",
         "author_id",
         "subject_id",
       ],
@@ -132428,6 +132469,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[a-f0-9]{64}$",
           minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        author_name: {
+          title: "Author name",
+          type: "string",
+          minLength: 1,
+        },
+        decided_by_name: {
+          title: "Decided by name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        decision: {
+          title: "Decision",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        recipients: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
         },
         author_id: {
           title: "Author id",
@@ -148155,6 +148233,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "revision",
         "id",
         "status",
+        "updated_at",
         "subject_id",
         "subject_kind",
         "name",
@@ -148177,6 +148256,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
         },
         subject_id: {
           title: "Subject id",

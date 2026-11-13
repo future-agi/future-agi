@@ -20890,6 +20890,7 @@ export interface SkillsContextAuthoredItemApi {
   id: string;
   /** @minLength 1 */
   status: string;
+  updated_at: string;
   subject_id: string;
   subject_kind: SkillsContextAuthoredItemApiSubjectKind;
   /** @minLength 1 */
@@ -21237,6 +21238,10 @@ export interface SkillsPacketResponseApi {
   result: SkillsContextPacketApi;
 }
 
+export type SkillsContextRequestDetailApiRecipientsItem = {
+  [key: string]: string | null;
+};
+
 export interface SkillsContextRequestDetailApi {
   /** @minimum 1 */
   revision: number;
@@ -21249,6 +21254,16 @@ export interface SkillsContextRequestDetailApi {
    * @pattern ^sha256:[a-f0-9]{64}$
    */
   fingerprint: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  author_name: string;
+  /** @minLength 1 */
+  decided_by_name: string | null;
+  /** @minLength 1 */
+  decision: string | null;
+  recipients: SkillsContextRequestDetailApiRecipientsItem[];
+  updated_at: string;
   author_id: string;
   subject_id: string;
 }
@@ -21352,6 +21367,17 @@ export interface SkillsContextPostMoveApi {
 export interface SkillsContextExecutionReceiptApi {
   /** @minimum 1 */
   revision: number;
+  /** @minLength 1 */
+  name?: string;
+  subject_id?: string;
+  /** @minLength 1 */
+  subject_kind?: string;
+  /** @minLength 1 */
+  executed_by_name?: string;
+  /** @minLength 1 */
+  approved_by_name?: string;
+  executed_at?: string;
+  previous_version?: number | null;
   request_id: string;
   decision_id: string;
   executed_by: string;
