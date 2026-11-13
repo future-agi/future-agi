@@ -825,7 +825,13 @@ def legacy_suppressions(
             suppressed = {_assignment_key(record) for record in records} & curated
         return suppressed
     live_hit_pages = 0
-    for page in _assignment_pages(unmatched, deadline=deadline):
+    for page_number, page in enumerate(
+        _assignment_pages(unmatched, deadline=deadline), start=1
+    ):
+        # Hitless pages cost no live budget, but still count as scanned work,
+        # so a lifetime walk ends as "too broad" and never as a deadline 503.
+        if live_roots and page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
+            raise TagReadUnavailable(over_budget)
         keys = {_assignment_key(record) for record in page}
         traces = sorted({trace for _, trace in keys})
         page_hits: set[tuple[str, str]] = set()

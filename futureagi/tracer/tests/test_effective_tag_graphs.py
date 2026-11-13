@@ -828,6 +828,51 @@ def test_large_curated_window_suppression_walk_is_capped(monkeypatch):
         )
 
 
+@pytest.mark.unit
+def test_curated_suppression_walk_has_a_scanned_page_bound(monkeypatch):
+    """Hitless dead pages are free of the live budget, not of all work.
+
+    Without a scanned-page bound only the read deadline stops a lifetime walk,
+    and a deadline is a retryable 503 that retrying never fixes.
+    """
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 3)
+    monkeypatch.setattr(
+        effective_tags, "_query_assignments", lambda *args, **kwargs: []
+    )
+    rows = [
+        {"legacy_project": PROJECT, "legacy_trace": f"curated-{index}"}
+        for index in range(effective_tags.MAX_TAG_OVERLAY_KEYS + 1)
+    ]
+    walked = []
+
+    def execute(_sql, params, **_kwargs):
+        return SimpleNamespace(data=rows if not params["tag_suppress_scoped"] else [])
+
+    def pages(*args, **kwargs):
+        for index in range(10):
+            walked.append(index)
+            yield [
+                {
+                    "project_id": PROJECT,
+                    "entity_kind": "trace",
+                    "trace_id": f"dead-{index}",
+                    "manual_tags": [],
+                }
+            ]
+
+    monkeypatch.setattr(effective_tags, "_assignment_pages", pages)
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.legacy_suppressions(
+            execute,
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=ReadDeadline.start(10_000),
+            window_start=BEGIN,
+            window_end=END,
+        )
+    assert len(walked) == 4
+
+
 def test_dense_curated_suppression_ignores_dead_lifetime_pages(stores, monkeypatch):
     """More than eight thousand cleared/unmatched old rows must not hide live tags."""
     tagged_project(stores)
