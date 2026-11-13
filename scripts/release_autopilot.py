@@ -314,8 +314,8 @@ def lists_release_pr(run, number):
 
     GitHub lists every open PR from the run's head branch on each of its runs,
     so a second PR from the release branch shows on this PR's runs and the
-    reverse. This binds a run to the PR but cannot tell the two apart; the
-    check job's conclusion does.
+    reverse. This binds a run to the PR but cannot tell the two apart. A
+    skipped check job sets apart only a PR into dev (see the doc).
     """
     entries = run.get("pull_requests")
     return isinstance(entries, list) and any(
