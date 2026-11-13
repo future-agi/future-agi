@@ -231,12 +231,10 @@ def test_stopping_runs_asks_every_run_to_stop_before_awaiting_cleanup():
     assert set(events[2:]) == {"first cleaned up", "second cleaned up"}
 
 
-def test_runs_stop_when_the_sign_in_behind_the_socket_is_refused():
+def saml_falcon_consumer():
     import types
     from unittest.mock import AsyncMock
     from uuid import uuid4
-
-    from sockets.saml_guard import SamlSocketGuard
 
     consumer = FalconAIConsumer()
     consumer.scope = {
@@ -244,22 +242,85 @@ def test_runs_stop_when_the_sign_in_behind_the_socket_is_refused():
         "auth_scope": types.SimpleNamespace(org_id=uuid4()),
         "auth_token_id": uuid4(),
     }
+    consumer.accept = AsyncMock()
     consumer.close = AsyncMock()
+    return consumer
+
+
+def test_runs_stop_when_the_sign_in_behind_the_socket_is_refused():
+    from unittest.mock import AsyncMock
+
+    from accounts.saml_credential import SamlCredentialInvalid
+    from sockets.saml_guard import SamlSocketGuard
+
+    clock = FakeClock()
+    consumer = saml_falcon_consumer()
 
     async def run():
+        assert await consumer._ensure_live(inbound=True)
         agent_run = consumer._start_agent_run(asyncio.Event().wait())
         await asyncio.sleep(0)
+        clock.advance(31)
         # The run's next event finds the sign-in refused; the socket closes and
         # will no longer hear about membership changes, so the run stops too.
         await consumer.send_json({"type": "stream", "data": {}})
         await wait_until_done(agent_run)
         assert agent_run.cancelled()
 
-    with patch.object(
-        SamlSocketGuard,
-        "_validate",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("synthetic credential store outage"),
+    with (
+        patch("sockets.saml_guard.time", clock.module),
+        patch.object(
+            SamlSocketGuard,
+            "_validate",
+            new_callable=AsyncMock,
+            side_effect=[None, SamlCredentialInvalid("token_inactive")],
+        ),
     ):
         asyncio.run(run())
     consumer.close.assert_awaited_once_with(code=4001)
+
+
+def test_runs_continue_while_the_sign_in_cannot_be_checked(settings):
+    from unittest.mock import AsyncMock
+
+    from django.db import OperationalError
+
+    from sockets.saml_guard import SamlSocketGuard
+
+    settings.SAML_SOCKET_UNAVAILABLE_CLOSE_SECONDS = 60
+    clock = FakeClock()
+    consumer = saml_falcon_consumer()
+    outage = OperationalError("synthetic database outage")
+
+    async def run():
+        assert await consumer._ensure_live(inbound=True)
+        agent_run = consumer._start_agent_run(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        clock.advance(31)
+        # Frames are held back while the sign-in cannot be checked, but nothing
+        # is refused, so the run keeps going.
+        await consumer.send_json({"type": "stream", "data": {}})
+        await asyncio.sleep(0.1)
+        assert not agent_run.done()
+        consumer.close.assert_not_awaited()
+
+        # Past the window the socket closes with a code the client retries;
+        # like any other disconnect, the run still finishes and saves.
+        clock.advance(60)
+        await consumer.send_json({"type": "stream", "data": {}})
+        await asyncio.sleep(0.1)
+        consumer.close.assert_awaited_once_with(code=1011)
+        assert not agent_run.done()
+        agent_run.cancel()
+        await wait_until_done(agent_run)
+
+    with (
+        patch("sockets.saml_guard.time", clock.module),
+        patch.object(
+            SamlSocketGuard,
+            "_validate",
+            new_callable=AsyncMock,
+            side_effect=[None, outage, outage],
+        ),
+    ):
+        asyncio.run(run())

@@ -137,7 +137,10 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             async for message in self._pubsub.listen():
                 if message["type"] == "message":
                     if not await self._guard.ensure_live(inbound=False):
-                        return
+                        if self._guard.revoked or self._guard.closed:
+                            return
+                        # Deliver nothing until a credential check succeeds.
+                        continue
                     if not await self._membership.ensure_member():
                         if self._membership.closed:
                             return

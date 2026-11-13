@@ -1,4 +1,6 @@
+import json
 import time
+from collections import deque
 
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -10,6 +12,11 @@ from sockets.targets import normalize_socket_target
 
 logger = structlog.get_logger(__name__)
 
+# Subscription frames that arrive while a credential or membership check is
+# pending are kept, in order, and answered once a check succeeds.
+SUBSCRIPTION_FRAME_TYPES = frozenset({"subscribe", "unsubscribe"})
+MAX_PENDING_SUBSCRIPTION_FRAMES = 16
+
 
 class DataConsumer(AsyncJsonWebsocketConsumer):
     def __init__(self, *args, **kwargs):
@@ -20,6 +27,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         self.user_group_name = None
         self._guard = SamlSocketGuard(self)
         self._membership = MembershipSocketGuard(self)
+        self._pending_subscription_frames = deque(
+            maxlen=MAX_PENDING_SUBSCRIPTION_FRAMES
+        )
 
     async def connect(self):
         self.user = self.scope["user"]
@@ -58,16 +68,50 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4000)
 
     async def receive(self, text_data=None, bytes_data=None):
-        """Guard raw frames so subclasses cannot bypass SAML or membership
+        """Guard raw frames so subclasses cannot skip SAML or membership
         revalidation before answering a client request."""
 
-        if self._membership.closed:
+        if not await self._may_answer():
+            if not self._socket_closed():
+                self._keep_subscription_frame(text_data)
             return
-        if not await self._guard.ensure_live(inbound=True):
-            return
-        if not await self._membership.ensure_member():
-            return
+        await self._answer_pending_subscription_frames()
         await super().receive(text_data=text_data, bytes_data=bytes_data)
+
+    async def _may_answer(self) -> bool:
+        if self._membership.closed:
+            return False
+        if not await self._guard.ensure_live(inbound=True):
+            return False
+        return await self._membership.ensure_member()
+
+    def _socket_closed(self) -> bool:
+        return self._guard.revoked or self._guard.closed or self._membership.closed
+
+    def _keep_subscription_frame(self, text_data) -> None:
+        """Keep a subscription frame that arrived while a check was pending.
+
+        A later subscription replaces an earlier one, so when the queue is
+        full the oldest frame is dropped.
+        """
+
+        if not text_data:
+            return
+        try:
+            content = json.loads(text_data)
+        except ValueError:
+            return
+        if not isinstance(content, dict):
+            return
+        if content.get("type") in SUBSCRIPTION_FRAME_TYPES:
+            self._pending_subscription_frames.append(content)
+
+    async def _answer_pending_subscription_frames(self) -> None:
+        """Answer kept subscription frames; call only after a check succeeded."""
+
+        while self._pending_subscription_frames:
+            content = self._pending_subscription_frames.popleft()
+            await self.receive_json(content)
 
     async def receive_json(self, content):
         """
@@ -187,6 +231,11 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         if not await self._guard.ensure_live(inbound=False):
             return
+        if self._pending_subscription_frames:
+            # A kept subscription may be for this frame's target.
+            if not await self._membership.ensure_member():
+                return
+            await self._answer_pending_subscription_frames()
         if uuid and self._uuid_group_name(uuid) != self.current_subscription:
             return
         if not await self._membership.ensure_member():
