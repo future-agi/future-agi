@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -109,7 +108,7 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 		return &guardrails.CheckResult{Pass: true}
 	}
 	if g.adapter == nil {
-		return &guardrails.CheckResult{Pass: true, Message: "external guardrail: no adapter configured"}
+		return guardrails.ExecutionFailure("external guardrail: no adapter configured")
 	}
 
 	var text string
@@ -124,11 +123,7 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 
 	respBody, err := g.callProvider(ctx, text)
 	if err != nil {
-		return &guardrails.CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("external guardrail call failed: %v", err),
-		}
+		return guardrails.ExecutionFailure(fmt.Sprintf("external guardrail call failed: %v", err))
 	}
 
 	return g.adapter.parseResponse(respBody)
@@ -173,7 +168,7 @@ func (g *ExternalGuardrail) doCall(ctx context.Context, text string) ([]byte, er
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	return guardrails.ReadResponseBody(resp.Body)
 }
 
 // extractInputText concatenates all message contents from the request.

@@ -22,7 +22,7 @@ import CustomTooltip from "src/components/tooltip";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 
 import "./InputPromptV2.css";
-import Quill from "quill";
+import Quill from "src/utils/quillHtmlExport";
 import { htmlToText } from "html-to-text";
 import { useController, useWatch } from "react-hook-form";
 import { getRandomId } from "src/utils/utils";

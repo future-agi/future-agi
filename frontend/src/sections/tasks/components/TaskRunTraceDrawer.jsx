@@ -91,6 +91,9 @@ const TaskRunTraceDrawer = ({
       onClose={onClose}
       projectId={projectId}
       initialSpanId={spanId}
+      // The run evaluated this span: keep it in the tree even when the
+      // user's saved span filters would hide it.
+      keepInitialSpanVisible
       initialEvalFocus
       onPrev={onPrev}
       onNext={onNext}

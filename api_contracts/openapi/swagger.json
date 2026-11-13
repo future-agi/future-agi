@@ -37583,7 +37583,37 @@
             "get": {
                 "operationId": "model-hub_get-eval-logs_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "log_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "order",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "include_source_navigation",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "true",
+                            "false"
+                        ]
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -37630,7 +37660,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "patch": {
                 "operationId": "model-hub_get-eval-logs_partial_update",
@@ -75591,6 +75623,15 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "expected_span_id",
+                        "in": "query",
+                        "description": "Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
                     }
                 ],
                 "responses": {
@@ -75607,6 +75648,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -113126,133 +113173,27 @@
                 }
             }
         },
-        "Organization": {
-            "required": [
-                "name"
-            ],
+        "AnnotationTaskAssignee": {
             "type": "object",
             "properties": {
                 "id": {
                     "title": "Id",
                     "type": "string",
                     "format": "uuid",
-                    "readOnly": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time",
                     "readOnly": true
                 },
                 "name": {
                     "title": "Name",
                     "type": "string",
-                    "maxLength": 255,
+                    "readOnly": true,
                     "minLength": 1
-                },
-                "display_name": {
-                    "title": "Display name",
-                    "type": "string",
-                    "maxLength": 255
-                },
-                "is_new": {
-                    "title": "Is new",
-                    "type": "boolean"
-                },
-                "ws_enabled": {
-                    "title": "Ws enabled",
-                    "type": "boolean"
-                },
-                "region": {
-                    "title": "Region",
-                    "type": "string",
-                    "maxLength": 16,
-                    "minLength": 1
-                },
-                "require_2fa": {
-                    "title": "Require 2fa",
-                    "type": "boolean"
-                },
-                "require_2fa_grace_period_days": {
-                    "title": "Require 2fa grace period days",
-                    "type": "integer",
-                    "maximum": 32767,
-                    "minimum": 0
-                },
-                "require_2fa_enforced_at": {
-                    "title": "Require 2fa enforced at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                }
-            }
-        },
-        "User": {
-            "required": [
-                "email",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
                 },
                 "email": {
                     "title": "Email",
                     "type": "string",
                     "format": "email",
-                    "maxLength": 254,
+                    "readOnly": true,
                     "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "organization_role": {
-                    "title": "Organization role",
-                    "type": "string",
-                    "enum": [
-                        "Owner",
-                        "Admin",
-                        "Member",
-                        "Viewer",
-                        "workspace_admin",
-                        "workspace_member",
-                        "workspace_viewer"
-                    ],
-                    "x-nullable": true
-                },
-                "organization": {
-                    "$ref": "#/definitions/Organization"
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time",
-                    "readOnly": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "role": {
-                    "title": "Role",
-                    "description": "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
-                    "type": "string",
-                    "maxLength": 255,
-                    "x-nullable": true
-                },
-                "goals": {
-                    "title": "Goals",
-                    "description": "List of user's goals for using the platform",
-                    "type": "object",
-                    "x-nullable": true
                 }
             }
         },
@@ -113444,7 +113385,7 @@
                 "assigned_users": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/User"
+                        "$ref": "#/definitions/AnnotationTaskAssignee"
                     },
                     "readOnly": true
                 },
@@ -127244,6 +127185,67 @@
                 }
             }
         },
+        "EvalLogSourceNavigation": {
+            "required": [
+                "status",
+                "kind",
+                "project_id",
+                "trace_id",
+                "span_id",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "no_reference",
+                        "unsupported_source",
+                        "unsupported_target",
+                        "incomplete_reference",
+                        "invalid_reference",
+                        "ambiguous_reference",
+                        "unavailable",
+                        "source_not_recorded",
+                        "temporarily_unavailable"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "voice_call"
+                    ],
+                    "x-nullable": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                }
+            }
+        },
         "EvalApiLogRowResponseResult": {
             "required": [
                 "log_id",
@@ -127316,7 +127318,7 @@
                 "span_id": {
                     "title": "Span id",
                     "type": "string",
-                    "format": "uuid",
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "trace_id": {
@@ -127342,6 +127344,9 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "source_navigation": {
+                    "$ref": "#/definitions/EvalLogSourceNavigation"
                 }
             }
         },
@@ -159362,6 +159367,136 @@
                     "title": "Eval group",
                     "type": "string",
                     "readOnly": true
+                }
+            }
+        },
+        "Organization": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "display_name": {
+                    "title": "Display name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "is_new": {
+                    "title": "Is new",
+                    "type": "boolean"
+                },
+                "ws_enabled": {
+                    "title": "Ws enabled",
+                    "type": "boolean"
+                },
+                "region": {
+                    "title": "Region",
+                    "type": "string",
+                    "maxLength": 16,
+                    "minLength": 1
+                },
+                "require_2fa": {
+                    "title": "Require 2fa",
+                    "type": "boolean"
+                },
+                "require_2fa_grace_period_days": {
+                    "title": "Require 2fa grace period days",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "require_2fa_enforced_at": {
+                    "title": "Require 2fa enforced at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "User": {
+            "required": [
+                "email",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "maxLength": 254,
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "organization_role": {
+                    "title": "Organization role",
+                    "type": "string",
+                    "enum": [
+                        "Owner",
+                        "Admin",
+                        "Member",
+                        "Viewer",
+                        "workspace_admin",
+                        "workspace_member",
+                        "workspace_viewer"
+                    ],
+                    "x-nullable": true
+                },
+                "organization": {
+                    "$ref": "#/definitions/Organization"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "role": {
+                    "title": "Role",
+                    "description": "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+                    "type": "string",
+                    "maxLength": 255,
+                    "x-nullable": true
+                },
+                "goals": {
+                    "title": "Goals",
+                    "description": "List of user's goals for using the platform",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },
