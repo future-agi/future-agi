@@ -1,9 +1,11 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useMemo, forwardRef, useRef, useEffect } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
-import { ProcessingStatusCell, TitleCell } from "./knowledge-cells";
+import { TitleCell } from "./knowledge-cells";
+import { ProcessingStatusCell } from "../KnowledgeBaseData/CellRenderer";
 import PropTypes from "prop-types";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
@@ -292,7 +294,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={54}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}

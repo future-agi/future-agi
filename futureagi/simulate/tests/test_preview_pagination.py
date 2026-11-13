@@ -146,20 +146,21 @@ def test_revision_rejects_equal_count_membership_or_bulk_version_change():
     # create a current xmin that was not visible in the signed snapshot.
     with patch(
         "simulate.services.preview_pagination._read_revision_state",
-        return_value=(True, 3, 3, False),
+        return_value=(True, 3, False),
     ):
         with pytest.raises(PreviewSnapshotChanged):
             assert_preview_revision(
                 kind="run_test_executions",
                 parent_id="00000000-0000-0000-0000-000000000001",
                 revision=revision,
+                active_total=3,
             )
 
 
 def test_revision_reconstructs_epoch_aware_xmin_before_visibility_check():
     with patch("simulate.services.preview_pagination.connection.cursor") as cursor:
         cursor_context = cursor.return_value.__enter__.return_value
-        cursor_context.fetchone.return_value = (True, 3, 3, True)
+        cursor_context.fetchone.return_value = (True, 3, True)
         _read_revision_state(
             kind="run_test_executions",
             parent_id="00000000-0000-0000-0000-000000000001",

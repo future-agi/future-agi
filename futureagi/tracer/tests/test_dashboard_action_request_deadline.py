@@ -9,7 +9,6 @@ from unittest import mock
 
 import pytest
 from django.conf import settings
-from django.db import DatabaseError
 
 from tracer.services.clickhouse import dashboard_action_deadline as action_deadline
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
@@ -74,84 +73,37 @@ def test_dashboard_action_wall_uses_configured_interactive_deadline():
 
 
 @pytest.mark.unit
-def test_dashboard_postgres_budget_is_lazy_and_shrinks_every_statement(monkeypatch):
-    installed = {}
-    atomic_entries = []
-    raw_cursor = mock.MagicMock()
+def test_dashboard_postgres_scope_is_lazy_uncapped_and_restored(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    @contextmanager
-    def install_wrapper(wrapper):
-        installed["wrapper"] = wrapper
-        yield
-
-    @contextmanager
-    def atomic():
-        atomic_entries.append("entered")
-        yield
-
-    fake_connection = SimpleNamespace(
-        vendor="postgresql",
-        in_atomic_block=False,
-        execute_wrapper=install_wrapper,
-    )
-    monkeypatch.setattr(action_deadline, "connection", fake_connection)
-    monkeypatch.setattr(
-        action_deadline,
-        "transaction",
-        SimpleNamespace(atomic=atomic, set_rollback=mock.MagicMock()),
-    )
-    deadline = _SequencedDeadline([9_000, 8_500, 7_000, 6_500, 6_000])
-    executed = []
-
+    pg = FakePostgres()
+    monkeypatch.setattr(action_deadline, "connection", pg)
+    monkeypatch.setattr(action_deadline.transaction, "atomic", pg.atomic)
+    deadline = mock.MagicMock()
+    deadline.remaining_ms.return_value = 8_000
     with action_deadline.bounded_dashboard_postgres_reads(deadline):
-        assert atomic_entries == []
-        wrapper = installed["wrapper"]
-        context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
-
-        def execute(sql, params, many, _context):
-            executed.append((sql, params, many))
-            return sql
-
-        assert wrapper(execute, "SELECT first", (), False, context) == "SELECT first"
-        assert wrapper(execute, "SELECT second", (), False, context) == "SELECT second"
-
-    assert atomic_entries == ["entered"]
-    assert raw_cursor.execute.call_args_list == [
-        mock.call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("9000",),
-        ),
-        mock.call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("7000",),
-        ),
-    ]
-    assert [row[0] for row in executed] == ["SELECT first", "SELECT second"]
+        assert pg.events == []
+        assert pg.execute("SELECT first") == "SELECT first"
+        assert pg.execute("SELECT second") == "SELECT second"
+    assert pg.query_timeouts == ["0", "0"]
+    assert pg.timeout == "750ms" and not pg.in_atomic_block and not pg.wrappers
 
 
 @pytest.mark.unit
 def test_dashboard_postgres_failure_is_typed_and_sanitized(monkeypatch):
-    fake_connection = SimpleNamespace(vendor="postgresql", in_atomic_block=True)
-    monkeypatch.setattr(action_deadline, "connection", fake_connection)
-    monkeypatch.setattr(
-        action_deadline,
-        "transaction",
-        SimpleNamespace(set_rollback=mock.MagicMock()),
-    )
-    deadline = _SequencedDeadline([8_000])
-    context = {"cursor": SimpleNamespace(cursor=mock.MagicMock())}
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
+    pg = FakePostgres(outer=True, failure="statement")
+    monkeypatch.setattr(action_deadline, "connection", pg)
+    monkeypatch.setattr(action_deadline.transaction, "atomic", pg.atomic)
+    deadline = mock.MagicMock()
+    deadline.remaining_ms.return_value = 8_000
     with pytest.raises(action_deadline.DashboardActionUnavailable) as caught:
-        action_deadline._execute_dashboard_postgres_query_with_deadline(
-            deadline,
-            mock.MagicMock(side_effect=DatabaseError("private SQL credentials")),
-            "SELECT private",
-            (),
-            False,
-            context,
-        )
-
+        with action_deadline.bounded_dashboard_postgres_reads(deadline):
+            pg.execute("SELECT private")
     assert "private" not in str(caught.value)
+    assert "deadline" not in str(caught.value) and "budget" not in str(caught.value)
+    assert pg.in_atomic_block and pg.timeout == "750ms"
 
 
 @pytest.mark.unit
@@ -167,7 +119,7 @@ def test_public_wall_starts_before_runtime_validation(monkeypatch, view_name, re
     from tracer.views import dashboard as dashboard_view
 
     events = []
-    deadline = _SequencedDeadline([9_000, 8_900], events)
+    deadline = _SequencedDeadline([9_000, 8_900, 8_800, 8_700], events)
 
     @contextmanager
     def install_wrapper(_wrapper):
@@ -213,7 +165,7 @@ def test_public_wall_starts_before_runtime_validation(monkeypatch, view_name, re
     response = getattr(view_cls, view_name)(view, _request())
 
     assert response.status_code == 400
-    assert events[:3] == [
+    assert [event for event in events if isinstance(event, str)][:3] == [
         "deadline_started",
         "postgres_wrapper_installed",
         "runtime_validation",
@@ -224,7 +176,7 @@ def test_public_wall_starts_before_runtime_validation(monkeypatch, view_name, re
 
 
 @pytest.mark.unit
-def test_expired_validation_returns_sanitized_503(monkeypatch):
+def test_completed_validation_failure_remains_a_failure_when_late(monkeypatch):
     from tfc.utils import api_contracts
     from tracer.views import dashboard as dashboard_view
 
@@ -258,8 +210,7 @@ def test_expired_validation_returns_sanitized_503(monkeypatch):
 
     response = dashboard_view.DashboardViewSet.query(view, _request())
 
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
+    assert response.status_code == 400
     assert "private" not in str(response.data)
 
 

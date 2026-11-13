@@ -12,6 +12,7 @@ import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
 import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
+import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
 import { readEvalTaskDetail } from "./task_detail_read";
 
 // Operator categories shared by the task filter wire builders (validation.js,
@@ -202,9 +203,8 @@ export const FIELD_CATEGORY_TO_COL_TYPE = {
   annotation: "ANNOTATION",
 };
 
-// Column ids the BE always routes through its annotation handler regardless
-// of col_type. Pin them to ANNOTATION on the wire so the dispatcher doesn't
-// also feed them to SPAN_ATTRIBUTE / SYSTEM_METRIC handlers.
+// Legacy annotation controls without an explicit source use these column ids.
+// A customer attribute may share either name; explicit source identity wins.
 export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
 
 // Reserved metadata keys on the saved BE filters dict — every other key
@@ -237,7 +237,14 @@ export const formatTaskFilters = (filters_applied) => {
     property: "attributes",
     propertyId: i?.column_id,
     ...(i?.property_id ? { registryId: i.property_id } : {}),
-    apiColType: i?.filter_config?.col_type,
+    // Hydration's generic attributes sentinel must not retype legacy controls.
+    apiColType:
+      i?.filter_config?.col_type ||
+      (ANNOTATION_COLUMN_IDS.has(i?.column_id)
+        ? "ANNOTATION"
+        : ID_ONLY_FIELDS.has(i?.column_id) || i?.column_id === "session_id"
+          ? "SYSTEM_METRIC"
+          : undefined),
     filterConfig: {
       filterType: i?.filter_config?.filter_type,
       filterOp: i?.filter_config?.filter_op,

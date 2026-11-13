@@ -1,7 +1,7 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useState } from "react";
 import AreaChart from "./AreaChart";
-import { CustomTab, CustomTabs, TabWrapper } from "../SummaryStyle";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import ChartTableData from "./ChartTableData";
@@ -38,7 +38,7 @@ const AreaChartWrapper = ({ data, graphLabels, headerData, datasetIndex }) => {
           <Typography
             typography={"s1"}
             fontWeight={"fontWeightMedium"}
-            color="green.500"
+            color="status.success.fg"
           >
             {headerData?.average !== null
               ? `${headerData?.average}${getSuffixForCharts(headerData, null)}`
@@ -49,29 +49,21 @@ const AreaChartWrapper = ({ data, graphLabels, headerData, datasetIndex }) => {
           )}
         </Box>
         <Box>
-          <TabWrapper sx={{ marginBottom: "0px" }}>
-            <CustomTabs
-              textColor="primary"
+          <Box sx={{ mb: 2 }}>
+            <SegmentedTabs
               value={currentTab}
               onChange={(e, value) => setCurrentTab(value)}
-              TabIndicatorProps={{
-                style: {
-                  opacity: 0,
-                  height: "100%",
-                  borderRadius: "8px",
-                },
-              }}
             >
               {tabOptions.map((tab) => (
-                <CustomTab
+                <Tab
                   key={tab.value}
                   label={tab.label}
                   value={tab.value}
                   disabled={tab.disabled}
                 />
               ))}
-            </CustomTabs>
-          </TabWrapper>
+            </SegmentedTabs>
+          </Box>
         </Box>
       </Box>
       <Box sx={{ height: "300px" }}>

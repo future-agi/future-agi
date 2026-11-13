@@ -71,7 +71,9 @@ class SAMLIDPLoginQuerySerializer(serializers.Serializer):
 
 class SAMLAuthLoginQuerySerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=("google", "github", "microsoft"))
+    onboarding_token = serializers.CharField(required=False, allow_blank=True)
 
 
 class SAMLOAuthCallbackQuerySerializer(serializers.Serializer):
     code = serializers.CharField(required=False, allow_blank=True)
+    state = serializers.CharField(required=False, allow_blank=True)

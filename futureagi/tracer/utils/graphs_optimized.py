@@ -33,6 +33,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import ObservationSpan
+from tracer.services.clickhouse.graph_metric_statistic import with_metric_statistic
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_api_read_unavailable_error,
 )
@@ -730,7 +731,7 @@ def get_system_metric_data(
         point.get("timestamp"): point.get("traffic", 0)
         for point in metrics.get("traffic", [])
     }
-    return {
+    payload = {
         "metric_name": metric_name,
         "data": [
             {
@@ -742,6 +743,7 @@ def get_system_metric_data(
         ],
         **{key: value for key, value in metrics.items() if key.startswith("query_")},
     }
+    return with_metric_statistic(payload, "trace", metric_key)
 
 
 def get_annotation_graph_data(

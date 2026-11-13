@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from tracer.services.clickhouse.query_builders.monitor_metrics import (
@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     )
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import DurationField, ExpressionWrapper, F, Q
 from django.db.models.functions import Now
@@ -14,9 +15,10 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
 
-logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.error_codes import get_error_message
+from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -27,6 +29,8 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+logger = structlog.get_logger(__name__)
 
 # Pruned monitor queries scale with the window, not table size; 30s covers the
 # historical window crossing the hot/cold TTL boundary.
@@ -42,12 +46,34 @@ _EVAL_OUTPUT_TYPE_MAP = {
 }
 
 
+def uses_choice_threshold(eval_template) -> bool:
+    """True when the eval's alert metric is the share of one chosen label.
+
+    A scoring eval may also carry labels, but its metric is the mean score, so
+    a stored choice is neither validated, displayed, nor copied for it.
+    """
+    if eval_template is None:
+        return False
+    output_type = (eval_template.config or {}).get("output")
+    return output_type in (
+        EvalOutputType.PASS_FAIL.value,
+        EvalOutputType.CHOICES.value,
+    ) and bool(eval_template.choices)
+
+
 class MonitorConfigError(Exception):
     """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
 
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
+    # Monitors are project-scoped (the REST serializer and UI require one); a
+    # NULL project would otherwise bind as ``project_id = 'None'`` and fail in
+    # ClickHouse (Code 376) on every run. Checked first so a project-less eval
+    # monitor reports this cause, not a missing eval config.
+    if monitor.project_id is None:
+        raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
+
     eval_config_id = None
     eval_output_type = None
     if (
@@ -166,12 +192,61 @@ def _send_slack_notification(
         )
 
 
+def _send_webhook_notification(
+    monitor: UserAlertMonitor,
+    message: str,
+    alert_type: str,
+    current_value: float | None = None,
+    threshold_value: float | None = None,
+) -> None:
+    """Sends a webhook notification for an alert."""
+    if not monitor.webhook_url:
+        return
+
+    app_url = (getattr(settings, "APP_URL", "") or "").rstrip("/")
+    dashboard_link = f"{app_url}/dashboard/alerts" if app_url else ""
+
+    payload = {
+        "event": "alert.triggered",
+        "alert_type": alert_type,
+        "monitor": {
+            "id": str(monitor.id),
+            "name": monitor.name,
+        },
+        "project": {
+            "id": str(monitor.project_id),
+            "name": monitor.project.name if monitor.project else None,
+        },
+        "metric": monitor.metric_type,
+        "current_value": current_value,
+        "threshold_value": threshold_value,
+        "message": message,
+        "timestamp": timezone.now().isoformat(),
+        "dashboard_url": dashboard_link,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "FutureAGI-Alerts/1.0",
+    }
+
+    try:
+        post_webhook(monitor.webhook_url, json=payload, headers=headers, timeout=10)
+        logger.info("monitor_webhook_sent", monitor_id=str(monitor.id))
+    except Exception:  # noqa: BLE001 - best-effort delivery; logger.exception would log the URL's secrets
+        # Transport exceptions can embed the entire URL, including secret query
+        # parameters. Keep destination, payload and exception text out of logs.
+        logger.error("monitor_webhook_failed", monitor_id=str(monitor.id))
+
+
 def _handle_alert_trigger(
     monitor: UserAlertMonitor,
     message: str,
     alert_type: str,
-    time_window_start: Optional[datetime] = None,
-    now: Optional[datetime] = None,
+    time_window_start: datetime | None = None,
+    now: datetime | None = None,
+    current_value: float | None = None,
+    threshold_value: float | None = None,
 ) -> None:
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
@@ -189,6 +264,9 @@ def _handle_alert_trigger(
     )
     _send_alert_email(monitor, message, alert_type)
     _send_slack_notification(monitor, message, alert_type)
+    _send_webhook_notification(
+        monitor, message, alert_type, current_value, threshold_value
+    )
 
 
 @temporal_activity(
@@ -290,7 +368,7 @@ def _get_metric_value(
     start_time: datetime,
     end_time: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
-) -> Optional[float]:
+) -> float | None:
     """Metric value for the time window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
     builder = builder or build_monitor_ch_builder(monitor)
@@ -320,7 +398,7 @@ def _get_historical_stats(
     start_time: datetime,
     end_time: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
     """Historical (mean, stddev) for the window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
     builder = builder or build_monitor_ch_builder(monitor)
@@ -388,7 +466,15 @@ def _check_static_threshold(
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
 
 
 def _check_percentage_change_threshold(
@@ -454,7 +540,15 @@ def _check_percentage_change_threshold(
             f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
             f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
         )
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
 
 
 def _compare(value1: float, operator: str, value2: float) -> bool:

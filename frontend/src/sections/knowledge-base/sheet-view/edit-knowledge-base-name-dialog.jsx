@@ -91,7 +91,13 @@ export default function EditKnowledgeBaseNameDialog({
   };
 
   return (
-    <Dialog fullWidth maxWidth={"xs"} open={open} onClose={onClose}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      open={open}
+      onClose={onClose}
+    >
       <DialogTitle sx={{ pb: "0" }}>
         <Stack
           direction={"row"}
@@ -114,7 +120,7 @@ export default function EditKnowledgeBaseNameDialog({
             }}
             onClick={onClose}
           >
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
       </DialogTitle>

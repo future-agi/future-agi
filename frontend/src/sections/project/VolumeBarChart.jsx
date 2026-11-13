@@ -30,18 +30,9 @@ const VolumeBarChart = ({
 
   const hovered = hoveredIdx !== null ? days[hoveredIdx] : null;
 
-  const barColor =
-    theme.palette.mode === "dark"
-      ? "rgba(255,255,255,0.4)"
-      : "rgba(0,0,0,0.22)";
-  const barHoverColor =
-    theme.palette.mode === "dark"
-      ? "rgba(255,255,255,0.75)"
-      : "rgba(0,0,0,0.55)";
-  const lineColor =
-    theme.palette.mode === "dark"
-      ? "rgba(255,255,255,0.08)"
-      : "rgba(0,0,0,0.06)";
+  const barColor = theme.palette.text.disabled;
+  const barHoverColor = theme.palette.text.secondary;
+  const lineColor = theme.palette.divider;
 
   return (
     <Box sx={{ width: "100%" }}>
@@ -68,8 +59,8 @@ const VolumeBarChart = ({
                 height: `${pct}%`,
                 minHeight: day.value > 0 ? 2 : 0,
                 bgcolor: hoveredIdx === idx ? barHoverColor : barColor,
-                borderRadius: "1px 1px 0 0",
-                transition: "background-color 80ms",
+                borderRadius: "4px 4px 0 0",
+                transition: "background-color 120ms",
                 cursor: "default",
               }}
             />
@@ -89,7 +80,7 @@ const VolumeBarChart = ({
       >
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: hovered ? "text.secondary" : "transparent",
             lineHeight: 1,
             whiteSpace: "nowrap",
@@ -99,7 +90,7 @@ const VolumeBarChart = ({
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 500,
             color: hovered ? "text.secondary" : "transparent",
             lineHeight: 1,

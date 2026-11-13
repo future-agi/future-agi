@@ -10,6 +10,7 @@ import TaskLivePreview from "../TaskLivePreview";
 const axiosGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("src/utils/axios", () => ({
+  readQuery: axiosGetMock,
   default: { get: axiosGetMock },
   endpoints: {
     project: {
@@ -17,6 +18,7 @@ vi.mock("src/utils/axios", () => ({
       getTracesForObserveProject: () => "/tracer/observe-project-traces/",
       projectSessionList: () => "/tracer/project-session-list/",
       getTrace: (id) => `/tracer/trace/${id}/`,
+      getObservationSpan: (id) => `/tracer/span/${id}/`,
       traceSession: "/tracer/trace-session/",
       getCallLogs: "/tracer/call-logs/",
       getVoiceCallDetail: "/tracer/voice-call-detail/",
@@ -69,21 +71,43 @@ const renderPreview = (evalsDetails) => {
 // never recoverable from the report, so these tests assert on the value being a
 // non-string — which is the whole gate — and never on a particular inner shape.
 const OBJECT_MAPPING_VALUE = { value: "output.value" };
+const SPAN_ROW = {
+  span_id: "span-1",
+  trace_id: "trace-1",
+  project_id: "project-1",
+  start_time: "2026-09-01T12:01:02.123456Z",
+  observation_type: "SPAN",
+  service_name: "test-service",
+  _version: "1",
+  output: { value: "hi" },
+};
 const SPAN_LIST_RESPONSE = {
   data: {
     status: true,
     result: {
-      table: [{ span_id: "span-1", output: { value: "hi" } }],
+      table: [SPAN_ROW],
       metadata: { total_rows: 1, has_more: false, next_cursor: null },
       config: [],
     },
   },
 };
 
+const previewRead = async (url) => {
+  if (url === "/tracer/observe-project-spans/") return SPAN_LIST_RESPONSE;
+  if (url === "/tracer/span/span-1/")
+    return {
+      data: {
+        status: true,
+        result: { observation_span: { ...SPAN_ROW, id: SPAN_ROW.span_id } },
+      },
+    };
+  throw new Error(`Unexpected GET ${url}`);
+};
+
 describe("TaskLivePreview — variable mapping", () => {
   beforeEach(() => {
     axiosGetMock.mockReset();
-    axiosGetMock.mockResolvedValue(SPAN_LIST_RESPONSE);
+    axiosGetMock.mockImplementation(previewRead);
   });
 
   it("renders a mapping whose value is an object instead of tearing down the page", async () => {
@@ -130,7 +154,7 @@ describe("TaskLivePreview — variable mapping", () => {
 describe("TaskLivePreview — app error boundary", () => {
   beforeEach(() => {
     axiosGetMock.mockReset();
-    axiosGetMock.mockResolvedValue(SPAN_LIST_RESPONSE);
+    axiosGetMock.mockImplementation(previewRead);
   });
 
   it("does not trip the boundary that wraps the whole app", async () => {

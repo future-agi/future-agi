@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -43,12 +42,10 @@ import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
-  extractAttributeFilters,
-  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
-import NewTaskFilterBox from "../NewTaskDrawer/NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
 import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
@@ -56,11 +53,12 @@ import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Configured Eval Card ──
 
 const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
-  const theme = useTheme();
   const name =
     evalItem?.name ||
     evalItem?.eval_template?.name ||
@@ -78,10 +76,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -96,8 +91,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
                 label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "action.hover",
                   "& .MuiChip-label": { px: 0.5 },
                 }}
@@ -108,8 +101,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
                 label={`+${mappedKeys.length - 3}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -123,7 +114,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
           onClick={onRemove}
           sx={{ p: 0.25, color: "text.secondary" }}
         >
-          <Iconify icon="mingcute:close-line" width={16} />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       )}
     </Box>
@@ -259,28 +250,11 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-
-      // Task system filter aggregation. Keep the update payload aligned with
-      // the backend-supported task filter contract instead of saving fields
-      // that the dispatcher would ignore.
-      const systemFilters = {};
-      (data.filters || []).forEach((f) => {
-        if (!f?.property || f.property === "attributes") return;
-        const apiKey = getTaskFilterApiKey(f.property);
-        const v = f?.filterConfig?.filterValue;
-        const values = Array.isArray(v)
-          ? v
-          : v !== undefined && v !== null && v !== ""
-            ? [v]
-            : [];
-        if (!values.length) return;
-        if (systemFilters[apiKey]) {
-          systemFilters[apiKey].push(...values);
-        } else {
-          systemFilters[apiKey] = [...values];
-        }
-      });
+      const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+        data,
+        data.project,
+        true,
+      );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -427,13 +401,12 @@ const EditTaskDrawerV2Content = ({
                 />
               }
               onClick={() => setIsEditing(!isEditing)}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               {isEditing ? "Editing" : "Edit"}
             </Button>
           )}
           <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-            <Iconify icon="mingcute:close-line" width={20} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
       </Box>
@@ -442,21 +415,9 @@ const EditTaskDrawerV2Content = ({
       {isView && (
         <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
           <Tabs
+            sx={{ boxShadow: "none" }}
             value={selectedTab}
             onChange={(_, val) => setSelectedTab(val)}
-            sx={{
-              minHeight: 0,
-              "& .MuiTab-root": {
-                minHeight: 36,
-                fontWeight: 600,
-                fontSize: "13px",
-                textTransform: "none",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: 500,
-                },
-              },
-            }}
           >
             {TAB_OPTIONS.map((tab) => (
               <Tab key={tab.value} label={tab.label} value={tab.value} />
@@ -536,18 +497,14 @@ const EditTaskDrawerV2Content = ({
                 <Accordion defaultExpanded>
                   <AccordionSummary>Filters</AccordionSummary>
                   <AccordionDetails>
-                    <NewTaskFilterBox
-                      getValues={getValues}
-                      setValue={setValue}
-                      attributes={
-                        Array.isArray(evalAttributes)
-                          ? evalAttributes.map((attr) => ({
-                              label: attr,
-                              value: attr,
-                            }))
-                          : []
-                      }
+                    <TaskFilterBar
                       control={control}
+                      setValue={setValue}
+                      projectId={project}
+                      isSimulator={String(rowType || "")
+                        .toLowerCase()
+                        .startsWith("voice")}
+                      rowType={rowType}
                     />
                   </AccordionDetails>
                 </Accordion>
@@ -575,11 +532,9 @@ const EditTaskDrawerV2Content = ({
                         disabled={!project}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
-                          <Iconify icon="mingcute:add-line" width={16} />
+                          <Iconify icon="solar:add-linear" width={16} />
                         }
                         sx={{
-                          textTransform: "none",
-                          fontWeight: 500,
                           alignSelf: "flex-start",
                         }}
                       >
@@ -723,12 +678,14 @@ const EditTaskDrawerV2 = ({
     enabled: !!taskId && open,
   });
 
+  const covered = useDrawerCovered(open);
   if (!open) return null;
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
@@ -755,7 +712,7 @@ const EditTaskDrawerV2 = ({
             height: "100%",
           }}
         >
-          <CircularProgress size={28} />
+          <ContentSkeleton variant="panel" />
         </Box>
       )}
       {isError && (

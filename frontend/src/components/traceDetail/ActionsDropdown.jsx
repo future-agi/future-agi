@@ -10,23 +10,27 @@ import {
 import Iconify from "src/components/iconify";
 
 const ACTIONS = [
-  { id: "dataset", label: "Move to dataset", icon: "mdi:folder-move-outline" },
+  {
+    id: "dataset",
+    label: "Move to dataset",
+    icon: "solar:move-to-folder-linear",
+  },
   {
     id: "prompt-workbench",
     label: "Iterate in prompt workbench",
-    icon: "mdi:pencil-outline",
+    icon: "solar:pen-linear",
   },
   // {
   //   id: "agent-playground",
   //   label: "Iterate in agent playground",
-  //   icon: "mdi:robot-outline",
+  //   icon: "solar:bot-linear",
   // },
-  { id: "tags", label: "Add Tags", icon: "mdi:tag-outline" },
-  { id: "annotate", label: "Annotate", icon: "mdi:pencil-box-outline" },
+  { id: "tags", label: "Add Tags", icon: "solar:tag-linear" },
+  { id: "annotate", label: "Annotate", icon: "solar:pen-new-square-linear" },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
-    icon: "mdi:clipboard-list-outline",
+    icon: "solar:clipboard-list-linear",
   },
 ];
 
@@ -40,13 +44,9 @@ const ActionsDropdown = ({ onAction }) => {
         ref={anchorRef}
         variant="outlined"
         size="small"
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onClick={() => setOpen(true)}
         sx={{
-          textTransform: "none",
-          fontSize: 12,
-          fontWeight: 500,
-          height: 30,
           borderColor: "divider",
           color: "text.primary",
         }}
@@ -72,7 +72,7 @@ const ActionsDropdown = ({ onAction }) => {
             dense
           >
             <ListItemIcon>
-              <Iconify icon={action.icon} width={18} />
+              <Iconify icon={action.icon} width={16} />
             </ListItemIcon>
             <ListItemText
               primaryTypographyProps={{ variant: "body2", fontSize: 13 }}

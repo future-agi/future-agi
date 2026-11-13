@@ -23,8 +23,7 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 function PieDonut({ group, colorFor, formatValue }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const txtColor = isDark ? "#fff" : "#1a1a2e";
+  const txtColor = theme.palette.text.primary;
   const containerRef = useRef(null);
   const [box, setBox] = useState(null);
   const [geometry, setGeometry] = useState(null);
@@ -115,7 +114,7 @@ function PieDonut({ group, colorFor, formatValue }) {
             value: {
               show: Boolean(centerText),
               fontSize: `${centerFontSize}px`,
-              fontWeight: 700,
+              fontWeight: 600,
               color: txtColor,
               offsetY: 8,
               formatter: () => centerText,
@@ -124,7 +123,7 @@ function PieDonut({ group, colorFor, formatValue }) {
               show: Boolean(centerText),
               showAlways: Boolean(centerText),
               fontSize: `${centerFontSize}px`,
-              fontWeight: 700,
+              fontWeight: 600,
               color: txtColor,
               label: "",
               formatter: () => centerText,
@@ -135,7 +134,7 @@ function PieDonut({ group, colorFor, formatValue }) {
     },
     dataLabels: { enabled: false },
     legend: { show: false, height: 0 },
-    stroke: { width: 4, colors: [isDark ? "#1e1e2e" : "#fff"] },
+    stroke: { width: 4, colors: [theme.palette.background.paper] },
     states: {
       hover: { filter: { type: "darken", value: 0.92 } },
       active: { filter: { type: "none" } },
@@ -197,9 +196,7 @@ function PieDonut({ group, colorFor, formatValue }) {
                 <polyline
                   points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
                   fill="none"
-                  stroke={
-                    isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.25)"
-                  }
+                  stroke={theme.palette.text.disabled}
                   strokeWidth="1"
                 />
                 <text
@@ -207,7 +204,7 @@ function PieDonut({ group, colorFor, formatValue }) {
                   y={c.elbowY - 5}
                   textAnchor={c.isRight ? "start" : "end"}
                   fill={txtColor}
-                  fontSize="11"
+                  fontSize="12"
                   fontWeight="500"
                   fontFamily="inherit"
                 >

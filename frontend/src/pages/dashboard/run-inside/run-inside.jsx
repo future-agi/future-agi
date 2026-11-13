@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Paper, Box } from "@mui/material";
+import { Box } from "@mui/material";
 import RunInsights from "src/components/run-insights/run-insights";
 import Iconify from "src/components/iconify";
 import { useParams, useSearchParams } from "src/routes/hooks";
@@ -105,8 +105,7 @@ const RunInsidePage = () => {
     }
   };
   return (
-    <Paper
-      elevation={3}
+    <Box
       sx={{
         width: "100%",
         height: "100vh",
@@ -114,7 +113,7 @@ const RunInsidePage = () => {
         flexDirection: "row",
         bgcolor: "background.paper",
         borderRadius: 0,
-        position: "relative", // Allows absolute positioning for the button
+        position: "relative",
       }}
     >
       <Helmet>
@@ -250,7 +249,7 @@ const RunInsidePage = () => {
           }}
         >
           <Iconify
-            icon="iconamoon:arrow-right-1-light"
+            icon="solar:alt-arrow-right-linear"
             width={12}
             color="text.disabled"
             sx={{ transform: isCollapsed ? "rotate(180deg)" : "" }}
@@ -276,7 +275,7 @@ const RunInsidePage = () => {
       </Box>
 
       {/* Collapse Button */}
-    </Paper>
+    </Box>
   );
 };
 

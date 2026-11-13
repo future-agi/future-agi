@@ -215,7 +215,12 @@ class AgentDefinition(BaseModel):
         return self.versions.filter(id=id).first()
 
     def create_version(
-        self, description, commit_message, release_notes=None, status="draft"
+        self,
+        description,
+        commit_message,
+        release_notes=None,
+        status="draft",
+        version_number=None,
     ):
         """Create a new version of this agent"""
         from .agent_version import AgentVersion
@@ -229,6 +234,7 @@ class AgentDefinition(BaseModel):
             release_notes=release_notes,
             status=status,
             workspace=self.workspace,
+            version_number=version_number,
         )
 
         return version
