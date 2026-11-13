@@ -25,7 +25,7 @@ from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.configuration import continuous_coverage_floor
 from tracer.services.eval_tasks.entries import soft_delete_live
-from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
 
@@ -129,7 +129,7 @@ def test_legacy_conversion_starts_at_the_conversion(
         )
         assert floor == converted
     finally:
-        truncate_ch_spans()
+        delete_ch_spans([pre, post])
 
 
 def test_resave_after_legacy_failed_delete_and_rerun_does_not_rebill(
@@ -212,7 +212,7 @@ def test_resave_after_legacy_failed_delete_and_rerun_does_not_rebill(
         assert after_edit == (rerun, rerun, None)
         assert floor == rerun
     finally:
-        truncate_ch_spans()
+        delete_ch_spans([old, after])
 
 
 def test_retry_after_failed_conversion_dispatch_keeps_the_conversion_floor(
@@ -270,7 +270,7 @@ def test_retry_after_failed_conversion_dispatch_keeps_the_conversion_floor(
         assert floor == activation
         assert after_retry == (activation, activation, None)
     finally:
-        truncate_ch_spans()
+        delete_ch_spans([before, between])
 
 
 @pytest.mark.parametrize(

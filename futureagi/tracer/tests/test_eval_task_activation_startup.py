@@ -10,7 +10,7 @@ from tracer.models.eval_task import EvalTaskStatus
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
-from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
 from tracer.tests.test_eval_task_activation_paths import ROUTES, convert, historical
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
@@ -92,4 +92,4 @@ def test_converted_route_resume_excludes_pre_conversion_spans(
             )
         ) == {spans[0].pk, spans[2].pk}
     finally:
-        truncate_ch_spans()
+        delete_ch_spans(spans)

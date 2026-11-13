@@ -9,7 +9,7 @@ from tfc.temporal.eval_tasks.activities import _reconcile_sync, _set_task_status
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
-from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
 
 
 @pytest.mark.django_db(transaction=True)
@@ -68,7 +68,7 @@ def test_delayed_start_keeps_acceptance_floor_and_pending_arrivals(
         eval_task.refresh_from_db()
         assert eval_task.continuous_cursor >= activation
     finally:
-        truncate_ch_spans()
+        delete_ch_spans(spans)
 
 
 @pytest.mark.django_db(transaction=True)

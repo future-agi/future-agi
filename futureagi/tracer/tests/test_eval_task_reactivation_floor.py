@@ -23,7 +23,7 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
-from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
 
@@ -150,7 +150,7 @@ def test_continuous_rerun_evaluates_only_arrivals_after_rerun(
         assert floor_after_rerun == rerun
         assert rerun <= floor_after_running <= running_at
     finally:
-        truncate_ch_spans()
+        delete_ch_spans([old_20d, old_1d, new])
 
 
 def test_continuous_metadata_rerun_keeps_floor_and_cursor(auth_client, eval_task):
@@ -230,4 +230,4 @@ def test_create_ignores_client_start_time_as_continuous_floor(
         assert stored == (None, None)
         assert task.created_at <= floor_after_running <= running_at
     finally:
-        truncate_ch_spans()
+        delete_ch_spans([pre_creation, post_running])
