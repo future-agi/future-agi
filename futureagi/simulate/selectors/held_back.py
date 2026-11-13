@@ -159,7 +159,12 @@ CAUSE_WORDS = {
         "Stopped — the agent refused the connection. "
         "Check that it listens on the port it was given, then push a new agent version."
     ),
-    "unknown": "Stopped — the reason wasn't recorded. Run it again.",
+    # Exit 78 is deterministic, so running it again cannot help; the agent's own start, on the
+    # reader's machine, shows the error. No guest text reaches the reader.
+    "unknown": (
+        "The agent stopped before it was ready and didn't say why. "
+        "Start it on your own machine to see the error it prints."
+    ),
 }
 
 
@@ -181,9 +186,11 @@ def failure_cause(failure: Mapping[str, Any]) -> str | None:
 
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
     """A failure's message as a coding agent and a call row read it: when the failure has a
-    cause, what it means and what to do, with the cause's code last; otherwise fixed text for
-    its code."""
+    cause, what it means and what to do, with a named cause's code last; otherwise fixed text
+    for its code. An unknown cause reads as words only: the machine field still says it."""
     cause = failure_cause(failure)
+    if cause == UNKNOWN_FAILURE_CAUSE:
+        return CAUSE_WORDS[cause]
     if cause is not None:
         return f"{CAUSE_WORDS[cause]} (cause: {cause})"
     code = str(failure.get("code") or "failed")

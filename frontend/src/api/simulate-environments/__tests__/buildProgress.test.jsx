@@ -128,9 +128,13 @@ describe("jobToBuildProgress", () => {
     expect(failedWith("agent_not_ready_in_time")).toBe(
       "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
     );
-    expect(failedWith("a_value_from_a_newer_server")).toBe(
-      "Stopped — the reason wasn't recorded. Run it again.",
-    );
+    // Exit 78 with no recorded cause, or one this page does not know: a next step, no code,
+    // and never "run it again" for a deterministic failure.
+    for (const cause of ["unknown", "a_value_from_a_newer_server"]) {
+      expect(failedWith(cause)).toBe(
+        "The agent stopped before it was ready and didn't say why. Start it on your own machine to see the error it prints.",
+      );
+    }
   });
 
   it("leaves a failure with no cause outside our infrastructure as recorded", () => {

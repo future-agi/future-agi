@@ -70,6 +70,15 @@ pytestmark = pytest.mark.django_db
 BASE = "/simulate/api/harness-environments"
 # A certify start timeout as the guest recorded it, from a run before failures carried a cause.
 _START_TIMEOUT = "depends_on/depends_on_timeout (agent): agent: started_check did not pass within 180.0s"
+
+
+def _cause_read(cause: str) -> str:
+    """How a cause reads: a named one's words with its code last, unknown's words alone."""
+    if cause == "unknown":
+        return CAUSE_WORDS[cause]
+    return f"{CAUSE_WORDS[cause]} (cause: {cause})"
+
+
 VERIFY_FIELDS = {
     "state",
     "passed",
@@ -1050,7 +1059,7 @@ class TestWhatACodingAgentReads:
         job = _as(api_client, keys.coder, "get", job_path)
         call_read = _as(api_client, keys.coder, "get", call_path)
 
-        message = f"{CAUSE_WORDS[read]} (cause: {read})"
+        message = _cause_read(read)
         assert job.json()["status"]["failure"] == {
             "domain": "environment",
             "stage": "validating_environment",
@@ -1074,6 +1083,8 @@ class TestWhatACodingAgentReads:
             # A start timeout recorded without a cause, or by an older image, is a slow start.
             (None, _START_TIMEOUT, "agent_not_ready_in_time"),
             ("unknown", _START_TIMEOUT, "agent_not_ready_in_time"),
+            # Exit 78 with no recorded cause: the unknown words, not the guest's message.
+            ("unknown", "agent: exited early", "unknown"),
         ],
     )
     def test_a_person_s_calls_read_a_named_cause_in_plain_words(
@@ -1109,7 +1120,7 @@ class TestWhatACodingAgentReads:
         )
         # With a cause every call says it plainly, and the guest text stays on the job.
         # Without one, a person's calls keep the stored message as before.
-        assert reasons == ({f"{CAUSE_WORDS[read]} (cause: {read})"} if read else {raw})
+        assert reasons == ({_cause_read(read)} if read else {raw})
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
@@ -1188,6 +1199,12 @@ def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
         "Didn't start in time — the agent wasn't ready within the limit. "
         "Run it again; if it repeats, make it start or listen sooner. "
         "(cause: agent_not_ready_in_time)"
+    )
+    # Exit 78 with no recorded cause: words only, with a next step and no code. It is
+    # deterministic, so they never say to run it again.
+    assert coding_agent_failure_message({**failure, "cause": "unknown"}) == (
+        "The agent stopped before it was ready and didn't say why. "
+        "Start it on your own machine to see the error it prints."
     )
     # Without one, the fixed label for its code.
     assert (

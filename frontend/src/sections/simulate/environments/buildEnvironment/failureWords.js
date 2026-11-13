@@ -16,7 +16,8 @@ export const CAUSE_WORDS = {
     "Stopped — the agent didn't reply to a message in time. Run it again. If it repeats, make the agent reply faster.",
   chat_target_refused:
     "Stopped — the agent refused the connection. Check that it listens on the port it was given, then push a new agent version.",
-  unknown: "Stopped — the reason wasn't recorded. Run it again.",
+  unknown:
+    "The agent stopped before it was ready and didn't say why. Start it on your own machine to see the error it prints.",
 };
 
 export const INFRASTRUCTURE_LINE =
