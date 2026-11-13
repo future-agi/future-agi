@@ -5,6 +5,11 @@ withdrew its own row. Run it with ``--apply`` while the stranded sweep is off
 (``EVAL_TASK_SWEEP_MAX_TASKS=0``), then turn the sweep back on: otherwise the
 sweep activates those rows from their creation time. Prints counts and
 organization ids only, never a task, project or organization name.
+
+Like the other operator commands it runs only in a one-shot operator job
+(``SERVICE_TYPE=bootstrap`` with ``STARTUP_DB_MUTATION_MODE=operator``; see
+``model_hub.apps``), with the backend's Temporal settings, because every
+candidate is checked against Temporal before it is withdrawn.
 """
 
 from collections import Counter
