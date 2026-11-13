@@ -15,6 +15,7 @@ import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import NodeErrorAlert from "./NodeErrorAlert";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -211,6 +212,16 @@ const NODE_OUTPUT_THEME_PARAMS = {
   headerColumnBorder: { width: 0 },
 };
 
+/**
+ * NodeOutputDetail
+ *
+ * Displays node input and output execution details in AG Grid.
+ *
+ * Error Handling Behavior (Issue #2503):
+ * - If a node fails without producing output, the failure error message is rendered in the grid output cell as well as the error alert.
+ * - If a node fails after producing partial output, NodeErrorAlert displays the error banner above the grid while the grid preserves and displays the partial output rows.
+ * - If a node succeeds, no error banner or error cell is rendered.
+ */
 export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   const agTheme = useAgThemeWith(NODE_OUTPUT_THEME_PARAMS);
   const gridApiRef = useRef(null);
@@ -232,14 +243,17 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     nodeDetail?.nodeExecutionId ||
     nodeDetail?.node_execution_id ||
     nodeExecutionId;
-  const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
+  const errorMessage = useMemo(() => {
+    return nodeDetail?.errorMessage || nodeDetail?.error_message || nodeDetail?.error || null;
+  }, [nodeDetail?.errorMessage, nodeDetail?.error_message, nodeDetail?.error]);
 
   const inputs = useMemo(() => nodeDetail?.inputs || [], [nodeDetail?.inputs]);
   const outputs = useMemo(
     () => nodeDetail?.outputs || [],
     [nodeDetail?.outputs],
   );
-  const hasErrorMessage = !!errorMessage && outputs.length === 0;
+  const hasErrorMessage = Boolean(errorMessage);
+  const hasOutputs = outputs.length > 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
@@ -257,7 +271,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       return [{ id: nodeExecutionIdentifier, _running: true }];
     }
 
-    if (hasErrorMessage) {
+    if (hasErrorMessage && !hasOutputs) {
       if (inputs.length > 0) {
         // Has inputs but output errored — one row per input
         return inputs.map((inp, i) => ({
@@ -332,7 +346,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     const usePairedInput =
-      isPairedMode || (hasErrorMessage && inputs.length > 0);
+      isPairedMode || (hasErrorMessage && !hasOutputs && inputs.length > 0);
     const cols = [];
 
     if (showInputs) {
@@ -355,7 +369,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       );
     }
 
-    if (hasErrorMessage) {
+    if (hasErrorMessage && !hasOutputs) {
       cols.push({
         field: "output",
         headerName: "Output",
@@ -384,7 +398,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     return cols;
-  }, [showInputs, hasErrorMessage, isPairedMode, isNodeRunning, inputs.length]);
+  }, [showInputs, hasErrorMessage, hasOutputs, isPairedMode, isNodeRunning, inputs.length]);
 
   const PORT_ROW_HEIGHT = 120;
 
@@ -525,6 +539,9 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           }
         />
       </Box>
+
+      {/* Node Error Alert for execution failures */}
+      {hasErrorMessage && <NodeErrorAlert errorMessage={errorMessage} />}
 
       {/* AG Grid Table */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
