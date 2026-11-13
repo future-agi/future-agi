@@ -542,10 +542,6 @@ def test_a_comparison_whose_metadata_was_not_removed_is_not_reported_deleted(
         storage_unavailable,
         raising=False,
     )
-    monkeypatch.setattr(
-        "model_hub.utils.compare_storage.delete_compare_metadata",
-        storage_unavailable,
-    )
 
     deleted = auth_client.delete(DELETE_URL.format(compare_id=compare_id))
     assert deleted.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, (

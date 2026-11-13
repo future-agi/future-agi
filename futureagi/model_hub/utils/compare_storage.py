@@ -105,8 +105,8 @@ def delete_compare_objects(compare_id) -> None:
 
 def delete_compare_metadata(compare_id) -> None:
     """Remove a comparison's metadata, after which every read of the
-    comparison answers as not found. Raises when the bucket did not remove
-    it."""
+    comparison answers as not found. Raises on a storage error; removing
+    metadata that is already gone is not an error."""
     client, bucket = _client_and_bucket()
     client.remove_object(
         bucket, compare_object_key(compare_id, COMPARE_METADATA_OBJECT)
