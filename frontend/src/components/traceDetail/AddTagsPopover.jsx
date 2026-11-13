@@ -4,6 +4,8 @@ import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import useSaveEntityTags, {
   isSourceTag,
+  latestTagState,
+  tagTargetKey,
   tagUpdateErrorMessage,
 } from "./useSaveEntityTags";
 import { enqueueSnackbar } from "notistack";
@@ -30,23 +32,41 @@ const AddTagsPopover = ({
     items.length === 1 ? items[0].currentTags || EMPTY_TAGS : currentTags;
   const saveEntityTags = useSaveEntityTags();
 
-  const [tags, setTags] = useState(() =>
-    isBulk ? [] : normalizeTags(selectedTags),
-  );
+  // The last acknowledged single save: { key, result }. The owner's entity
+  // and tags can be older than it (a drawer refetch or a grid row update
+  // lands later), and the popover can be reopened before they catch up.
+  const acknowledged = React.useRef(null);
+  // The tag state the shown list was built from, sent as the save's base so
+  // the list and the expected revision always match.
+  const baseState = React.useRef({ key: null, state: null });
+  const selectedEntityRef = React.useRef(selectedEntity);
+  selectedEntityRef.current = selectedEntity;
+
+  const seed = () => {
+    if (isBulk) return [];
+    const current = selectedEntityRef.current;
+    const state = latestTagState(current, acknowledged.current);
+    baseState.current = { key: tagTargetKey(current), state };
+    return normalizeTags(state === current ? selectedTags : state.tags);
+  };
+  const [tags, setTags] = useState(seed);
   const confirmedTags = React.useRef(tags);
   const queryClient = useQueryClient();
 
   React.useEffect(() => {
     if (open) {
-      confirmedTags.current = isBulk ? [] : normalizeTags(selectedTags);
+      confirmedTags.current = seed();
       setTags(confirmedTags.current);
     }
+    // Reseed on open and when the owner's tags change; the entity is read
+    // through a ref so a new object for the same entity does not reseed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedTags, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
     // The saved entity travels with the request: the owner can select another
     // entity before the save is acknowledged.
-    mutationFn: ({ tags: newTags, entity: savedEntity, type }) => {
+    mutationFn: ({ tags: newTags, entity: savedEntity, type, base }) => {
       if (isBulk) {
         // Merge with each item's existing tags to avoid overwriting.
         // Backend PATCH replaces tags[], so we compute the full set here.
@@ -68,12 +88,24 @@ const AddTagsPopover = ({
           return results;
         });
       }
-      return saveEntityTags({ entity: savedEntity, type, tags: newTags });
+      return saveEntityTags({
+        entity: savedEntity,
+        type,
+        tags: newTags,
+        base,
+      });
     },
     onSuccess: (result, { entity: savedEntity, type }) => {
       if (!isBulk) {
-        confirmedTags.current = normalizeTags(result.tags);
-        setTags(confirmedTags.current);
+        acknowledged.current = { key: tagTargetKey(savedEntity), result };
+        // Show it only if the popover still edits the entity it was saved for.
+        if (
+          tagTargetKey(savedEntity) === tagTargetKey(selectedEntityRef.current)
+        ) {
+          baseState.current = { key: tagTargetKey(savedEntity), state: result };
+          confirmedTags.current = normalizeTags(result.tags);
+          setTags(confirmedTags.current);
+        }
       }
       enqueueSnackbar(
         isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
@@ -103,6 +135,11 @@ const AddTagsPopover = ({
       saveTags({
         tags: nextTags,
         entity: selectedEntity,
+        // Never another entity's state: then the entity's own revision.
+        base:
+          baseState.current.key === tagTargetKey(selectedEntity)
+            ? baseState.current.state
+            : selectedEntity,
         type: items[0]?.type || (spanId ? "span" : "trace"),
       });
     },

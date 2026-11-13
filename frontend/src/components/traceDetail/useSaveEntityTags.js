@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useState } from "react";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 
@@ -45,9 +45,63 @@ export const hasTagTarget = (entity) =>
   Number.isSafeInteger(entity?.tag_revision) &&
   entity.tag_revision >= 0;
 
+// One physical target, for matching an acknowledged save to its entity.
+export const tagTargetKey = (entity) =>
+  entity?.tag_target
+    ? JSON.stringify(
+        TARGET_FIELDS.map((field) => entity.tag_target[field] ?? null),
+      )
+    : null;
+
+// The newest tag state an editor knows for an entity: the entity as loaded,
+// or a later acknowledged save of the same target (a save result has tags,
+// manual_tags, source_tag_names and tag_revision). An editor builds its next
+// tag list from this state and sends it as the save's base, so the list and
+// the expected revision always come from the same state.
+export const latestTagState = (entity, confirmed) => {
+  const key = tagTargetKey(entity);
+  if (
+    key === null ||
+    !confirmed ||
+    confirmed.key !== key ||
+    !Number.isSafeInteger(confirmed.result?.tag_revision) ||
+    !Number.isSafeInteger(entity?.tag_revision) ||
+    confirmed.result.tag_revision <= entity.tag_revision
+  ) {
+    return entity;
+  }
+  return confirmed.result;
+};
+
+/**
+ * Tags an inline editor shows, kept at the last acknowledged save until the
+ * entity it was given catches up (a refetch can land after the next edit).
+ *
+ * @returns {{ tags, base, confirm }} the tags to show, the state they come
+ *   from (pass it to the save as `base`), and confirm(result, savedEntity)
+ *   to call when a save is acknowledged.
+ */
+export function useLatestEntityTags(entity, tags) {
+  const [confirmed, setConfirmed] = useState(null);
+  const base = latestTagState(entity, confirmed);
+  const confirm = useCallback(
+    (result, savedEntity) =>
+      setConfirmed({ key: tagTargetKey(savedEntity), result }),
+    [],
+  );
+  return { tags: base === entity ? tags : base.tags || [], base, confirm };
+}
+
+/**
+ * Save an entity's tags.
+ *
+ * `tags` is the complete new list, built by the caller from `base`: the
+ * entity as loaded (the default) or a later acknowledged save of it. The save
+ * expects `base`'s revision, so a list built from stale data is refused (409)
+ * instead of silently dropping a newer tag.
+ */
 export default function useSaveEntityTags() {
-  const saved = useRef(new Map());
-  return useCallback(async ({ entity, tags, type = "trace" }) => {
+  return useCallback(async ({ entity, tags, type = "trace", base }) => {
     if (!hasTagTarget(entity)) {
       const error = new Error("Missing tag target");
       error.code = "tag_scope_required";
@@ -58,18 +112,17 @@ export default function useSaveEntityTags() {
     const target = Object.fromEntries(
       TARGET_FIELDS.map((field) => [field, entity.tag_target[field]]),
     );
-    const key = JSON.stringify(target);
-    const previous = saved.current.get(key);
-    const latest =
-      previous?.tag_revision > entity.tag_revision ? previous : entity;
+    const state = Number.isSafeInteger(base?.tag_revision) ? base : entity;
     const manualNames = new Set(
-      (latest.manual_tags || []).map((tag) => tag.name),
+      (state.manual_tags || []).map((tag) => tag.name),
     );
+    const sourceState = state.source_tag_names ? state : entity;
     const body = {
       ...target,
-      expected_tag_revision: latest.tag_revision,
+      expected_tag_revision: state.tag_revision,
       tags: tags.filter(
-        (tag) => !isSourceTag(entity, tag.name) || manualNames.has(tag.name),
+        (tag) =>
+          !isSourceTag(sourceState, tag.name) || manualNames.has(tag.name),
       ),
     };
     const response =
@@ -82,10 +135,6 @@ export default function useSaveEntityTags() {
             apiPath("/tracer/trace/{id}/tags/", { id: target.trace_id }),
             body,
           );
-    const result = response.data.result;
-    // A popover can stay open for several saves before its grid refetches.
-    // Carry the acknowledged revision forward; never retry a stale write.
-    saved.current.set(key, result);
-    return result;
+    return response.data.result;
   }, []);
 }

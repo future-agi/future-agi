@@ -39,6 +39,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import useSaveEntityTags, {
+  useLatestEntityTags,
   isSourceTag,
   tagUpdateErrorMessage,
 } from "src/components/traceDetail/useSaveEntityTags";
@@ -1170,15 +1171,24 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
   const saveEntityTags = useSaveEntityTags();
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
+  // The span's tags until its refetch lands are the last acknowledged save:
+  // the next edit builds on them, at their revision.
+  const latest = useLatestEntityTags(entity, tags);
 
-  const normalized = useMemo(() => normalizeTags(tags), [tags]);
+  const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
 
   const { mutate, isPending } = useMutation({
     // The saved entity travels with the request: the pane can switch to
     // another span before the save is acknowledged.
-    mutationFn: ({ tags: newTags, entity: savedEntity }) =>
-      saveEntityTags({ entity: savedEntity, tags: newTags, type: "span" }),
+    mutationFn: ({ tags: newTags, entity: savedEntity, base }) =>
+      saveEntityTags({
+        entity: savedEntity,
+        tags: newTags,
+        type: "span",
+        base,
+      }),
     onSuccess: (result, { entity: savedEntity }) => {
+      latest.confirm(result, savedEntity);
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       // The parent grid caches tags and their revision outside React Query.
       onSaved?.(result, { entity: savedEntity, type: "span" });
@@ -1191,8 +1201,8 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
   });
 
   const persist = useCallback(
-    (next) => mutate({ tags: next, entity }),
-    [mutate, entity],
+    (next) => mutate({ tags: next, entity, base: latest.base }),
+    [mutate, entity, latest.base],
   );
 
   return (

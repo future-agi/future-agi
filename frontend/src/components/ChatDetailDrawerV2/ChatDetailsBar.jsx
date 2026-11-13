@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import useSaveEntityTags, {
+  useLatestEntityTags,
   isSourceTag,
   tagUpdateErrorMessage,
 } from "src/components/traceDetail/useSaveEntityTags";
@@ -122,22 +123,32 @@ const InlineTagsRow = ({ tags = [], entity }) => {
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
-  const normalized = useMemo(() => normalizeTags(tags), [tags]);
+  // Until the refetch lands, the tags are the last acknowledged save.
+  const latest = useLatestEntityTags(entity, tags);
+  const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
 
-  const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) => saveEntityTags({ entity, tags: newTags }),
-    onSuccess: () =>
-      Promise.all(
+  const { mutate, isPending } = useMutation({
+    mutationFn: ({ tags: newTags, entity: savedEntity, base }) =>
+      saveEntityTags({ entity: savedEntity, tags: newTags, base }),
+    onSuccess: (result, { entity: savedEntity }) => {
+      latest.confirm(result, savedEntity);
+      return Promise.all(
         TAG_INVALIDATION_QUERY_KEYS.map((queryKey) =>
           queryClient.invalidateQueries({ queryKey }),
         ),
-      ),
+      );
+    },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
     },
     retry: false,
   });
+
+  const persist = useCallback(
+    (next) => mutate({ tags: next, entity, base: latest.base }),
+    [mutate, entity, latest.base],
+  );
 
   return (
     <Stack
@@ -156,15 +167,15 @@ const InlineTagsRow = ({ tags = [], entity }) => {
           color={tag.color}
           size="small"
           readOnly={isPending || isSourceTag(entity, tag.name)}
-          onRemove={() => saveTags(normalized.filter((_, i) => i !== idx))}
+          onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
-            saveTags(
+            persist(
               normalized.map((t, i) => (i === idx ? { ...t, color: c } : t)),
             )
           }
           onRename={(n) => {
             if (normalized.some((t, i) => i !== idx && t.name === n)) return;
-            saveTags(
+            persist(
               normalized.map((t, i) => (i === idx ? { ...t, name: n } : t)),
             );
           }}
@@ -179,7 +190,7 @@ const InlineTagsRow = ({ tags = [], entity }) => {
         >
           <TagInput
             onAdd={(newTag) => {
-              saveTags([...normalized, newTag]);
+              persist([...normalized, newTag]);
               setIsAdding(false);
             }}
             existingNames={normalized.map((t) => t.name)}

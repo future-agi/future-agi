@@ -22,11 +22,13 @@ vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/api/project/trace-detail", () => ({
   useGetTraceDetail: () => ({ data: null }),
 }));
+// The name the mocked tag input adds next.
+const nextTag = vi.hoisted(() => ({ name: "reviewed" }));
 vi.mock("../TagInput", () => ({
   default: ({ onAdd, disabled }) => (
     <button
       disabled={disabled}
-      onClick={() => onAdd({ name: "reviewed", color: "#123456" })}
+      onClick={() => onAdd({ name: nextTag.name, color: "#123456" })}
     >
       Add test tag
     </button>
@@ -89,6 +91,7 @@ function renderEditor(props = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nextTag.name = "reviewed";
   axios.patch.mockResolvedValue(success());
   axios.post.mockResolvedValue(success());
 });
@@ -111,14 +114,36 @@ describe("scoped entity tag writes", () => {
     },
   );
 
-  it("uses the acknowledged revision for consecutive saves before grid refresh", async () => {
+  it("uses the acknowledged revision when the next list is built on that save", async () => {
     const { result } = renderHook(() => useSaveEntityTags());
-    await act(() => result.current({ entity, tags }));
-    await act(() => result.current({ entity, tags: [] }));
+    let saved;
+    await act(async () => {
+      saved = await result.current({ entity, tags });
+    });
+    await act(() => result.current({ entity, tags: [], base: saved }));
     expect(axios.patch.mock.calls[1][1]).toEqual({
       ...target,
       expected_tag_revision: 1,
       tags: [],
+    });
+  });
+
+  it("never pairs a list built from stale tags with a newer acknowledged revision", async () => {
+    // Saved x at revision 1, but the caller's list still comes from the
+    // entity as loaded (revision 0): expecting revision 1 would silently drop
+    // x. Expect the entity's revision, so the server refuses it (409).
+    const { result } = renderHook(() => useSaveEntityTags());
+    await act(() => result.current({ entity, tags }));
+    await act(() =>
+      result.current({
+        entity,
+        tags: [...entity.tags, { name: "y" }],
+      }),
+    );
+    expect(axios.patch.mock.calls[1][1]).toEqual({
+      ...target,
+      expected_tag_revision: 0,
+      tags: [{ name: "y" }],
     });
   });
 
@@ -424,4 +449,120 @@ describe("scoped entity tag writes", () => {
       );
     },
   );
+
+  describe("a quick second edit before the refetch lands keeps both tags", () => {
+    // The first save is acknowledged at revision 1; the owner's entity and
+    // tags stay at revision 0 because the trace-detail refetch has not landed.
+    const acknowledgeX = (method) =>
+      method.mockResolvedValueOnce({
+        data: {
+          result: {
+            tags: [{ name: "sdk" }, { name: "x", color: "#123456" }],
+            manual_tags: [{ name: "x", color: "#123456" }],
+            source_tag_names: ["sdk"],
+            tag_revision: 1,
+          },
+        },
+      });
+    const both = [
+      { name: "x", color: "#123456" },
+      { name: "y", color: "#123456" },
+    ];
+
+    it("in the span pane's inline tag row", async () => {
+      acknowledgeX(axios.post);
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpanDetailPane
+            entry={{
+              observation_span: {
+                ...entity,
+                id: "root-1",
+                trace: "trace-1",
+                name: "root",
+              },
+            }}
+            projectId={target.project_id}
+            onClose={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+      nextTag.name = "x";
+      fireEvent.click(screen.getByRole("button", { name: "tag" }));
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(screen.getByText("x")).not.toBeDisabled());
+      nextTag.name = "y";
+      fireEvent.click(screen.getByRole("button", { name: "tag" }));
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+      expect(axios.post.mock.calls[1][1]).toEqual({
+        ...target,
+        expected_tag_revision: 1,
+        tags: both,
+      });
+    });
+
+    it("in the drawer header popover reopened before the refetch", async () => {
+      acknowledgeX(axios.patch);
+      const client = new QueryClient();
+      const popover = (open) => (
+        <QueryClientProvider client={client}>
+          <AddTagsPopover
+            open={open}
+            anchorEl={document.body}
+            onClose={vi.fn()}
+            entity={entity}
+            currentTags={entity.tags}
+          />
+        </QueryClientProvider>
+      );
+      const { rerender } = render(popover(true));
+      nextTag.name = "x";
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(screen.getByText("x")).not.toBeDisabled());
+      rerender(popover(false));
+      rerender(popover(true));
+      expect(screen.getByText("x")).toBeInTheDocument();
+      nextTag.name = "y";
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+      expect(axios.patch.mock.calls[1][1]).toEqual({
+        ...target,
+        expected_tag_revision: 1,
+        tags: both,
+      });
+    });
+
+    it.each([
+      ["chat", ChatDetailsBar],
+      ["voice", CallDetailsBar],
+    ])("in the %s drawer's inline tag row", async (_kind, Bar) => {
+      acknowledgeX(axios.patch);
+      // The refetch never lands: the drawer keeps the row it was opened with.
+      const data = {
+        ...entity,
+        trace_id: "trace-1",
+        id: "trace-1",
+        tags: entity.tags,
+      };
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <Bar data={data} onAction={vi.fn()} />
+        </QueryClientProvider>,
+      );
+      nextTag.name = "x";
+      fireEvent.click(screen.getByRole("button", { name: "tag" }));
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(screen.getByText("x")).not.toBeDisabled());
+      nextTag.name = "y";
+      fireEvent.click(screen.getByRole("button", { name: "tag" }));
+      fireEvent.click(screen.getByText("Add test tag"));
+      await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+      expect(axios.patch.mock.calls[1][1]).toEqual({
+        ...target,
+        expected_tag_revision: 1,
+        tags: both,
+      });
+    });
+  });
 });

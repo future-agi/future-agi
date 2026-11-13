@@ -4,6 +4,7 @@ import { Box, Button, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import useSaveEntityTags, {
+  useLatestEntityTags,
   isSourceTag,
   tagUpdateErrorMessage,
 } from "src/components/traceDetail/useSaveEntityTags";
@@ -88,15 +89,20 @@ const InlineTagsRow = ({ tags = [], entity }) => {
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
-  const normalized = useMemo(() => normalizeTags(tags), [tags]);
+  // Until the refetch lands, the tags are the last acknowledged save.
+  const latest = useLatestEntityTags(entity, tags);
+  const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
 
-  const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) => saveEntityTags({ entity, tags: newTags }),
-    onSuccess: () =>
-      Promise.all([
+  const { mutate, isPending } = useMutation({
+    mutationFn: ({ tags: newTags, entity: savedEntity, base }) =>
+      saveEntityTags({ entity: savedEntity, tags: newTags, base }),
+    onSuccess: (result, { entity: savedEntity }) => {
+      latest.confirm(result, savedEntity);
+      return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] }),
         queryClient.invalidateQueries({ queryKey: ["trace-detail"] }),
-      ]),
+      ]);
+    },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
@@ -104,7 +110,10 @@ const InlineTagsRow = ({ tags = [], entity }) => {
     retry: false,
   });
 
-  const persist = useCallback((next) => saveTags(next), [saveTags]);
+  const persist = useCallback(
+    (next) => mutate({ tags: next, entity, base: latest.base }),
+    [mutate, entity, latest.base],
+  );
 
   return (
     <Stack
