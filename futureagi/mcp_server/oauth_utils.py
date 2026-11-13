@@ -27,9 +27,20 @@ def generate_authorization_code() -> str:
 
 
 def generate_oauth_token(
-    user_id, org_id, workspace_id, client_id, scope, expires_in=3600
+    user_id,
+    org_id,
+    workspace_id,
+    client_id,
+    scope,
+    expires_in=3600,
+    refresh_family_id=None,
 ):
-    """Generate encrypted OAuth access token. Returns (token_str, expires_at)."""
+    """Generate encrypted OAuth access token. Returns (token_str, expires_at).
+
+    ``refresh_family_id`` names the refresh-token family issued with this
+    token, so revoking that family also ends this token (see
+    mcp_server.oauth_revocation).
+    """
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     payload = {
         "type": "mcp_oauth",
@@ -40,23 +51,56 @@ def generate_oauth_token(
         "scope": scope,
         "expires_at": expires_at.isoformat(),
     }
+    if refresh_family_id:
+        payload["refresh_family_id"] = str(refresh_family_id)
     f = _get_fernet()
     encrypted = f.encrypt(json.dumps(payload, sort_keys=True).encode())
     return encrypted.decode(), expires_at
 
 
-def generate_refresh_token(user_id, org_id, client_id):
-    """Generate encrypted refresh token (no expiry)."""
+def refresh_token_ttl_seconds() -> int:
+    """Configured MCP OAuth refresh-token lifetime in seconds."""
+    from mcp_server.constants import DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS
+
+    ttl = getattr(
+        settings,
+        "MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS",
+        DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+    )
+    return max(int(ttl), 1)
+
+
+def generate_refresh_token(user_id, org_id, client_id, expires_at=None):
+    """Generate an encrypted refresh token.
+
+    When ``expires_at`` is given it is carried in the token and enforced by
+    decrypt_oauth_token; servers that store refresh tokens also enforce it on
+    their own record (see mcp_server.refresh_tokens).
+    """
     payload = {
         "type": "mcp_refresh",
         "user_id": str(user_id),
         "org_id": str(org_id),
         "client_id": client_id,
         "issued_at": datetime.now(timezone.utc).isoformat(),
+        "jti": secrets.token_urlsafe(16),
     }
+    if expires_at is not None:
+        payload["expires_at"] = expires_at.isoformat()
     f = _get_fernet()
     encrypted = f.encrypt(json.dumps(payload, sort_keys=True).encode())
     return encrypted.decode()
+
+
+def refresh_token_expiry(now=None):
+    """Expiry for a refresh token issued now."""
+    now = now or datetime.now(timezone.utc)
+    return now + timedelta(seconds=refresh_token_ttl_seconds())
+
+
+def hash_refresh_token(token: str) -> str:
+    """Stable lookup key for a refresh token (the token itself is not stored)."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def decrypt_oauth_token(token):
@@ -69,8 +113,10 @@ def decrypt_oauth_token(token):
         if payload.get("type") not in ("mcp_oauth", "mcp_refresh"):
             return None
 
-        # Check expiry for access tokens
-        if payload.get("type") == "mcp_oauth":
+        # Check expiry. Access tokens always carry one; refresh tokens issued
+        # before expiry was introduced do not, and are bounded by the
+        # server-side record instead.
+        if payload.get("type") == "mcp_oauth" or payload.get("expires_at"):
             expires_at = datetime.fromisoformat(payload["expires_at"])
             if datetime.now(timezone.utc) > expires_at:
                 return None
