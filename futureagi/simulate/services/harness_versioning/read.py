@@ -210,7 +210,7 @@ def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
     if version.status == VersionStatus.CANDIDATE:
         return states.get(str(version.id), "superseded")
     if version.discard_reason in (DiscardReason.SUPERSEDED, DiscardReason.EXPIRED):
-        return version.discard_reason
+        return str(version.discard_reason)
     return None
 
 

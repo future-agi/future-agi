@@ -945,7 +945,9 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     key = serializers.CharField()
     document = serializers.CharField()
     action = serializers.ChoiceField(choices=("added", "removed", "changed"))
-    fields = serializers.ListField(child=serializers.CharField())
+    fields = serializers.ListField(  # type: ignore[assignment]  # the API field is named fields
+        child=serializers.CharField()
+    )
     patch = serializers.ListField(child=serializers.DictField())
     base_digest = serializers.CharField(allow_null=True)
     draft_digest = serializers.CharField(allow_null=True)

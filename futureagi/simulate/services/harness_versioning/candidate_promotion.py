@@ -28,6 +28,7 @@ from simulate.services.harness_versioning.candidate_sets import (
     store_set,
     supersede_candidates,
     unavailable_on_our_side,
+    version_id_of,
 )
 from simulate.services.harness_versioning.candidates import edits_moved
 from simulate.services.harness_versioning.draft_pieces import (
@@ -137,7 +138,7 @@ def promote_candidates(
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")
-            != entry[f"{piece}_version_id"]
+            != version_id_of(entry, piece)
             for piece in DRAFT_PIECES
         ):
             raise _not_validated()

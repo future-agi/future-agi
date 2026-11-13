@@ -88,7 +88,7 @@ def name_saved(activated: dict[str, Any], *, name: str) -> None:
     for version, created in activated.values():
         if not created:
             continue
-        fields = []
+        fields: list[str] = []
         if name:
             version.name, fields = name[:80], [*fields, "name"]
         reviewed = (version.documents or {}).get("review_changes")

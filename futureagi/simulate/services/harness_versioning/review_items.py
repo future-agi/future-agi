@@ -478,12 +478,14 @@ def compute_changes(
         if old is not None and new is not None and old.digest == new.digest:
             continue
         item = new or old
+        if item is None:
+            continue
         action = "added" if old is None else "removed" if new is None else "changed"
         if item.raw is not None or (old is not None and old.raw is not None):
             patch: list[dict[str, Any]] = []
-        elif action == "added":
-            patch = [{"op": "add", "path": "", "value": new.value}]
-        elif action == "removed":
+        elif old is None:
+            patch = [{"op": "add", "path": "", "value": item.value}]
+        elif new is None:
             patch = [{"op": "test", "path": "", "value": old.value}]
         else:
             patch = _tested(old.value, jsonpatch.make_patch(old.value, new.value).patch)

@@ -231,11 +231,11 @@ def _amendment_owner(entry: str, changes: list[dict[str, Any]]) -> str | None:
                 else change["key"]
             )
             if f"{_AMENDMENT_DASH} {subject}: " in entry:
-                return change["id"]
+                return str(change["id"])
         elif change["kind"] == "contract_field" and entry.startswith(
             f"{change['key']} "
         ):
-            return change["id"]
+            return str(change["id"])
     return None
 
 
