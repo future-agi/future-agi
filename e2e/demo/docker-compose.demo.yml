@@ -1,0 +1,7 @@
+# Recording only (layered over docker-compose.yml + e2e/stack/docker-compose.standalone-e2e.yml):
+# the Standalone E2E stack's synthetic application runtime is named after the demo story instead of
+# its test-stack name. It is the same synthetic support application; only the display name changes.
+services:
+  app:
+    environment:
+      SKILLS_NATIVE_RUNTIME_NAME: acme-support
