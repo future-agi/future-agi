@@ -21,6 +21,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework.test import APIClient
 
 from accounts.models.user import OrgApiKey
+from tfc.middleware.workspace_context import clear_workspace_context
 from tracer.models.project import Project
 
 pytestmark = [
@@ -72,6 +73,11 @@ def tag_endpoint(organization, workspace, user, settings):
         HTTP_X_SECRET_KEY=key.secret_key,
         HTTP_X_WORKSPACE_ID=str(workspace.id),
     )
+    # Start requests from an empty model-manager scope, as
+    # WorkspaceContextMiddleware does outside tests (the test settings leave it
+    # out). Otherwise the session's first request imports every view under this
+    # test's workspace, which class-level querysets keep for later tests.
+    clear_workspace_context()
     return client, project, f"/tracer/project/{project.id}/tags/"
 
 
