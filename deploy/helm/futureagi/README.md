@@ -470,8 +470,10 @@ exists: keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`).
   service account needs bucket metadata read (`storage.buckets.get`) and
   object get, create, delete and list on it.
 - MinIO and other S3-compatible services: the app creates it on first use
-  with no bucket policy, so the credentials also need to create buckets, or
-  create it yourself.
+  with no bucket policy, or create it yourself. Credentials scoped to the
+  bucket (rather than root credentials) need `s3:ListBucket`,
+  `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and `s3:GetBucketPolicy`
+  on it, plus `s3:CreateBucket` if the app is to create it.
 
 Without these permissions, building a comparison fails with a generic 400
 error.
@@ -1306,7 +1308,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `objectStorage.mode` | `"external"` | `external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation). |
 | `objectStorage.backend` | `"s3"` | [STORAGE_BACKEND] `s3` (AWS), `gcs` (Google Cloud Storage with HMAC keys) or `minio` (any other S3-compatible endpoint). Bundled always uses `minio`. |
 | `objectStorage.bucket` | `"futureagi"` | [UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy. |
-| `objectStorage.compareBucket` | `""` | [COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. On S3 and GCS create it in advance, private; with `minio` it is created on first use with no bucket policy. On MinIO and S3 a bucket whose policy lets anyone read is refused; on GCS only its existence is checked, so keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`). S3 permissions on it: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetBucketPolicy`; GCS: bucket metadata read (`storage.buckets.get`) and object get, create, delete and list. Without them, building a comparison fails with a generic 400. Empty: `bucket` followed by `-compare`. |
+| `objectStorage.compareBucket` | `""` | [COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. On S3 and GCS create it in advance, private; with `minio` it is created on first use with no bucket policy. On MinIO and S3 a bucket whose policy lets anyone read is refused; on GCS only its existence is checked, so keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`). S3 permissions on it: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetBucketPolicy`; external MinIO with credentials scoped to the bucket: the same, plus `s3:CreateBucket` if it is created on first use; GCS: bucket metadata read (`storage.buckets.get`) and object get, create, delete and list. Without them, building a comparison fails with a generic 400. Empty: `bucket` followed by `-compare`. |
 | `objectStorage.region` | `"us-east-1"` | [S3_REGION, AWS_DEFAULT_REGION] bucket region. |
 | `objectStorage.accessKey` | `""` | [S3_ACCESS_KEY, or GCS_HMAC_ACCESS_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
 | `objectStorage.secretKey` | `""` | [S3_SECRET_KEY, or GCS_HMAC_SECRET_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
