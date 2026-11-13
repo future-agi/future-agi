@@ -22,9 +22,11 @@ func (g speechCheck) Name() string            { return "speech-check" }
 func (g speechCheck) Stage() guardrails.Stage { return g.stage }
 func (g speechCheck) Check(_ context.Context, in *guardrails.CheckInput) *guardrails.CheckResult {
 	var text string
-	content := in.Request.Messages[0].Content
+	var content json.RawMessage
 	if in.Response != nil {
 		content = in.Response.Choices[0].Message.Content
+	} else {
+		content = in.Request.Messages[0].Content
 	}
 	if err := json.Unmarshal(content, &text); err != nil {
 		return &guardrails.CheckResult{Pass: false, Err: err}
