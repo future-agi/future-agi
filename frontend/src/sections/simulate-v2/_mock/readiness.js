@@ -123,6 +123,12 @@ export const readinessOf = (report, scenarios = [], evalCount = 0) => {
         rows
           .filter((r) => ["untested", "stale"].includes(r.status))
           .every((r) => r.blockedBy),
+      /* Checked, but on another version or before a fix: the row that went
+         stale says what changed since (14 Nov, Nosang's grouping). */
+      staleRow:
+        status === "unchecked"
+          ? rows.find((r) => r.status === "stale" && !r.blockedBy) || null
+          : null,
       /* Not checked carries its cause too: a platform agent's check is a
          test call, offered right on the row. */
       fixRow: ["blocked", "partial", "unchecked"].includes(status)

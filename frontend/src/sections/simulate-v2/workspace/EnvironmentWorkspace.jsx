@@ -181,6 +181,8 @@ import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import { EmptyState } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
 import AssistantConsole from "../assistant/AssistantConsole";
+import BuilderFixResult from "../compat/BuilderFixResult";
+import { builderPromptFor, builderStepsFor } from "../compat/BuilderFixChat";
 import BuilderRail from "./BuilderRail";
 import { readBuilderCollapsed, writeBuilderCollapsed } from "./builderCollapse";
 import OverviewPanel from "./OverviewPanel";
@@ -501,6 +503,8 @@ export default function EnvironmentWorkspace() {
   const [codeOpen, setCodeOpen] = useState(null);
   /* The run plan a Run button opened: { scenarioIds, trials, also }. */
   const [runPlanReq, setRunPlanReq] = useState(null);
+  /* The run plan a builder-chat fix closed, to reopen when it's done. */
+  const lastPlanReq = useRef(null);
   /* A run asked for while edits are unsaved: which version it runs on. */
   const [draftAsk, setDraftAsk] = useState(null);
   /* A save asked for after a teammate saved first: { after } to run next. */
@@ -1237,7 +1241,13 @@ export default function EnvironmentWorkspace() {
      plan's capability rows update where they are. */
   /* key: the agent being checked — the run plan can pick another
      compatible agent, and the check belongs to that pair. */
-  const runCapsCheck = (agentNow = connectedAgent, key = agentKey) => {
+  /* opts.onDone({ passed, failed }) hears the outcome (the builder chat
+     reports it there); opts.quiet skips the toast the chat replaces. */
+  const runCapsCheck = (
+    agentNow = connectedAgent,
+    key = agentKey,
+    opts = {},
+  ) => {
     if (capsChecking || !agentNow || !pairCheckable(agentNow)) return;
     /* A platform agent (Vapi, Retell…): the pair's check reaches it through
        the platform and places no call (Karthik's run readiness), saved for
@@ -1257,9 +1267,11 @@ export default function EnvironmentWorkspace() {
           },
         });
         setCapsChecking(false);
-        enqueueSnackbar("Checked — Ready to run is updated for this agent.", {
-          variant: "success",
-        });
+        opts.onDone?.({ passed: true, failed: [] });
+        if (!opts.quiet)
+          enqueueSnackbar("Checked — Ready to run is updated for this agent.", {
+            variant: "success",
+          });
       }, 1800);
       return;
     }
@@ -1285,6 +1297,7 @@ export default function EnvironmentWorkspace() {
             },
           });
           setCapsChecking(false);
+          opts.onDone?.({ passed: false, failed: [], unavailable: true });
           enqueueSnackbar(
             timedOut
               ? `The check didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes — runs of this pairing are refused until a check passes.`
@@ -1306,12 +1319,17 @@ export default function EnvironmentWorkspace() {
           },
         });
         setCapsChecking(false);
-        enqueueSnackbar(
-          out.passed
-            ? "Connection ready — every check passed."
-            : `${failed} check${failed === 1 ? "" : "s"} failed — open ${failed === 1 ? "it" : "them"} in Ready to run to see the fix.`,
-          { variant: out.passed ? "success" : "warning" },
-        );
+        opts.onDone?.({
+          passed: out.passed,
+          failed: out.results.filter((r) => r.state === "failed"),
+        });
+        if (!opts.quiet)
+          enqueueSnackbar(
+            out.passed
+              ? "Connection ready — every check passed."
+              : `${failed} check${failed === 1 ? "" : "s"} failed — open ${failed === 1 ? "it" : "them"} in Ready to run to see the fix.`,
+            { variant: out.passed ? "success" : "warning" },
+          );
       },
       450 * (checksFor(spec).length + 1),
     );
@@ -1349,7 +1367,7 @@ export default function EnvironmentWorkspace() {
       },
       /* Several fixes at once (grouped blockers, 13 Nov): saved together,
          then one check — not one check per fix. */
-      applyRepairs: (items) => {
+      applyRepairs: (items, opts = {}) => {
         let vals = { ...(a.values || {}) };
         let merged = {};
         items.forEach(({ fixId, value }) => {
@@ -1370,7 +1388,7 @@ export default function EnvironmentWorkspace() {
           vals = { ...vals, ...merged };
         });
         setAgentValues(k, merged);
-        runCapsCheck({ ...a, values: vals }, k);
+        runCapsCheck({ ...a, values: vals }, k, opts);
       },
       runReleaseChecks: gates.canEdit ? runReleaseChecks : null,
       releaseRunning:
@@ -1383,6 +1401,114 @@ export default function EnvironmentWorkspace() {
               )
           : null,
     };
+  };
+
+  /*
+    Fix with builder chat (14 Nov): the run plan closes and the builder
+    chat — the same one that built the environment — takes the fixes, says
+    what it reads and changes, asks when there is a real choice, applies
+    them and re-checks the pair. It never starts the run: it ends with one
+    button back to the run plan.
+  */
+  const fixInBuilderChat = (jobs, key) => {
+    if (!jobs?.length) return;
+    const kit = fixKitOf(key);
+    lastPlanReq.current = runPlanReq;
+    setRunPlanReq(null);
+    setCollapsed(false);
+    const stamp = Date.now();
+    const tid = `a-fix-${stamp}`;
+    const ask =
+      jobs.length === 1
+        ? builderPromptFor(jobs[0].kind, jobs[0].row)
+        : `Fix these ${jobs.length} before the run:\n${jobs.map((j) => `• ${builderPromptFor(j.kind, j.row)}`).join("\n")}`;
+    setTurns((prev) => [
+      ...prev,
+      { id: `u-fix-${stamp}`, role: "user", text: ask },
+      { id: tid, role: "assistant", title: "Fixing for the run", steps: [] },
+    ]);
+    const push = (step) =>
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === tid ? { ...t, steps: [...t.steps, step] } : t,
+        ),
+      );
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      const asks = jobs.flatMap((j) =>
+        builderStepsFor(j.kind, j.row).filter((s) => s.t === "ask"),
+      ).length;
+      let asked = 0;
+      for (const j of jobs) {
+        for (const s of builderStepsFor(j.kind, j.row)) {
+          // eslint-disable-next-line no-await-in-loop
+          await wait(650);
+          if (s.t === "say") push({ kind: "note", text: s.text });
+          else if (s.t === "ok") push({ label: s.text, result: s.sub || "" });
+          else if (s.t === "ask") {
+            asked += 1;
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((res) =>
+              push({
+                kind: "ask",
+                question: {
+                  step: asked,
+                  total: asks,
+                  prompt: s.text,
+                  multiSelect: false,
+                  options: s.options.map((label) => ({ label })),
+                },
+                onSubmit: (ans) => res(ans),
+                onSkip: () => res({ pick: 0 }),
+              }),
+            );
+          }
+        }
+      }
+      await wait(400);
+      push({
+        kind: "note",
+        text: "Re-checking the pair with the fixes in place.",
+      });
+      const repairs = jobs
+        .filter((j) => j.kind === "tools")
+        .map((j) => ({ fixId: j.row.fixId }));
+      if (jobs.some((j) => j.kind === "release")) kit?.runReleaseChecks?.();
+      if (jobs.some((j) => j.kind === "rebuild")) kit?.rebuild?.();
+      const out = await new Promise((res) => {
+        if (repairs.length && kit?.applyRepairs)
+          kit.applyRepairs(repairs, { quiet: true, onDone: res });
+        else setTimeout(() => res({ passed: true, failed: [] }), 1600);
+      });
+      /* Named as the run plan's rows name them, not the check's steps. */
+      const AREA = {
+        starts: "Starts and replies",
+        replies: "Starts and replies",
+        continuity: "Starts and replies",
+        tools: "Tools wired to the test world",
+        cancel: "Run can be stopped",
+      };
+      const left = [
+        ...new Set((out.failed || []).map((r) => AREA[r.id] || r.label)),
+      ];
+      if (out.unavailable)
+        push({
+          kind: "note",
+          text: "The check couldn't run on our side, so nothing about the pair changed. Runs aren't held.",
+        });
+      push({
+        kind: "node",
+        node: (
+          <BuilderFixResult
+            passed={!!out.passed}
+            left={left}
+            onOpen={() =>
+              setRunPlanReq(lastPlanReq.current || { scenarioIds: null })
+            }
+          />
+        ),
+      });
+    })();
   };
   /* The pair's check runs for an agent we start or call, and for a platform
      agent (through its platform, no call placed). */
@@ -3499,6 +3625,7 @@ export default function EnvironmentWorkspace() {
               : null
           }
           fixKitOf={fixKitOf}
+          onFixInBuilder={fixInBuilderChat}
           canCheckCompat={(key) => {
             const a =
               key && key !== agentKey

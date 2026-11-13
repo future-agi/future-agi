@@ -162,6 +162,8 @@ export default function RunPlanDialog({
   canCheckCompat = null,
   /* (agentKey) => what a fix made in place needs, for that agent. */
   fixKitOf = null,
+  /* (jobs, agentKey) => hand builder fixes to the builder chat. */
+  onFixInBuilder = null,
   onCheckCompat,
   checkingCompat = false,
   onRepairCompat,
@@ -775,6 +777,11 @@ export default function RunPlanDialog({
                 evalCount={(evals || []).length}
                 onFix={(row) => onRepairCompat?.(row, pickedKey)}
                 fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
+                onFixInBuilder={
+                  onFixInBuilder
+                    ? (jobs) => onFixInBuilder(jobs, pickedKey)
+                    : null
+                }
                 onCheck={
                   onCheckCompat && canCheckCompat?.(pickedKey)
                     ? () => onCheckCompat(pickedKey)
@@ -1087,6 +1094,62 @@ export default function RunPlanDialog({
                     </Typography>
                   </Tooltip>
                 );
+              })()}
+
+            {/* ── what this run can't prove yet, said before it starts (14 Nov,
+              Nosang's run plan): scenarios not proved against this
+              environment version, and a first run of this agent version on
+              it, which prepares the pair first. ── */}
+            {!noRun &&
+              (() => {
+                const envLbl = pickedEnv || currentEnvLabel;
+                const staleN = (!suite && bd?.stale) || 0;
+                const agentVer = versions[0] || null;
+                const ranBefore = (envState?.runs || []).some(
+                  (r) =>
+                    (r.envVersion || currentEnvLabel) === envLbl &&
+                    (!r.agentKey || !pickedKey || r.agentKey === pickedKey) &&
+                    (!agentVer ||
+                      !r.agentVersion ||
+                      r.agentVersion === agentVer),
+                );
+                const notes = [
+                  staleN > 0 &&
+                    `${staleN} scenario${staleN === 1 ? " hasn't" : "s haven't"} been proved against environment ${envLbl} — ${staleN === 1 ? "it runs" : "they run"} but count${staleN === 1 ? "s" : ""} toward no decision`,
+                  !ranBefore &&
+                    `The first run of ${agentVer ? `agent ${agentVer}` : "this agent"} on environment ${envLbl} prepares the pair first, which takes several minutes`,
+                ].filter(Boolean);
+                return notes.length ? (
+                  <Stack spacing={0.75}>
+                    {notes.map((n) => (
+                      <Stack
+                        key={n}
+                        direction="row"
+                        spacing={1}
+                        alignItems="flex-start"
+                        sx={{
+                          border: "1px solid",
+                          borderColor: "status.warning.border",
+                          bgcolor: "status.warning.bg",
+                          borderRadius: "8px",
+                          px: 1.5,
+                          py: 0.875,
+                        }}
+                      >
+                        <Iconify
+                          icon="solar:danger-triangle-linear"
+                          width={16}
+                          sx={{
+                            color: "status.warning.fg",
+                            flexShrink: 0,
+                            mt: "2px",
+                          }}
+                        />
+                        <Typography sx={{ typography: "s2" }}>{n}</Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                ) : null;
               })()}
 
             {/* ── a platform agent: what runs for real during this run, named ── */}
@@ -1737,6 +1800,7 @@ RunPlanDialog.propTypes = {
   compatOf: PropTypes.func,
   canCheckCompat: PropTypes.func,
   fixKitOf: PropTypes.func,
+  onFixInBuilder: PropTypes.func,
   onCheckCompat: PropTypes.func,
   checkingCompat: PropTypes.bool,
   onRepairCompat: PropTypes.func,

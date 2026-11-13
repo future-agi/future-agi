@@ -41,6 +41,15 @@ const firstSentence = (d) =>
     .split(/\s+—\s+|(?<=\.)\s/)[0]
     .replace(/\.$/, "");
 const BUILDER = ["tools", "release", "rebuild"];
+/* What changed since a stale row was checked, in a few words. */
+const staleReasonOf = (a) => {
+  const d = String(a.staleRow?.detail || "");
+  if (/^Fix applied/.test(d)) return "Fix applied, not re-checked yet";
+  return d
+    .replace(/^Was Supported\.\s*/, "")
+    .replace(/\s+—\s+re-check.*$/, "")
+    .replace(/\.$/, "");
+};
 /* What each area's check proves, said on a row that still needs it. */
 const CHECKS = {
   start: "The agent starts, answers a message and keeps the conversation.",
@@ -134,9 +143,9 @@ function Row({ area, open, onToggle, lead = null, end = null, children }) {
       >
         {lead}
         <StatusDot
-          status={st.dot}
+          status={area.staleRow ? "flaky" : st.dot}
           size={6}
-          hollow={area.status === "unchecked"}
+          hollow={area.status === "unchecked" && !area.staleRow}
         />
         <Typography noWrap sx={{ typography: "s2", flexShrink: 0 }}>
           {area.label}
@@ -150,9 +159,13 @@ function Row({ area, open, onToggle, lead = null, end = null, children }) {
             minWidth: 0,
           }}
         >
-          {area.status === "unchecked" && !area.detail
-            ? "Not checked yet"
-            : firstSentence(area.detail)}
+          {area.staleRow
+            ? staleReasonOf(area)
+            : area.waits
+              ? `Waits on ${String(area.fixRow?.blockedBy || "starts and replies").toLowerCase()}`
+              : area.status === "unchecked" && !area.detail
+                ? "Not checked yet"
+                : firstSentence(area.detail)}
         </Typography>
         {end}
         <Iconify
@@ -224,6 +237,9 @@ export default function ReadyToRun({
   /* What a fix made here needs (connection spec, applyRepair(s), release
      checks, rebuild); without it every fix opens the agent. */
   fixKit = null,
+  /* Builder fixes go to the environment's builder chat (14 Nov); without
+     it they run in the small chat inside this panel. */
+  onFixInBuilder = null,
   children,
 }) {
   const [openId, setOpenId] = useState(null);
@@ -312,6 +328,17 @@ export default function ReadyToRun({
   const startBuilder = (rows) => {
     if (!rows.length || chatJobs) return;
     setOpenId(null);
+    if (onFixInBuilder) {
+      onFixInBuilder(
+        rows.map((a) => ({
+          id: a.id,
+          label: a.label,
+          kind: kindOf(a),
+          row: a.fixRow,
+        })),
+      );
+      return;
+    }
     setChatJobs(
       rows.map((a) => ({
         id: a.id,
@@ -528,6 +555,18 @@ export default function ReadyToRun({
                             }}
                           />
                         </Stack>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            px: 1.25,
+                            pb: 0.5,
+                          }}
+                        >
+                          Only this field changes; everything else on the
+                          agent&apos;s connection keeps its value. Saving checks
+                          the pair again.
+                        </Typography>
                         {a.fixRow?.suggestion?.why && (
                           <Typography
                             sx={{
@@ -723,9 +762,23 @@ export default function ReadyToRun({
                   <Typography sx={{ typography: "s2", flex: 1 }}>
                     {f.label}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "success.main" }}>
-                    Fixed
-                  </Typography>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{
+                      px: 0.75,
+                      py: 0.125,
+                      borderRadius: "4px",
+                      bgcolor: "status.success.bg",
+                      color: "status.success.fg",
+                      typography: "s3",
+                      fontWeight: 500,
+                    }}
+                  >
+                    <StatusDot status="passed" size={5} />
+                    <span>Fixed</span>
+                  </Stack>
                 </Stack>
               ))}
               {chatJobs && (
@@ -776,20 +829,23 @@ export default function ReadyToRun({
                       ["What it checks", CHECKS[a.id]],
                       [
                         "Last check",
-                        state === "stale"
-                          ? report.staleWhy
+                        a.staleRow
+                          ? a.staleRow.was === "blocked"
+                            ? "Blocked, then a fix was applied"
+                            : `Passed${a.staleRow.checkedAt ? ` ${ago(a.staleRow.checkedAt)}` : ""}`
                           : a.waits
                             ? `Waits on ${String(a.fixRow?.blockedBy || "Starts and replies").toLowerCase()}`
                             : val?.at
                               ? `The last check (${ago(val.at)}) didn't cover it`
                               : "Never checked for this agent",
                       ],
+                      ["Since then", a.staleRow ? staleReasonOf(a) : null],
                       [
                         "Why again",
                         a.waits
                           ? "It settles once that check passes; nothing to do here."
-                          : state === "stale"
-                            ? "The result may differ on this version. Check again before trusting the scenarios that need it."
+                          : a.staleRow
+                            ? "The result may differ now. Check again before trusting the scenarios that need it."
                             : "Until it's checked, results that need it can't be trusted.",
                       ],
                       [
@@ -808,36 +864,28 @@ export default function ReadyToRun({
       )}
 
       {ready.length > 0 && (
-        <Tooltip
-          arrow
-          placement="top-start"
-          title={ready.map((a) => a.label).join(" · ")}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.625,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
         >
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{
-              px: 1.5,
-              py: 0.625,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
+          <StatusDot
+            status={checking ? "running" : "passed"}
+            size={6}
+            live={checking}
+          />
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
           >
-            <StatusDot
-              status={checking ? "running" : "passed"}
-              size={6}
-              live={checking}
-            />
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              {blockers.length || recheckRows.length
-                ? `${ready.length} more ready`
-                : `All ${ready.length} ready`}
-            </Typography>
-          </Stack>
-        </Tooltip>
+            {`${blockers.length || recheckRows.length ? "Also ready" : "All ready"}: ${ready.map((a) => a.label).join(", ")}`}
+          </Typography>
+        </Stack>
       )}
 
       {(limits.length > 0 || voiceReplies) && !checking && (
@@ -907,5 +955,6 @@ ReadyToRun.propTypes = {
   onCheck: PropTypes.func,
   checking: PropTypes.bool,
   fixKit: PropTypes.object,
+  onFixInBuilder: PropTypes.func,
   children: PropTypes.node,
 };

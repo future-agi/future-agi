@@ -333,7 +333,7 @@ export const compatibilityOf = ({
     !isCredentialsVersion(saved)
       ? `Agent ${version.label} arrived after the last test`
       : checkedHere && pairNow.envVersion !== checkedHere.envVersion
-        ? `Environment ${pairNow.envVersion} was saved after the last check (it ran on ${checkedHere.envVersion})`
+        ? `Last checked on environment ${checkedHere.envVersion}; this run uses ${pairNow.envVersion}`
         : checkedHere && pairNow.suite !== checkedHere.suite
           ? "The scenarios changed after the last check"
           : null;
