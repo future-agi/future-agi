@@ -620,8 +620,308 @@ class TestTheOutputTemplateIsStillJSON:
         assert dims["goal"]["cite"] == [
             {
                 "span": "<span id>",
-                "field": "in|out|status",
+                "field": "in|out|status|tools",
                 "quote": "<the passage, copied from that field>",
             }
         ]
         assert "span" in dims["completion"]
+
+
+FLAGGED_LINE = f"[{STATUS_TOOL}] issue_refund (TOOL) status=Error [FLAGGED]"
+REFUND_PASSAGE = "Your refund of $40 has been issued"
+
+
+def _tools_fail(*cites, evidence=None):
+    return {
+        "evidence": evidence
+        or " ".join(c.get("quote") or "" for c in cites).strip(),
+        "verdict": "FAIL",
+        "cite": list(cites),
+    }
+
+
+def _scan_tools(trace, tools):
+    result, _ = _scan(trace, _reply({"tools": tools}, [TOOLS_ISSUE]))
+    return _issues(result)
+
+
+class TestAStatusCiteMatchesTheLineThePromptShows:
+    """The prompt marks every Error span [FLAGGED] (the prefilter flags each
+    one), so a status passage copied from that line carries the flag."""
+
+    def test_an_error_span_is_shown_with_the_flag(self):
+        _, messages = _scan(
+            _status_only_trace(), _reply({"tools": {"verdict": "PASS"}}, [])
+        )
+        assert FLAGGED_LINE in messages[1]["content"]
+
+    def test_a_status_passage_copying_the_whole_shown_line_is_kept(self):
+        tools = _tools_fail(
+            _cite(STATUS_TOOL, "status", FLAGGED_LINE),
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_status_only_trace(), tools) == [("Tool-related", "H")]
+
+    def test_the_flag_without_the_status_is_dropped(self):
+        tools = _tools_fail(
+            _cite(STATUS_TOOL, "status", f"[{STATUS_TOOL}] issue_refund [FLAGGED]"),
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_status_only_trace(), tools) == []
+
+    def test_a_flag_the_prompt_did_not_show_is_dropped(self):
+        """A status the prefilter does not flag is shown without the flag, so a
+        passage adding one was not copied from the prompt."""
+        quote = f"[{STATUS_TOOL}] issue_refund (TOOL) status=Timeout [FLAGGED]"
+        tools = _tools_fail(
+            _cite(STATUS_TOOL, "status", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_status_only_trace(status="Timeout"), tools) == []
+
+
+# A recorded tool error long enough that one appended sentence stays inside the
+# 80% trigram tolerance when the passage is scored as a whole (0.83).
+TRACEBACK = (
+    'Traceback (most recent call last): File "/srv/app/refunds/client.py", line 88, '
+    "in issue_refund resp = session.post(url, json=body, timeout=5) File "
+    '"/usr/lib/python3.12/site-packages/requests/sessions.py", line 637, in post '
+    'return self.request("POST", url, data=data, json=json, **kwargs) '
+    "requests.exceptions.ReadTimeout: HTTPConnectionPool(host='payments.local', "
+    "port=8443): Read timed out after 5 seconds while waiting for the refund "
+    "gateway to answer the request"
+)
+# The same error as a model might copy it: quote marks rewritten.
+TRACEBACK_REQUOTED = TRACEBACK.replace('"', "'")
+APPENDED_SENTENCE = "The agent told the user the refund was issued."
+APPENDED_CLAUSE = "and the agent told the user the refund was issued"
+REFUND_TOOL = "tool-3"
+GATEWAY_REPLY = (
+    "Refund request received for order 1182. The card on file for this customer "
+    "expired in March of this year, so the payment gateway declined the refund. "
+    "Ask the customer for a new card before retrying."
+)
+
+
+def _tool_error_trace(tool_out=TRACEBACK):
+    trace = _trace(request="Please refund order 1182.", answer=REFUND_ANSWER)
+    trace["spans"][0]["child_spans"] = [
+        {
+            "span_id": REFUND_TOOL,
+            "span_name": "issue_refund",
+            "duration": "PT5.0S",
+            "status_code": "Error",
+            "span_attributes": {
+                "span.kind": "TOOL",
+                "input.value": "issue_refund(order=1182, amount=40)",
+                "output.value": tool_out,
+            },
+            "child_spans": [],
+        }
+    ]
+    return trace
+
+
+class TestEverySentenceOfAPassageIsChecked:
+    """A passage of several sentences is kept only when each sentence is found
+    in the cited field on its own; one real sentence cannot carry another."""
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param(f"{TRACEBACK} {APPENDED_SENTENCE}", id="appended-sentence"),
+            pytest.param(f"{TRACEBACK} {APPENDED_CLAUSE}", id="appended-clause"),
+        ],
+    )
+    def test_a_long_tool_error_with_added_text_is_dropped(self, quote):
+        tools = _tools_fail(_cite(REFUND_TOOL, "out", quote))
+        assert _scan_tools(_tool_error_trace(), tools) == []
+
+    def test_a_one_cite_quote_with_a_reworded_error_and_added_text_is_dropped(self):
+        tools = {
+            "evidence": f"{TRACEBACK_REQUOTED} {APPENDED_SENTENCE}",
+            "verdict": "FAIL",
+            "cite": [{"span": REFUND_TOOL, "field": "out"}],
+        }
+        assert _scan_tools(_tool_error_trace(), tools) == []
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param(TRACEBACK, id="exact"),
+            pytest.param(TRACEBACK_REQUOTED, id="requoted"),
+        ],
+    )
+    def test_the_tool_error_alone_is_kept(self, quote):
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(), tools) == [("Tool-related", "H")]
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param(GATEWAY_REPLY, id="exact"),
+            pytest.param(
+                "Refund request received for order 1182. The card on file for this "
+                "customer expired in March of this year; so the payment gateway "
+                "declined the refund.",
+                id="punctuation-rewritten",
+            ),
+        ],
+    )
+    def test_a_real_multi_sentence_quote_is_kept(self, quote):
+        tools = _tools_fail(
+            _cite(REFUND_TOOL, "out", quote), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_tool_error_trace(GATEWAY_REPLY), tools) == [
+            ("Tool-related", "H")
+        ]
+
+
+AVAILABLE_TOOLS = ["lookup_order", "issue_refund"]
+
+
+def _trace_with_declared_tools():
+    """The agent had issue_refund available and never called it."""
+    trace = _trace(request="Please refund order 1182.", answer=REFUND_ANSWER)
+    trace["spans"][0]["span_attributes"]["llm.tools"] = json.dumps(
+        [{"type": "function", "function": {"name": n}} for n in AVAILABLE_TOOLS]
+    )
+    return trace
+
+
+class TestTheToolsListCanBeCited:
+    """A TOOLS FAIL for an available tool the agent never called quotes the
+    tool's name from TOOLS AVAILABLE."""
+
+    def test_the_tools_list_is_in_the_prompt(self):
+        _, messages = _scan(
+            _trace_with_declared_tools(), _reply({"tools": {"verdict": "PASS"}}, [])
+        )
+        assert "TOOLS AVAILABLE: " in messages[1]["content"]
+        assert "issue_refund" in messages[1]["content"]
+
+    @pytest.mark.parametrize(
+        "quote",
+        [
+            pytest.param("issue_refund", id="name"),
+            pytest.param("TOOLS AVAILABLE: lookup_order, issue_refund", id="line"),
+        ],
+    )
+    def test_a_fail_quoting_an_available_tool_is_kept(self, quote):
+        tools = _tools_fail(
+            {"field": "tools", "quote": quote}, _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_trace_with_declared_tools(), tools) == [
+            ("Tool-related", "H")
+        ]
+
+    def test_a_tool_name_that_is_not_listed_is_dropped(self):
+        tools = _tools_fail(
+            {"field": "tools", "quote": "cancel_order"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_trace_with_declared_tools(), tools) == []
+
+    def test_a_trace_without_a_tools_list_cannot_cite_one(self):
+        trace = _trace(request="Please refund order 1182.", answer=REFUND_ANSWER)
+        trace["spans"][0]["child_spans"] = []
+        tools = _tools_fail(
+            {"field": "tools", "quote": "issue_refund"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        _, messages = _scan(trace, _reply({"tools": {"verdict": "PASS"}}, []))
+        assert "TOOLS AVAILABLE" not in messages[1]["content"]
+        assert _scan_tools(trace, tools) == []
+
+
+class TestStatusCiteDefaults:
+    def test_a_status_cite_without_a_quote_takes_its_recorded_status(self):
+        tools = _tools_fail(
+            {"span": STATUS_TOOL, "field": "status"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_status_only_trace(), tools) == [("Tool-related", "H")]
+
+    def test_an_output_cite_without_a_quote_next_to_a_quoted_one_is_dropped(self):
+        tools = _tools_fail(
+            _cite(STATUS_TOOL, "status", "status=Error"),
+            {"span": ROOT, "field": "out"},
+            evidence=f"status=Error {INVENTED_PASSAGE}",
+        )
+        assert _scan_tools(_status_only_trace(), tools) == []
+
+    @pytest.mark.parametrize("recorded", ["Ok", "OK", "STATUS_CODE_OK", "Unset"])
+    def test_a_status_that_records_success_cannot_support_a_fail(self, recorded):
+        line = f"[{STATUS_TOOL}] issue_refund (TOOL) status={recorded}"
+        tools = _tools_fail(
+            _cite(STATUS_TOOL, "status", line), _cite(ROOT, "out", REFUND_PASSAGE)
+        )
+        assert _scan_tools(_status_only_trace(status=recorded), tools) == []
+
+    @pytest.mark.parametrize("recorded", ["Ok", "Unset"])
+    def test_a_status_cite_without_a_quote_on_a_successful_span_is_dropped(
+        self, recorded
+    ):
+        tools = _tools_fail(
+            {"span": STATUS_TOOL, "field": "status"},
+            _cite(ROOT, "out", REFUND_PASSAGE),
+        )
+        assert _scan_tools(_status_only_trace(status=recorded), tools) == []
+
+
+class TestOneCiteQuoteFollowedByCommentary:
+    """With one cite and no per-cite quote, the evidence is a quote that may be
+    followed by the model's own words, provided its first sentence is copied
+    exactly from the cited field."""
+
+    def test_an_exact_first_sentence_followed_by_commentary_is_kept(self):
+        tools = {
+            "evidence": (
+                "Refund request received for order 1182. "
+                "So the agent should not have said it was issued."
+            ),
+            "verdict": "FAIL",
+            "cite": [{"span": REFUND_TOOL, "field": "out"}],
+        }
+        assert _scan_tools(_tool_error_trace(GATEWAY_REPLY), tools) == [
+            ("Tool-related", "H")
+        ]
+
+    def test_a_reworded_first_sentence_followed_by_commentary_is_dropped(self):
+        tools = {
+            "evidence": (
+                "Refund request received, for order 1182. "
+                "So the agent should not have said it was issued."
+            ),
+            "verdict": "FAIL",
+            "cite": [{"span": REFUND_TOOL, "field": "out"}],
+        }
+        assert _scan_tools(_tool_error_trace(GATEWAY_REPLY), tools) == []
+
+    def test_commentary_after_a_per_cite_quote_is_dropped(self):
+        quote = (
+            "Refund request received for order 1182. "
+            "So the agent should not have said it was issued."
+        )
+        tools = _tools_fail(_cite(REFUND_TOOL, "out", quote))
+        assert _scan_tools(_tool_error_trace(GATEWAY_REPLY), tools) == []
+
+    def test_only_the_copied_sentence_is_kept_as_evidence(self):
+        """The commentary is allowed, not carried: later steps (merging claims
+        that describe one moment) see only the sentence that was checked."""
+        from ee.agenthub.trace_scanner.scanner import _bind
+
+        verdict = {
+            "evidence": (
+                "Refund request received for order 1182. "
+                "So the agent should not have said it was issued."
+            ),
+            "verdict": "FAIL",
+            "cite": [{"span": REFUND_TOOL, "field": "out"}],
+        }
+        trace = _tool_error_trace(GATEWAY_REPLY)
+        assert _bind(verdict, trace, None) == (
+            None,
+            ["Refund request received for order 1182."],
+        )

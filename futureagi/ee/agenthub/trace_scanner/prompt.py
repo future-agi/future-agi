@@ -167,6 +167,8 @@ WHAT COUNTS AS EVIDENCE — this is strict, and quoting the wrong thing invalida
   legitimately DERIVED (sums, counts, percentages of returned values) are grounded.
 - TOOLS: quote the tool error or wrong result AND the agent's contradicting assertion. A
   tool span that recorded only status=Error (no input or output) is quoted as its status.
+  For an available tool the agent never called, quote the tool's name from TOOLS AVAILABLE
+  AND the response that guessed instead.
 - INSTRUCTION: quote TWO things — the rule as stated in the input, AND the response text that
   violates it. Quoting the rule alone is not evidence of a violation.
 - COMPLETION: quote the end of the final response showing it stops early — or, for an
@@ -174,11 +176,12 @@ WHAT COUNTS AS EVIDENCE — this is strict, and quoting the wrong thing invalida
 
 CITE WHERE EVERY QUOTE CAME FROM. Each FAIL carries "cite": one entry per quoted passage, at
 most three, each naming the span id (the [id] on that span's line), the field the passage
-was copied from — "in", "out", or "status" for a span whose only record of the failure is
-its status — and the passage itself as "quote", copied verbatim with nothing added. Each
-passage is checked in code against the recorded text of the one field it cites. A FAIL that cites nothing, has any passage that is
-not in the field it cites, or quotes these instructions or the trace's framing instead of a
-span field is discarded. COMPLETION names its span with "span" instead (see the dimension).
+was copied from — "in", "out", "status" for a span whose only record of the failure is
+its status, or "tools" for tool names copied from TOOLS AVAILABLE (no span id needed) — and
+the passage itself as "quote", copied verbatim with nothing added. Each passage is checked
+in code against the recorded text of the one field it cites, sentence by sentence. A FAIL
+that cites nothing, has any passage that is not in the field it cites, or quotes these
+instructions or the trace's framing instead of a span field is discarded. COMPLETION names its span with "span" instead (see the dimension).
 
 Never cite a closing pleasantry ("You're welcome", "Have a great day", "Let me know if...")
 as evidence of any failure.
@@ -233,7 +236,7 @@ OUTPUT — strict JSON, no prose outside it:
 {
   "dimensions": {
     "goal":        {"evidence": "<verbatim quote or empty>", "verdict": "PASS|FAIL",
-                    "cite": [{"span": "<span id>", "field": "in|out|status",
+                    "cite": [{"span": "<span id>", "field": "in|out|status|tools",
                               "quote": "<the passage, copied from that field>"}]},
     "grounding":   {"evidence": "...", "verdict": "PASS|FAIL", "cite": [...]},
     "tools":       {"evidence": "...", "verdict": "PASS|FAIL", "cite": [...]},
@@ -297,6 +300,33 @@ _TRACE_DATA_REMINDER = (
 )
 
 
+# The TOOLS AVAILABLE list is cut here, so a cited tool name is matched only
+# against names the model was actually shown.
+TOOLS_AVAILABLE_LABEL = "TOOLS AVAILABLE: "
+TOOLS_AVAILABLE_CHARS = 1200
+
+
+def tools_available_text(tools) -> str:
+    """The TOOLS AVAILABLE list as the prompt shows it, after the label."""
+    return neutralize(", ".join(map(str, tools or ())))[:TOOLS_AVAILABLE_CHARS]
+
+
+def span_header(s) -> str:
+    """One span's header line as the prompt shows it, without indentation.
+
+    The evidence gate rebuilds the same line for a FAIL that cites a span's
+    status, so a passage copied from the prompt matches it word for word.
+    """
+    u = neutralize
+    head = f"[{u(s.get('id'))}] {u(s.get('name'))}"
+    if s.get("kind"):
+        head += f" ({u(s['kind'])})"
+    head += f" status={u(s.get('status'))}"
+    if s.get("flagged"):
+        head += " [FLAGGED]"
+    return head
+
+
 def build_prompt_v8(payloads):
     """One trace per call — the full span tree, nothing pre-selected.
 
@@ -313,7 +343,7 @@ def build_prompt_v8(payloads):
     u = neutralize
     parts = []
     if t.get("tools_available"):
-        parts.append("TOOLS AVAILABLE: " + u(", ".join(map(str, t["tools_available"])))[:1200])
+        parts.append(TOOLS_AVAILABLE_LABEL + tools_available_text(t["tools_available"]))
     if t.get("flow"):
         parts.append(f"\nEXECUTION FLOW:\n{u(t['flow'])}")
     if t.get("signals"):
@@ -326,13 +356,7 @@ def build_prompt_v8(payloads):
             "[FLAGGED] = structurally anomalous):"
         )
         for s in spans:
-            head = f"  {s.get('depth', 0) * '  '}[{u(s.get('id'))}] {u(s.get('name'))}"
-            if s.get("kind"):
-                head += f" ({u(s['kind'])})"
-            head += f" status={u(s.get('status'))}"
-            if s.get("flagged"):
-                head += " [FLAGGED]"
-            parts.append(head)
+            parts.append(f"  {s.get('depth', 0) * '  '}{span_header(s)}")
             if s.get("in"):
                 parts.append(f"      in : {field(s['in'])}")
             if s.get("out"):
