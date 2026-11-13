@@ -2166,10 +2166,21 @@ class FeedbackDetailsResponseSerializer(serializers.Serializer):
 class EvalApiLogRowQuerySerializer(serializers.Serializer):
     log_id = serializers.UUIDField(required=True)
     order = serializers.CharField(required=False, allow_blank=True)
-    source = serializers.CharField(required=False, allow_blank=True)
     include_source_navigation = serializers.ChoiceField(
         choices=("true", "false"), required=False
     )
+
+    def get_fields(self):
+        # The ``source`` query parameter is added here: as a class attribute it
+        # would shadow DRF's ``Field.source`` (a str), which mypy rejects.
+        fields = {}
+        for name, field in super().get_fields().items():
+            fields[name] = field
+            if name == "order":
+                fields["source"] = serializers.CharField(
+                    required=False, allow_blank=True
+                )
+        return fields
 
     def validate_include_source_navigation(self, value):
         return value == "true"

@@ -5983,9 +5983,10 @@ def eval_usage_snapshot_lists_by_source(snapshot) -> bool:
 def _eval_usage_source_project_ids(request, workspace, template_id) -> list[str]:
     """Projects whose trace-attached eval logs the Usage page may list.
 
-    A log is listed by the source it ran on, so this is every project the
-    caller may read in the workspace (the same scope source navigation
-    searches), not the projects that hold a config of this eval today.
+    A log that recorded its project is listed by that project, so this is
+    every project the caller may read in the workspace, not the projects that
+    hold a config of this eval today. Past the bound it falls back to the
+    readable projects running this eval now (a disclosed limit).
     """
     workspace_id = str(workspace.id) if workspace else None
     project_ids = readable_source_project_ids(request, workspace_id)
