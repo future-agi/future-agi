@@ -315,7 +315,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         expected={
             '0117_cohort_sampling': {'public.tracer_project','public.tracer_eval_task',
                 'public.tracer_eval_sampling_cohort','public.tracer_eval_sampling_member'},
-            '0117_sampling_project_db_default': {'public.tracer_project'},
+            # The default ships in 0117_cohort_sampling; this AlterField is
+            # identical, so Django emits no SQL and it touches no table.
+            '0117_sampling_project_db_default': set(),
             '0119_merge_sampling_default_and_simulation_project': set(),
             '0120_sampling_cohort_lease': {'public.tracer_eval_sampling_cohort'},
             '0121_merge_sampling_and_sql_reuse': set(),
