@@ -52,6 +52,7 @@ def fetch_url_content(url, timeout=15):
             url,
             method="GET",
             timeout=timeout,
+            total_timeout=timeout,
             max_bytes=MAX_RESPONSE_BYTES,
             headers={"User-Agent": "FalconAI/1.0"},
         )
