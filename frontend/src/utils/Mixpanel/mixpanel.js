@@ -1,132 +1,12 @@
-import mixpanel from "mixpanel-browser";
 import { matchPath } from "react-router";
-
 import logger from "../logger";
 
 import { Events } from "./EventNames";
-import { MIXPANEL_HOST } from "src/config-global";
-import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
-
-// Mixpanel is opt-in: skip init entirely on OSS builds where no token
-// is set. mixpanel-browser's init(undefined, ...) silently produces a
-// half-broken object that throws on every track() — flooding the console
-// with "Cannot read properties of undefined (reading 'disable_all_events')".
-const MIXPANEL_TOKEN = import.meta.env.VITE_MIXPANEL_TOKEN;
-const MIXPANEL_ENABLED = Boolean(MIXPANEL_TOKEN);
-const runtimeSessionReplayPercent =
-  typeof window === "undefined"
-    ? undefined
-    : window.__FUTURE_AGI_CONFIG__?.VITE_MIXPANEL_SESSION_REPLAY_PERCENT;
-const configuredSessionReplayPercent = Number(
-  runtimeSessionReplayPercent !== undefined &&
-    String(runtimeSessionReplayPercent).trim() !== ""
-    ? runtimeSessionReplayPercent
-    : import.meta.env.VITE_MIXPANEL_SESSION_REPLAY_PERCENT ?? 0,
-);
-const MIXPANEL_SESSION_REPLAY_PERCENT = Number.isFinite(
-  configuredSessionReplayPercent,
-)
-  ? Math.min(100, Math.max(0, configuredSessionReplayPercent))
-  : 0;
-const INITIAL_PATHNAME =
-  typeof window === "undefined" ? "/" : window.location.pathname;
-let mixpanelReplayMayBeActive =
-  MIXPANEL_SESSION_REPLAY_PERCENT > 0 &&
-  !isSessionReplayBlockedPath(INITIAL_PATHNAME);
-let mixpanelReplayConfigDisabled = false;
-let mixpanelReplayStopScript = null;
-
-if (MIXPANEL_ENABLED) {
-  try {
-    mixpanel.init(MIXPANEL_TOKEN, {
-      debug: true,
-      persistence: "localStorage",
-      ignore_dnt: true,
-      // Product analytics events remain enabled. Session replay is intentionally
-      // opt-in because multiple rrweb recorders retained hundreds of MiB on
-      // mutation-heavy grids. High-mutation routes are blocked even when an
-      // environment explicitly opts into replay.
-      record_sessions_percent: mixpanelReplayMayBeActive
-        ? MIXPANEL_SESSION_REPLAY_PERCENT
-        : 0,
-      record_mask_text_class: ".sensitive",
-      ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
-    });
-  } catch (error) {
-    logger.error("Failed to initialize Mixpanel:", error);
-  }
-}
-
-export const syncMixpanelSessionReplay = (pathname) => {
-  if (
-    !MIXPANEL_ENABLED ||
-    !mixpanelReplayMayBeActive ||
-    !isSessionReplayBlockedPath(pathname)
-  ) {
-    return;
-  }
-
-  try {
-    // Keep each successful transition, but leave replay retryable until every
-    // required operation has succeeded. In particular, do not clear
-    // mixpanelReplayMayBeActive before a throwing set_config/stop call.
-    if (!mixpanelReplayConfigDisabled) {
-      mixpanel.set_config({ record_sessions_percent: 0 });
-      mixpanelReplayConfigDisabled = true;
-    }
-
-    if (mixpanel._recorder) {
-      mixpanel.stop_session_recording();
-      mixpanelReplayMayBeActive = false;
-      mixpanelReplayStopScript = null;
-      return;
-    }
-
-    // The recorder bundle may still be loading. Stop it immediately after its
-    // existing script load handler starts the recorder.
-    const recorderSource = mixpanel.get_config?.("recorder_src");
-    let normalizedRecorderSource = null;
-    if (recorderSource) {
-      try {
-        normalizedRecorderSource = new URL(recorderSource, document.baseURI)
-          .href;
-      } catch (error) {
-        logger.error("Failed to resolve Mixpanel recorder source:", error);
-      }
-    }
-    const recorderScript = normalizedRecorderSource
-      ? Array.from(document.scripts).find(
-          (script) => script.src === normalizedRecorderSource,
-        )
-      : null;
-
-    // A successful config update is sufficient when this browser was not
-    // sampled and no recorder load is in flight.
-    if (!recorderScript) {
-      mixpanelReplayMayBeActive = false;
-      return;
-    }
-    if (mixpanelReplayStopScript === recorderScript) return;
-
-    const stopLoadedRecorder = () => {
-      if (mixpanelReplayStopScript === recorderScript) {
-        mixpanelReplayStopScript = null;
-      }
-      try {
-        if (mixpanel._recorder) mixpanel.stop_session_recording();
-        mixpanelReplayMayBeActive = false;
-      } catch (error) {
-        // The one-shot listener has been consumed. Keep replay eligible for a
-        // direct retry on the next blocked-route synchronization.
-        logger.error("Failed to stop Mixpanel session replay:", error);
-      }
-    };
-    recorderScript.addEventListener("load", stopLoadedRecorder, { once: true });
-    mixpanelReplayStopScript = recorderScript;
-  } catch (error) {
-    logger.error("Failed to stop Mixpanel session replay:", error);
-  }
-};
+import {
+  identifyPostHogUser,
+  resetPostHogUser,
+  trackPostHogEvent,
+} from "../PostHog";
 
 export const PropertyName = {
   method: "method",
@@ -215,84 +95,43 @@ const customModelEventProperties = (properties) => ({
 });
 
 export const trackEvent = (eventName, properties) => {
-  if (!MIXPANEL_ENABLED) return;
-  try {
-    mixpanel.track(
-      eventName,
-      eventName === Events.customModelAdded
-        ? customModelEventProperties(properties)
-        : properties,
-    );
-  } catch (error) {
-    logger.error("Failed to track event:", error);
-  }
+  trackPostHogEvent(
+    eventName,
+    eventName === Events.customModelAdded
+      ? customModelEventProperties(properties)
+      : properties,
+  );
 };
 
 export const trackError = (properties, where) => {
-  if (!MIXPANEL_ENABLED) return;
-  try {
-    mixpanel.track(
-      `Client Error : ${where || window.location.pathname}`,
-      properties,
-    );
-  } catch (error) {
-    logger.error("Failed to track error:", error);
-  }
+  trackPostHogEvent(
+    `Client Error : ${where || window.location.pathname}`,
+    properties,
+  );
 };
 
+// Keep the existing synchronous API for callers, including axios logout paths.
+// The PostHog boundary coalesces the auth provider's paired legacy/direct calls.
 export const identifyUser = (userData = {}) => {
-  const { id, email } = userData;
-  logger.debug("identifyUser userData", userData);
-  if (!id) {
-    logger.error("User ID is required for identification");
-    return;
-  }
-  if (!MIXPANEL_ENABLED) return;
-
+  identifyPostHogUser(userData);
   try {
-    // Mixpanel identification
-    mixpanel.identify(id);
-    mixpanel.people.set_once("id", id);
-    mixpanel.people.set_once("$email", email);
-    mixpanel.people.set_once("$name", userData?.name);
-    mixpanel.people.set_once("Org Id", userData?.organization?.id);
-    mixpanel.people.set_once("Org Name", userData?.organization?.name);
-    mixpanel.people.set_once("Workspace Id", userData?.default_workspace_id);
-
-    //set group
-    mixpanel.set_group("org_id", userData?.organization?.id);
-
-    mixpanel.get_group("org_id", userData?.organization?.id).set_once({
-      "Organization Name": userData?.organization?.name,
-    });
-
-    // Appcues identification
-    if (window.Appcues) {
-      window.Appcues.identify(id, {
-        email: email,
-      });
+    if (userData.id && window.Appcues) {
+      window.Appcues.identify(userData.id, { email: userData.email });
     }
   } catch (error) {
     logger.error("Failed to identify user:", error);
     trackError({
       error: error.message,
-      userId: id,
-      email: email,
+      userId: userData.id,
+      email: userData.email,
       context: "identifyUser",
     });
   }
 };
-
 export const resetUser = () => {
-  if (!MIXPANEL_ENABLED) {
-    if (window.Appcues) window.Appcues.reset();
-    return;
-  }
+  resetPostHogUser();
   try {
-    mixpanel.reset();
-    if (window.Appcues) {
-      window.Appcues.reset();
-    }
+    if (window.Appcues) window.Appcues.reset();
   } catch (error) {
     logger.error("Failed to reset user:", error);
   }

@@ -10,6 +10,8 @@ import { SESSION_REPLAY_URL_BLOCKLIST } from "src/utils/sessionReplayPolicy";
 const posthogHost = POSTHOG_HOST || "https://us.i.posthog.com";
 
 let initialized = false;
+let lastIdentity;
+let resetSinceActivity = false;
 
 export const initPostHog = () => {
   if (initialized || !POSTHOG_KEY) {
@@ -84,6 +86,19 @@ export const identifyPostHogUser = (userData = {}) => {
   } = userData;
   if (!id) return;
 
+  const identity = JSON.stringify([
+    id,
+    email,
+    name,
+    organization?.id,
+    organization?.name,
+    organization?.display_name,
+    default_workspace_id,
+    default_workspace_role,
+    organization_role,
+  ]);
+  if (identity === lastIdentity) return;
+
   try {
     const setOnce = {};
     try {
@@ -132,6 +147,8 @@ export const identifyPostHogUser = (userData = {}) => {
         organization_id: organization?.id,
       });
     }
+    lastIdentity = identity;
+    resetSinceActivity = false;
   } catch (error) {
     logger.error("PostHog identify error:", error);
   }
@@ -141,9 +158,11 @@ export const identifyPostHogUser = (userData = {}) => {
  * Reset on logout
  */
 export const resetPostHogUser = () => {
-  if (!initialized) return;
+  if (!initialized || resetSinceActivity) return;
   try {
     posthog.reset();
+    lastIdentity = undefined;
+    resetSinceActivity = true;
   } catch (error) {
     logger.error("PostHog reset error:", error);
   }
@@ -156,6 +175,7 @@ export const trackPostHogEvent = (eventName, properties = {}) => {
   if (!initialized) return;
   try {
     posthog.capture(eventName, properties);
+    resetSinceActivity = false;
   } catch (error) {
     logger.error("PostHog track error:", error);
   }
