@@ -29,7 +29,10 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_read_budget_error,
 )
-from tracer.services.clickhouse.v2.effective_tags import effective_tag_values
+from tracer.services.clickhouse.v2.effective_tags import (
+    TagVocabularyCache,
+    effective_tag_values,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     NIL_UUID,
     remap_left_join,
@@ -752,6 +755,7 @@ def read_span_system_filter_value_cursor_page(
     emitted_digests: list[str] = []
     after = value_after
     query_count = 0
+    assignment_cache = TagVocabularyCache(start, end)
 
     while current_end > start and len(emitted) < int(page_size):
         current_start = (
@@ -822,6 +826,7 @@ def read_span_system_filter_value_cursor_page(
                     after=after,
                     limit=FILTER_VALUE_CURSOR_SCAN_LIMIT,
                     settings=FILTER_VALUE_READ_SETTINGS,
+                    assignment_cache=assignment_cache,
                 )
                 result = QueryResult(
                     data=[{"val": value} for value in tag_values],

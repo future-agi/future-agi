@@ -696,3 +696,100 @@ def test_tag_leaf_does_not_hour_bound_other_any_span_leaves(stores):
     query, tag_only = _classify_unbounded(stores, leaf("tag", "sdk"))
     assert tag_only == ["alpha", "beta"]
     assert "AND start_time >= toStartOfHour(toDateTime64(%(start_date)s" in query
+
+
+def test_cursor_reuses_assignment_snapshot_across_time_slices(stores, monkeypatch):
+    from tracer.services.clickhouse import filter_value_reads
+
+    seed(stores, "new", start_time=START + timedelta(seconds=2, milliseconds=500))
+    seed(stores, "old", start_time=START + timedelta(milliseconds=500))
+    manual("new", ["new-ui"])
+    manual("old", ["old-ui"])
+    monkeypatch.setattr(
+        filter_value_reads, "FILTER_VALUE_CURSOR_INITIAL_SEGMENT", timedelta(seconds=1)
+    )
+    lookup = Mock(wraps=effective_tags._query_assignments)
+    monkeypatch.setattr(effective_tags, "_query_assignments", lookup)
+    page = read_span_system_filter_value_cursor_page(
+        stores.analytics,
+        project_ids=[PROJECT],
+        metric_name="tag",
+        page_size=10,
+        window_start=START,
+        window_end=START + timedelta(seconds=3),
+        deadline=ReadDeadline.start(60000),
+    )
+    assert page.values == ("new-ui", "old-ui")
+    assert lookup.call_count == 1
+
+
+def test_curated_picker_limits_both_history_reads_to_live_roots(stores, monkeypatch):
+    seed(stores, "live")
+    seed(stores, "outside", start_time=BEGIN - timedelta(days=8))
+    stores.execute(
+        "INSERT INTO traces VALUES (%(project)s, 'live', '[\"curated\"]', 1, 0)",
+        {"project": PROJECT},
+    )
+    stores.execute(
+        "INSERT INTO traces VALUES (%(project)s, 'outside', '[\"outside\"]', 1, 0)",
+        {"project": PROJECT},
+    )
+    execute = stores.analytics.execute_ch_query
+    queries = []
+
+    def observed(sql, params=None, **kwargs):
+        if "tag_legacy_vocab" in sql:
+            queries.append(sql)
+        return execute(sql, params, **kwargs)
+
+    monkeypatch.setattr(stores.analytics, "execute_ch_query", observed)
+    result = read_span_system_filter_values(
+        stores.analytics,
+        project_ids=[PROJECT],
+        metric_name="tag",
+        now=END,
+    )
+    assert result.values == ("curated",)
+    assert len(queries) == 1
+    # Both the replay and tag-bearing candidate set must be limited before
+    # reading the project's entire curated history.
+    assert queries[0].count("AND (project_id, id) IN (\n") == 2
+    assert queries[0].count("SELECT project_id, trace_id\n") == 2
+
+
+def test_window_suppressions_do_not_read_curated_history_outside_roots(stores):
+    seed(stores, "live")
+    seed(stores, "outside", start_time=BEGIN - timedelta(days=8))
+    for trace in ("live", "outside"):
+        stores.execute(
+            "INSERT INTO traces VALUES (%(project)s, %(trace)s, '[\"curated\"]', 1, 0)",
+            {"project": PROJECT, "trace": trace},
+        )
+        manual(trace, [])
+    _, params = ClickHouseFilterBuilderV2(project_id=PROJECT).translate(
+        [leaf("tag", "curated")]
+    )
+    params.update(start_date=BEGIN, end_date=END)
+    queries = []
+    execute = stores.analytics.execute_ch_query
+
+    def observed(sql, bound=None, **kwargs):
+        queries.append(sql)
+        return execute(sql, bound, **kwargs)
+
+    prepared = prepare_effective_tag_params(
+        observed, params, deadline=ReadDeadline.start(10000), allow_window_scan=True
+    )
+    assert prepared["effective_tag_rows_1_assigned_keys"] == (
+        ("", ""),
+        (PROJECT, "live"),
+    )
+    assert len(queries) == 1
+    assert queries[0].count("AND (project_id, id) IN (\n") == 2
+
+
+def test_classifier_curated_replay_is_bounded_by_window_live_roots():
+    for column in ("tag", "tags"):
+        builder = ClickHouseFilterBuilderV2(project_id=PROJECT)
+        sql, _ = builder.translate([leaf(column, "curated")])
+        assert sql.count("AND (project_id, id) IN (\n") == 2

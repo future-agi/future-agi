@@ -557,7 +557,8 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
                 # trace assignment (or unsuppressed legacy curated tags).
                 inner = (
                     f"SELECT {selected} FROM {canonical_root_sql(relation)} "
-                    f"WHERE {source} OR {trace_overlay_sql(relation, predicate)}"
+                    f"WHERE {source} OR "
+                    f"{trace_overlay_sql(relation, predicate, live_roots=True)}"
                 )
             else:
                 inner = f"SELECT {selected} FROM {live} WHERE {match}"

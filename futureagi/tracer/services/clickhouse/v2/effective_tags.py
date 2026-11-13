@@ -153,18 +153,24 @@ def live_tag_source_sql(prefix: str) -> str:
     )"""
 
 
-def legacy_trace_tags_sql(prefix: str) -> str:
+def legacy_trace_tags_sql(prefix: str, *, live_roots: bool = False) -> str:
     """Unsuppressed latest curated ``traces.tags`` names in the leaf's scope.
 
     Only traces that ever carried curated tags enter the replay; all of their
     versions do, so a later clear or tombstone still wins. Any saved trace
-    assignment, even an empty one, suppresses this fallback.
+    assignment, even an empty one, suppresses this fallback. Picker reads
+    additionally restrict both history passes to window-live roots.
     """
     p = prefix
     scope = (
         f"project_id IN %({p}_projects)s "
         f"AND (%({p}_scoped)s = 0 OR id IN %({p}_traces)s)"
     )
+    if live_roots:
+        scope += f""" AND (project_id, id) IN (
+            SELECT project_id, trace_id
+            FROM {live_tag_source_sql(p)} WHERE is_root
+        )"""
     names = source_names_sql(("etag_l.1",), ())
     return f"""(
         SELECT toString(project_id) AS legacy_project, toString(id) AS legacy_trace,
@@ -202,7 +208,9 @@ def span_key_sql(*, project: str = "toString(project_id)") -> str:
     )
 
 
-def trace_overlay_sql(prefix: str, names_predicate: str) -> str:
+def trace_overlay_sql(
+    prefix: str, names_predicate: str, *, live_roots: bool = False
+) -> str:
     """A trace's own non-source names: its assignment, else curated tags.
 
     ``names_predicate`` is a template whose ``{names}`` is an Array(String).
@@ -212,7 +220,8 @@ def trace_overlay_sql(prefix: str, names_predicate: str) -> str:
     return (
         f"((toString(project_id), trace_id) IN %({p}_trace_keys)s "
         f"OR (toString(project_id), trace_id) IN (SELECT legacy_project, "
-        f"legacy_trace FROM {legacy_trace_tags_sql(p)} WHERE {legacy}))"
+        f"legacy_trace FROM {legacy_trace_tags_sql(p, live_roots=live_roots)} "
+        f"WHERE {legacy}))"
     )
 
 
@@ -226,7 +235,7 @@ def effective_match_sql(prefix: str, names_predicate: str) -> str:
     source = names_predicate.format(names="src")
     return (
         f"({source} "
-        f"OR (is_root AND {trace_overlay_sql(p, names_predicate)}) "
+        f"OR (is_root AND {trace_overlay_sql(p, names_predicate, live_roots=True)}) "
         f"OR (NOT is_root AND {span_key_sql()} IN %({p}_span_keys)s))"
     )
 
@@ -669,12 +678,14 @@ def _unmatched_trace_predicate(project_ids: tuple[str, ...], names: Q) -> Q:
     return Q(project_id__in=project_ids, entity_kind="trace") & ~names
 
 
-def _legacy_match_query(prefix: str, names_predicate: str) -> str:
+def _legacy_match_query(
+    prefix: str, names_predicate: str, *, live_roots: bool = False
+) -> str:
     """Latest live curated ``traces.tags`` rows of the scope that match."""
     legacy = names_predicate.format(names="legacy_names")
     return f"""
         SELECT legacy_project, legacy_trace
-        FROM {legacy_trace_tags_sql(prefix)}
+        FROM {legacy_trace_tags_sql(prefix, live_roots=live_roots)}
         WHERE {legacy}
         LIMIT %({prefix}_limit)s
     """
@@ -687,6 +698,8 @@ def legacy_suppressions(
     values: tuple[str, ...] | None,
     deadline: ReadDeadline,
     settings: dict[str, Any] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> set[tuple[str, str]]:
     """Trace assignments that hide a curated tag the leaf would otherwise match.
 
@@ -714,7 +727,10 @@ def legacy_suppressions(
     else:
         names_predicate = "hasAny({names}, %(" + prefix + "_names)s)"
     unmatched = _unmatched_trace_predicate(project_ids, _names_predicate(values))
-    query = _legacy_match_query(prefix, names_predicate)
+    if (window_start is None) != (window_end is None):
+        raise TagReadUnavailable("tag_scope_required")
+    live_roots = window_start is not None and window_end is not None
+    query = _legacy_match_query(prefix, names_predicate, live_roots=live_roots)
     over_budget = "tag_overlay_budget_exceeded"
 
     def curated_matches(traces: tuple[str, ...] | None) -> set[tuple[str, str]]:
@@ -731,6 +747,17 @@ def legacy_suppressions(
             f"{prefix}_assigned_keys": (_TRACE_SENTINEL,),
             f"{prefix}_limit": limit + 1,
         }
+        if live_roots:
+            assert window_start is not None and window_end is not None
+            params.update(
+                _scope_params(
+                    prefix,
+                    project_ids=project_ids,
+                    window_start=window_start,
+                    window_end=window_end,
+                    trace_ids=traces,
+                )
+            )
         if values is not None:
             params[f"{prefix}_names"] = list(values)
         try:
@@ -831,6 +858,8 @@ def prepare_effective_tag_params(
                     project_ids=request.project_ids,
                     values=request.values,
                     deadline=deadline,
+                    window_start=start,
+                    window_end=end,
                 )
             cache[cache_key] = overlay
         trace_keys, span_keys, assigned = cache[cache_key].keys(request.values)
@@ -904,6 +933,16 @@ def _execute_overlay_read(
     return list(result.data or [])
 
 
+@dataclass
+class TagVocabularyCache:
+    """Request-local assignment snapshot; large vocabularies retain the paged walk."""
+
+    window_start: datetime
+    window_end: datetime
+    pages: tuple[list[dict[str, Any]], ...] | None = None
+    too_large: bool = False
+
+
 def _assignment_vocabulary(
     execute: Callable[..., Any],
     *,
@@ -913,6 +952,7 @@ def _assignment_vocabulary(
     window_end: datetime,
     deadline: ReadDeadline,
     settings: dict[str, Any],
+    assignment_cache: TagVocabularyCache | None = None,
 ) -> tuple[set[str], set[tuple[str, str]] | None]:
     """UI names on entities live in the window, and the trace assignments.
 
@@ -923,19 +963,59 @@ def _assignment_vocabulary(
     start, end = _utc(window_start), _utc(window_end)
     hour_start, hour_end = _hours(start, end)
     scope = Q(project_id__in=project_ids)
-    predicate = scope & Q(entity_kind="trace")
-    if metric_name == "tag":
-        predicate |= (
-            scope
-            & Q(entity_kind="span", start_hour__gte=hour_start, start_hour__lt=hour_end)
-            & ~Q(manual_tags=[])
+
+    def predicate_for(hours: tuple[datetime, datetime]) -> Q:
+        predicate = scope & Q(entity_kind="trace")
+        if metric_name == "tag":
+            predicate |= (
+                scope
+                & Q(
+                    entity_kind="span",
+                    start_hour__gte=hours[0],
+                    start_hour__lt=hours[1],
+                )
+                & ~Q(manual_tags=[])
+            )
+        return predicate
+
+    pages: Iterable[list[dict[str, Any]]]
+    if assignment_cache is not None and not assignment_cache.too_large:
+        if assignment_cache.pages is None:
+            snapshot: list[list[dict[str, Any]]] = []
+            count = 0
+            full_hours = _hours(
+                _utc(assignment_cache.window_start), _utc(assignment_cache.window_end)
+            )
+            for page in _assignment_pages(predicate_for(full_hours), deadline=deadline):
+                count += len(page)
+                if count > MAX_TAG_OVERLAY_KEYS:
+                    assignment_cache.too_large = True
+                    snapshot.clear()
+                    break
+                snapshot.append(page)
+            if not assignment_cache.too_large:
+                assignment_cache.pages = tuple(snapshot)
+        pages = (
+            assignment_cache.pages
+            if assignment_cache.pages is not None
+            else _assignment_pages(
+                predicate_for((hour_start, hour_end)), deadline=deadline
+            )
+        )
+    else:
+        pages = _assignment_pages(
+            predicate_for((hour_start, hour_end)), deadline=deadline
         )
     found: set[str] = set()
     assigned: set[tuple[str, str]] | None = set()
     prefix = "tag_vocab"
-    for page in _assignment_pages(predicate, deadline=deadline):
+    for page in pages:
         overlay = TagOverlay()
         for record in page:
+            if record["entity_kind"] == "span" and not (
+                hour_start <= _utc(record["start_hour"]) < hour_end
+            ):
+                continue
             overlay.add(record)
         if assigned is not None:
             assigned |= overlay.assigned
@@ -1040,12 +1120,7 @@ def _legacy_vocabulary(
         SELECT DISTINCT name
         FROM (
             SELECT legacy_names
-            FROM {legacy_trace_tags_sql(prefix)}
-            WHERE (legacy_project, legacy_trace) IN (
-                SELECT toString(project_id), trace_id
-                FROM {live_tag_source_sql(prefix)}
-                WHERE is_root
-            )
+            FROM {legacy_trace_tags_sql(prefix, live_roots=True)}
         ) ARRAY JOIN legacy_names AS name
         WHERE (%(tag_after_any)s = 1 OR name > %(tag_after)s)
           AND (%(tag_search)s = '' OR positionCaseInsensitiveUTF8(name, %(tag_search)s) > 0)
@@ -1075,6 +1150,7 @@ def effective_tag_values(
     after: str | None = None,
     limit: int,
     settings: dict[str, Any] | None = None,
+    assignment_cache: TagVocabularyCache | None = None,
 ) -> tuple[str, ...]:
     """Sorted effective names in the window: ``tag`` any span, ``tags`` root.
 
@@ -1135,6 +1211,7 @@ def effective_tag_values(
         window_end=window_end,
         deadline=deadline,
         settings=settings or {},
+        assignment_cache=assignment_cache,
     )
     folded = search.casefold()
     values.update(
