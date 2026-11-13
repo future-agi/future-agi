@@ -316,6 +316,7 @@ from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
@@ -625,6 +626,7 @@ def _compare_metadata_matches_request(
 COMPARE_NOT_FOUND_MESSAGE = (
     "This comparison was not found or has expired. Open the comparison again."
 )
+COMPARE_NOT_FOUND_CODE = "compare_not_found"
 COMPARE_ROW_ERROR_MESSAGE = "Unable to retrieve the compared row. Please try again."
 
 
@@ -701,7 +703,16 @@ def _client_rows_belong_to_datasets(dataset_info, datasets):
 
 
 def _compare_not_found_response(gm):
-    return gm.not_found(COMPARE_NOT_FOUND_MESSAGE)
+    # Its own code, so that a client can tell an unknown or expired comparison
+    # from a dataset that was not found (both are 404s).
+    return Response(
+        build_error_envelope(
+            COMPARE_NOT_FOUND_MESSAGE,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=COMPARE_NOT_FOUND_CODE,
+        ),
+        status=status.HTTP_404_NOT_FOUND,
+    )
 
 
 def _prepare_compare_dataset_impl(

@@ -497,9 +497,16 @@ def test_unknown_compare_id_is_not_found_without_server_details(
         auth_client.delete(DELETE_URL.format(compare_id=compare_id)),
     ):
         assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
+        # Its own code: a client tells it apart from a dataset not found.
+        assert response.json()["code"] == "compare_not_found"
         body = response.content.decode()
         for detail in ("metadata.json", "No such file", "media", compare_id):
             assert detail not in body
+
+    # A dataset that is not found keeps the generic code.
+    missing_dataset = _download(auth_client, uuid.uuid4(), [right.id], compare_id)
+    assert missing_dataset.status_code == status.HTTP_404_NOT_FOUND
+    assert missing_dataset.json()["code"] == "not_found"
 
     # Nothing was built or removed under the supplied id.
     assert _stored(page_store, compare_id) == {}
