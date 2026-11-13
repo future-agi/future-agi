@@ -7,7 +7,8 @@ import { READY_STATUS, readinessOf } from "../_mock/readiness";
 import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
 import { ago } from "../agents/agentViewUtils";
 import InlineFix from "./InlineFix";
-import { fixKindOf, fixLabelOf } from "./fixKinds";
+import { fixKindOf, fixLabelOf, shortFixLabel } from "./fixKinds";
+import BlockerGroup from "./BlockerGroup";
 
 /*
   Ready to run (plan T06; runs.md step 1): the short panel in Run setup for
@@ -21,15 +22,6 @@ const namesOf = (ids, titleOf) => {
   );
   if (names.length <= 3) return names.join(", ");
   return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
-};
-
-/* "Add a, b and 3 more to the agent" → "Add 5 tools to the agent": the names
-   are on the row's hover. */
-const shortFix = (label) => {
-  const m = /^Add (.+?) and (\d+) more (to .+)$/.exec(label || "");
-  if (!m) return label;
-  const n = m[1].split(",").length + Number(m[2]);
-  return `Add ${n} tools ${m[3]}`;
 };
 
 export default function ReadyToRun({
@@ -62,6 +54,9 @@ export default function ReadyToRun({
   /* The scenarios this run skips; a row counts only the ones it skips, so
      the rows and the run plan's count line agree (12 Nov review). */
   const skippedIds = new Set((report.scope?.blocked || []).map((b) => b.id));
+  const blockerAreas = areas.filter((a) => a.status === "blocked");
+  const grouped =
+    blockerAreas.length >= 2 && !checking && !!fixKit?.applyRepairs;
   /* A stated limit of where the agent runs (Partial on tools, reset, stop or
      evidence) has nothing to fix: it isn't a row to act on but one quiet
      line under the ready ones, so the results are read right. */
@@ -193,142 +188,155 @@ export default function ReadyToRun({
       {/* Short by design (runs.md: "a short Ready to run panel"): one line
           per blocker — its reason and the scenarios it hits on hover — and
           every ready area folded into one quiet line. */}
-      {open.map((a) => {
-        const st = READY_STATUS[a.status];
-        const skips = a.affected.filter((id) => skippedIds.has(id));
-        const names = skips.length ? namesOf(skips, titleOf) : "";
-        /* A blocker carries its fix (T06). Not checked isn't a blocker — its
+      {/* Two or more blockers: one row, one Fix (13 Nov). */}
+      {grouped && (
+        <BlockerGroup
+          areas={blockerAreas}
+          kit={fixKit}
+          onFix={onFix}
+          skippedIds={skippedIds}
+        />
+      )}
+      {open
+        .filter((a) => !(grouped && a.status === "blocked"))
+        .map((a) => {
+          const st = READY_STATUS[a.status];
+          const skips = a.affected.filter((id) => skippedIds.has(id));
+          const names = skips.length ? namesOf(skips, titleOf) : "";
+          /* A blocker carries its fix (T06). Not checked isn't a blocker — its
            cases still run — and its action is the pair's check, run here
            (Karthik's Re-check). A Partial row is a stated limit: no action. */
-        const kind =
-          a.status === "blocked" && a.fixRow && !checking
-            ? fixKindOf(a.fixRow, fixKit) || "link"
-            : a.status === "unchecked" && !a.waits && onCheck && !checking
-              ? "check"
-              : null;
-        const fixOpen =
-          openFix === a.id && kind && !["link", "check"].includes(kind);
-        return (
-          <Fragment key={a.id}>
-            <Tooltip
-              arrow
-              placement="top-start"
-              title={
-                <Box sx={{ whiteSpace: "pre-line" }}>
-                  {[
-                    a.detail,
-                    names && `Skipped in this run (${skips.length}): ${names}`,
-                  ]
-                    .filter(Boolean)
-                    .join("\n")}
-                </Box>
-              }
-            >
-              <Stack
-                direction="row"
-                alignItems="flex-start"
-                spacing={1}
-                sx={{
-                  px: 1.5,
-                  py: 0.625,
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }}
+          const kind =
+            a.status === "blocked" && a.fixRow && !checking
+              ? fixKindOf(a.fixRow, fixKit) || "link"
+              : a.status === "unchecked" && !a.waits && onCheck && !checking
+                ? "check"
+                : null;
+          const fixOpen =
+            openFix === a.id && kind && !["link", "check"].includes(kind);
+          return (
+            <Fragment key={a.id}>
+              <Tooltip
+                arrow
+                placement="top-start"
+                title={
+                  <Box sx={{ whiteSpace: "pre-line" }}>
+                    {[
+                      a.detail,
+                      names &&
+                        `Skipped in this run (${skips.length}): ${names}`,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
+                  </Box>
+                }
               >
-                <Box sx={{ pt: "7px", flexShrink: 0, display: "flex" }}>
-                  <StatusDot
-                    status={checking ? "running" : st.dot}
-                    size={6}
-                    live={checking}
-                    hollow={!checking && a.status === "unchecked"}
-                  />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    sx={{
-                      typography: "s2",
-                      lineHeight: "22px",
-                    }}
-                  >
-                    {a.label}
-                    <Box
-                      component="span"
-                      sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
+                <Stack
+                  direction="row"
+                  alignItems="flex-start"
+                  spacing={1}
+                  sx={{
+                    px: 1.5,
+                    py: 0.625,
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Box sx={{ pt: "7px", flexShrink: 0, display: "flex" }}>
+                    <StatusDot
+                      status={checking ? "running" : st.dot}
+                      size={6}
+                      live={checking}
+                      hollow={!checking && a.status === "unchecked"}
+                    />
+                  </Box>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        lineHeight: "22px",
+                      }}
                     >
-                      {checking
-                        ? "Checking…"
-                        : a.status === "unchecked"
-                          ? "Not checked yet"
-                          : /* With a fix that says what's wrong, the reason is
+                      {a.label}
+                      <Box
+                        component="span"
+                        sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
+                      >
+                        {checking
+                          ? "Checking…"
+                          : a.status === "unchecked"
+                            ? "Not checked yet"
+                            : /* With a fix that says what's wrong, the reason is
                              on hover only (13 Nov: fewer words). */
-                            [
-                              kind === "link"
-                                ? null
-                                : String(a.detail || "")
-                                    .split(/\s+—\s+|(?<=\.)\s/)[0]
-                                    .replace(/\.$/, ""),
-                              skips.length ? `${skips.length} skipped` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                    </Box>
-                  </Typography>
-                  {kind === "link" && onFix && (
+                              [
+                                kind === "link"
+                                  ? null
+                                  : String(a.detail || "")
+                                      .split(/\s+—\s+|(?<=\.)\s/)[0]
+                                      .replace(/\.$/, ""),
+                                skips.length ? `${skips.length} skipped` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                      </Box>
+                    </Typography>
+                    {kind === "link" && onFix && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => onFix(a.fixRow)}
+                        endIcon={
+                          <Iconify icon="solar:arrow-right-linear" width={12} />
+                        }
+                        sx={{
+                          py: 0.25,
+                          mt: 0.5,
+                          minWidth: 0,
+                          whiteSpace: "normal",
+                          textAlign: "left",
+                          lineHeight: "18px",
+                          display: "flex",
+                          width: "fit-content",
+                        }}
+                      >
+                        {shortFixLabel(fixLabelOf(a.fixRow)) ||
+                          "Open the connection"}
+                      </Button>
+                    )}
+                  </Box>
+                  {kind === "check" && (
                     <Button
                       size="small"
                       variant="outlined"
-                      onClick={() => onFix(a.fixRow)}
-                      endIcon={
-                        <Iconify icon="solar:arrow-right-linear" width={12} />
-                      }
-                      sx={{
-                        py: 0.25,
-                        mt: 0.5,
-                        minWidth: 0,
-                        whiteSpace: "normal",
-                        textAlign: "left",
-                        lineHeight: "18px",
-                        display: "flex",
-                        width: "fit-content",
-                      }}
+                      onClick={onCheck}
+                      sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
                     >
-                      {shortFix(fixLabelOf(a.fixRow)) || "Open the connection"}
+                      Run the check
                     </Button>
                   )}
-                </Box>
-                {kind === "check" && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={onCheck}
-                    sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
-                  >
-                    Run the check
-                  </Button>
-                )}
-                {kind && !["link", "check"].includes(kind) && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => setOpenFix(fixOpen ? null : a.id)}
-                    sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
-                  >
-                    {fixOpen ? "Close" : "Fix"}
-                  </Button>
-                )}
-              </Stack>
-            </Tooltip>
-            {fixOpen && (
-              <InlineFix
-                kind={kind}
-                row={a.fixRow}
-                kit={fixKit}
-                onClose={() => setOpenFix(null)}
-              />
-            )}
-          </Fragment>
-        );
-      })}
+                  {kind && !["link", "check"].includes(kind) && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => setOpenFix(fixOpen ? null : a.id)}
+                      sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
+                    >
+                      {fixOpen ? "Close" : "Fix"}
+                    </Button>
+                  )}
+                </Stack>
+              </Tooltip>
+              {fixOpen && (
+                <InlineFix
+                  kind={kind}
+                  row={a.fixRow}
+                  kit={fixKit}
+                  onClose={() => setOpenFix(null)}
+                />
+              )}
+            </Fragment>
+          );
+        })}
       {waiting.length > 0 && (
         <Tooltip
           arrow

@@ -200,8 +200,11 @@ import AlsoRunIn from "../run/AlsoRunIn";
 import WorldPanel from "./WorldPanel";
 import SettingsPanel from "./SettingsPanel";
 import { clickable, focusRing } from "../components/clickable";
-import { compatibilityOf, pairingStampOf,
-  PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
+import {
+  compatibilityOf,
+  pairingStampOf,
+  PAIR_CHECK_LIMIT_MIN,
+} from "../_mock/compatibility";
 import { buildableAgentsOf } from "../environments/worldSource";
 
 /**
@@ -1342,6 +1345,31 @@ export default function EnvironmentWorkspace() {
         const p = inlineRepairPatch(a.values, spec, fixId, value);
         setAgentValues(k, p);
         runCapsCheck({ ...a, values: { ...(a.values || {}), ...p } }, k);
+      },
+      /* Several fixes at once (grouped blockers, 13 Nov): saved together,
+         then one check — not one check per fix. */
+      applyRepairs: (items) => {
+        let vals = { ...(a.values || {}) };
+        let merged = {};
+        items.forEach(({ fixId, value }) => {
+          const p = inlineRepairPatch(vals, spec, fixId, value);
+          /* Each patch carries the whole spec; keep only what it changes, so
+             a later fix doesn't undo an earlier one. */
+          const changed = Object.fromEntries(
+            Object.entries(p.connection || {}).filter(
+              ([key, v]) => spec?.[key] !== v,
+            ),
+          );
+          const connection = {
+            ...spec,
+            ...(merged.connection || {}),
+            ...changed,
+          };
+          merged = { ...merged, ...p, connection };
+          vals = { ...vals, ...merged };
+        });
+        setAgentValues(k, merged);
+        runCapsCheck({ ...a, values: vals }, k);
       },
       runReleaseChecks: gates.canEdit ? runReleaseChecks : null,
       releaseRunning:
@@ -3036,8 +3064,8 @@ export default function EnvironmentWorkspace() {
                     Try the tools yourself
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Opens World &amp; tools: call a tool as the agent would and see
-                    the records change. Nothing is run or scored.
+                    Opens World &amp; tools: call a tool as the agent would and
+                    see the records change. Nothing is run or scored.
                   </Typography>
                 </Box>
               </MenuItem>

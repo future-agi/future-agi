@@ -20,6 +20,15 @@ export const fixKindOf = (row, kit) => {
 /** What the row's fix button says, when the fix is made elsewhere. */
 export const fixLabelOf = (row) => row?.fixLabel || null;
 
+/* "Add a, b and 3 more to the agent" → "Add 5 tools to the agent": the names
+   are on the row's hover. */
+export const shortFixLabel = (label) => {
+  const m = /^Add (.+?) and (\d+) more (to .+)$/.exec(label || "");
+  if (!m) return label;
+  const n = m[1].split(",").length + Number(m[2]);
+  return `Add ${n} tools ${m[3]}`;
+};
+
 /** The field an inline field fix edits, prefilled with the check's suggestion. */
 export const fieldFixOf = (row, kit) => {
   const inline = inlineRepairOf(kit?.spec, row?.fixId);
