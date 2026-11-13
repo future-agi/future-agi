@@ -7,7 +7,7 @@ on:
       - 'frontend/**'
       - '.github/workflows/frontend-develop.yml'
   pull_request:
-    branches: [main, develop, dev]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-develop.yml'

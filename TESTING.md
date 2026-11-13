@@ -378,7 +378,7 @@ Installed once per clone via `yarn install` at repo root (husky's `prepare` scri
 
 ### `pre-commit` (`.husky/pre-commit`)
 
-Runs `lint-staged` against files currently staged. For frontend paths that means ESLint auto-fix + Prettier; Python formatting runs separately via `make pre-commit-install` inside `futureagi/`.
+Runs `lint-staged` against files currently staged. For frontend paths that means ESLint auto-fix + Prettier; for Python under `futureagi/`, `scripts/lint-staged-python.sh` runs `ruff check --fix` and then `ruff format`.
 
 The hook auto-skips during `git merge` — merge-commit staging includes the entire merge diff, which makes linting every file pointless and slow.
 
