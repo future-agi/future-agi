@@ -221,6 +221,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(summary, r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$")
         self.assertRegex(summary, r"(?m)^          RUFF: \$\{\{ needs\.ruff-delta\.result \}\}\s*$")
 
+    def test_the_gate_runs_from_the_base_branch(self):
+        # A PR branched before the gate has no scripts/check_python_lint_delta.py,
+        # and a PR that edits the gate must not be judged by its own edit.
+        ruff = job_block(self.text, "ruff-delta")
+        self.assertIn('git show "origin/${BASE_REF}:scripts/check_python_lint_delta.py" > "$gate"', ruff)
+        self.assertRegex(ruff, r'python3 -I "\$gate" --base "\$base" --expect-ruff-version "\$RUFF_VERSION"')
+        self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
+        # The self-test runs only when the branch carries it.
+        self.assertIn("if [ -f scripts/test_check_python_lint_delta.py ]; then", ruff)
+
     def test_nothing_turns_a_failure_into_a_pass(self):
         # continue-on-error on any job or step can report a real failure as
         # success to the summary, or make the summary itself green regardless.
