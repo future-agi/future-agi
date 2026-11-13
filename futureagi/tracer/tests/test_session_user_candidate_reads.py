@@ -2500,7 +2500,7 @@ def test_user_candidates_on_production_span_schema_keep_project_and_latest_state
                 root(
                     other_project_id,
                     trace_id,
-                    f"root-{index}",
+                    f"other-root-{index}",
                     now - timedelta(minutes=30 + index),
                     session_id,
                     end_user_id,
@@ -2567,18 +2567,36 @@ def test_user_candidates_on_production_span_schema_keep_project_and_latest_state
             )
             return seed_rows, _dict_rows(match_raw, match_columns)
 
-        seed_rows, matches = classify(25)
-        assert {row["trace_id"] for row in seed_rows} <= {*trace_ids, deleted_trace_id}
-        assert {row["trace_id"] for row in matches} == set(trace_ids)
-        assert len(matches) == len(trace_ids)
+        def roots(rows):
+            return {
+                (
+                    row["trace_id"],
+                    row["root_span_id"],
+                    row["start_time"].replace(tzinfo=None),
+                )
+                for row in rows
+            }
 
+        # The requested project's live roots. The other project's roots for the
+        # same trace ids start earlier and carry a higher version, so reading
+        # them would change the canonical root of each trace.
+        live_roots = {
+            (trace_ids[0], "root-0", session_start),
+            (trace_ids[1], "root-1", session_start + timedelta(minutes=1)),
+        }
+        seed_rows, matches = classify(25)
+        assert roots(seed_rows) == live_roots
+        assert roots(matches) == live_roots
+        assert len(matches) == len(trace_ids)
+        assert {row["_root_version"] for row in matches} == {1, 2}
+
+        # The deleted root is the newest in the project; the one-row page is
+        # the newest live root instead.
+        newest_live_root = max(live_roots, key=lambda root_key: root_key[2])
         one_seed, one_match = classify(1)
-        assert len(one_seed) == 1
-        assert one_seed[0]["trace_id"] in {*trace_ids, deleted_trace_id}
-        assert len(one_match) <= 1
-        assert {row["trace_id"] for row in one_match} <= (
-            {one_seed[0]["trace_id"]} & set(trace_ids)
-        )
+        assert roots(one_seed) == {newest_live_root}
+        assert roots(one_match) == {newest_live_root}
+        assert len(one_match) == 1
 
         def session_page(page_size):
             session_builder = SessionListQueryBuilderV2(
