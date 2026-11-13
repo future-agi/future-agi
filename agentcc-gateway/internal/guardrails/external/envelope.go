@@ -182,14 +182,8 @@ func validateEnvelope(adapter providerAdapter, body []byte) error {
 		if !ok || len(summary) == 0 {
 			return fmt.Errorf("missing Enkrypt summary")
 		}
-		for name, config := range a.detectors {
-			if cfg, ok := config.(map[string]interface{}); ok && cfg["enabled"] == false {
-				continue
-			}
-			if _, exists := summary[name]; !exists {
-				return fmt.Errorf("missing requested Enkrypt detector")
-			}
-		}
+		// Enkrypt may list only the detectors that fired; a requested detector
+		// absent from an otherwise well-formed summary did not trigger.
 		for _, value := range summary {
 			switch v := value.(type) {
 			case bool:

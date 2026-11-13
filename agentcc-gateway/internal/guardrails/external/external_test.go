@@ -692,6 +692,9 @@ func TestEnkrypt_ArraySummary(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "insult")}))
+	if result.Err != nil {
+		t.Fatalf("summary without the untriggered default detector is a verdict, got execution failure: %v", result.Err)
+	}
 	if result.Pass {
 		t.Fatal("expected fail for array toxicity summary")
 	}

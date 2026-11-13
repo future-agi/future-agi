@@ -65,3 +65,34 @@ func TestAdapterFailurePolicyScope(t *testing.T) {
 		}
 	}
 }
+
+// A summary that lists only the detectors that fired is a complete verdict:
+// the omitted default detector did not trigger, so the positive toxicity
+// result must block whatever the organization's failure policy is.
+func TestEnkryptSummaryWithOnlyTriggeredDetectorBlocks(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		t.Run(fmt.Sprintf("open=%v", open), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `{"summary":{"toxicity":["toxicity","insult"]},"details":{}}`)
+			}))
+			defer srv.Close()
+			check := external.New("check", map[string]interface{}{"provider": "enkrypt", "endpoint": srv.URL, "api_key": "synthetic-local-only"})
+			raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, open)
+			p := acceptancePlugin(t, false, raw, map[string]g.Guardrail{"check": check})
+			rc := acceptanceRC()
+			defer rc.Release()
+			result := p.ProcessRequest(context.Background(), rc)
+			if result.Action != pipeline.ShortCircuit {
+				t.Fatalf("toxicity verdict was admitted: fail_open=%v action=%v", open, result.Action)
+			}
+			if result.Error == nil || result.Error.Code != "content_blocked" {
+				t.Fatalf("expected a content block, got %+v", result.Error)
+			}
+			for _, outcome := range rc.GuardrailResults {
+				if strings.Contains(outcome.Message, "guardrail_unavailable") {
+					t.Fatalf("content verdict recorded as unavailable: %+v", outcome)
+				}
+			}
+		})
+	}
+}
