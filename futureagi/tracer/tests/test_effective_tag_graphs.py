@@ -644,11 +644,43 @@ def test_graph_tag_window_excludes_lifetime_matching_assignments(
 
 
 def test_window_graph_with_more_than_eight_pages_of_dead_trace_assignments(stores):
-    """The page count must not mistake dead lifetime keys for live graph binds."""
+    """The page count must not mistake dead lifetime keys for live graph binds.
+
+    Every one of the 8,100 aged trace assignments carries ``wanted`` (more than
+    eight 1,000-row pages of the windowed walk), while only alpha, beta and
+    gamma have a root in the window. ``counted`` names traces by their summed
+    ``total_tokens`` and a trace graph must count each matched trace's root and
+    child, so the three are seeded exactly as ``tagged_project`` seeds them.
+    """
     for trace in ("alpha", "beta", "gamma"):
-        seed(stores, trace)
+        seed(stores, trace, total_tokens=_tokens(trace, "root"))
+        seed(
+            stores,
+            trace,
+            span="child",
+            parent_span_id="root",
+            total_tokens=_tokens(trace, "child"),
+        )
         manual(trace, ["wanted"])
-    lifetime_assignments(names=("wanted",), count=8_100)
+    dead = 8_100
+    assert dead > (
+        effective_tags.MAX_WINDOW_OVERLAY_PAGES * effective_tags._ASSIGNMENT_PAGE_SIZE
+    )
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="trace",
+                trace_id=f"aged-{index:05d}",
+                span_id="",
+                start_hour=TRACE_ASSIGNMENT_HOUR,
+                observation_type="",
+                service_name="",
+                manual_tags=[{"name": "wanted", "color": "#123456"}],
+            )
+            for index in range(dead)
+        ]
+    )
 
     assert counted(stores, "trace", leaf("tag", "wanted")) == {"alpha", "beta", "gamma"}
 
