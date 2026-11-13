@@ -1226,7 +1226,11 @@ Suggested rollout:
    diff, a branch behind `dev` (one behind-dev note naming the head, the
    sweep dispatching the PR about hourly, and the note marked "No longer
    applies" after the author merges `dev` in and pushes, and again after
-   `autopilot-hold` is added), a branch behind `dev` with a push by an
+   `autopilot-hold` is added), a second behind episode (after the author
+   merges `dev` in, merge another PR into `dev` while CI runs: the bot posts
+   one new comment naming the head, edits the note back to live, and the
+   author receives a notification for the new comment; development did not
+   observe that notification), a branch behind `dev` with a push by an
    account not on the list (an escalation and no behind-dev note), a push
    by an account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
