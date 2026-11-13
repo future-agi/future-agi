@@ -98,6 +98,37 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
     )
 
 
+# The trace reader binds at most this many projects in one read.
+MAX_SOURCE_PROJECTS = 4096
+
+
+def readable_source_projects(request, workspace_id=None):
+    """Projects the caller may read in a log's workspace.
+
+    An eval log's trace is looked up only here, never through its eval config.
+    """
+    # Import lazily: the shared scope helper belongs to the tracer view module.
+    from tracer.views.trace import _project_queryset_for_request
+
+    scope = _project_queryset_for_request(request)
+    if workspace_id:
+        scope = scope.filter(
+            Q(workspace_id=workspace_id) | Q(workspace_id__isnull=True)
+        )
+    return scope
+
+
+def readable_source_project_ids(request, workspace_id=None) -> list[str] | None:
+    """The ids of :func:`readable_source_projects`, or None past the bound."""
+    project_ids = [
+        str(project_id)
+        for project_id in readable_source_projects(request, workspace_id)
+        .order_by("id")
+        .values_list("id", flat=True)[: MAX_SOURCE_PROJECTS + 1]
+    ]
+    return None if len(project_ids) > MAX_SOURCE_PROJECTS else project_ids
+
+
 def _resolve_project_scope(
     request, log_row, candidate
 ) -> tuple[list[str], SourceNavigation | None]:
@@ -105,8 +136,8 @@ def _resolve_project_scope(
     # Import lazily: the shared scope helper belongs to the tracer view module.
     from tracer.views.trace import _project_queryset_for_request
 
-    scope = _project_queryset_for_request(request)
     if candidate.project_id is not None:
+        scope = _project_queryset_for_request(request)
         project = scope.filter(id=candidate.project_id).first()
         if project is None:
             return [], SourceNavigation("unavailable")
@@ -123,14 +154,12 @@ def _resolve_project_scope(
     # about where this log's trace lives and is never read here: search the
     # projects this user may read in the log's workspace for the trace itself,
     # and let the read refuse a trace found in more than one of them.
-    if log_row.workspace_id:
-        scope = scope.filter(
-            Q(workspace_id=log_row.workspace_id) | Q(workspace_id__isnull=True)
-        )
     # One past the reader's project bound, so an oversized scope fails closed.
     project_ids = [
         str(project_id)
-        for project_id in scope.order_by("id").values_list("id", flat=True)[:4097]
+        for project_id in readable_source_projects(request, log_row.workspace_id)
+        .order_by("id")
+        .values_list("id", flat=True)[: MAX_SOURCE_PROJECTS + 1]
     ]
     if not project_ids:
         return [], SourceNavigation("unavailable")

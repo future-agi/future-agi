@@ -145,6 +145,7 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  keepInitialSpanVisible = false,
   initialEvalFocus = false,
   refreshParentGrid,
   hideOpenInNewTab = false,
@@ -575,6 +576,11 @@ const TraceDetailDrawerV2 = ({
 
     if (!hasTypeFilter && activeFilters.length === 0) return rawSpans;
 
+    // A caller that pins the span it opened (an evaluation's source span)
+    // keeps that span in the tree whatever filters the user saved. The saved
+    // filters themselves stay as they are.
+    const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
+
     // Map filter field names to span property accessors
     function getSpanValue(span, field) {
       const attrs = span.span_attributes || {};
@@ -601,6 +607,7 @@ const TraceDetailDrawerV2 = ({
 
     function matchesSpan(entry) {
       const span = getSpan(entry);
+      if (pinnedSpanId && span.id === pinnedSpanId) return true;
 
       // Span type filter from Display panel
       if (hasTypeFilter) {
@@ -652,7 +659,13 @@ const TraceDetailDrawerV2 = ({
     }
 
     return filterTree(rawSpans);
-  }, [rawSpans, spanFilters, spanTypeFilter]);
+  }, [
+    rawSpans,
+    spanFilters,
+    spanTypeFilter,
+    keepInitialSpanVisible,
+    initialSpanId,
+  ]);
 
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
@@ -1674,6 +1687,7 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  keepInitialSpanVisible: PropTypes.bool,
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
   hideOpenInNewTab: PropTypes.bool,

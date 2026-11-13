@@ -288,6 +288,8 @@ describe("eval-owned source host", () => {
       traceId: TRACE,
       projectId: fresh.project_id,
       initialSpanId: fresh.span_id,
+      // A saved Observe display filter must not hide the evaluated span.
+      keepInitialSpanVisible: true,
       disablePortal: true,
       hideOpenInNewTab: true,
       hasPrev: false,

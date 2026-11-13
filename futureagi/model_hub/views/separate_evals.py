@@ -131,7 +131,10 @@ from model_hub.serializers.eval_runner import (
     UpdateEvalTemplateSerializer,
 )
 from model_hub.services.eval_log_source_navigation import (
+    MAX_SOURCE_PROJECTS,
     SourceNavigation,
+    readable_source_project_ids,
+    readable_source_projects,
     resolve_eval_log_source_navigation,
 )
 from model_hub.utils.api_log_config import parse_api_log_config
@@ -5953,6 +5956,36 @@ def _pending_eval_usage_payload(template_id, page, page_size):
     }
 
 
+def _eval_usage_source_project_ids(request, workspace, template_id) -> list[str]:
+    """Projects whose trace-attached eval logs the Usage page may list.
+
+    A log is listed by the source it ran on, so this is every project the
+    caller may read in the workspace (the same scope source navigation
+    searches), not the projects that hold a config of this eval today.
+    """
+    workspace_id = str(workspace.id) if workspace else None
+    project_ids = readable_source_project_ids(request, workspace_id)
+    if project_ids is not None:
+        return project_ids
+    # Past the bound one ClickHouse read may bind: keep the readable projects
+    # that run this eval now, still bounded, rather than drop every trace log.
+    logger.warning(
+        "eval_usage.source_project_scope_too_large",
+        template_id=str(template_id),
+        workspace_id=workspace_id,
+    )
+    configured = CustomEvalConfig.objects.filter(
+        eval_template_id=template_id, deleted=False
+    ).values("project_id")
+    return [
+        str(project_id)
+        for project_id in readable_source_projects(request, workspace_id)
+        .filter(id__in=configured)
+        .order_by("id")
+        .values_list("id", flat=True)[:MAX_SOURCE_PROJECTS]
+    ]
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -6118,21 +6151,9 @@ class EvalUsageStatsView(APIView):
             read_completeness = EvalUsageReadCompleteness.COMPLETE.value
             unavailable_fields: list[str] = []
             if clickhouse_usage_enabled:
-                project_configs = CustomEvalConfig.objects.filter(
-                    eval_template_id=template_id,
-                    deleted=False,
-                    project__organization=organization,
+                project_ids = _eval_usage_source_project_ids(
+                    request, workspace, template_id
                 )
-                if workspace:
-                    project_configs = project_configs.filter(
-                        project__workspace=workspace
-                    )
-                project_ids = [
-                    str(value)
-                    for value in project_configs.values_list(
-                        "project_id", flat=True
-                    ).distinct()
-                ]
                 usage_read = read_eval_usage(
                     organization_id=str(organization.id),
                     workspace_id=str(workspace.id) if workspace else None,

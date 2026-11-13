@@ -276,14 +276,19 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
         and "AS bounded_trace_candidates" in query
         and "PREWHERE trace_project_scan.project_id IN %(project_ids)s" in query
         and "SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id" in query
-        and "GROUP BY trace_project_scan.id" in query
+        and "GROUP BY trace_project_scan.id, trace_project_scan.project_id" in query
         and "LEFT JOIN (" in query
-        and "allowed_trace_projects.trace_id" in query
+        and "readable_trace_projects.trace_id" in query
         and "toUUIDOrZero(current_usage.eval_trace_id)" in query
-        and "allowed_trace_projects.project_id IN %(project_ids)s" in query
+        # A log that recorded its project is listed by that project only;
+        # an older log by any readable project holding its trace.
+        and "AS eval_source_project_id" in query
+        and "has(\n                    readable_trace_projects.live_project_ids,"
+        in query
+        and "notEmpty(readable_trace_projects.live_project_ids)" in query
         and query.count("FROM usage_apicalllog") == 2
         and query.index("LIMIT 1 BY id")
-        < query.index("allowed_trace_projects.project_id IN")
+        < query.index("readable_trace_projects.live_project_ids")
         for query in period_queries
     )
     chart_query = next(
@@ -587,6 +592,8 @@ def test_eval_usage_full_window_budget_failure_is_not_split_or_published(monkeyp
 def test_latest_trace_project_relation_requires_finite_candidates():
     with pytest.raises(ValueError, match="bounded trace-ID candidate"):
         trace_project_scope.latest_live_trace_projects_sql(candidate_trace_ids_sql="")
+    with pytest.raises(ValueError, match="bounded trace-ID candidate"):
+        trace_project_scope.live_trace_project_sets_sql(candidate_trace_ids_sql="")
 
 
 @pytest.mark.unit

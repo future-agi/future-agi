@@ -96,4 +96,52 @@ def latest_live_trace_projects_sql(
     """
 
 
-__all__ = ["latest_live_project_traces_sql", "latest_live_trace_projects_sql"]
+def live_trace_project_sets_sql(
+    *,
+    candidate_trace_ids_sql: str,
+    project_ids_param: str = "project_ids",
+) -> str:
+    """Return, per candidate trace, every requested project holding it live.
+
+    Unlike :func:`latest_live_trace_projects_sql`, a trace ID present in more
+    than one requested project is kept, with all of those projects in
+    ``live_project_ids``. A caller that may read every requested project can
+    then decide membership itself (for example by a recorded project id)
+    instead of losing the row. Latest state is judged per ``(trace, project)``
+    so a tombstone in one project cannot hide or resurrect another project's
+    copy. The caller must provide a finite trace-ID candidate query.
+    """
+
+    if not _PARAM_NAME_RE.fullmatch(project_ids_param):
+        raise ValueError("Invalid ClickHouse parameter name")
+    if not candidate_trace_ids_sql.strip():
+        raise ValueError("A bounded trace-ID candidate query is required")
+
+    return f"""
+        SELECT
+            trace_id,
+            groupUniqArray(project_id) AS live_project_ids
+        FROM (
+            SELECT
+                trace_project_scan.id AS trace_id,
+                trace_project_scan.project_id AS project_id,
+                argMax(
+                    trace_project_scan.is_deleted,
+                    trace_project_scan._version
+                ) AS latest_is_deleted
+            FROM {_TRACE_TABLE} AS trace_project_scan
+            INNER JOIN ({candidate_trace_ids_sql}) AS bounded_trace_candidates
+              ON trace_project_scan.id = bounded_trace_candidates.trace_id
+            PREWHERE trace_project_scan.project_id IN %({project_ids_param})s
+            GROUP BY trace_project_scan.id, trace_project_scan.project_id
+        ) AS trace_project_state
+        WHERE latest_is_deleted = 0
+        GROUP BY trace_id
+    """
+
+
+__all__ = [
+    "latest_live_project_traces_sql",
+    "latest_live_trace_projects_sql",
+    "live_trace_project_sets_sql",
+]
