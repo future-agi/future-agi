@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -262,6 +264,46 @@ func TestListAgents(t *testing.T) {
 	}
 	if len(result) != 2 {
 		t.Fatalf("expected 2 agents, got %d", len(result))
+	}
+}
+
+// TestListAgentsDuringFetchCards pins the agent-card data race: FetchCards
+// goroutines write Agent.Card while ListAgents reads it under -race; the
+// card pointer was previously a plain *AgentCard written unlocked.
+func TestListAgentsDuringFetchCards(t *testing.T) {
+	var hits atomic.Int64
+	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"ext","description":"external agent","skills":[]}`))
+	}))
+	defer agentSrv.Close()
+
+	s := NewServer(CardConfig{Name: "test"}, NewRegistry(map[string]AgentConfig{
+		"ext": {URL: agentSrv.URL},
+	}))
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for time.Now().Before(deadline) {
+			s.registry.FetchCards(context.Background())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for time.Now().Before(deadline) {
+			req := httptest.NewRequest("GET", "/v1/agents", nil)
+			w := httptest.NewRecorder()
+			s.ListAgents(w, req)
+		}
+	}()
+	wg.Wait()
+
+	if hits.Load() == 0 {
+		t.Fatal("agent card endpoint was never fetched")
 	}
 }
 
