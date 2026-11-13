@@ -64,6 +64,9 @@ class AttachmentRecordingSegment(ScopedAttachmentRecord):
         choices=RecordingSegmentState.choices,
         default=RecordingSegmentState.STAGED,
     )
+    # Set when a derivative attempt fails; the derivative queue goes oldest
+    # stamp first, so segments that keep failing cannot starve newer ones.
+    derivative_checked_at = models.DateTimeField(null=True)
 
     class Meta:
         constraints = [
@@ -123,7 +126,11 @@ class AttachmentProviderConnection(ScopedAttachmentRecord):
     key_id = models.CharField(max_length=16)
     secret_nonce = models.BinaryField(max_length=12)
     secret_ciphertext = models.BinaryField(max_length=512)
-    created_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT)
+    # Audit only. Deleting the user keeps the project's connection (SET_NULL);
+    # nothing authorizes through this column.
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, on_delete=models.SET_NULL
+    )
     enabled = models.BooleanField(default=False)
     revoked_at = models.DateTimeField(null=True)
 
@@ -248,6 +255,9 @@ class AttachmentImportJob(ScopedAttachmentRecord):
     deletion_generation = models.PositiveBigIntegerField()
     # Live in-flight reservation (source + window + staged segments).
     reserved_bytes = models.PositiveBigIntegerField()
+    # Staged segments charged one object and one link each (``_reserve_segment``),
+    # released with the rest of the reservation by ``_release``.
+    reserved_segments = models.PositiveIntegerField(default=0)
     released_at = models.DateTimeField(null=True)
     finished_at = models.DateTimeField(null=True)
     # Single-worker lease (imports._claim); the token fences late writers.

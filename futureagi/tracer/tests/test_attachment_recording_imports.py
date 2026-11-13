@@ -19,6 +19,7 @@ from datetime import timedelta
 import jwt
 import pytest
 from django.db import connection as db_connection
+from django.db.models import F
 from django.utils import timezone
 
 from tracer.models.attachment import (
@@ -131,6 +132,13 @@ def env(project, user, settings, tmp_path):
     return scope, writer, imports.Importer("user", user.pk), user
 
 
+def set_allow_import(scope, value):
+    """Flip the opt-in the way the 0133 scope fence requires: with a policy bump."""
+    AttachmentScope.objects.filter(pk=scope.pk).exclude(allow_import=value).update(
+        allow_import=value, policy_version=F("policy_version") + 1
+    )
+
+
 def session(env, **policy):
     """A live capture session of the env writer, bootstrapped through F01.
 
@@ -139,9 +147,7 @@ def session(env, **policy):
     so the server's deny-wins re-check is exercised on every later step.
     """
     scope, writer, _, _ = env
-    AttachmentScope.objects.filter(pk=scope.pk).update(
-        allow_import=policy.pop("allow_import", True)
-    )
+    set_allow_import(scope, policy.pop("allow_import", True))
     current, _ = broker.bootstrap(
         writer,
         {
@@ -840,7 +846,7 @@ def test_turning_import_off_denies_live_sessions_and_queued_jobs(env):
         scope_id=env[0].id,
         body=body(current, data=data, envelope_id=envelope(env, data)),
     )
-    AttachmentScope.objects.filter(pk=env[0].pk).update(allow_import=False)
+    set_allow_import(env[0], False)
     with pytest.raises(AttachmentError, match="source_unavailable"):
         imports.submit(
             env[2],
@@ -914,7 +920,7 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     assert not AttachmentImportJob.objects.exists()
 
     # Opt in, then bootstrap a session that carries the switch.
-    AttachmentScope.objects.filter(pk=scope.pk).update(allow_import=True)
+    set_allow_import(scope, True)
     reply, session_body = http.bootstrap(api)
     http.ok(reply, 200, "BootstrapResponse")
     current = CaptureSession.objects.get(

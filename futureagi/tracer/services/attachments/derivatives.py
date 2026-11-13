@@ -19,6 +19,8 @@ import uuid
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Exists, OuterRef, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from tracer.models.attachment import AttachmentOccurrence, AttachmentScope
@@ -170,6 +172,21 @@ def _produce(segment, representation, source_path, storage):
             expected_length=limit,
             expected_sha256=digest.hexdigest(),
         )
+    try:
+        return _publish(segment, representation, identity, digest, limit, facts)
+    except AttachmentError:
+        # Deleted or fenced while it was being produced: the object was already
+        # promoted, so remove it, unless a published row already owns that key.
+        # The erase drain repeats the erase after its horizon in case this
+        # process dies first.
+        if not AttachmentRecordingDerivative.objects.filter(
+            segment=segment, representation=representation
+        ).exists():
+            storage.erase_upload(object_id)
+        raise
+
+
+def _publish(segment, representation, identity, digest, limit, facts):
     with transaction.atomic():
         AttachmentScope.objects.select_for_update().get(pk=segment.scope_id)
         scope, _, occurrence = _live(segment)
@@ -228,6 +245,60 @@ def erase_for_segment(segment, storage):
     """Erase every derivative object of a segment (deterministic keys)."""
     for representation in REPRESENTATIONS:
         storage.erase_upload(derivative_id(segment, representation))
+
+
+def erase_for_attachment(*, scope_id, attachment_client_id, storage):
+    """Erase hook for a tombstoned imported segment: its derivatives.
+
+    Called by ``retention.erase`` for attachment-keyed erase work. The segment
+    leaves the derivative queue (``ERASED``) and nothing is served for it.
+    Returns whether the attachment was a recording segment.
+    """
+    segment = AttachmentRecordingSegment.objects.filter(
+        scope_id=scope_id, attachment_client_id=attachment_client_id
+    ).first()
+    if segment is None:
+        return False
+    erase_for_segment(segment, storage)
+    AttachmentRecordingSegment.objects.filter(pk=segment.pk).update(
+        state=RecordingSegmentState.ERASED
+    )
+    return True
+
+
+def pending(*, limit, now=None):
+    """``[(segment id, scope id)]`` still missing derivatives, fairest first.
+
+    Only published segments of enabled scopes whose occurrence is live (not
+    deleted, not expired) qualify, so deleted or expired recordings never
+    occupy the queue; segments whose last attempt failed go to the back.
+    """
+    now = now or timezone.now()
+    live = AttachmentOccurrence.objects.filter(
+        scope_id=OuterRef("scope_id"),
+        client_id=OuterRef("occurrence_client_id"),
+        deleted_at__isnull=True,
+        expires_at__gt=now,
+    ).filter(Q(source_expires_at__isnull=True) | Q(source_expires_at__gt=now))
+    done = AttachmentRecordingDerivative.objects.filter(
+        published_at__isnull=False, representation="peaks"
+    ).values("segment_id")
+    return list(
+        AttachmentRecordingSegment.objects.filter(
+            state=RecordingSegmentState.PUBLISHED, scope__enabled=True
+        )
+        .filter(Exists(live))
+        .exclude(pk__in=done)
+        .order_by(Coalesce("derivative_checked_at", "created_at"), "pk")
+        .values_list("pk", "scope_id")[:limit]
+    )
+
+
+def defer(segment_id):
+    """A failed attempt: send the segment to the back of the queue."""
+    AttachmentRecordingSegment.objects.filter(pk=segment_id).update(
+        derivative_checked_at=timezone.now()
+    )
 
 
 def recording_manifest(*, scope_id, recording_id):

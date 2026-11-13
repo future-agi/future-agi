@@ -141,12 +141,16 @@ the job row lock before publication. A second worker skips a leased job, and a
 worker that lost its lease (crash, pause, a tick started by hand) cannot
 reserve, publish or finish; after the lease lapses the next tick retries.
 
-A job is charged to one global budget shard (`global_shard(job id)`), plus its
-organization and project rows, exactly like an upload. It holds the declared
-source plus one window, one transfer, recording and validation slot, and one
-object and link slot per staged segment plus the source snapshot, until it
-finishes. Derivatives are produced by the same bounded tick (at most 20
-segments per 30 s per worker, one at a time) and are not separately reserved.
+A job is charged to the deployment row `global:imports` (full deployment caps:
+8 GiB, 128 transfers, 64 recordings), plus its organization and project rows.
+Imports do not use the upload shards `global:0..15`: a shard holds 1/16 of the
+deployment caps (512 MiB), less than one valid import, and a long import on a
+shard would throttle every upload hashed to it. A job holds the declared source
+plus one window, one transfer, recording and validation slot, two objects and
+one link from admission, plus the bytes, one object and one link of each staged
+segment, until it finishes; the sweep releases any finished job whose release
+failed. Derivatives are produced by the same bounded tick (at most 20 segments
+per 30 s per worker, one at a time) and are not separately reserved.
 
 ### Opt-in
 
@@ -175,8 +179,9 @@ ClickHouse within `FI_ATTACHMENTS_BIND_LOOKBACK_HOURS` of the import. An
 imported segment has no upload row: its tombstone queues erase work keyed on
 the attachment, and the erase drain removes the segment object
 (`original/{attachment id}`, all versions) and its channel and peaks
-derivatives, then repeats once after `imports.ERASE_HORIZON_SECONDS` to catch
-a derivative that was being produced at the moment of deletion.
+derivatives, then repeats once 15 minutes after the tombstone
+(`retention.ATTACHMENT_ERASE_HORIZON`) to catch a derivative that was being
+produced at the moment of deletion.
 
 ### Required configuration (when enabled)
 

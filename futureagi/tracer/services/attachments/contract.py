@@ -123,13 +123,31 @@ def server_policy(scope):
     )
 
 
+def allowed_sources(scope):
+    """F01 SourceKinds this scope accepts: uploads, plus imports when opted in.
+
+    ``RemoteUrl`` (a sealed URL envelope) is advertised while ``allow_import``
+    is on. ``ProviderFile`` is advertised only once a provider output reader is
+    qualified, because without one every such import fails
+    ``source_unavailable``.
+    """
+    sources = list(UPLOAD_SOURCES)
+    if scope.allow_import:
+        from tracer.services.attachments.provider_recordings import READERS
+
+        sources.append("RemoteUrl")
+        if READERS:
+            sources.append("ProviderFile")
+    return sources
+
+
 def policy_document(scope):
     """F01 ``Policy``: the server's current, versioned decision for this scope."""
     enabled = bool(scope.enabled)
     return {
         "version": str(scope.policy_version),
         "enabled": enabled,
-        "allowed_sources": list(UPLOAD_SOURCES) if enabled else [],
+        "allowed_sources": allowed_sources(scope) if enabled else [],
         "allowed_modalities": sorted(SERVER_MODALITIES) if enabled else [],
         "require_media_redaction": bool(scope.require_media_redaction),
         "require_metadata_removal": False,
