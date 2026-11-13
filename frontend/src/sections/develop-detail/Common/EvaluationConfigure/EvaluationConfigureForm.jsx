@@ -932,7 +932,7 @@ const EvaluationConfigureForm = ({
             Close
           </Button>
         </Box>
-        <Typography fontSize="13px" fontWeight={600} color="text.secondary">
+        <Typography fontSize="12px" fontWeight={600} color="text.secondary">
           {selectedEval?.name || evalConfig?.name}
         </Typography>
         {isLoading && <LinearProgress />}

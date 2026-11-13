@@ -43,7 +43,7 @@ export default function FalconAIFab() {
   if (isSidebarOpen) return null;
 
   return (
-    <CustomTooltip title="Falcon AI (⌘K)" show={true} placement="left" arrow>
+    <CustomTooltip title="Chat (⌘K)" show={true} placement="left" arrow>
       <Fab
         onClick={openFalconAI}
         size="medium"

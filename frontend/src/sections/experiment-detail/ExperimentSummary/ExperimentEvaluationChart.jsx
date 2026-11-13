@@ -33,7 +33,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
           icon="solar:check-circle-linear"
           sx={{ color: "text.secondary" }}
         />
-        <Typography color="text.secondary" fontSize="13px" fontWeight={600}>
+        <Typography color="text.secondary" fontSize="12px" fontWeight={600}>
           {col?.name?.split("-")?.[0]}
         </Typography>
       </Box>

@@ -1229,7 +1229,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Typography
                   variant="body2"
                   fontWeight={600}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
                 </Typography>
