@@ -55,6 +55,14 @@ BEHIND_DEV_NOTE = (
     "push, and about once an hour until then."
 )
 BEHIND_DEV_CLEARED = "The branch now contains the live `dev` tip."
+# Posted, without a marker, when a cleared behind-dev note applies again
+# (behind_dev). GitHub sends no notification for an edited comment, so the
+# edit back to live alone would not tell the author about the new wait.
+BEHIND_DEV_AGAIN = (
+    "The autopilot is waiting again: head `{head}` does not contain the latest "
+    "`dev` commit. Merge `dev` into the branch and push. The behind-dev note "
+    "above explains the rules."
+)
 # The two other ways the note stops applying. Fixed text, like every cleared note.
 BEHIND_DEV_HANDED = (
     "A person must review this PR (see the escalation note). Merging `dev` in "
@@ -1702,6 +1710,8 @@ def behind_dev(api, policy, settings, pr, comments, decision):
     """The branch does not contain the live dev tip, so the author merges dev
     in; no review round is spent. The behind-dev note is the PR's only sign of
     this wait, and it parks the PR until the head changes (PARKING_NOTES).
+    When a cleared note applies again, a new comment (BEHIND_DEV_AGAIN)
+    notifies the author first.
 
     The note goes only on a head that merging dev in would let continue: the
     merge decision would otherwise allow it, no escalation names it, and its
@@ -1727,6 +1737,13 @@ def behind_dev(api, policy, settings, pr, comments, decision):
             # A head the history has not recorded yet may come from a push by
             # someone else; wait for it, as the review path does.
             if pushes[0].get("after") == head:
+                # A cleared note that applies again is a new wait: tell the
+                # author with a new comment before the note is edited back.
+                # In this order a failed comment fails the run, the note stays
+                # cleared, nothing parks the PR and the next run tries again.
+                previous = standing_note(comments, BEHIND_DEV_MARKER)
+                if previous and previous["body"].startswith(BEHIND_DEV_MARKER + NO_LONGER_APPLIES):
+                    comment(api, number, BEHIND_DEV_AGAIN.format(head=head))
                 post_note(api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, head)
             summary(waiting)
             return

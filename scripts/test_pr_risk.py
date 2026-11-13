@@ -2521,6 +2521,71 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len([c for c in self.api.comments
                               if c["body"].startswith(risk.BEHIND_DEV_MARKER)]), 1)
         self.assertFalse(self.reservations())
+        # The note was live throughout, so it needs no second comment.
+        self.assertEqual(self.behind_again(), [])
+
+    def behind_again(self):
+        """The unmarked comments that say a cleared behind-dev note applies again."""
+        prefix = risk.BEHIND_DEV_AGAIN.split("`", 1)[0]
+        return [c["body"] for c in self.api.comments
+                if risk.bot_comment(c) and c["body"].startswith(prefix)]
+
+    def catch_up_then_fall_behind_again(self):
+        """The note goes up, the author merges dev in (CI still running on the
+        new head, so the note is cleared and nothing else happens), then
+        another PR merges into dev. Returns the note's comment and the head."""
+        self.fall_behind()
+        self.prepare()
+        [note] = [c for c in self.api.comments if c["body"].startswith(risk.BEHIND_DEV_MARKER)]
+        merged = "1" * 40
+        self.api.push(merged)
+        self.api.pr["base"]["sha"] = OTHER
+        self.prepare()
+        self.summary.assert_called_with("Waiting for successful required checks on the current head SHA.")
+        self.assertTrue(note["body"].startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        self.api.dev_tip = "e" * 40
+        os.environ["POLICY_SHA"] = os.environ["GITHUB_SHA"] = "e" * 40
+        return note, merged
+
+    def test_a_second_behind_episode_posts_a_new_comment_before_the_note_comes_back(self):
+        # GitHub sends no notification for an edited comment, so the edit
+        # back to live alone would not tell the author who already merged dev in.
+        note, merged = self.catch_up_then_fall_behind_again()
+        start = len(self.api.requests)
+        self.prepare()
+        comment_writes = [w[:2] for w in self.api.requests[start:]
+                          if w[0] in {"POST", "PATCH"} and "comments" in w[1]]
+        self.assertEqual(comment_writes, [("POST", "issues/42/comments"),
+                                          ("PATCH", f"issues/comments/{note['id']}")])
+        [again] = self.behind_again()
+        self.assertEqual(again, risk.BEHIND_DEV_AGAIN.format(head=merged))
+        self.assertFalse(again.startswith("<!--"))
+        [body] = self.behind_notes()
+        self.assertFalse(body.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        self.assertIn(f"Head: `{merged}`.", body)
+        self.assertTrue(risk.parked(self.api, {"number": 42, "head": {"sha": merged}}))
+        self.assertFalse(self.reservations())
+        # The same head again: no comment is posted or edited.
+        start = len(self.api.requests)
+        self.prepare()
+        self.assertFalse([w for w in self.api.requests[start:]
+                          if w[0] in {"POST", "PATCH"} and "comments" in w[1]])
+        self.assertEqual(len(self.behind_again()), 1)
+
+    def test_a_failed_comment_for_a_second_behind_episode_is_retried_by_the_next_run(self):
+        note, merged = self.catch_up_then_fall_behind_again()
+        self.failing(lambda method, route, data: method == "POST" and route == "issues/42/comments"
+                     and not str((data or {}).get("body", "")).startswith("<!--"), 1)
+        with self.assertRaises(risk.ApiError):
+            self.prepare()
+        # The note was not edited back, so it does not park the PR.
+        self.assertEqual(self.behind_again(), [])
+        self.assertTrue(note["body"].startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        self.assertFalse(risk.parked(self.api, {"number": 42, "head": {"sha": merged}}))
+        self.prepare()
+        self.assertEqual(len(self.behind_again()), 1)
+        [body] = self.behind_notes()
+        self.assertIn(f"Head: `{merged}`.", body)
 
     def test_the_behind_dev_note_is_only_for_a_pr_the_autopilot_could_take_on(self):
         cases = {
@@ -2726,6 +2791,8 @@ class ControllerTests(unittest.TestCase):
         posts = [w for w in self.api.requests if w[0] == "POST" and w[1] == "issues/42/comments"
                  and str(w[2].get("body", "")).startswith(risk.BEHIND_DEV_MARKER)]
         self.assertEqual(len(posts), 1)
+        # The edit alone notifies nobody, so a new comment says the wait is back.
+        self.assertEqual(self.behind_again(), [risk.BEHIND_DEV_AGAIN.format(head=HEAD)])
 
     def test_no_behind_dev_note_on_a_head_already_handed_to_a_person(self):
         # An escalation of this head (here a push by someone not on the list)

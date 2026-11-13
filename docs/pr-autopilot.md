@@ -492,15 +492,25 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
      trusted-author list. Hours and mergeability do not clear it, because
      they change without a push and the note would flip back and forth.
    If the PR waits behind `dev` again later, the bot edits that comment
-   back. GitHub sends no notification for an edited comment, so only the
-   first behind episode notifies the author. A change to the trusted-author
+   back. GitHub sends no notification for an edited comment, so the bot
+   first posts one short new comment that names the head and points to the
+   note. So the author is notified each time the note comes back, not for
+   each push. That comment comes first: if it fails, the run fails,
+   the note stays cleared and does not park the PR, and the next sweep
+   tries again. If the edit then fails, the next run posts the comment a
+   second time. A new head that is still behind while the note is live
+   gets only the edit. So if `dev` moves between the author's merge of `dev`
+   and the first run on that head, the author is not told again. That
+   window lasts from the push until the first run on the new head: the run
+   that the PR event dispatches, or the next sweep (about every 15 minutes)
+   when PR-event runs are blocked. A change to the trusted-author
    list starts no run, and the sweep does not dispatch a PR that the list
    no longer covers. The note on such a PR stays live until the PR's next
    event (a push, a label, a draft change) or a manual dispatch. `dev`
    does not require up-to-date branches and the repository setting
    "Always suggest updating pull request branches" is off, so GitHub shows
    no out-of-date notice and no "Update branch" button on these PRs; the
-   note is the only sign of the wait. The note does not suggest
+   bot's comments are the only sign of the wait. The note does not suggest
    `gh pr update-branch`: whether that REST call works with the setting
    off is not known yet (rollout step 2). Manual dispatches on other branches are rejected.
    PR-event runs and the schedule both need this workflow on the default
@@ -1247,7 +1257,8 @@ only after the push history is read and shows the head; a history that needs
 a person is escalated at once instead; cleared once the branch contains the
 tip, once a person has the head, or once the PR is a draft, held, not LOW or
 no longer from a trusted author, but not for hours or mergeability; edited
-back to live when it applies again; and parked by the sweep), the PR-event
+back to live when it applies again, after one new comment that notifies the
+author, with a retry when that comment fails; and parked by the sweep), the PR-event
 types that clear it, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads, and `dev`
