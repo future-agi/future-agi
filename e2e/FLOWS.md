@@ -30,6 +30,28 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-002 — Agents remain complete across bounded list pages
+
+**Goal:** A developer can browse all of their agents in bounded pages without losing rows or changing supported page sizes.
+
+**Spec:** `flows/agents/graph-page-size-cap.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. create 101 uniquely named graphs through the public graph API
+2. open Agents Playground and search for the unique flow prefix
+3. compare the exact first-page names and IDs with the authorized 25-row list response
+4. move to page two and compare the exact next 25 rows with the list API
+5. request page sizes 101 and 100000000 and require a 100-row page with capped metadata
+6. follow next_page and require the final seeded graph without duplicated or omitted IDs
+
+**Backend state verified:**
+
+- The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
+- Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -87,6 +109,28 @@
 - choices-eval alert with a valid label is created
 - PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
 - alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
+
+### ALERT-E2E-003 — alert owners configure webhooks without private destinations or unauthorized changes
+
+**Goal:** An authorized alert owner configures a public webhook through the alert editor while private destinations and unauthorized changes are refused.
+
+**Spec:** `flows/alerts/webhook-configuration.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named muted monitor with no notification destinations
+2. open the alert editor, choose Webhook, enter a public URL and save
+3. read the exact saved destination through the detail API and Postgres
+4. try a private destination through the editor and verify rejection
+5. try cross-organization, cross-workspace and viewer updates
+
+**Backend state verified:**
+
+- The browser-saved webhook is returned by the alert detail API and stored on the owner organization's muted monitor.
+- A private destination is rejected and the saved webhook remains unchanged.
+- Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
 
 ## annotations
 
@@ -278,6 +322,53 @@
 - the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
@@ -1272,7 +1363,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
@@ -2559,6 +2650,33 @@
 - an atomic replace on the host is seen by the container without restarting anything
 - with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
 - POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 

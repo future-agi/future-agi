@@ -354,7 +354,7 @@ function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
           sx={{
             flex: 1,
             minWidth: 0,
-            fontSize: "13px",
+            fontSize: "12px",
             fontFamily: "Inter, sans-serif",
             fontWeight: hasKids ? 600 : 400,
             color: "text.primary",
@@ -462,7 +462,7 @@ function ColumnTreeSelect({
       InputProps={{
         readOnly: true,
         sx: {
-          fontSize: "13px",
+          fontSize: "12px",
           fontFamily: "Inter, sans-serif",
           height: 30,
           py: 0,
@@ -571,7 +571,7 @@ function ColumnTreeSelect({
                       </InputAdornment>
                     ) : null,
                     sx: {
-                      fontSize: "13px",
+                      fontSize: "12px",
                       fontFamily: "Inter, sans-serif",
                       height: 32,
                       py: 0,
@@ -1489,7 +1489,7 @@ const DatasetTestMode = React.forwardRef(
                   component="li"
                   {...props}
                   key={option.id}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {option.name || option.id}
                 </Box>
@@ -1508,7 +1508,7 @@ const DatasetTestMode = React.forwardRef(
                       params.InputProps.endAdornment
                     ),
                   }}
-                  sx={{ "& .MuiInputBase-root": { fontSize: "13px" } }}
+                  sx={{ "& .MuiInputBase-root": { fontSize: "12px" } }}
                 />
               )}
             />

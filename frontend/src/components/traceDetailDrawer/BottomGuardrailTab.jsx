@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, LinearProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import {
   Accordion,
   AccordionDetails,
@@ -14,11 +14,12 @@ import { green, pink } from "@mui/material/colors";
 import Markdown from "react-markdown";
 import { extractStringValues } from "./common";
 import { getSpanAttributes } from "./DrawerRightRenderer/getSpanData";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
   const [expandedItems, setExpandedItems] = useState({});
 
-  if (isLoading) return <LinearProgress />;
+  if (isLoading) return <LoadingScreen compact />;
 
   const handleAccordionChange = (panel) => (event, isExpanded) => {
     setExpandedItems((prev) => ({
@@ -158,7 +159,7 @@ const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
                 sx={{
                   backgroundColor: "background.paper",
                   borderRadius: "8px",
-                  fontSize: "13px",
+                  fontSize: "12px",
                   whiteSpace: "pre-wrap",
                   maxHeight: "72vh",
                   overflow: "auto",

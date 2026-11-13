@@ -123,7 +123,7 @@ export const DeleteItem = ({
             {name}
           </Typography>
           {createdBy && (
-            <Typography fontSize={"13px"} fontWeight={400}>
+            <Typography fontSize={"12px"} fontWeight={400}>
               {`Created by ${createdBy}`}
             </Typography>
           )}

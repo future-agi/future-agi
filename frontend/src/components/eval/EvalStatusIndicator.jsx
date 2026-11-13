@@ -62,7 +62,7 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
             borderRadius: "8px",
             bgcolor: "status.info.bg",
             color: "status.info.fg",
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 500,
             lineHeight: 1.4,
             whiteSpace: "nowrap",

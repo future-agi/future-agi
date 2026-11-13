@@ -142,7 +142,7 @@ const PdfPreviewDrawer = () => {
                 p: 4,
                 bgcolor: "background.paper",
                 fontFamily: "monospace",
-                fontSize: "13px",
+                fontSize: "12px",
                 lineHeight: 1.8,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",

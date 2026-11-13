@@ -221,8 +221,6 @@ const ResponseFormatSelector = ({
               mt: 0.5,
               minWidth: 200,
               borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "border.default",
             },
           },
         }}

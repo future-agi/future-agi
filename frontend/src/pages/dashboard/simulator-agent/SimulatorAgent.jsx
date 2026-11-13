@@ -21,6 +21,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { useDebounce } from "src/hooks/use-debounce";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { getSimulatorAgentColumnDefs } from "./common";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";

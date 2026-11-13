@@ -16,7 +16,7 @@ function fmt(v) {
 
 const BreakdownTooltip = ({ inputCost, outputCost, totalCost }) => (
   <Box sx={{ p: 0.5, minWidth: 180 }}>
-    <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+    <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
       Cost breakdown
     </Typography>
     <BRow label="Input cost" value={fmt(inputCost)} bold />
@@ -93,7 +93,7 @@ const CostCell = ({ value, data }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.disabled",
           px: 1.5,
           width: "100%",
@@ -120,7 +120,7 @@ const CostCell = ({ value, data }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
         }}
