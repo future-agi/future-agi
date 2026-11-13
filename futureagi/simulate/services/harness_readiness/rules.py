@@ -119,7 +119,9 @@ def rows(
                 reading=preflight,
                 reason_code=preflight.reason_code,
                 reason=preflight.reason,
-                checked_at=pairing.runtime.updated_at.isoformat(),
+                checked_at=(
+                    pairing.runtime.updated_at.isoformat() if pairing.runtime else None
+                ),
             )
         elif capability.id == "cancel":
             # Read from the agent's runs, not the certificate: never Stale or gated.
@@ -149,7 +151,7 @@ def rows(
                 reading=failed,
                 reason_code=failed.reason_code,
                 reason=failed.reason,
-                checked_at=bundle.updated_at.isoformat(),
+                checked_at=bundle.updated_at.isoformat() if bundle else None,
             )
         else:
             fresh[capability.id] = _gated(capability, reading, fresh)[0]
@@ -388,7 +390,10 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         }
     )
     code = row["reason_code"]
-    if code in ("preflight_failed", "preflight_pending"):
+    if (
+        code in ("preflight_failed", "preflight_pending")
+        and pairing.agent_version is not None
+    ):
         return {
             "type": "preflight",
             "category": "startup",
@@ -477,6 +482,7 @@ def answer(
         and not (row["id"] == "cancel" and row["status"] == "untested")
     )
     pair_failed = failed and not named
+    kind: Literal["ready", "blocked", "stale", "unchecked", "validating"]
     if validating:
         kind = "validating"
     elif lowest == "blocked" or pair_failed:

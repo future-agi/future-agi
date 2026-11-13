@@ -172,5 +172,7 @@ class Reading:
     checked_at: str | None = None
 
 
-def targets(kind: str, names: list[str], result: str) -> list[Target]:
+def targets(
+    kind: Literal["tool", "action", "check"], names: list[str], result: str
+) -> list[Target]:
     return [{"kind": kind, "name": name, "result": result} for name in names]

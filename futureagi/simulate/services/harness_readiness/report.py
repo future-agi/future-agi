@@ -3,7 +3,7 @@ the re-check that validates the pairing again."""
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import structlog
 from django.utils import timezone
@@ -29,6 +29,7 @@ from simulate.services.harness_readiness.catalogue import (
     PairingView,
     RowView,
     Status,
+    VersionRef,
 )
 from simulate.services.harness_readiness.evidence import (
     certified,
@@ -277,9 +278,9 @@ def readiness_report(
         counts[row["status"]] += 1
     return {
         "pairing": {
-            "agent_version": refs["agent"],
-            "environment_version": refs["environment"],
-            "suite_version": refs["suite"],
+            "agent_version": cast("VersionRef | None", refs["agent"]),
+            "environment_version": cast("VersionRef | None", refs["environment"]),
+            "suite_version": cast("VersionRef | None", refs["suite"]),
             "evidence": evidence.source,
         },
         "validation": view,

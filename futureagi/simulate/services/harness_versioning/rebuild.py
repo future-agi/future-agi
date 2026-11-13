@@ -1769,7 +1769,7 @@ def _land(
         break
     if activated is None:
         return None
-    if validate:
+    if validate and agent is not None:
         validation = start_validation(
             locked,
             agent,

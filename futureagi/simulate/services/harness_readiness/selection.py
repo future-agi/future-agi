@@ -167,7 +167,10 @@ def selection_report(
         "rows": rows,
         "selection": {
             "requested": requested,
-            **{bucket: len(by_bucket[bucket]) for bucket in BUCKETS},
+            "eligible": len(by_bucket["eligible"]),
+            "blocked": len(by_bucket["blocked"]),
+            "stale": len(by_bucket["stale"]),
+            "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
             "dropped": placement.dropped,
             "grading": {

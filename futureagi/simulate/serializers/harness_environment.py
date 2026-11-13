@@ -894,7 +894,8 @@ class HarnessCapabilityFixSerializer(serializers.Serializer):
 
 class HarnessCapabilityRowSerializer(serializers.Serializer):
     id = serializers.CharField()
-    label = serializers.CharField()
+    # A declared field, not Field.label: the metaclass moves it off the class.
+    label = serializers.CharField()  # type: ignore[assignment]
     area = serializers.CharField(allow_null=True)
     status = serializers.ChoiceField(choices=_READINESS_STATUSES)
     measured = serializers.BooleanField()
@@ -918,7 +919,8 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
 
 class HarnessCapabilityCountsSerializer(serializers.Serializer):
     supported = serializers.IntegerField()
-    partial = serializers.IntegerField()
+    # A declared field, not BaseSerializer.partial: the metaclass moves it off the class.
+    partial = serializers.IntegerField()  # type: ignore[assignment]
     blocked = serializers.IntegerField()
     unavailable = serializers.IntegerField()
     untested = serializers.IntegerField()
