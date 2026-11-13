@@ -784,7 +784,7 @@ def test_agent_graph_tag_ignores_a_tagged_child_outside_the_window(
 
 
 def test_agent_graph_tag_window_leaves_other_leaves_unbounded(stores):
-    """Only the Tag witness is windowed; the read stays pruned only for Tags.
+    """Only the Tag witness is windowed; other leaves keep any-span witnesses.
 
     alpha's in-window root carries the SDK tag; its only ``customer=acme``
     span starts three hours after the window. An attribute leaf is witnessed
@@ -826,8 +826,8 @@ def test_agent_graph_tag_window_leaves_other_leaves_unbounded(stores):
         stores, leaf("tag", "sdk"), attribute, traces=traces
     )
     assert graphed == {"alpha"}
-    assert AGENT_GRAPH_HOUR_PRUNE not in sql
-    # A Tag leaf alone reads only the window's physical hours.
     sql, graphed = agent_graph_query(stores, leaf("tag", "sdk"), traces=traces)
     assert graphed == {"alpha", "beta"}
-    assert AGENT_GRAPH_HOUR_PRUNE in sql
+    # A Tag leaf keeps the unpruned physical read: out-of-window intermediate
+    # spans still prove monetary ancestry for in-window usage.
+    assert AGENT_GRAPH_HOUR_PRUNE not in sql

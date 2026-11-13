@@ -234,11 +234,11 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # must then replay candidate membership across all child timestamps;
         # ``groupArrayIf`` below still prevents those remote witnesses from
         # becoming graph nodes or edges.
-        # When every membership predicate is itself window-bounded (Tag leaves
-        # only), no row outside the window can contribute, be the in-window
-        # root, or witness membership, so the same pruned read stays exact.
+        # Tag leaves keep this unpruned read too: out-of-window intermediate
+        # spans still prove monetary ancestry (graph_monetary_rows_sql), even
+        # though they can no longer witness the Tag leaf.
         physical_window = ""
-        if all(plan.event_window_only):
+        if not plan.predicates:
             physical_window = (
                 "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
                 "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
