@@ -72,7 +72,7 @@ test('standalone supplies the same listeners and source-selected internal execut
   assert.deepEqual(hosts, { 'allowed.example': '11.23.0.10', 'denied.example': '11.23.0.10',
     'worker-allowed.example': '11.23.0.11', 'private.example': '172.30.91.10' });
   const runner = readFileSync(new URL('../../bin/e2e', import.meta.url), 'utf8');
-  assert.match(runner, /SERVICES=\(app postgres clickhouse mock-llm code-executor link-canary link-worker-canary\)/);
+  assert.match(runner, /SERVICES=\(app postgres clickhouse mock-llm mock-google code-executor link-canary link-worker-canary\)/);
 });
 
 test('both CI legs build and select the executor from the checked-out source', () => {

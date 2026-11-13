@@ -412,6 +412,7 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-property-catalog-consumer",
                 "mock-llm",
                 "mock-slack",
+                "mock-google",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
