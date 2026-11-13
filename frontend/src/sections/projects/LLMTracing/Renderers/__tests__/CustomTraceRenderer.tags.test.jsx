@@ -6,7 +6,7 @@ import CustomTraceRenderer from "../CustomTraceRenderer";
 // renderer's wiring: which entity it targets, and that a save refreshes the
 // server-side grid via the grid api (which the cache invalidation can't do).
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: ({ open, traceId, spanId, entity, onClose }) => (
+  default: ({ open, traceId, spanId, entity, onClose, onSuccess }) => (
     <div
       data-testid="add-tags-popover"
       data-open={String(open)}
@@ -21,6 +21,25 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
           onClick={() => onClose?.()}
         >
           close
+        </button>
+      )}
+      {open && (
+        <button
+          type="button"
+          data-testid="popover-save"
+          onClick={() =>
+            onSuccess?.(
+              {
+                tags: [{ name: "sdk" }, { name: "reviewed" }],
+                manual_tags: [{ name: "reviewed" }],
+                source_tag_names: ["sdk"],
+                tag_revision: 4,
+              },
+              { entity, type: spanId ? "span" : "trace" },
+            )
+          }
+        >
+          save
         </button>
       )}
     </div>
@@ -97,6 +116,48 @@ describe("CustomTraceRenderer — tags column", () => {
     expect(refreshServerSide).not.toHaveBeenCalled();
 
     await user.click(screen.getByTestId("popover-close"));
+    expect(refreshServerSide).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the row the saved tags and revision before the grid refreshes", async () => {
+    // The datasource serves a completed page from its cache on refresh, so
+    // without this the row keeps the old revision and the next edit is a 409.
+    const user = userEvent.setup();
+    const data = {
+      trace_id: "trace-1",
+      span_id: "root-1",
+      project_id: "project-1",
+      tags: [{ name: "sdk" }],
+      manual_tags: [],
+      source_tag_names: ["sdk"],
+      tag_revision: 3,
+      tag_target: {
+        project_id: "project-1",
+        trace_id: "trace-1",
+        span_id: "root-1",
+        start_hour: "2026-11-08T10:00:00+00:00",
+        observation_type: "span",
+        service_name: "svc",
+      },
+    };
+    const refreshCells = vi.fn();
+    const refreshServerSide = vi.fn();
+    const forEachNode = (visit) => visit({ data });
+    const { container } = renderTagsColumn({
+      data,
+      value: data.tags,
+      api: { refreshServerSide, refreshCells, forEachNode },
+    });
+    await user.click(container.firstChild);
+    await user.click(screen.getByTestId("popover-save"));
+    await user.click(screen.getByTestId("popover-close"));
+
+    expect(data).toMatchObject({
+      tags: [{ name: "sdk" }, { name: "reviewed" }],
+      manual_tags: [{ name: "reviewed" }],
+      tag_revision: 4,
+    });
+    expect(refreshCells).toHaveBeenCalledTimes(1);
     expect(refreshServerSide).toHaveBeenCalledTimes(1);
   });
 });

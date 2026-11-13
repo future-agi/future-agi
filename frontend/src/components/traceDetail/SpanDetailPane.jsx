@@ -1173,13 +1173,15 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
 
   const normalized = useMemo(() => normalizeTags(tags), [tags]);
 
-  const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) =>
-      saveEntityTags({ entity, tags: newTags, type: "span" }),
-    onSuccess: (result) => {
+  const { mutate, isPending } = useMutation({
+    // The saved entity travels with the request: the pane can switch to
+    // another span before the save is acknowledged.
+    mutationFn: ({ tags: newTags, entity: savedEntity }) =>
+      saveEntityTags({ entity: savedEntity, tags: newTags, type: "span" }),
+    onSuccess: (result, { entity: savedEntity }) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       // The parent grid caches tags and their revision outside React Query.
-      onSaved?.(result, entity);
+      onSaved?.(result, { entity: savedEntity, type: "span" });
     },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
@@ -1188,7 +1190,10 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
     retry: false,
   });
 
-  const persist = useCallback((next) => saveTags(next), [saveTags]);
+  const persist = useCallback(
+    (next) => mutate({ tags: next, entity }),
+    [mutate, entity],
+  );
 
   return (
     <Stack

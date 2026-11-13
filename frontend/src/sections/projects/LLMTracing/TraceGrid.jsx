@@ -247,10 +247,12 @@ const TraceGrid = React.forwardRef(
     // A tag save in the detail drawer updates only that entity's loaded rows.
     // refreshGrid would send the user back to page 1.
     const applyDrawerTagSave = useCallback(
-      (result, entity) =>
+      (result, saved) =>
         applySavedEntityTags(gridRef?.current?.api, {
-          target: entity?.tag_target,
           result,
+          entity: saved?.entity,
+          type: saved?.type,
+          gridKind: "trace",
         }),
       [gridRef],
     );

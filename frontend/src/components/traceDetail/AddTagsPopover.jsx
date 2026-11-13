@@ -44,7 +44,9 @@ const AddTagsPopover = ({
   }, [open, selectedTags, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) => {
+    // The saved entity travels with the request: the owner can select another
+    // entity before the save is acknowledged.
+    mutationFn: ({ tags: newTags, entity: savedEntity, type }) => {
       if (isBulk) {
         // Merge with each item's existing tags to avoid overwriting.
         // Backend PATCH replaces tags[], so we compute the full set here.
@@ -66,13 +68,9 @@ const AddTagsPopover = ({
           return results;
         });
       }
-      return saveEntityTags({
-        entity: selectedEntity,
-        type: items[0]?.type || (spanId ? "span" : "trace"),
-        tags: newTags,
-      });
+      return saveEntityTags({ entity: savedEntity, type, tags: newTags });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, { entity: savedEntity, type }) => {
       if (!isBulk) {
         confirmedTags.current = normalizeTags(result.tags);
         setTags(confirmedTags.current);
@@ -86,7 +84,7 @@ const AddTagsPopover = ({
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       // A single save also hands back the acknowledged result and the saved
       // entity, so a grid can update that row without reloading the list.
-      onSuccess?.(result, isBulk ? undefined : selectedEntity);
+      onSuccess?.(result, isBulk ? undefined : { entity: savedEntity, type });
     },
     onError: (error) => {
       if (!isBulk) setTags(confirmedTags.current);
@@ -102,9 +100,13 @@ const AddTagsPopover = ({
   const persist = useCallback(
     (nextTags) => {
       setTags(nextTags);
-      saveTags(nextTags);
+      saveTags({
+        tags: nextTags,
+        entity: selectedEntity,
+        type: items[0]?.type || (spanId ? "span" : "trace"),
+      });
     },
-    [saveTags],
+    [saveTags, selectedEntity, items, spanId],
   );
 
   const handleAdd = useCallback(

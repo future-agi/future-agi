@@ -183,12 +183,15 @@ describe("TraceDetailDrawerV2 read-only", () => {
     renderDrawer({ refreshParentGrid, onTagsSaved });
 
     const result = { id: "trace-1", tags: [], tag_revision: 2 };
-    const entity = { tag_target: { trace_id: "trace-1", span_id: "root" } };
-    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess(result, entity);
-    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved(result, entity);
+    const saved = {
+      entity: { tag_target: { trace_id: "trace-1", span_id: "root" } },
+      type: "trace",
+    };
+    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess(result, saved);
+    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved(result, saved);
     expect(onTagsSaved).toHaveBeenCalledTimes(2);
-    expect(onTagsSaved).toHaveBeenNthCalledWith(1, result, entity);
-    expect(onTagsSaved).toHaveBeenNthCalledWith(2, result, entity);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(1, result, saved);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(2, result, saved);
     expect(refreshParentGrid).not.toHaveBeenCalled();
   });
 });

@@ -290,7 +290,44 @@ describe("scoped entity tag writes", () => {
     renderEditor({ onSuccess });
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
-    expect(onSuccess).toHaveBeenCalledWith(success().data.result, entity);
+    expect(onSuccess).toHaveBeenCalledWith(success().data.result, {
+      entity,
+      type: "trace",
+    });
+  });
+
+  it("reports the entity a popover save was sent for, not a later selection", async () => {
+    let acknowledge;
+    axios.patch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        acknowledge = resolve;
+      }),
+    );
+    const onSuccess = vi.fn();
+    const other = {
+      ...entity,
+      tag_target: { ...target, trace_id: "trace-2", span_id: "root-2" },
+    };
+    const client = new QueryClient();
+    const popover = (selected) => (
+      <QueryClientProvider client={client}>
+        <AddTagsPopover
+          open
+          anchorEl={document.body}
+          onClose={vi.fn()}
+          entity={selected}
+          currentTags={selected.tags}
+          onSuccess={onSuccess}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(popover(entity));
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    rerender(popover(other));
+    await act(async () => acknowledge(success()));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(onSuccess.mock.calls[0][1]).toEqual({ entity, type: "trace" });
   });
 
   it("tells the drawer after an inline span tag save so the grid updates the row", async () => {
@@ -315,9 +352,50 @@ describe("scoped entity tag writes", () => {
     fireEvent.click(screen.getByRole("button", { name: "tag" }));
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(onTagsSaved).toHaveBeenCalledTimes(1));
-    expect(onTagsSaved).toHaveBeenCalledWith(
-      success().data.result,
-      expect.objectContaining({ id: "root-1", tag_target: target }),
+    expect(onTagsSaved).toHaveBeenCalledWith(success().data.result, {
+      entity: expect.objectContaining({ id: "root-1", tag_target: target }),
+      type: "span",
+    });
+  });
+
+  it("reports the span an inline save was sent for after the pane switches span", async () => {
+    let acknowledge;
+    axios.post.mockReturnValueOnce(
+      new Promise((resolve) => {
+        acknowledge = resolve;
+      }),
+    );
+    const onTagsSaved = vi.fn();
+    const client = new QueryClient();
+    const pane = (id, spanTarget) => (
+      <QueryClientProvider client={client}>
+        <SpanDetailPane
+          entry={{
+            observation_span: {
+              ...entity,
+              tag_target: spanTarget,
+              id,
+              trace: "trace-1",
+              name: id,
+            },
+          }}
+          projectId={target.project_id}
+          onClose={vi.fn()}
+          onTagsSaved={onTagsSaved}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(
+      pane("child-a", { ...target, span_id: "child-a" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "tag" }));
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    rerender(pane("child-b", { ...target, span_id: "child-b" }));
+    await act(async () => acknowledge(success()));
+    await waitFor(() => expect(onTagsSaved).toHaveBeenCalledTimes(1));
+    expect(onTagsSaved.mock.calls[0][1].entity.tag_target.span_id).toBe(
+      "child-a",
     );
   });
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { normalizeTag } from "src/components/traceDetail/tagUtils";
@@ -17,6 +17,8 @@ const TagsCell = ({
   onTagsUpdated,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
+  // The latest acknowledged save while the popover is open.
+  const lastSaveRef = useRef(null);
   const tags = Array.isArray(value) ? value : [];
 
   // Resolve which single entity this cell tags from the grid context (trace
@@ -54,8 +56,12 @@ const TagsCell = ({
     // This grid is AG-Grid server-side: refreshing rebuilds the row and would
     // unmount this cell. The popover stays open across multiple adds, so we
     // refresh once on close (mirroring the bulk-tag flow) rather than per save,
-    // which would snap the popover shut after the first tag.
-    onTagsUpdated?.();
+    // which would snap the popover shut after the first tag. The last
+    // acknowledged save goes with it, so the row gets the saved tags and
+    // revision even when the grid serves the page from its cache.
+    const saved = lastSaveRef.current;
+    lastSaveRef.current = null;
+    onTagsUpdated?.(saved);
   };
 
   return (
@@ -117,6 +123,9 @@ const TagsCell = ({
           traceId={targetTraceId}
           spanId={targetSpanId}
           currentTags={value}
+          onSuccess={(result, saved) => {
+            lastSaveRef.current = { result, ...saved };
+          }}
         />
       )}
     </>
@@ -133,8 +142,9 @@ TagsCell.propTypes = {
   entityType: PropTypes.oneOf(["trace", "span"]),
   // Whether the current role may edit tags; false renders the cell read-only.
   canEditTags: PropTypes.bool,
-  // Called when the popover closes after editing, so the server-side grid can
-  // refresh and show the saved tags.
+  // Called when the popover closes, with the last acknowledged save
+  // ({ result, entity, type }) or null, so the server-side grid can show the
+  // saved tags and revision.
   onTagsUpdated: PropTypes.func,
 };
 

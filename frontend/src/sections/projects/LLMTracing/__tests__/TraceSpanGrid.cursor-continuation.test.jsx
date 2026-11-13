@@ -2196,7 +2196,12 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
       source_tag_names: ["sdk"],
       tag_revision: 3,
     };
-    act(() => drawer.onTagsSaved(result, { tag_target: saved.tag_target }));
+    act(() =>
+      drawer.onTagsSaved(result, {
+        entity: { tag_target: saved.tag_target },
+        type: kind,
+      }),
+    );
 
     const savedNode = nodes.find(
       (node) => node.data.tag_target.span_id === saved.tag_target.span_id,
@@ -2230,13 +2235,18 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
     act(() =>
       drawer.onTagsSaved(
         { ...result, tags: [], tag_revision: 2 },
-        { tag_target: saved.tag_target },
+        { entity: { tag_target: saved.tag_target }, type: kind },
       ),
     );
     act(() =>
       drawer.onTagsSaved(
         { ...result, tags: [], tag_revision: 9 },
-        { tag_target: { ...saved.tag_target, project_id: "project-2" } },
+        {
+          entity: {
+            tag_target: { ...saved.tag_target, project_id: "project-2" },
+          },
+          type: kind,
+        },
       ),
     );
     expect(savedNode.data.tag_revision).toBe(3);
