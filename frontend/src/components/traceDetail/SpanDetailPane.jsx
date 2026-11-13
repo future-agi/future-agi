@@ -1166,7 +1166,7 @@ LogViewTable.propTypes = {
 
 /* ── InlineTagsRow — always-visible tag chips with add/remove ── */
 
-const InlineTagsRow = ({ tags = [], entity, readOnly = false }) => {
+const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
   const saveEntityTags = useSaveEntityTags();
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
@@ -1176,8 +1176,11 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false }) => {
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
       saveEntityTags({ entity, tags: newTags, type: "span" }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["trace-detail"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      // The parent grid caches tags and their revision outside React Query.
+      onSaved?.();
+    },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
@@ -1258,6 +1261,7 @@ InlineTagsRow.propTypes = {
   tags: PropTypes.array,
   entity: PropTypes.object,
   readOnly: PropTypes.bool,
+  onSaved: PropTypes.func,
 };
 
 /* ── EvalCard — single eval score display ─────────────── */
@@ -1681,6 +1685,7 @@ const SpanDetailPane = ({
   initialEvalFocus = false,
   drawerOpen = true,
   readOnly = false,
+  onTagsSaved,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
   const evalFocusSeededRef = useRef(false);
@@ -1901,6 +1906,7 @@ const SpanDetailPane = ({
           tags={span?.tags || []}
           entity={span}
           readOnly={readOnly}
+          onSaved={onTagsSaved}
         />
       </Box>
 
@@ -2729,6 +2735,7 @@ AttributesCard.propTypes = {
 };
 
 SpanDetailPane.propTypes = {
+  onTagsSaved: PropTypes.func,
   entry: PropTypes.shape({
     observation_span: PropTypes.object,
     observationSpan: PropTypes.object,

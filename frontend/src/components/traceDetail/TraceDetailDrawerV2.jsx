@@ -1318,6 +1318,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
+                    onTagsSaved={refreshParentGrid}
                     drawerOpen={open}
                   />
                 </Box>
@@ -1403,6 +1404,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
+                    onTagsSaved={refreshParentGrid}
                     drawerOpen={open}
                   />
                 ) : (
@@ -1610,6 +1612,7 @@ const TraceDetailDrawerV2 = ({
                 ? getSpan(selectedSpanData)?.tags || []
                 : data?.trace?.tags || []
             }
+            onSuccess={refreshParentGrid}
           />
         )}
 

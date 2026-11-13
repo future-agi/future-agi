@@ -15,6 +15,9 @@ const TARGET_FIELDS = [
 
 export const tagUpdateErrorMessage = (error) => {
   const status = error?.statusCode ?? error?.response?.status;
+  if (status === 403) {
+    return "You need write access to this workspace to edit tags. Ask a workspace admin for access.";
+  }
   if (status === 404) {
     return "This trace or span is no longer available. Refresh the list before editing tags.";
   }

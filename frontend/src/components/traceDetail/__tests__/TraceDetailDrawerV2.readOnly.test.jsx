@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   toolbarProps: vi.fn(),
   headerProps: vi.fn(),
   spanPaneProps: vi.fn(),
+  tagsPopoverProps: vi.fn(),
   displayProps: vi.fn(),
   createView: vi.fn(),
   updateView: vi.fn(),
@@ -73,6 +74,13 @@ vi.mock("../DrawerHeader", () => ({
 vi.mock("../SpanDetailPane", () => ({
   default: (props) => {
     mocks.spanPaneProps(props);
+    return null;
+  },
+}));
+
+vi.mock("../AddTagsPopover", () => ({
+  default: (props) => {
+    mocks.tagsPopoverProps(props);
     return null;
   },
 }));
@@ -164,5 +172,16 @@ describe("TraceDetailDrawerV2 read-only", () => {
     }
     expect(mocks.spanPaneProps).toHaveBeenCalled();
     expect(mocks.spanPaneProps.mock.lastCall[0].readOnly).toBe(true);
+  });
+
+  it("refreshes the parent grid after a tag save in the drawer", () => {
+    // The grid row carries the trace's tag revision. A drawer save must make
+    // the grid refetch it, or the next grid edit is refused as stale (409).
+    const refreshParentGrid = vi.fn();
+    renderDrawer({ refreshParentGrid });
+
+    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess();
+    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved();
+    expect(refreshParentGrid).toHaveBeenCalledTimes(2);
   });
 });

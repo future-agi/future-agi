@@ -177,6 +177,14 @@ describe("scoped entity tag writes", () => {
     },
   );
 
+  it("tells a workspace viewer they need write access, not to retry", () => {
+    expect(
+      tagUpdateErrorMessage({ statusCode: 403, code: "tag_write_forbidden" }),
+    ).toBe(
+      "You need write access to this workspace to edit tags. Ask a workspace admin for access.",
+    );
+  });
+
   it("restores the last confirmed tags when a later edit fails before grid refresh", async () => {
     renderEditor();
     fireEvent.click(screen.getByText("Add test tag"));
@@ -273,6 +281,30 @@ describe("scoped entity tag writes", () => {
         { ...target, tags, expected_tag_revision: 0 },
       ),
     );
+  });
+
+  it("tells the drawer after an inline span tag save so the grid refreshes", async () => {
+    const onTagsSaved = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SpanDetailPane
+          entry={{
+            observation_span: {
+              ...entity,
+              id: "root-1",
+              trace: "trace-1",
+              name: "root",
+            },
+          }}
+          projectId={target.project_id}
+          onClose={vi.fn()}
+          onTagsSaved={onTagsSaved}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "tag" }));
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(onTagsSaved).toHaveBeenCalledTimes(1));
   });
 
   it.each([ChatDetailsBar, CallDetailsBar])(
