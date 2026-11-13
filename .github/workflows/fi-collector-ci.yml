@@ -2,7 +2,7 @@ name: Collector and compose CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
       - "fi-collector/**"
       - "futureagi/tracer/utils/normalization/**"
