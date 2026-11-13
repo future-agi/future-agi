@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
 import TechnicalDetails from "../components/TechnicalDetails";
+import { expiresIn } from "../utils/conclusions";
 import {
   IdentityValue,
   ReviewState,
@@ -24,13 +25,6 @@ import ApplicationBehaviorFields from "../tests/ApplicationBehaviorFields";
 import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
-// "Preview expires in 30 min": relative to the review clock; the exact UTC time is in details.
-export function expiresIn(expiresAt, now) {
-  const left = Date.parse(expiresAt) - now;
-  if (!Number.isFinite(left)) return "Preview expiry not reported";
-  const minutes = Math.max(1, Math.round(left / 60000));
-  return minutes >= 120 ? `Preview expires in ${Math.round(minutes / 60)} hours` : `Preview expires in ${minutes} min`;
-}
 function ReviewedExample({
   preview,
   suiteRevision,

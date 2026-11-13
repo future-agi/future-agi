@@ -14,22 +14,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 import TechnicalDetails from "../components/TechnicalDetails";
-
-// Readable money: two decimals for people; the exact decimal strings stay in Details.
-const usd = (value) => {
-  const number = Number(value);
-  return value == null || value === '' || !Number.isFinite(number) ? null : `$${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-// "Nov 1–30": the end of a period is exclusive, so the last covered day is the day before it.
-export function periodLabel(startsAt, endsAt) {
-  const start = new Date(startsAt);
-  const end = new Date(new Date(endsAt).getTime() - 1);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-  const month = (date) => date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
-  return month(start) === month(end) && start.getUTCFullYear() === end.getUTCFullYear()
-    ? `${month(start)} ${start.getUTCDate()}–${end.getUTCDate()}`
-    : `${month(start)} ${start.getUTCDate()} – ${month(end)} ${end.getUTCDate()}`;
-}
+import { periodLabel, usd } from "../utils/conclusions";
 
 function PolicyForm({ policy, canManage, onSave, onRefresh }) {
   const [revision, setRevision] = useState(policy.revision);

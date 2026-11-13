@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { answerConclusion } from './ContextTestsPanel';
-import { publishSentence } from './ContextReleaseReview';
+import { answerConclusion, expiresIn, periodLabel, publishSentence } from '../utils/conclusions';
 import { linkChanges } from 'src/api/skills/j6-recovery';
-import { expiresIn } from '../review/CaseImportDialog';
-import { periodLabel } from '../review/SpendPolicyPanel';
 
 // Conclusion-first copy is derived from server data only; nothing is inferred when data is missing.
 describe('conclusion sentences', () => {

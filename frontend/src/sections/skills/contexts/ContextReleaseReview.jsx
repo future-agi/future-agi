@@ -13,6 +13,7 @@ import {
 import ObjectHeader from "../components/ObjectHeader";
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
+import { mountName, publishSentence } from "../utils/conclusions";
 import { paths } from "src/routes/paths";
 import Section from "src/components/section";
 import ChecksList from "../components/ChecksList";
@@ -26,21 +27,6 @@ import {
   ReviewState,
 } from "../review/ReleaseReviewBody";
 import CapabilityChanges from "../review/CapabilityChanges";
-
-const mountName = (mount) => String(mount || "").replace(/^skills\//, "").replace(/\/$/, "");
-// "Publishing creates billing-agent v2: refund-policy v2, no instruction changes".
-export function publishSentence(name, review) {
-  const next = (review.expectedHeadVersion ?? 0) + 1;
-  const paths = (review.changes || []).map((file) => file.path);
-  const instructions = paths.filter((path) => !path.startsWith("skills/") && !path.startsWith(".futureagi/")).length;
-  const skills = [...new Set(paths.filter((path) => path.startsWith("skills/")).map((path) => path.split("/")[1]))];
-  const locked = new Map((review.acceptedLock?.links || []).map((link) => [mountName(link.mount), link.version]));
-  const parts = [
-    ...skills.map((skill) => (locked.has(skill) ? `${skill} v${locked.get(skill)}` : `${skill} changes`)),
-    instructions ? `${instructions} instruction file${instructions === 1 ? "" : "s"} change${instructions === 1 ? "s" : ""}` : "no instruction changes",
-  ];
-  return `Publishing creates ${name || "this context"} v${next}: ${parts.join(", ")}`;
-}
 
 function DraftPublication({
   name,
@@ -245,7 +231,7 @@ function DraftPublication({
             />
           )}
           <Typography variant="s3">
-            Publishing doesn't attach or share test results. You choose the evidence when you request a release review.
+            Publishing doesn&apos;t attach or share test results. You choose the evidence when you request a release review.
           </Typography>
           <OperationFeedback operation={operation} />
           {oneStep !== operation && <OperationFeedback operation={oneStep} />}

@@ -18,6 +18,7 @@ import TestCaseEditor from '../tests/TestCaseEditor';
 import TestInventoryReview from '../tests/TestInventoryReview';
 import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadReview';
 import ContextNativePanel from './ContextNativePanel';
+import { answerConclusion } from '../utils/conclusions';
 
 // The one Tests panel for an agent context. One scroll, two sections, each with its own
 // loading, error and empty states so a failure in one never hides the other:
@@ -104,19 +105,6 @@ SavedDraftHandoff.propTypes = { onOpen: PropTypes.func.isRequired, disabled: Pro
 
 const ARM_LABELS = { without_target: 'Without context', without_context: 'Without context', reference: 'Historical reference', production: 'Production' };
 const armLabel = (variant, subject) => (variant === 'candidate' ? `With ${subject}` : ARM_LABELS[variant] || variant.replaceAll('_', ' '));
-const passedAll = (variant) => Boolean(variant?.attempts?.length) && variant.attempts.every((item) => item.answer_verdict === 'pass');
-
-// One sentence that says what the answer check found, before any identifiers.
-export function answerConclusion({ status, subject, rows, complete }) {
-  if (isActiveSkillJob(status)) return `Answer check running for ${subject}.`;
-  if (status !== 'completed') return `Answer check ${String(status || 'stopped').replaceAll('_', ' ')} for ${subject}. No result is inferred.`;
-  if (!complete || !rows.length) return `Answer check finished for ${subject}.`;
-  const passed = rows.filter((row) => passedAll(row.variants.find((variant) => variant.variant === 'candidate'))).length;
-  const baseline = rows.every((row) => passedAll(row.variants.find((variant) => variant.variant !== 'candidate')));
-  const lead = passed === rows.length ? `Answer check passed for ${subject} on ${passed} of ${rows.length} case${rows.length === 1 ? '' : 's'}` : `Answer check failed for ${subject} on ${rows.length - passed} of ${rows.length} case${rows.length === 1 ? '' : 's'}`;
-  return `${lead}${baseline && rows.some((row) => row.variants.length > 1) ? ' (also passes without the context)' : ''}.`;
-}
-
 function Results({ contextId, runId, contextName }) {
   const [page, setPage] = useState(1);
   const [attemptId, setAttemptId] = useState(null);

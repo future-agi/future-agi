@@ -48,6 +48,7 @@ import { consumerNextStep, humanizeCode, needsDeliveryVerification } from './con
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
 import { suggestRelease, suggestReviewer } from "./recoverySuggestion";
+import { recipientsOf } from "../utils/conclusions";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
 // choice, then recovers local locks and applications without a false
@@ -73,7 +74,6 @@ const reasonNames = {
   distribution_blocked: "Distribution blocked",
 };
 const uuid = () => crypto.randomUUID();
-export const recipientsOf = (options) => (options?.recipients ?? []).filter((person) => person?.id).map((person) => ({ id: String(person.id), name: person.name || person.email || 'Workspace member', ...(person.email ? { email: person.email } : {}) }));
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 
 function Cohort({ cohort, numbers, asOf }) {

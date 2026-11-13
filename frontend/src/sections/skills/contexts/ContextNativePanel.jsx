@@ -18,6 +18,7 @@ import { paths } from 'src/routes/paths';
 import { useSkillsSpendPolicy } from 'src/api/skills/r3-spend';
 import { getSkillErrorCode } from 'src/api/skills/operation-errors';
 import OperationFeedback from '../components/OperationFeedback';
+import { noReviewsYet } from '../utils/conclusions';
 import { useAppendEvidenceAnnotation, useAllEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
@@ -43,9 +44,6 @@ const FAMILIES = [['selection', 'Skill selected'], ['delivery', 'File delivered'
 const localTime = (value) => value ? fDateTime(value, 'MMM d, h:mm a') : 'Time not reported';
 const disagreementLabel = (count) => `${count} disagreement${count === 1 ? '' : 's'}`;
 const ACTIVE_STATES = ['queued', 'provisioning', 'preparing', 'running'];
-const httpStatus = (error) => error?.response?.status ?? error?.statusCode ?? error?.status;
-// A finished run whose review record does not exist yet has no human reviews; only a real failure is an error.
-export const noReviewsYet = (query) => (query.isError && httpStatus(query.error) === 404 ? { ...query, isError: false, error: null, data: { results: [] } } : query);
 const VERDICTS = [['agree', 'Agree with the automatic outcome'], ['disagree', 'Disagree with the automatic outcome'], ['cannot_assess', 'Cannot assess']];
 
 function Verdict({ value, status }) {

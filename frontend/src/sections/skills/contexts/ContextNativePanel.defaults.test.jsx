@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import ContextNativePanel, { noReviewsYet } from './ContextNativePanel';
+import ContextNativePanel from './ContextNativePanel';
+import { noReviewsYet } from '../utils/conclusions';
 
 const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: vi.fn(), runs: [], detail: undefined, annotations: [], annotationIds: [], annotationError: undefined, prepared: undefined }));
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
