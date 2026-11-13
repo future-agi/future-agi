@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from django.core.exceptions import ObjectDoesNotExist
 
-from model_hub.models.develop_annotations import Annotations
+from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column
 from model_hub.tests import test_auto_annotate_tenant_scope as scope_tests
 from model_hub.tests.test_auto_annotate_tenant_scope import (
@@ -42,7 +42,8 @@ def _update(tenant, column):
 
 
 @pytest.mark.parametrize(
-    "mismatch", ["wrong_output", "unattached_label", "attached_wrong_scope"]
+    "mismatch",
+    ["wrong_output", "unattached_label", "attached_wrong_scope", "attached_wrong_org"],
 )
 def test_feedback_rejects_independent_label_and_output_mismatches(tenants, mismatch):
     own, foreign, _ = tenants
@@ -55,6 +56,11 @@ def test_feedback_rejects_independent_label_and_output_mismatches(tenants, misma
         update["column_id"] = str(wrong.id)
     elif mismatch == "unattached_label":
         annotation.labels.clear()
+    elif mismatch == "attached_wrong_org":
+        # Workspace middleware alone cannot catch an inconsistent organization FK.
+        AnnotationsLabels.objects.filter(pk=own.label.pk).update(
+            organization=foreign.organization
+        )
     else:
         annotation.labels.add(foreign.label)
         update["label_id"] = str(foreign.label.id)
@@ -311,6 +317,71 @@ def test_column_allocation_never_returns_foreign_dataset_column(tenants, filled)
     assert allowed
     assert column_id == expected.id
     assert column_id != foreign_column.id
+
+
+@pytest.mark.parametrize("record", ["annotation", "label"])
+@pytest.mark.parametrize("field", ["organization", "workspace"])
+def test_column_allocation_checks_request_scope_without_middleware(
+    tenants, record, field
+):
+    own, foreign, sibling = tenants
+    annotation, _ = _annotation(own)
+    annotation.assigned_users.add(own.user)
+    target = annotation if record == "annotation" else own.label
+    value = foreign.organization if field == "organization" else sibling.workspace
+    type(target).no_workspace_objects.filter(pk=target.pk).update(**{field: value})
+    clear_workspace_context()
+    with pytest.raises(ObjectDoesNotExist):
+        _view(own).can_user_annotate(
+            annotation.id, own.row.id, own.label.id, own.user.id
+        )
+    assert not Cell.objects.exists()
+
+
+def test_feedback_revalidates_response_column_after_label_dispatch(tenants):
+    own, foreign, _ = tenants
+    annotation, output = _annotation(own)
+    annotation.assigned_users.add(own.user)
+    response_column = _output_column(own.dataset, "response-field")
+    sentinel = Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=response_column,
+        value="Untouched",
+    )
+
+    def move_response_column(*args, **kwargs):
+        # Both batch references passed prevalidation. A stored relationship then
+        # changes at the external Temporal boundary, before the response write.
+        Column.objects.filter(pk=response_column.pk).update(dataset=foreign.dataset)
+
+    with (
+        patch.object(
+            auto_annotate.generate_annotations_task,
+            "apply_async",
+            side_effect=move_response_column,
+        ) as dispatch,
+        patch("model_hub.views.develop_annotations.EmbeddingManager"),
+    ):
+        response = own.client.post(
+            f"/model-hub/annotations/{annotation.id}/update_cells/",
+            {
+                "label_values": [_update(own, output)],
+                "response_field_values": [
+                    {
+                        "row_id": str(own.row.id),
+                        "column_id": str(response_column.id),
+                        "value": "Must not be written",
+                    }
+                ],
+            },
+            format="json",
+        )
+    dispatch.assert_called_once()
+    assert response.status_code == 404, response.content
+    clear_workspace_context()
+    sentinel.refresh_from_db()
+    assert sentinel.value == "Untouched"
 
 
 def test_create_rejects_input_column_from_foreign_dataset(tenants):

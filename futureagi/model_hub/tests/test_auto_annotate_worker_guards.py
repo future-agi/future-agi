@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import connection
 
 from accounts.models.workspace import Workspace
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
@@ -184,6 +185,47 @@ def test_feedback_dataframe_ignores_foreign_dataset_base_cell(tenants):
         dataset=foreign.dataset, row=own.row, column=base, value="Foreign base cell"
     )
     frame = auto_annotate.dataset_to_dataframe(own.dataset.id, "feedback")
+    assert frame["label_value"].tolist() == ["Yes"]
+    assert frame[base.id].isna().all()
+
+
+@pytest.mark.parametrize("mismatch", ["column_dataset", "column_deleted"])
+def test_feedback_dataframe_revalidates_columns_after_projection(tenants, mismatch):
+    own, foreign, _ = tenants
+    output = _output_column(own.dataset, "feedback")
+    base = _output_column(own.dataset, "input")
+    Column.objects.filter(pk=base.pk).update(source="input")
+    Cell.objects.create(
+        dataset=own.dataset,
+        row=own.row,
+        column=output,
+        value="Yes",
+        feedback_info={"update": True},
+    )
+    Cell.objects.create(
+        dataset=own.dataset, row=own.row, column=base, value="Must not be read"
+    )
+    cell_reads = 0
+
+    def change_column_before_base_read(execute, sql, params, many, context):
+        nonlocal cell_reads
+        if sql.startswith("SELECT") and 'FROM "model_hub_cell"' in sql:
+            cell_reads += 1
+            if cell_reads == 2:
+                # The column-ID projection has already been materialized. Execute
+                # a real stored-state change before the later base-cell SELECT;
+                # never replace an ORM call or fabricate query results.
+                changes = (
+                    {"dataset": foreign.dataset}
+                    if mismatch == "column_dataset"
+                    else {"deleted": True}
+                )
+                Column.objects.filter(pk=base.pk).update(**changes)
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(change_column_before_base_read):
+        frame = auto_annotate.dataset_to_dataframe(own.dataset.id, "feedback")
+    assert cell_reads == 2
     assert frame["label_value"].tolist() == ["Yes"]
     assert frame[base.id].isna().all()
 
