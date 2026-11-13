@@ -31,10 +31,10 @@ interface EvalRow {
   eval_explanation: string | null;
 }
 
-test('EVAL-E2E-014: Recalculate on an eval task\'s result replaces it in place', {
+test('EVAL-E2E-015: Recalculate on an eval task\'s result replaces it in place', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'EVAL-E2E-014', area: 'evals',
+    id: 'EVAL-E2E-015', area: 'evals',
     userGoal: 'A user who disagrees with an eval task\'s verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span\'s current input',
     steps: ['seed a trace through the collector, and register its trace and LLM span through the public trace and span API',
             'author an LLM-as-a-judge eval (mock LLM through the gateway) and run an eval task over the project',

@@ -1347,7 +1347,7 @@
 - one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
 - the picker stays within the viewport at both heights
 
-### EVAL-E2E-014 — Recalculate on an eval task's result replaces it in place
+### EVAL-E2E-015 — Recalculate on an eval task's result replaces it in place
 
 **Goal:** A user who disagrees with an eval task's verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span's current input
 
