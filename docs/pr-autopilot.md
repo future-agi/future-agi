@@ -460,7 +460,8 @@ follow the header.
       The merged-PR runs, `pull_request` runs created at or after their PR
       was merged, have the branch it merged into as their ref and are
       deleted (20 such runs on `dev` for the PRs updated from 14 Oct to
-      13 Nov). Such a run can start long after the merge, so the PRs are
+      13 Nov). Such a run starts on a later edit of a merged PR (seen from
+      14 minutes to about three hours after the merge), so the PRs are
       listed by their last update;
    6. the new release-bot key goes into the environments.
 
