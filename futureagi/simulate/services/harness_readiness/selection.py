@@ -569,8 +569,8 @@ def _voice(pairing: Pairing) -> bool:
 
 def _status_for(row: RowView, case: CaseNeeds) -> Status:
     """The row's status for this case: a tool row failing only on tools the case
-    does not need is Supported for it. An agent tool the world lacks may be called
-    in any case."""
+    does not need is Supported for it, unless its evidence is Stale or waits on its
+    gate. An agent tool the world lacks may be called in any case."""
     if (
         row["id"] in TOOL_ROWS
         and row["targets"]
@@ -579,7 +579,9 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        return "supported"
+        if row["stale_because"] == "built_with_unknown" or row["blocked_by"]:
+            return "untested"
+        return "stale" if row["stale_because"] else "supported"
     return row["status"]
 
 
