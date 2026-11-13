@@ -31,7 +31,7 @@ def _tenant(suffix, organization=None):
     organization = organization or Organization.objects.create(name=f"Tenant {suffix}")
     user = User.objects.create_user(
         email=f"auto-{suffix}@example.com",
-        password="test-password",
+        password=None,  # These tests authenticate with API keys, not passwords.
         organization=organization,
     )
     membership, _ = OrganizationMembership.no_workspace_objects.get_or_create(
@@ -255,6 +255,64 @@ def test_worker_rejects_mismatched_scope_before_model_or_writes(tenants, bad_sco
             )
     generate.assert_not_called()
     assert not Cell.objects.exists()
+
+
+@pytest.mark.parametrize("is_default", [False, True])
+def test_worker_rejects_consistent_references_to_foreign_workspace(
+    tenants, model_boundaries, is_default
+):
+    own, foreign, _ = tenants
+    annotation, _ = _annotation(own)
+    workspace = foreign.workspace
+    if is_default:
+        workspace = Workspace.objects.create(
+            organization=foreign.organization,
+            is_default=True,
+            name="Default",
+            created_by=foreign.user,
+        )
+    # All three records still belong to A, and agree on B's workspace. Agreement
+    # alone is insufficient: the workspace itself must also belong to A.
+    for record in (annotation, own.dataset, own.label):
+        type(record).no_workspace_objects.filter(pk=record.pk).update(
+            workspace=workspace
+        )
+    with pytest.raises(ValueError, match="Workspace does not belong"):
+        auto_annotate.generate_annotations_task._original_func(
+            own.label.id, annotation.id, own.organization.id
+        )
+    model_boundaries[0].evaluate.assert_not_called()
+    model_boundaries[1].assert_not_called()
+    assert not Cell.objects.exists()
+
+
+@pytest.mark.parametrize("annotation_default", [False, True])
+@pytest.mark.parametrize("dataset_default", [False, True])
+@pytest.mark.parametrize("label_default", [False, True])
+def test_worker_accepts_own_default_and_null_workspace_combinations(
+    tenants, model_boundaries, annotation_default, dataset_default, label_default
+):
+    own = tenants[0]
+    annotation, column = _annotation(own)
+    default = Workspace.objects.create(
+        organization=own.organization,
+        is_default=True,
+        name="Default",
+        created_by=own.user,
+    )
+    for record, use_default in (
+        (annotation, annotation_default),
+        (own.dataset, dataset_default),
+        (own.label, label_default),
+    ):
+        type(record).no_workspace_objects.filter(pk=record.pk).update(
+            workspace=default if use_default else None
+        )
+    auto_annotate.generate_annotations_task._original_func(
+        own.label.id, annotation.id, own.organization.id
+    )
+    assert Cell.objects.get(column=column, row=own.row).value == "Yes"
+    model_boundaries[0].evaluate.assert_called_once()
 
 
 def test_worker_rejects_foreign_row_before_model_or_writes(tenants, model_boundaries):

@@ -48,6 +48,11 @@ def generate_annotations_task(
         id=annotation_id,
         organization=org,
     )
+    if (
+        annotation.workspace is not None
+        and annotation.workspace.organization_id != org.id
+    ):
+        raise ValueError("Workspace does not belong to the annotation organization")
     workspace_scope = Q(workspace_id=annotation.workspace_id)
     if annotation.workspace is None or annotation.workspace.is_default:
         workspace_scope = Q(workspace__isnull=True) | Q(
