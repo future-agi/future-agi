@@ -3,6 +3,10 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { RESPONSE_CODES } from "src/utils/constants";
 
+// The backend's error code for a comparison that is unknown or expired. Other
+// 404s (e.g. a compared dataset that was deleted) are reported as errors.
+export const COMPARE_NOT_FOUND_CODE = "compare_not_found";
+
 export const COMPARISON_EXPIRED_MESSAGE =
   "This comparison expired and is being rebuilt. Download it again once the table has loaded.";
 
@@ -24,9 +28,10 @@ export const useDeleteCompare = () => {
   });
 };
 
-// Downloads the comparison as CSV. A comparison that expired answers 404:
-// that is not an error to show. The table is rebuilt (onComparisonExpired)
-// and the user is asked to download again once it has loaded.
+// Downloads the comparison as CSV. A comparison that expired answers 404 with
+// COMPARE_NOT_FOUND_CODE: that is not an error to show. The table is rebuilt
+// (onComparisonExpired) and the user is asked to download again once it has
+// loaded.
 export const useDownloadCompare = ({
   compareId,
   selectedDatasetsValues,
@@ -51,7 +56,8 @@ export const useDownloadCompare = ({
       } catch (error) {
         if (
           requestCompareId &&
-          error?.statusCode === RESPONSE_CODES.NOT_FOUND
+          error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
+          error?.code === COMPARE_NOT_FOUND_CODE
         ) {
           return { expiredCompareId: requestCompareId };
         }
@@ -60,9 +66,12 @@ export const useDownloadCompare = ({
     },
     onSuccess: ({ response, expiredCompareId }) => {
       if (expiredCompareId) {
-        // Rebuild only if the table has not already moved on to a new one.
-        if (compareId?.current === expiredCompareId) onComparisonExpired?.();
-        enqueueSnackbar(COMPARISON_EXPIRED_MESSAGE, { variant: "info" });
+        // Rebuild only if the table has not already moved on to a new one;
+        // the message is shown only when a rebuild starts.
+        if (compareId?.current === expiredCompareId) {
+          onComparisonExpired?.();
+          enqueueSnackbar(COMPARISON_EXPIRED_MESSAGE, { variant: "info" });
+        }
         return;
       }
       const url = window.URL.createObjectURL(new Blob([response.data]));

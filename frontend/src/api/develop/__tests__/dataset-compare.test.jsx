@@ -25,6 +25,7 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("src/components/snackbar", () => snackbar);
 
 import {
+  COMPARE_NOT_FOUND_CODE,
   COMPARISON_EXPIRED_MESSAGE,
   useDeleteCompare,
   useDownloadCompare,
@@ -161,6 +162,7 @@ describe("useDownloadCompare", () => {
   it("rebuilds an expired comparison instead of reporting a 404", async () => {
     mocks.post.mockRejectedValue({
       statusCode: 404,
+      code: COMPARE_NOT_FOUND_CODE,
       result: "This comparison was not found or has expired.",
     });
     const onComparisonExpired = vi.fn();
@@ -187,7 +189,11 @@ describe("useDownloadCompare", () => {
     mocks.post.mockImplementation(async () => {
       // The table started over while the download was in flight.
       compareId.current = NEW_COMPARE_ID;
-      throw { statusCode: 404, result: "Not found." };
+      throw {
+        statusCode: 404,
+        code: COMPARE_NOT_FOUND_CODE,
+        result: "This comparison was not found or has expired.",
+      };
     });
     const onComparisonExpired = vi.fn();
     const { result, onError } = renderDownloadCompare(
@@ -201,9 +207,34 @@ describe("useDownloadCompare", () => {
 
     expect(onError).not.toHaveBeenCalled();
     expect(onComparisonExpired).not.toHaveBeenCalled();
-    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+    // No rebuild started, so no "being rebuilt" message.
+    expect(snackbar.enqueueSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("reports a dataset that was not found while a comparison was open", async () => {
+    // A compared dataset was deleted: a 404 with the generic code.
+    const failure = {
+      statusCode: 404,
+      code: "not_found",
+      result: "The specified dataset does not exist or has been deleted.",
+    };
+    mocks.post.mockRejectedValue(failure);
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: COMPARE_ID },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toBe(failure);
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBe(failure);
+    expect(onComparisonExpired).not.toHaveBeenCalled();
+    expect(snackbar.enqueueSnackbar).not.toHaveBeenCalledWith(
       COMPARISON_EXPIRED_MESSAGE,
-      { variant: "info" },
+      expect.anything(),
     );
   });
 
