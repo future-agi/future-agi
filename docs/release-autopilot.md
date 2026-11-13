@@ -224,7 +224,8 @@ changes none of them.
      listed paths match main's recorded tip, or are read. Then the runs of
      the last 30 days on refs that a key or approver environment admits.
      Each run is compared only on its own workflow file, what that file
-     reaches through `uses: ./` and the paths the one-time read lists for
+     reaches through `uses: ./` (at the base, and at the run's own version where
+     the workflow file differs) and the paths the one-time read lists for
      it; those files must match what was read, or their versions are read,
      or the run is deleted. The run listing is sliced so that each slice
      returns all its runs, because the endpoint stops at 1,000 without an
