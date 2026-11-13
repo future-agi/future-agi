@@ -5,8 +5,6 @@ Run with: pytest tfc/temporal/background_tasks/tests/test_activities.py -v
 """
 
 import os
-import shutil
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,59 +104,70 @@ class TestProcessHuggingFaceDatasetActivity:
 class TestDeleteCompareFolderActivity:
     """Tests for delete_compare_folder_activity."""
 
-    def test_deletes_local_folder_if_exists(self):
-        """Test that activity deletes local folder when it exists."""
+    def test_removes_remote_objects_then_local_folder(self, monkeypatch, tmp_path):
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
         from tfc.utils.storage import get_compare_local_dir
 
-        # Create a temp directory structure
-        temp_dir = tempfile.mkdtemp()
-        compare_dir = os.path.join(temp_dir, "compare")
-        os.makedirs(compare_dir)
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
         test_compare_id = "test-compare-123"
-        test_folder = os.path.join(compare_dir, test_compare_id)
+        test_folder = get_compare_local_dir(test_compare_id)
+        os.makedirs(test_folder)
+        with open(os.path.join(test_folder, "metadata.json"), "w") as f:
+            f.write("{}")
+        seen = []
+
+        def delete_remote(compare_id):
+            # The local folder is still there while the remote objects go.
+            seen.append((compare_id, os.path.isdir(test_folder)))
+
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", delete_remote
+        )
+
+        delete_compare_folder_activity(test_compare_id)
+
+        assert seen == [(test_compare_id, True)]
+        assert not os.path.exists(test_folder)
+
+    def test_keeps_local_folder_when_remote_deletion_fails(self, monkeypatch, tmp_path):
+        from tfc.temporal.background_tasks.activities import (
+            delete_compare_folder_activity,
+        )
+        from tfc.utils.storage import get_compare_local_dir
+
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+        test_folder = get_compare_local_dir("test-compare-456")
         os.makedirs(test_folder)
 
-        # Create a test file inside
-        with open(os.path.join(test_folder, "test.json"), "w") as f:
-            f.write("{}")
+        def delete_remote(compare_id):
+            raise RuntimeError("storage unavailable")
 
-        try:
-            # Patch the working directory and s3 delete
-            with (
-                patch("os.path.isdir") as mock_isdir,
-                patch("shutil.rmtree") as mock_rmtree,
-                patch("tfc.utils.storage.delete_compare_folder") as mock_s3_delete,
-            ):
-                mock_isdir.return_value = True
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", delete_remote
+        )
 
-                delete_compare_folder_activity(test_compare_id)
+        with pytest.raises(RuntimeError):
+            delete_compare_folder_activity("test-compare-456")
+        assert os.path.isdir(test_folder)
 
-                expected_dir = get_compare_local_dir(test_compare_id)
-                mock_isdir.assert_called_once_with(expected_dir)
-                mock_rmtree.assert_called_once_with(expected_dir)
-                mock_s3_delete.assert_called_once_with(test_compare_id)
-        finally:
-            shutil.rmtree(temp_dir)
-
-    @patch("tfc.utils.storage.delete_compare_folder")
-    def test_skips_local_deletion_if_folder_not_exists(self, mock_s3_delete):
-        """Test that activity skips local deletion when folder doesn't exist."""
+    def test_missing_local_folder_still_removes_remote_objects(
+        self, monkeypatch, tmp_path
+    ):
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
 
-        with (
-            patch("os.path.isdir", return_value=False) as mock_isdir,
-            patch("shutil.rmtree") as mock_rmtree,
-        ):
-            delete_compare_folder_activity("nonexistent-123")
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+        seen = []
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", seen.append
+        )
 
-            mock_isdir.assert_called_once()
-            mock_rmtree.assert_not_called()
-            mock_s3_delete.assert_called_once_with("nonexistent-123")
+        delete_compare_folder_activity("nonexistent-123")
+
+        assert seen == ["nonexistent-123"]
 
 
 @pytest.mark.django_db

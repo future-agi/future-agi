@@ -262,6 +262,15 @@ from model_hub.utils.annotation_queue_helpers import (
     TEXT_FILTER_LOOKUPS,
     or_text_filter_q,
 )
+from model_hub.utils.compare_storage import (
+    COMPARE_METADATA_OBJECT,
+    CompareObjectUnavailable,
+    created_at_now,
+    is_expired,
+    read_compare_json,
+    remove_compare,
+    write_compare_json,
+)
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
@@ -315,14 +324,11 @@ from tfc.utils.functions import (
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
-    delete_compare_folder,
-    download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
     is_own_storage_url,
     upload_audio_to_s3,
     upload_audio_to_s3_duration,
-    upload_compare_json_to_s3,
     upload_document_to_s3,
     upload_file_to_s3,
     upload_image_to_s3,
@@ -614,7 +620,6 @@ def _compare_metadata_matches_request(
 # A completed comparison's metadata is stored next to its pages. The local
 # metadata file exists only on the backend replica that built the comparison,
 # while later blocks, row detail, download and delete may reach any replica.
-COMPARE_METADATA_OBJECT = "metadata.json"
 COMPARE_NOT_FOUND_MESSAGE = (
     "This comparison was not found or has expired. Open the comparison again."
 )
@@ -622,23 +627,19 @@ COMPARE_ROW_ERROR_MESSAGE = "Unable to retrieve the compared row. Please try aga
 
 
 def _publish_compare_metadata(compare_id, metadata):
-    upload_compare_json_to_s3(
-        compare_json=metadata,
-        compare_id=compare_id,
-        page_name=COMPARE_METADATA_OBJECT,
-    )
+    write_compare_json(compare_id, COMPARE_METADATA_OBJECT, metadata)
 
 
 def _load_compare_metadata(compare_id):
-    """The stored metadata of a completed comparison, or None."""
+    """The stored metadata of a completed, unexpired comparison, or None."""
     try:
-        metadata = download_json_from_s3(
-            object_key=f"compare/{compare_id}/{COMPARE_METADATA_OBJECT}"
-        )
-    except ValueError:
+        metadata = read_compare_json(compare_id, COMPARE_METADATA_OBJECT)
+    except CompareObjectUnavailable:
         # Raised for a missing object as for any other read failure.
         return None
     if not isinstance(metadata, dict) or metadata.get("status") != "completed":
+        return None
+    if is_expired(metadata):
         return None
     return metadata
 
@@ -671,6 +672,32 @@ def _resolve_request_compare(request, compare_id):
     return metadata if visible == len(dataset_ids) else None
 
 
+def _client_rows_belong_to_datasets(dataset_info, datasets):
+    """Whether every row id a client-supplied dataset_info lists under one of
+    these datasets is a row of that dataset."""
+    if not isinstance(dataset_info, dict):
+        return False
+    listed = {str(dataset.id): set() for dataset in datasets}
+    for row_ids in dataset_info.values():
+        if not isinstance(row_ids, dict):
+            return False
+        for ds_id, row_id in row_ids.items():
+            if str(ds_id) not in listed:
+                continue
+            try:
+                listed[str(ds_id)].add(uuid.UUID(str(row_id)))
+            except ValueError:
+                return False
+    return all(
+        not listed[str(dataset.id)]
+        or Row.all_objects.filter(
+            dataset=dataset, id__in=listed[str(dataset.id)]
+        ).count()
+        == len(listed[str(dataset.id)])
+        for dataset in datasets
+    )
+
+
 def _compare_not_found_response(gm):
     return gm.not_found(COMPARE_NOT_FOUND_MESSAGE)
 
@@ -701,6 +728,7 @@ def _prepare_compare_dataset_impl(
             json.dump(
                 {
                     "status": "processing",
+                    "created_at": created_at_now(),
                     "total_rows": len(common_base_values),
                     "total_pages": (len(common_base_values) + 9) // 10,
                     "total_processed": 0,
@@ -791,11 +819,7 @@ def _prepare_compare_dataset_impl(
                         for table in compare_json["table"]
                     }
                 )
-                upload_compare_json_to_s3(
-                    compare_id=compare_id,
-                    compare_json=compare_json,
-                    page_name=f"page_{index // 10}.json",
-                )
+                write_compare_json(compare_id, f"page_{index // 10}.json", compare_json)
 
                 with open(metadata_path, "r+") as f:
                     metadata = json.load(f)
@@ -818,10 +842,10 @@ def _prepare_compare_dataset_impl(
             rowid_in_file.update(
                 {str(row["row_id"]): leftover_page for row in leftover_table}
             )
-            upload_compare_json_to_s3(
-                compare_id=compare_id,
-                compare_json={"column_config": column_config, "table": leftover_table},
-                page_name=f"{leftover_page}.json",
+            write_compare_json(
+                compare_id,
+                f"{leftover_page}.json",
+                {"column_config": column_config, "table": leftover_table},
             )
 
         with open(metadata_path) as f:
@@ -13505,9 +13529,7 @@ class GetCompareDatasetRow(APIView):
             response["next_row_id"] = next_row_id
 
             # Fetch the table data for the current page (page_index)
-            data = download_json_from_s3(
-                object_key=f"compare/{compare_id}/page_{page_index}.json"
-            )
+            data = read_compare_json(compare_id, f"page_{page_index}.json")
 
             # Find the specific row data on this page
             row_found = False
@@ -13651,10 +13673,7 @@ class GetCompareDatasetRow(APIView):
             return self._gm.internal_server_error_response(COMPARE_ROW_ERROR_MESSAGE)
 
     def thread_delete(self, compare_id):
-        compare_dir = get_compare_local_dir(compare_id)
-        if os.path.isdir(compare_dir):
-            shutil.rmtree(compare_dir)
-        delete_compare_folder(compare_id)
+        remove_compare(compare_id)
 
     @swagger_auto_schema(
         responses={
@@ -13929,8 +13948,7 @@ class CompareDatasetsView(APIView):
 
         def fetch_page(args):
             compare_id, page, start, end, start_page, end_page = args
-            object_key = f"compare/{compare_id}/page_{page}.json"
-            json_data = download_json_from_s3(object_key)
+            json_data = read_compare_json(compare_id, f"page_{page}.json")
 
             start_idx = start % 10 if page == start_page else 0
             end_idx = (
@@ -14305,8 +14323,8 @@ class CompareDatasetsView(APIView):
                 return self._gm.success_response(result)
 
             compare_id = str(uuid.uuid4())
+            # The page writer creates the local folder once the request is valid.
             metadata_path = get_compare_metadata_path(compare_id)
-            os.makedirs(get_compare_local_dir(compare_id), exist_ok=True)
 
             # Check if dataset_info and common_column_names are provided
             dataset_info = validated_data["dataset_info"]
@@ -14347,8 +14365,13 @@ class CompareDatasetsView(APIView):
             )
             for dst in datasets:
                 logger.info(f"Datasets: {dst.id}  {dst.name}")
-            if len(datasets) != len(dataset_ids) + 1:
+            requested_ids = {str(ds_id) for ds_id in ordered_ids}
+            if len(requested_ids) != len(ordered_ids):
                 return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
+            # A dataset outside the caller's workspace is answered exactly like
+            # one that does not exist.
+            if len(datasets) != len(requested_ids):
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             comparison_datasets = list(datasets)
             columns_qs = (
@@ -14630,6 +14653,12 @@ class DownloadComparisonDatasetView(APIView):
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_DOWNLOAD_DATASET")
                 )
+            # Rows named by the client must belong to the datasets they are
+            # listed under; anything else is answered like an unknown dataset.
+            if not compare_id and not _client_rows_belong_to_datasets(
+                dataset_info, comparison_datasets
+            ):
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             common_base_values = []
             # if not dataset_info:

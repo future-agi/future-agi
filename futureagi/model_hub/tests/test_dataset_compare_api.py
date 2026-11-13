@@ -6,6 +6,7 @@ from rest_framework import status
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.utils.compare_storage import CompareObjectUnavailable, created_at_now
 from model_hub.views.develop_dataset import CompareDatasetsView
 from tfc.utils.storage import get_compare_local_dir
 
@@ -127,28 +128,28 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
     shared = {
         f"compare/{compare_id}/metadata.json": {
             "status": "completed",
+            "created_at": created_at_now(),
             "base_dataset_id": dataset_ids[0],
             "comparison_datasets": dataset_ids,
         }
     }
 
-    def download(object_key, bucket_name=None):
+    def read(compare_id, name):
+        object_key = f"compare/{compare_id}/{name}"
         if object_key not in shared:
-            raise ValueError(f"missing object {object_key}")
+            raise CompareObjectUnavailable(name)
         return shared[object_key]
 
     def raise_temporal_unavailable(*args, **kwargs):
         raise RuntimeError("Temporal unavailable")
 
-    monkeypatch.setattr(
-        "model_hub.views.develop_dataset.download_json_from_s3", download
-    )
+    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", read)
     monkeypatch.setattr(
         "tfc.temporal.drop_in.start_activity",
         raise_temporal_unavailable,
     )
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.delete_compare_folder",
+        "model_hub.utils.compare_storage.delete_compare_objects",
         lambda compare_id: shared.clear(),
     )
 
@@ -173,7 +174,7 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
     base_row = compare_datasets["base_row"]
     other_row = compare_datasets["other_row"]
 
-    def fake_download_json_from_s3(object_key):
+    def fake_read_compare_json(compare_id, name):
         return {
             "column_config": [
                 {
@@ -194,8 +195,8 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
         }
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.download_json_from_s3",
-        fake_download_json_from_s3,
+        "model_hub.views.develop_dataset.read_compare_json",
+        fake_read_compare_json,
     )
 
     view = CompareDatasetsView()

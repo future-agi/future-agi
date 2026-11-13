@@ -19,6 +19,7 @@ import io
 import json
 import threading
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from rest_framework import status
@@ -43,27 +44,25 @@ PAGE_SIZE = 10
 @pytest.fixture
 def page_store(monkeypatch, tmp_path):
     """In-memory replacement for the compare page JSON objects."""
+    from model_hub.utils.compare_storage import CompareObjectUnavailable
+
     store = {}
     lock = threading.Lock()
 
-    def upload(compare_json, compare_id, page_name, bucket_name=None):
-        key = f"compare/{compare_id}/{page_name}"
+    def write(compare_id, name, data):
+        key = f"compare/{compare_id}/{name}"
         with lock:
-            store[key] = json.loads(json.dumps(compare_json))
-        return key
+            store[key] = json.loads(json.dumps(data))
 
-    def download(object_key, bucket_name=None):
+    def read(compare_id, name):
+        key = f"compare/{compare_id}/{name}"
         with lock:
-            if object_key not in store:
-                raise ValueError(f"missing object {object_key}")
-            return json.loads(json.dumps(store[object_key]))
+            if key not in store:
+                raise CompareObjectUnavailable(name)
+            return json.loads(json.dumps(store[key]))
 
-    monkeypatch.setattr(
-        "model_hub.views.develop_dataset.upload_compare_json_to_s3", upload
-    )
-    monkeypatch.setattr(
-        "model_hub.views.develop_dataset.download_json_from_s3", download
-    )
+    monkeypatch.setattr("model_hub.views.develop_dataset.write_compare_json", write)
+    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", read)
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
     return store
 
@@ -498,3 +497,135 @@ def test_unknown_compare_id_is_not_found_without_server_details(
     # Nothing was built or removed under the supplied id.
     assert _stored(page_store, compare_id) == {}
     assert worker == []
+
+
+def _rows_by_input(dataset):
+    return {
+        cell.value: str(cell.row_id)
+        for cell in Cell.objects.filter(dataset=dataset, column__name="input")
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_with_another_organizations_dataset_is_not_found(
+    auth_client, organization, workspace, other_org, monkeypatch, tmp_path
+):
+    _, other_organization, other_workspace = other_org
+    compare_root = _replica(monkeypatch, tmp_path, "replica-a")
+    shared = [f"foreign-build-{index:02d}" for index in range(3)]
+    left, _, _ = _make_dataset(organization, workspace, "Build left", shared, "left")
+    foreign, _, _ = _make_dataset(
+        other_organization, other_workspace, "Build foreign", shared, "foreign"
+    )
+
+    unknown = _post(auth_client, left.id, [uuid.uuid4()], 0, None)
+    for response in (
+        _post(auth_client, left.id, [foreign.id], 0, None),
+        _post(auth_client, foreign.id, [left.id], 0, None),
+    ):
+        # Indistinguishable from a dataset that does not exist.
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
+        assert response.json() == unknown.json()
+        assert "foreign-" not in response.content.decode()
+    assert unknown.status_code == status.HTTP_404_NOT_FOUND, unknown.content[:500]
+    # Nothing was started for the refused selections.
+    assert not compare_root.exists() or not any(compare_root.iterdir())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_download_without_compare_id_refuses_rows_of_another_organization(
+    auth_client, organization, workspace, other_org
+):
+    _, other_organization, other_workspace = other_org
+    shared = [f"foreign-rows-{index:02d}" for index in range(3)]
+    left, _, _ = _make_dataset(organization, workspace, "Rows left", shared, "left")
+    right, _, _ = _make_dataset(organization, workspace, "Rows right", shared, "right")
+    foreign, _, _ = _make_dataset(
+        other_organization, other_workspace, "Rows foreign", shared, "secret"
+    )
+    left_rows, right_rows = _rows_by_input(left), _rows_by_input(right)
+    foreign_rows = _rows_by_input(foreign)
+
+    def download(dataset_info, dataset_id=left.id):
+        return auth_client.post(
+            DOWNLOAD_URL.format(dataset_id=dataset_id),
+            {
+                "dataset_ids": [str(right.id)],
+                "base_column_name": "input",
+                "dataset_info": dataset_info,
+                "common_column_names": ["input", "output"],
+            },
+            format="json",
+        )
+
+    # The caller's own rows export as before.
+    own = {
+        value: {str(left.id): left_rows[value], str(right.id): right_rows[value]}
+        for value in shared
+    }
+    exported = _csv_rows(download(own))
+    assert sorted(row["input"] for row in exported) == shared
+    assert {row["output-Rows right"] for row in exported} == {
+        f"right-{value}" for value in shared
+    }
+
+    unknown = download(own, dataset_id=uuid.uuid4())
+    assert unknown.status_code == status.HTTP_404_NOT_FOUND, unknown.content[:500]
+    for listed_under in (left, right):
+        pointed = copy.deepcopy(own)
+        pointed[shared[0]][str(listed_under.id)] = foreign_rows[shared[0]]
+        response = download(pointed)
+        # Answered like an unknown dataset, with none of the foreign cells.
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response
+        assert response.json() == unknown.json()
+        assert "secret-" not in response.content.decode()
+
+
+def _age_metadata(page_store, compare_id, hours):
+    key = f"compare/{compare_id}/metadata.json"
+    created = datetime.fromisoformat(page_store[key]["created_at"])
+    page_store[key]["created_at"] = (created - timedelta(hours=hours)).isoformat()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_comparison_expires_two_hours_after_it_was_created(
+    auth_client, organization, workspace, page_store, worker, monkeypatch, tmp_path
+):
+    shared = [f"expiry-{index:02d}" for index in range(3)]
+    left, _, _ = _make_dataset(organization, workspace, "Expiry left", shared, "left")
+    right, _, _ = _make_dataset(
+        organization, workspace, "Expiry right", shared, "right"
+    )
+    _replica(monkeypatch, tmp_path, "replica-a")
+    fresh = _result(_post(auth_client, left.id, [right.id], 0, None))
+    fresh_id = fresh["metadata"]["compare_id"]
+    old = _result(_post(auth_client, left.id, [right.id], 0, None))
+    old_id = old["metadata"]["compare_id"]
+    _age_metadata(page_store, fresh_id, hours=1.5)
+    _age_metadata(page_store, old_id, hours=2.5)
+
+    unknown = auth_client.get(
+        ROW_URL.format(compare_id=uuid.uuid4(), row_id=uuid.uuid4())
+    )
+    for response in (
+        auth_client.get(ROW_URL.format(compare_id=old_id, row_id=_row_ids(old)[0])),
+        _post(auth_client, left.id, [right.id], 0, old_id),
+        auth_client.post(
+            DOWNLOAD_URL.format(dataset_id=left.id),
+            {
+                "dataset_ids": [str(right.id)],
+                "base_column_name": "input",
+                "compare_id": old_id,
+            },
+            format="json",
+        ),
+        auth_client.delete(DELETE_URL.format(compare_id=old_id)),
+    ):
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
+        assert response.json() == unknown.json()
+
+    kept = auth_client.get(
+        ROW_URL.format(compare_id=fresh_id, row_id=_row_ids(fresh)[0])
+    )
+    assert kept.status_code == status.HTTP_200_OK, kept.content[:500]
+    assert _result(_post(auth_client, left.id, [right.id], 0, fresh_id))["table"]

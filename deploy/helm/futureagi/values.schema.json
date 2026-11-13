@@ -1162,6 +1162,10 @@
           "type": "string",
           "description": "[UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy."
         },
+        "compareBucket": {
+          "type": "string",
+          "description": "[COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. Created on first use (not on GCS) with no bucket policy; a bucket anyone may read is refused. Empty: `bucket` followed by `-compare`."
+        },
         "region": {
           "type": "string",
           "description": "[S3_REGION, AWS_DEFAULT_REGION] bucket region."

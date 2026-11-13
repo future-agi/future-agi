@@ -322,3 +322,69 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
     if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
         _checked_bucket_policies.add(bucket_name)
         _tighten_existing_bucket_policy(client, bucket_name)
+
+
+class PrivateBucketRefused(Exception):
+    """A bucket meant for server-only data whose policy lets anyone in."""
+
+    def __init__(self, bucket_name: str):
+        super().__init__(f"bucket {bucket_name} has a policy that lets anyone in")
+        self.bucket_name = bucket_name
+
+
+# Answers to a policy read that mean there is no policy for these credentials
+# to read, as opposed to a failure to ask.
+_NO_POLICY_CODES = ("NoSuchBucketPolicy", "AccessDenied", "NotImplemented")
+_BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
+
+# Private buckets this process has already created or checked.
+_checked_private_buckets: set[str] = set()
+
+
+def policy_allows_anyone(policy: str) -> bool:
+    """Whether a bucket policy allows anyone at all to do anything."""
+    try:
+        statements = json.loads(policy).get("Statement") or []
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if isinstance(statements, dict):
+        statements = [statements]
+    return any(
+        isinstance(statement, dict)
+        and statement.get("Effect") == "Allow"
+        and _is_anonymous(statement.get("Principal"))
+        for statement in statements
+    )
+
+
+def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
+    """Create the bucket if needed, with no bucket policy, so only the
+    backend's own credentials reach its objects. An existing bucket whose
+    policy lets anyone in raises PrivateBucketRefused and is asked again on
+    the next call. GCS buckets are pre-created with IAM, as for ensure_bucket.
+    """
+    if bucket_name in _checked_private_buckets:
+        return
+    if STORAGE_BACKEND == "gcs":
+        _checked_private_buckets.add(bucket_name)
+        return
+    if not client.bucket_exists(bucket_name):
+        try:
+            client.make_bucket(bucket_name)
+        except Exception as exc:
+            # Another process created it first: check it like any other.
+            if getattr(exc, "code", None) not in _BUCKET_ALREADY_CREATED_CODES:
+                raise
+        else:
+            _checked_private_buckets.add(bucket_name)
+            return
+    try:
+        policy = client.get_bucket_policy(bucket_name)
+    except Exception as exc:
+        if getattr(exc, "code", None) not in _NO_POLICY_CODES:
+            raise
+        policy = None
+    if policy and policy_allows_anyone(policy):
+        logger.error("storage_private_bucket_public", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name)
+    _checked_private_buckets.add(bucket_name)

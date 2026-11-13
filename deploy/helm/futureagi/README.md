@@ -457,6 +457,12 @@ reads of an object by its URL; no listing, no writes). Browsers download
 stored files by plain object URLs, so the bucket's endpoint must be
 reachable from your users' browsers.
 
+Dataset comparison data goes to a second, private bucket
+(`objectStorage.compareBucket`, default `<bucket>-compare`) that only the
+backend reads with its credentials. Elsewhere the app creates it on first use
+with no bucket policy; on GCS create it in advance as a private bucket. A
+bucket whose policy lets anyone in is refused.
+
 ### Bundled datastores
 
 | Datastore | External: set | Bundled: runs | Bundled image |
@@ -1287,6 +1293,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `objectStorage.mode` | `"external"` | `external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation). |
 | `objectStorage.backend` | `"s3"` | [STORAGE_BACKEND] `s3` (AWS), `gcs` (Google Cloud Storage with HMAC keys) or `minio` (any other S3-compatible endpoint). Bundled always uses `minio`. |
 | `objectStorage.bucket` | `"futureagi"` | [UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy. |
+| `objectStorage.compareBucket` | `""` | [COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. Created on first use (not on GCS) with no bucket policy; a bucket anyone may read is refused. Empty: `bucket` followed by `-compare`. |
 | `objectStorage.region` | `"us-east-1"` | [S3_REGION, AWS_DEFAULT_REGION] bucket region. |
 | `objectStorage.accessKey` | `""` | [S3_ACCESS_KEY, or GCS_HMAC_ACCESS_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
 | `objectStorage.secretKey` | `""` | [S3_SECRET_KEY, or GCS_HMAC_SECRET_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
