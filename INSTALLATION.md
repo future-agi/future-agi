@@ -604,9 +604,9 @@ Standalone's `app` image is built on the **slim** backend: heavy ML, audio
 and voice dependencies and several SDKs are not installed, which keeps that
 backend around 340 MB to download. Distributed and Helm run the default
 backend, which also has the `sandbox`, `billing`, `ops`, `gcp`, `langchain`,
-`rabbitmq` and `localizer` extras, `uv`, git and Debian's ffmpeg
+`rabbitmq`, `localizer` and `pii` extras, `uv`, git and Debian's ffmpeg
 ([Backend variants](https://docs.futureagi.com/docs/self-hosting/images#backend-variants)). Neither has `audio`,
-`ml`, `voice`, `pii`, `prompt-opt` or `vectordb`. Most features work out of
+`ml`, `voice`, `prompt-opt` or `vectordb`. Most features work out of
 the box. The ones below need an optional dependency group ("extra") baked into
 the image:
 
@@ -631,9 +631,11 @@ unavailable. Voice simulation is gated up front and returns a clear "not
 available in this build" API error. Without `gcp` the model picker does not
 offer the Vertex partner models. Without `sandbox`, hosted runs on Daytona or
 E2B answer `501 sandbox_sdk_missing`. Standalone's slim backend has neither
-`gcp` nor `sandbox`. If PII redaction is enabled for a project, ingestion
-fails closed until the `pii` extra is installed, so unredacted data is never
-stored silently.
+`gcp` nor `sandbox`. Standalone's slim backend has no `pii` either: if PII
+redaction is enabled for a project, ingestion fails closed until the extra is
+installed, so unredacted data is never stored silently, and evidence imports
+redact only fixed-shape values (emails, phone numbers, card and ID numbers, IP
+addresses and keys) and say that names and addresses were not checked.
 
 **To enable extras**, rebuild the backend image with the `EXTRAS` build
 argument (comma-separated). `EXTRAS` replaces the variant's own list of
@@ -642,7 +644,7 @@ groups, so name every group you want:
 ```bash
 # Distributed and Helm: the default backend's groups plus yours
 docker build -f futureagi/Dockerfile.oss \
-  --build-arg EXTRAS=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,audio,pii \
+  --build-arg EXTRAS=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii,audio \
   -t future-agi-backend:with-extras ./futureagi
 
 # Standalone: the slim backend with just the groups you add

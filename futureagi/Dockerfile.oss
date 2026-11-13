@@ -18,7 +18,7 @@
 # value passed explicitly wins, e.g. `--build-arg IMAGE_VARIANT=slim
 # --build-arg EXTRAS=sandbox --build-arg WITH_GIT=true`.
 #                         standard     slim
-#   EXTRAS                sandbox,billing,ops,gcp,langchain,rabbitmq,localizer | none
+#   EXTRAS                sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii | none
 #                         (optional dependency groups, comma-separated;
 #                         `none` installs no group)
 #   FFMPEG_FLAVOR         debian       minimal   (minimal: LGPL source build,

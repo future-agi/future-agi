@@ -138,7 +138,7 @@ if [[ "$OSS_VARIANT" == standard ]]; then
   check "Has uv (EE and cloud images install on top)" image_test "$OSS_IMAGE" sh -c "command -v uv"
   check "Has git (hosted-harness GitHub sources)" image_test "$OSS_IMAGE" sh -c "git --version"
   check "Has the optional groups of the base dependencies" image_python "$OSS_IMAGE" -c \
-    "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk"
+    "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk, presidio_analyzer, presidio_anonymizer, en_core_web_sm"
   check "Has every NLTK package" image_python "$OSS_IMAGE" -c \
     "import nltk; [nltk.data.find(p) for p in ('corpora/omw-1.4/', 'tokenizers/punkt/', 'taggers/averaged_perceptron_tagger/')]"
   check "Keeps every googleapiclient discovery document" image_python "$OSS_IMAGE" -c \
