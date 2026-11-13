@@ -49,12 +49,18 @@ const SEED = () => [
           "Use when the caller asks for a person, or the agent can't finish safely.",
           "Offer a transfer and say how long the wait is.\nSummarise the case for the person taking over.",
         ),
+        files: [
+          {
+            path: "references/handover.md",
+            text: "# Handover summary\n\n- Who is calling and why\n- What was tried\n- What the caller was promised",
+          },
+        ],
       },
     ],
     tags: { production: 1, staging: 2 },
     tests: {
       1: { at: daysAgo(55), loaded: "observed", result: "helps" },
-      2: { at: daysAgo(20), loaded: "unknown", result: "helps" },
+      2: seedReport("lib-escalate-to-human", 2, 1, daysAgo(20)),
     },
     promotions: [
       { v: 1, at: daysAgo(55), by: "Priya Nair", reason: null, tested: true },
@@ -77,10 +83,20 @@ const SEED = () => [
           "Use before offering or issuing a refund.",
           "Check the order date against the 30-day window.\nRefunds above $200 need a supervisor.",
         ),
+        files: [
+          {
+            path: "scripts/check_window.py",
+            text: "from datetime import date\n\ndef in_window(ordered: date, today: date) -> bool:\n    return (today - ordered).days <= 30\n",
+          },
+          {
+            path: "references/policy.md",
+            text: "# Refund policy\n\n- 30 days from delivery\n- Above $200: supervisor approval\n- Final sale items: no refund",
+          },
+        ],
       },
     ],
     tags: { production: 1 },
-    tests: { 1: { at: daysAgo(29), loaded: "observed", result: "helps" } },
+    tests: { 1: seedReport("lib-refund-policy", 1, 0, daysAgo(29)) },
     promotions: [
       { v: 1, at: daysAgo(29), by: "Dan Osei", reason: null, tested: true },
     ],
@@ -275,7 +291,7 @@ export const addFromRepo = (settings, repoSkill, agentName) => {
 };
 
 /** A new version: nothing changes in place, tags stay where they were. */
-export const newVersion = (settings, id, { text, note }) => ({
+export const newVersion = (settings, id, { text, note, files }) => ({
   skillLibrary: withSkill(settings, id, (s) => ({
     ...s,
     versions: [
@@ -286,6 +302,7 @@ export const newVersion = (settings, id, { text, note }) => ({
         by: currentUser()?.name || "You",
         note: note || "Edited",
         text,
+        ...(files && { files }),
       },
     ],
   })),
@@ -428,4 +445,214 @@ export const detach = (settings, agentKey, skillId) => {
       [agentKey]: (all[agentKey] || []).filter((a) => a.skillId !== skillId),
     },
   };
+};
+
+/* ── Testing a version (skills.md step 3; 26 Oct plan: positive, negative
+   and interaction cases; no-skill vs current vs candidate) ─────────────── */
+
+/** A version's files: SKILL.md first, then its scripts and references. */
+export const filesOf = (version) => [
+  { path: "SKILL.md", text: version?.text || "" },
+  ...(version?.files || []),
+];
+
+/** name / description / body of a SKILL.md. */
+export const parseSkillMd = (text) => {
+  const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text || "");
+  const front = m ? m[1] : "";
+  const field = (k) =>
+    (new RegExp(`^${k}:\\s*(.*)$`, "m").exec(front) || [])[1] || "";
+  return {
+    name: field("name"),
+    description: field("description"),
+    body: (m ? m[2] : text || "").trim(),
+  };
+};
+
+/* Requests that should and shouldn't fire the skill — near-misses are the
+   useful negatives (agentskills.io: optimizing descriptions). */
+const TRIGGER_SEED = {
+  "lib-escalate-to-human": [
+    { text: "Can I talk to a real person please?", should: true },
+    { text: "Get me your manager.", should: true },
+    {
+      text: "This is the third time — I want someone who can fix it.",
+      should: true,
+    },
+    { text: "I'd like to dispute a charge on my card.", should: true },
+    { text: "Can you transfer my order to a new address?", should: false },
+    { text: "Is a person going to check my refund?", should: false },
+    { text: "What are your opening hours?", should: false },
+  ],
+  "lib-refund-policy": [
+    { text: "I want my money back for this order.", should: true },
+    { text: "Can you refund the $240 jacket?", should: true },
+    { text: "It arrived broken, what can you do?", should: true },
+    { text: "Can I exchange this for a bigger size?", should: false },
+    { text: "When will my refund land in my account?", should: false },
+    { text: "Cancel my subscription.", should: false },
+  ],
+  "lib-identity-check": [
+    { text: "Change the email on my account.", should: true },
+    { text: "Read me my card details.", should: true },
+    { text: "What's the status of order 4471?", should: true },
+    { text: "What's your returns policy?", should: false },
+    { text: "Do you ship to Canada?", should: false },
+  ],
+};
+export const testPlanOf = (skill) =>
+  skill.testPlan || {
+    trigger: TRIGGER_SEED[skill.id] || [
+      {
+        text: `${skill.description || skill.name}`.replace(/\.$/, ""),
+        should: true,
+      },
+    ],
+  };
+export const saveTestPlan = (settings, id, plan) => ({
+  skillLibrary: withSkill(settings, id, (s) => ({ ...s, testPlan: plan })),
+});
+
+const CASE_TITLES = [
+  "Caller asks for a person straight away",
+  "Angry caller after a failed refund",
+  "Order lookup with a wrong email",
+  "Refund above the $200 cap",
+  "Return outside the 30-day window",
+  "Caller changes the delivery address",
+  "Duplicate charge on the card",
+  "Caller asks the agent to read a card number",
+];
+
+/**
+ * A test of version v: the same scenarios run three ways — this version,
+ * without the skill, and the version in production — and the trigger
+ * requests run 3 times each. Deterministic for a version and its inputs.
+ */
+const reportOf = (
+  id,
+  v,
+  prodV,
+  { at, envs, observed, agentKey, agentName, trigger },
+) => {
+  const seed = hash(`${id}:${v}:${prodV}:${envs.map((e) => e.id).join(",")}`);
+  const cases = envs.flatMap((e, ei) =>
+    (e.scenarios.length
+      ? e.scenarios
+      : CASE_TITLES.map((t, i) => ({ id: `${e.id}-${i}`, title: t }))
+    )
+      .slice(0, 8)
+      .map((sc, i) => {
+        const h = hash(`${seed}:${ei}:${i}`);
+        const without = h % 3 === 0 ? 1 : 0;
+        const prod = prodV ? Math.min(1, without + ((h >> 3) % 2)) : null;
+        const base = prod ?? without;
+        const cand =
+          (h >> 6) % 9 === 0
+            ? 0
+            : Math.min(1, base + ((h >> 4) % 3 === 0 ? 1 : 0));
+        return { id: sc.id, title: sc.title, env: e.name, without, prod, cand };
+      }),
+  );
+  const pct = (k) =>
+    cases.length
+      ? Math.round((100 * cases.filter((c) => c[k]).length) / cases.length)
+      : 0;
+  const triggerRuns = (trigger || []).map((t, i) => {
+    const h = hash(`${seed}:t:${i}`);
+    const fired = t.should ? 3 - (h % 5 === 0 ? 1 : 0) : h % 6 === 0 ? 1 : 0;
+    return { ...t, fired };
+  });
+  const passedNew = cases.filter((c) => c.cand).length;
+  const passedCurrent = cases.filter((c) =>
+    prodV ? c.prod : c.without,
+  ).length;
+  return {
+    at,
+    loaded: observed ? "observed" : "unknown",
+    result:
+      passedNew === passedCurrent
+        ? "same"
+        : passedNew > passedCurrent
+          ? "helps"
+          : "worse",
+    agentKey,
+    agentName,
+    envId: envs[0]?.id,
+    envName: envs.map((e) => e.name).join(", "),
+    envNames: envs.map((e) => e.name),
+    against: prodV,
+    scenarios: cases.length,
+    passedNew,
+    passedCurrent,
+    rates: {
+      cand: pct("cand"),
+      without: pct("without"),
+      prod: prodV ? pct("prod") : null,
+    },
+    cases,
+    trigger: triggerRuns,
+    cost: { prod: 0.042, cand: 0.042 + ((seed % 7) - 2) / 1000 },
+  };
+};
+
+function seedReport(id, v, prodV, at) {
+  return reportOf(id, v, prodV, {
+    at,
+    envs: [
+      { id: "env-voice-support", name: "Customer Support Line", scenarios: [] },
+    ],
+    observed: v === 1,
+    agentName: "Customer Support Line agent",
+    trigger: TRIGGER_SEED[id],
+  });
+}
+
+export const runSkillTest = (settings, id, v, opts) => {
+  const skill = libraryOf(settings).find((x) => x.id === id);
+  const prodV =
+    skill?.tags?.production && skill.tags.production !== v
+      ? skill.tags.production
+      : 0;
+  return {
+    skillLibrary: withSkill(settings, id, (s) => ({
+      ...s,
+      tests: {
+        ...s.tests,
+        [v]: reportOf(id, v, prodV, {
+          ...opts,
+          at: new Date().toISOString(),
+          trigger: testPlanOf(s).trigger,
+        }),
+      },
+    })),
+  };
+};
+
+/** Did the version beat production (or no skill), in a word. */
+export const verdictOf = (t) => {
+  if (!t) return { word: "Not tested", tone: "neutral" };
+  if (!t.cases)
+    return {
+      word:
+        t.result === "worse"
+          ? "Regression"
+          : t.result === "same"
+            ? "No change"
+            : "Improvement",
+      tone: t.result === "worse" ? "bad" : "neutral",
+    };
+  const regressed = t.cases.filter(
+    (c) => (t.against ? c.prod : c.without) && !c.cand,
+  ).length;
+  const improved = t.cases.filter(
+    (c) => !(t.against ? c.prod : c.without) && c.cand,
+  ).length;
+  if (regressed && improved)
+    return { word: "Tradeoff", tone: "warn", improved, regressed };
+  if (regressed)
+    return { word: "Regression", tone: "bad", improved, regressed };
+  if (improved)
+    return { word: "Improvement", tone: "good", improved, regressed };
+  return { word: "No change", tone: "neutral", improved, regressed };
 };

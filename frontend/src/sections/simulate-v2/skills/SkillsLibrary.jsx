@@ -1,12 +1,11 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
   Box,
   Button,
   IconButton,
-  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -19,23 +18,16 @@ import PageHeader from "src/components/page-header";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../components/SideDrawer";
 import { useConnectedAgents, useSimStore } from "../store";
-import { skillRuntimeOf, skillSetOf } from "../_mock/skills";
+import { skillSetOf } from "../_mock/skills";
 import { connectedAgentPath } from "../improvements/improvementNav";
 import {
   addFromRepo,
   agentContextOf,
-  attach,
   createSkill,
-  detach,
   latestV,
   libraryOf,
-  promote,
-  recordTest,
-  refLabel,
-  relevantScenariosOf,
-  resolveRef,
-  testLineOf,
   usedByOf,
+  verdictOf,
 } from "../_mock/skillLibrary";
 
 const head = {
@@ -58,6 +50,12 @@ const ago = (iso) => {
   return d < 1 ? "today" : d < 45 ? `${d}d ago` : `${Math.round(d / 30)}mo ago`;
 };
 const LOADED = { observed: "Observed", unknown: "Unknown" };
+const VERDICT_TONE = {
+  good: "success.main",
+  bad: "error.main",
+  warn: "warning.main",
+  neutral: "text.primary",
+};
 const LOADED_HINT =
   "Loaded: Observed means the test run's trace shows the agent reading the skill. Unknown means nothing in the run says either way.";
 const tableBox = {
@@ -98,7 +96,9 @@ export default function SkillsLibrary() {
   const { agents } = useConnectedAgents();
   const settings = state.workspaceSettings;
   const library = useMemo(() => libraryOf(settings), [settings]);
-  const [openId, setOpenId] = useState(null);
+  const navigate = useNavigate();
+  /* A skill opens on its own page (files, versions, tests, results). */
+  const setOpenId = (id) => navigate(paths.dashboard.simulate.skill(id));
   const [openContext, setOpenContext] = useState(null);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
@@ -122,7 +122,6 @@ export default function SkillsLibrary() {
   const shown = library.filter((s) =>
     `${s.name} ${s.description} ${s.owner}`.toLowerCase().includes(q),
   );
-  const open = library.find((s) => s.id === openId) || null;
   /* skills.md: an agent context is an agent's always-on instructions
      (AGENTS.md or similar) and the skills it links. */
   const contexts = useMemo(
@@ -320,9 +319,25 @@ export default function SkillsLibrary() {
                           color: test ? "text.primary" : "text.tertiary",
                         }}
                       >
-                        {test
-                          ? `v${v} · loaded: ${LOADED[test.loaded]}`
-                          : `v${v} not tested`}
+                        {test ? (
+                          <>
+                            {`v${v} · `}
+                            <Box
+                              component="span"
+                              sx={{ color: VERDICT_TONE[verdictOf(test).tone] }}
+                            >
+                              {verdictOf(test).word}
+                            </Box>
+                            <Box
+                              component="span"
+                              sx={{ color: "text.tertiary" }}
+                            >
+                              {` · ${LOADED[test.loaded]}`}
+                            </Box>
+                          </>
+                        ) : (
+                          `v${v} not tested`
+                        )}
                       </Box>
                       <Box component="td" sx={cell}>
                         <Typography
@@ -489,24 +504,8 @@ export default function SkillsLibrary() {
         )}
       </Box>
 
-      <SideDrawer open={!!open} onClose={() => setOpenId(null)} width={640}>
-        {open && (
-          <SkillDetail
-            key={open.id}
-            skill={open}
-            settings={settings}
-            agents={agents}
-            nameOf={nameOf}
-            envs={state.myEnvironments || []}
-            byEnv={state.byEnv || {}}
-            onSave={save}
-            onClose={() => setOpenId(null)}
-          />
-        )}
-      </SideDrawer>
-
       <SideDrawer
-        open={!!openContext && !open}
+        open={!!openContext}
         onClose={() => setOpenContext(null)}
         width={520}
       >
@@ -717,500 +716,6 @@ ContextDetail.propTypes = {
   library: PropTypes.array,
   onOpenSkill: PropTypes.func,
   onClose: PropTypes.func,
-};
-
-function SkillDetail({
-  skill,
-  settings,
-  agents,
-  nameOf,
-  envs,
-  byEnv,
-  onSave,
-  onClose,
-}) {
-  const navigate = useNavigate();
-  const [setup, setSetup] = useState(null);
-  const [promoting, setPromoting] = useState(null);
-  const [reason, setReason] = useState("");
-  const [testing, setTesting] = useState(null);
-  const [attachKey, setAttachKey] = useState("");
-  const [attachRef, setAttachRef] = useState(() =>
-    skill.tags?.production ? "production" : latestV(skill),
-  );
-  const used = usedByOf(skill.id, settings);
-  /* Agents a code skill can be attached to; the rest say why not. */
-  const attachable = agents.filter(
-    (a) => !used.some((u) => u.agentKey === a.key),
-  );
-  const eligible = attachable.filter((a) => skillRuntimeOf(a).canAdd);
-  useEffect(() => {
-    if (!testing) return undefined;
-    const t = setTimeout(() => {
-      const agent = agents.find((a) => a.key === testing.agentKey);
-      onSave(
-        recordTest(settings, skill.id, testing.v, {
-          ...testing,
-          observed: !!skillRuntimeOf(agent).observed,
-        }),
-      );
-      setTesting(null);
-    }, 1800);
-    return () => clearTimeout(t);
-  }, [testing]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tester = used[0]?.agentKey || null;
-  const versions = [...skill.versions].reverse();
-
-  return (
-    <Stack sx={{ height: "100%", minHeight: 0 }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        sx={{
-          px: 2.5,
-          py: 2,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {skill.name}
-          </Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`${skill.owner} · ${skill.description}`}
-          </Typography>
-        </Box>
-        <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="solar:close-linear" width={16} />
-        </IconButton>
-      </Stack>
-      <Box sx={{ flex: 1, overflow: "auto", px: 2.5, py: 2 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-          Versions
-        </Typography>
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            mb: 3,
-          }}
-        >
-          <Box component="table" sx={{ width: 1, borderCollapse: "collapse" }}>
-            <Box component="thead">
-              <Box component="tr">
-                {["Version", "Change", "Test", "Tag", ""].map((h) => (
-                  <Box component="th" key={h} sx={head}>
-                    {h}
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-            <Box component="tbody">
-              {versions.map((ver) => {
-                const t = skill.tests?.[ver.v];
-                const tags = Object.entries(skill.tags || {})
-                  .filter(([, v]) => v === ver.v)
-                  .map(([k]) => k);
-                const busy = testing?.v === ver.v;
-                return (
-                  <Box component="tr" key={ver.v}>
-                    <Box component="td" sx={cell}>{`v${ver.v}`}</Box>
-                    <Box
-                      component="td"
-                      sx={{ ...cell, color: "text.secondary" }}
-                    >
-                      {`${ver.note} · ${ver.by} · ${ago(ver.at)}`}
-                    </Box>
-                    <Box
-                      component="td"
-                      sx={{
-                        ...cell,
-                        color: t ? "text.primary" : "text.tertiary",
-                      }}
-                    >
-                      {busy
-                        ? "Testing…"
-                        : t
-                          ? `Loaded: ${LOADED[t.loaded]} · ${testLineOf(t)}`
-                          : "Not tested"}
-                    </Box>
-                    <Box
-                      component="td"
-                      sx={{ ...cell, color: "text.secondary" }}
-                    >
-                      {tags.join(", ") || "—"}
-                    </Box>
-                    <Box
-                      component="td"
-                      sx={{ ...cell, textAlign: "right", whiteSpace: "nowrap" }}
-                    >
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        disabled={!tester || !!testing}
-                        onClick={() =>
-                          setSetup({ v: ver.v, agentKey: tester, envId: "" })
-                        }
-                      >
-                        Test
-                      </Button>
-                      {!tags.includes("production") && (
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => {
-                            setReason("");
-                            setPromoting(ver.v);
-                          }}
-                          sx={{ color: "text.primary" }}
-                        >
-                          Promote
-                        </Button>
-                      )}
-                    </Box>
-                  </Box>
-                );
-              })}
-            </Box>
-          </Box>
-        </Box>
-        <Typography
-          sx={{ typography: "s3", color: "text.tertiary", mt: -2.25, mb: 3 }}
-        >
-          {tester
-            ? "A test runs an attached agent and compares the version with the one it loads now. Loaded shows Observed when the agent reports each skill it loads, Unknown when it doesn't."
-            : "Attach it to an agent to test a version in that agent's environment."}
-        </Typography>
-
-        <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-          Used by
-        </Typography>
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-          }}
-        >
-          {used.length === 0 && (
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", px: 1.5, py: 1 }}
-            >
-              Not attached to any agent yet.
-            </Typography>
-          )}
-          {used.map((u) => (
-            <Stack
-              key={u.agentKey}
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                px: 1.5,
-                py: 1,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Typography sx={{ typography: "s2", flex: 1 }}>
-                {nameOf(u.agentKey)}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {refLabel(skill, u.ref)}
-              </Typography>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => onSave(detach(settings, u.agentKey, skill.id))}
-              >
-                Detach
-              </Button>
-            </Stack>
-          ))}
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{ px: 1.5, py: 1 }}
-          >
-            <TextField
-              select
-              size="small"
-              value={attachKey}
-              onChange={(e) => setAttachKey(e.target.value)}
-              sx={{ minWidth: 220 }}
-              SelectProps={{ displayEmpty: true }}
-            >
-              <MenuItem value="" disabled>
-                {eligible.length
-                  ? "Attach to an agent…"
-                  : "No other agent can load skills"}
-              </MenuItem>
-              {attachable.map((a) => {
-                const rt = skillRuntimeOf(a);
-                return (
-                  <MenuItem key={a.key} value={a.key} disabled={!rt.canAdd}>
-                    {rt.canAdd
-                      ? a.name
-                      : `${a.name} · Unsupported — ${rt.short || "can't load skills"}`}
-                  </MenuItem>
-                );
-              })}
-            </TextField>
-            <TextField
-              select
-              size="small"
-              value={attachRef}
-              onChange={(e) => setAttachRef(e.target.value)}
-              sx={{ minWidth: 150 }}
-            >
-              {Object.keys(skill.tags || {}).map((k) => (
-                <MenuItem
-                  key={k}
-                  value={k}
-                >{`${k} (v${skill.tags[k]})`}</MenuItem>
-              ))}
-              {skill.versions.map((ver) => (
-                <MenuItem key={ver.v} value={ver.v}>{`v${ver.v}`}</MenuItem>
-              ))}
-            </TextField>
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={!attachKey}
-              onClick={() => {
-                onSave(attach(settings, attachKey, skill.id, attachRef));
-                setAttachKey("");
-              }}
-              sx={{ color: "text.primary", borderColor: "divider" }}
-            >
-              Attach
-            </Button>
-          </Stack>
-        </Box>
-        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-          Attached to a tag, an agent gets whichever version that tag points to.
-          Runs record the exact version it used.
-        </Typography>
-      </Box>
-
-      {setup && (
-        <SkillTestDialog
-          skill={skill}
-          setup={setup}
-          used={used}
-          agents={agents}
-          nameOf={nameOf}
-          envs={envs}
-          byEnv={byEnv}
-          onChange={setSetup}
-          onClose={() => setSetup(null)}
-          onAddScenarios={(envId) =>
-            navigate(
-              `${paths.dashboard.simulate.environmentStep(envId, "scenarios")}?add=1`,
-            )
-          }
-          onStart={(run) => {
-            setTesting(run);
-            setSetup(null);
-          }}
-        />
-      )}
-      {promoting != null && (
-        <ConfirmDialog
-          open
-          onClose={() => setPromoting(null)}
-          PaperProps={{ sx: { maxWidth: 480 } }}
-          title={`Promote v${promoting} to production?`}
-          content={
-            <Stack spacing={1}>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {skill.tests?.[promoting]
-                  ? "Agents attached to production get this version on their next run."
-                  : "This version hasn't been tested. Say why it's going out anyway — the reason is kept with the promotion."}
-              </Typography>
-              {!skill.tests?.[promoting] && (
-                <TextField
-                  size="small"
-                  fullWidth
-                  multiline
-                  minRows={2}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder="Why it ships untested"
-                />
-              )}
-            </Stack>
-          }
-          action={
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              disabled={!skill.tests?.[promoting] && !reason.trim()}
-              onClick={() => {
-                onSave(
-                  promote(
-                    settings,
-                    skill.id,
-                    promoting,
-                    "production",
-                    reason.trim(),
-                  ),
-                );
-                setPromoting(null);
-              }}
-            >
-              Promote
-            </Button>
-          }
-        />
-      )}
-    </Stack>
-  );
-}
-SkillDetail.propTypes = {
-  skill: PropTypes.object.isRequired,
-  settings: PropTypes.object,
-  agents: PropTypes.array.isRequired,
-  nameOf: PropTypes.func.isRequired,
-  envs: PropTypes.array,
-  byEnv: PropTypes.object,
-  onSave: PropTypes.func.isRequired,
-  onClose: PropTypes.func.isRequired,
-};
-
-/*
-  Skill → Test in environment (skills.md): pick an attached agent and one of
-  its environments; the version is compared with the one the agent loads now
-  on the same scenarios. No scenario about the skill → add some first.
-*/
-function SkillTestDialog({
-  skill,
-  setup,
-  used,
-  agents,
-  nameOf,
-  envs,
-  byEnv,
-  onChange,
-  onClose,
-  onAddScenarios,
-  onStart,
-}) {
-  const agent = agents.find((a) => a.key === setup.agentKey);
-  const agentEnvs = (agent?.usedIn || [])
-    .map((u) => envs.find((e) => e.id === u.envId))
-    .filter((e, i, arr) => e && arr.indexOf(e) === i);
-  const envId = setup.envId || agentEnvs[0]?.id || "";
-  const env = agentEnvs.find((e) => e.id === envId);
-  const relevant = relevantScenariosOf(skill, byEnv[envId]?.scenarios || []);
-  const ref = used.find((u) => u.agentKey === setup.agentKey)?.ref;
-  /* Testing the version the agent already loads compares with running
-     without the skill (0) — comparing a version with itself proves nothing. */
-  const current = ref != null ? resolveRef(skill, ref) : null;
-  const against = current != null && current !== setup.v ? current : 0;
-  return (
-    <ConfirmDialog
-      open
-      onClose={onClose}
-      PaperProps={{ sx: { maxWidth: 520 } }}
-      title={`Test v${setup.v} in an environment`}
-      content={
-        <Stack spacing={1.5} sx={{ pt: 0.5 }}>
-          <TextField
-            select
-            size="small"
-            label="Agent"
-            value={setup.agentKey}
-            onChange={(e) =>
-              onChange({ ...setup, agentKey: e.target.value, envId: "" })
-            }
-          >
-            {used.map((u) => (
-              <MenuItem key={u.agentKey} value={u.agentKey}>
-                {nameOf(u.agentKey)}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            select
-            size="small"
-            label="Environment"
-            value={envId}
-            disabled={!agentEnvs.length}
-            onChange={(e) => onChange({ ...setup, envId: e.target.value })}
-            SelectProps={{ displayEmpty: true }}
-          >
-            {!agentEnvs.length && (
-              <MenuItem value="">
-                This agent isn&apos;t in an environment
-              </MenuItem>
-            )}
-            {agentEnvs.map((e) => (
-              <MenuItem key={e.id} value={e.id}>
-                {e.name}
-              </MenuItem>
-            ))}
-          </TextField>
-          {env && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {relevant.length
-                ? `Compares v${setup.v} with ${against ? `v${against}, what ${nameOf(setup.agentKey)} loads now` : `${nameOf(setup.agentKey)} running without this skill`}, on the same ${relevant.length} ${relevant.length === 1 ? "scenario" : "scenarios"} about this skill.`
-                : `No scenario in ${env.name} is about this skill. A pass on unrelated scenarios proves nothing — add some first.`}
-            </Typography>
-          )}
-        </Stack>
-      }
-      action={
-        env && !relevant.length ? (
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            onClick={() => onAddScenarios(envId)}
-          >
-            Add scenarios
-          </Button>
-        ) : (
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={!env}
-            onClick={() =>
-              onStart({
-                v: setup.v,
-                agentKey: setup.agentKey,
-                envId,
-                envName: env.name,
-                against,
-                scenarios: relevant.length,
-              })
-            }
-          >
-            Run test
-          </Button>
-        )
-      }
-    />
-  );
-}
-SkillTestDialog.propTypes = {
-  skill: PropTypes.object.isRequired,
-  setup: PropTypes.object.isRequired,
-  used: PropTypes.array.isRequired,
-  agents: PropTypes.array.isRequired,
-  nameOf: PropTypes.func.isRequired,
-  envs: PropTypes.array.isRequired,
-  byEnv: PropTypes.object.isRequired,
-  onChange: PropTypes.func.isRequired,
-  onClose: PropTypes.func.isRequired,
-  onAddScenarios: PropTypes.func.isRequired,
-  onStart: PropTypes.func.isRequired,
 };
 
 function CreateSkillDialog({ onClose, onCreate }) {
