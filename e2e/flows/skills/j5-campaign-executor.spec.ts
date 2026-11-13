@@ -187,7 +187,7 @@ test('SKILLS-E2E-051: execute forty fixed campaign targets and reconcile an unkn
   await mkdir(`${evidence}/shots`, { recursive: true });
   await page.screenshot({ path: `${evidence}/shots/j5-forty-targets.png` });
   await page.getByRole('button', { name: `Review target ${repos[39].name}`, exact: true }).click();
-  await expect(page.getByText('Merged does not mean installed or delivered.', { exact: false })).toBeVisible();
+  await expect(page.getByText(/A merged PR doesn.t mean the app has the change/)).toBeVisible();
   await expect(page.getByText('Not observed', { exact: true })).toHaveCount(3);
   await page.getByText('Independent delivery observations', { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${evidence}/shots/j5-reconciled-not-delivered.png` });
