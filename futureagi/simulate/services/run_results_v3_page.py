@@ -265,7 +265,9 @@ def cached_run_values(
             cache.set_many(to_cache, timeout=CACHE_TIMEOUT)
         except Exception:
             # The values are already read; a refused write must not fail the page.
-            logger.warning("Could not cache %s runs' %s", len(to_cache), shape)
+            logger.warning(
+                "Could not cache %s runs' %s", len(to_cache), shape, exc_info=True
+            )
     return values
 
 

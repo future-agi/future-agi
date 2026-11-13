@@ -172,11 +172,7 @@ export default function CompareRowDrawer({ row, runs, onClose, onOpenCall }) {
                 sx={{ mt: 1 }}
               >
                 {trials.map((one) => (
-                  <ToggleButton
-                    key={one ?? "none"}
-                    value={one}
-                    sx={{ py: 0.25, px: 1, typography: "s3" }}
-                  >
+                  <ToggleButton key={one ?? "none"} value={one}>
                     {COMPARE_COPY.trial(one)}
                   </ToggleButton>
                 ))}

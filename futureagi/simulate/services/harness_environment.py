@@ -27,7 +27,6 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
-from simulate.services.run_results_v3_page import run_outcome_summaries
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -162,6 +161,9 @@ def version_ref(version: AgentVersion | None) -> dict[str, Any] | None:
 
 
 def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
+    # Local: run_results_v3 imports simulate.serializers, which imports this module.
+    from simulate.services.run_results_v3_page import run_outcome_summaries
+
     if not executions:
         return {}
     ids = [execution.id for execution in executions]
