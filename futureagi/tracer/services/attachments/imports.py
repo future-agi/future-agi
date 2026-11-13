@@ -649,10 +649,7 @@ def _reserve_segment(job, size, token=None):
         rows = _lock_import_budgets(scope)
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
         _hold(locked, token)
-        if (
-            locked.state in TERMINAL_RECORDING_STATES
-            or locked.released_at is not None
-        ):
+        if locked.state in TERMINAL_RECORDING_STATES or locked.released_at is not None:
             raise AttachmentError("conflict", 409)
         amounts = {"bytes": size, **SEGMENT_UNITS}
         headroom = _headroom(rows)
@@ -904,10 +901,7 @@ def _allocate(job, recording, plan, sha256, existing, token):
     with transaction.atomic():
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
         _hold(locked, token)
-        if (
-            locked.state in TERMINAL_RECORDING_STATES
-            or locked.released_at is not None
-        ):
+        if locked.state in TERMINAL_RECORDING_STATES or locked.released_at is not None:
             raise AttachmentError("conflict", 409)
         locked.save(update_fields=["lease_until"])
         if existing is not None:
