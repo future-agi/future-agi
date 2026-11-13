@@ -418,14 +418,22 @@ follow the header.
       `scripts/pr_risk.py` and `.github/pr-autopilot.yml`, which the
       approving job runs with the approver token; the header lists the
       files. Then the header's re-listing, in each key-holding repository.
-      Every `v*` tag is listed again and must point at a commit on `main`.
-      A tag that is new since step 2 stays if its `.github` and script
-      paths match main's recorded tip, or if a reader reads the differing
-      files at the tag; otherwise it is deleted with its runs. The runs of
-      the last 30 days on refs that a key or approver environment admits
-      must match what was read, or their versions are read, or the runs
-      are deleted. The run listing is sliced so that each slice returns
-      all its runs, because the endpoint stops at 1,000 without an error.
+      Every `v*` tag is listed again and compared with step 2's listing. A
+      tag that points at another commit than in step 2 was moved, and an
+      administrator puts it back at its step-2 commit. A new tag stays if
+      its commit is on `main` and its `.github` and listed paths match
+      main's recorded tip, or if a reader reads the differing files at the
+      tag; otherwise it is deleted with its runs. Each run of the last
+      30 days on a ref that a key or approver environment admits is
+      compared only on its own workflow file, what that file reaches
+      through `uses: ./` and the paths the one-time read lists for it,
+      such as `scripts/pr_risk.py` and `.github/pr-autopilot.yml` for this
+      workflow. Those files must match what was read, or their versions
+      are read, or the run is deleted. Runs on `dev`, which only
+      `pr-autopilot` admits, may be checked after the key move's step 6, as
+      long as that ends before the approver key is added (step 6 below).
+      The run listing is sliced so that each slice returns all its runs,
+      because the endpoint stops at 1,000 without an error.
       This repository had up to 712 runs in one hour of 12 Nov (read on
       13 Nov), so its slices are an hour or less. It also keeps
       `pull_request_target` runs, this workflow's PR-event runs among them,
