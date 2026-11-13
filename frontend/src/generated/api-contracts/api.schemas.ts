@@ -39729,6 +39729,10 @@ export type SimulateScenariosListParams = {
    * @minimum 1
    */
   limit?: number;
+  /**
+   * JSON array of up to 100 scenario UUIDs to surface at the top of the list.
+   */
+  selected_scenarios?: string;
 };
 
 export type SimulateScenariosGetColumnsListParams = {
@@ -39746,6 +39750,10 @@ export type SimulateScenariosGetColumnsListParams = {
    * @minimum 1
    */
   limit?: number;
+  /**
+   * JSON array of up to 100 scenario UUIDs to surface at the top of the list.
+   */
+  selected_scenarios?: string;
 };
 
 export type SimulateTestExecutionsReadParams = {
