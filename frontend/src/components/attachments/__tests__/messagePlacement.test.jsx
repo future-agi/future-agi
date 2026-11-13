@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import PropTypes from "prop-types";
 import { render } from "src/utils/test-utils";
 import SmartPreview from "src/components/traceDetail/SmartPreview";
 import SpanAttachments, { SpanAttachmentsProvider } from "../SpanAttachments";
@@ -48,6 +49,13 @@ function View({ attachments, input = chat(2), viewMode = "chat", enabled }) {
     </SpanAttachmentsProvider>
   );
 }
+
+View.propTypes = {
+  attachments: PropTypes.array,
+  input: PropTypes.string,
+  viewMode: PropTypes.string,
+  enabled: PropTypes.bool,
+};
 
 const list = () => screen.queryByLabelText("Span attachments");
 
