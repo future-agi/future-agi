@@ -565,4 +565,109 @@ describe("scoped entity tag writes", () => {
       });
     });
   });
+
+  describe("an editor moved to another entity and back keeps each one's save", () => {
+    // A and B are saved in turn (each acknowledged at revision 1) while the
+    // owner's data stays at revision 0; back on A, its edit builds on A's save.
+    const spanA = { ...entity, tag_target: { ...target, span_id: "span-a" } };
+    const spanB = { ...entity, tag_target: { ...target, span_id: "span-b" } };
+    const acknowledge = (method, name) =>
+      method.mockResolvedValueOnce({
+        data: {
+          result: {
+            tags: [{ name: "sdk" }, { name, color: "#123456" }],
+            manual_tags: [{ name, color: "#123456" }],
+            source_tag_names: ["sdk"],
+            tag_revision: 1,
+          },
+        },
+      });
+
+    it("in the span pane's inline tag row", async () => {
+      acknowledge(axios.post, "a1");
+      acknowledge(axios.post, "b1");
+      const client = new QueryClient();
+      const pane = (span) => (
+        <QueryClientProvider client={client}>
+          <SpanDetailPane
+            entry={{
+              observation_span: {
+                ...span,
+                id: span.tag_target.span_id,
+                trace: "trace-1",
+                name: span.tag_target.span_id,
+              },
+            }}
+            projectId={target.project_id}
+            onClose={vi.fn()}
+          />
+        </QueryClientProvider>
+      );
+      const add = async (name, calls) => {
+        nextTag.name = name;
+        fireEvent.click(screen.getByRole("button", { name: "tag" }));
+        fireEvent.click(screen.getByText("Add test tag"));
+        await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(calls));
+      };
+      const { rerender } = render(pane(spanA));
+      await add("a1", 1);
+      await waitFor(() => expect(screen.getByText("a1")).not.toBeDisabled());
+      rerender(pane(spanB));
+      await add("b1", 2);
+      await waitFor(() => expect(screen.getByText("b1")).not.toBeDisabled());
+      rerender(pane(spanA));
+      expect(screen.getByText("a1")).toBeInTheDocument();
+      await add("a2", 3);
+      expect(axios.post.mock.calls[2][1]).toEqual({
+        ...target,
+        span_id: "span-a",
+        expected_tag_revision: 1,
+        tags: [
+          { name: "a1", color: "#123456" },
+          { name: "a2", color: "#123456" },
+        ],
+      });
+    });
+
+    it("in the drawer header popover", async () => {
+      acknowledge(axios.patch, "a1");
+      acknowledge(axios.patch, "b1");
+      const client = new QueryClient();
+      const popover = (selected) => (
+        <QueryClientProvider client={client}>
+          <AddTagsPopover
+            open
+            anchorEl={document.body}
+            onClose={vi.fn()}
+            entity={selected}
+            currentTags={selected.tags}
+          />
+        </QueryClientProvider>
+      );
+      const add = async (name, calls) => {
+        nextTag.name = name;
+        fireEvent.click(screen.getByText("Add test tag"));
+        await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(calls));
+        await waitFor(() =>
+          expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+        );
+      };
+      const { rerender } = render(popover(spanA));
+      await add("a1", 1);
+      rerender(popover(spanB));
+      await add("b1", 2);
+      rerender(popover(spanA));
+      expect(screen.getByText("a1")).toBeInTheDocument();
+      await add("a2", 3);
+      expect(axios.patch.mock.calls[2][1]).toEqual({
+        ...target,
+        span_id: "span-a",
+        expected_tag_revision: 1,
+        tags: [
+          { name: "a1", color: "#123456" },
+          { name: "a2", color: "#123456" },
+        ],
+      });
+    });
+  });
 });

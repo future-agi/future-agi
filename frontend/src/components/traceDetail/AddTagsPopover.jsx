@@ -32,10 +32,11 @@ const AddTagsPopover = ({
     items.length === 1 ? items[0].currentTags || EMPTY_TAGS : currentTags;
   const saveEntityTags = useSaveEntityTags();
 
-  // The last acknowledged single save: { key, result }. The owner's entity
-  // and tags can be older than it (a drawer refetch or a grid row update
-  // lands later), and the popover can be reopened before they catch up.
-  const acknowledged = React.useRef(null);
+  // The last acknowledged single save of each entity (tagTargetKey ->
+  // result). The owner's entity and tags can be older than it (a drawer
+  // refetch or a grid row update lands later), and the popover can be
+  // reopened, or moved to another entity and back, before they catch up.
+  const acknowledged = React.useRef(new Map());
   // The tag state the shown list was built from, sent as the save's base so
   // the list and the expected revision always match.
   const baseState = React.useRef({ key: null, state: null });
@@ -53,15 +54,17 @@ const AddTagsPopover = ({
   const confirmedTags = React.useRef(tags);
   const queryClient = useQueryClient();
 
+  const selectedKey = tagTargetKey(selectedEntity);
   React.useEffect(() => {
     if (open) {
       confirmedTags.current = seed();
       setTags(confirmedTags.current);
     }
-    // Reseed on open and when the owner's tags change; the entity is read
-    // through a ref so a new object for the same entity does not reseed.
+    // Reseed on open, when the owner's tags change and when it selects
+    // another entity; the entity is read through a ref so a new object for
+    // the same entity does not reseed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedTags, isBulk]);
+  }, [open, selectedTags, selectedKey, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
     // The saved entity travels with the request: the owner can select another
@@ -97,7 +100,7 @@ const AddTagsPopover = ({
     },
     onSuccess: (result, { entity: savedEntity, type }) => {
       if (!isBulk) {
-        acknowledged.current = { key: tagTargetKey(savedEntity), result };
+        acknowledged.current.set(tagTargetKey(savedEntity), result);
         // Show it only if the popover still edits the entity it was saved for.
         if (
           tagTargetKey(savedEntity) === tagTargetKey(selectedEntityRef.current)

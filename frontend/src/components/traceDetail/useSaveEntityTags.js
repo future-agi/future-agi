@@ -55,22 +55,23 @@ export const tagTargetKey = (entity) =>
 
 // The newest tag state an editor knows for an entity: the entity as loaded,
 // or a later acknowledged save of the same target (a save result has tags,
-// manual_tags, source_tag_names and tag_revision). An editor builds its next
-// tag list from this state and sends it as the save's base, so the list and
-// the expected revision always come from the same state.
-export const latestTagState = (entity, confirmed) => {
+// manual_tags, source_tag_names and tag_revision). `acknowledged` maps
+// tagTargetKey -> the last acknowledged result for that target, so an editor
+// that moves between entities keeps each one's save. An editor builds its
+// next tag list from this state and sends it as the save's base, so the list
+// and the expected revision always come from the same state.
+export const latestTagState = (entity, acknowledged) => {
   const key = tagTargetKey(entity);
+  const result = key === null ? undefined : acknowledged?.get(key);
   if (
-    key === null ||
-    !confirmed ||
-    confirmed.key !== key ||
-    !Number.isSafeInteger(confirmed.result?.tag_revision) ||
+    !result ||
+    !Number.isSafeInteger(result.tag_revision) ||
     !Number.isSafeInteger(entity?.tag_revision) ||
-    confirmed.result.tag_revision <= entity.tag_revision
+    result.tag_revision <= entity.tag_revision
   ) {
     return entity;
   }
-  return confirmed.result;
+  return result;
 };
 
 /**
@@ -82,11 +83,13 @@ export const latestTagState = (entity, confirmed) => {
  *   to call when a save is acknowledged.
  */
 export function useLatestEntityTags(entity, tags) {
-  const [confirmed, setConfirmed] = useState(null);
-  const base = latestTagState(entity, confirmed);
+  const [acknowledged, setAcknowledged] = useState(() => new Map());
+  const base = latestTagState(entity, acknowledged);
   const confirm = useCallback(
     (result, savedEntity) =>
-      setConfirmed({ key: tagTargetKey(savedEntity), result }),
+      setAcknowledged((current) =>
+        new Map(current).set(tagTargetKey(savedEntity), result),
+      ),
     [],
   );
   return { tags: base === entity ? tags : base.tags || [], base, confirm };
