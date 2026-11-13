@@ -1,18 +1,19 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, LinearProgress } from "@mui/material";
+import { Box } from "@mui/material";
 
 import OptimizeTabPanel from "./OptimizeTabPanel";
 import PromptTemplateExplore from "./PromptTemplateExplore";
 import RightAnswerExplore from "./RightAnswerExplore";
 import PromptTemplateResults from "./PromptTemplateResults";
+import { LoadingScreen } from "src/components/loading-screen";
 
 function CustomTabPanel(props) {
   const { children, value, panelValue, loading, ...other } = props;
 
   return (
     <div hidden={panelValue !== value} role="tabpanel" {...other}>
-      {loading ? <LinearProgress /> : null}
+      {loading ? <LoadingScreen /> : null}
       {value === panelValue && !loading && <Box>{children}</Box>}
     </div>
   );

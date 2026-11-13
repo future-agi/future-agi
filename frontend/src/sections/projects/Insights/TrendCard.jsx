@@ -400,7 +400,7 @@ function RunPager({ runs, runId, onSelectRun }) {
       </Button>
       <Typography
         variant="body2"
-        sx={{ fontVariantNumeric: "tabular-nums", fontSize: 13 }}
+        sx={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
       >
         {formatWhen(current.finished_at || current.created_at)}
         <Box component="span" sx={{ color: "text.secondary" }}>

@@ -74,7 +74,7 @@ export const RenderJSONString = memo(({ val, theme }) => {
         : "var(--bg-subtle)",
     textOverflow: "ellipsis",
     overflow: "hidden",
-    fontSize: "13px",
+    fontSize: "12px",
     lineHeight: "22px",
     whiteSpace: "nowrap",
     color: "var(--text-primary)",
@@ -171,7 +171,7 @@ const CustomJsonViewer = ({
       editable={false}
       valueTypes={[imageType]}
       // this set same as Typography s1 as it is used for normal text
-      sx={{ fontSize: "13px", lineHeight: "22px" }}
+      sx={{ fontSize: "12px", lineHeight: "22px" }}
       {...rest}
     />
   );

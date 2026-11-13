@@ -756,7 +756,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"13px"}
+              fontSize={"12px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now

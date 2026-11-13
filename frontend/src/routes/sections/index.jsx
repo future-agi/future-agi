@@ -1,5 +1,6 @@
 import React, { Suspense, useMemo } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
+import { registerPreloadRoutes } from "src/routes/preload";
 import { Navigate, useRoutes } from "react-router-dom";
 
 import { mainRoutes } from "./main";
@@ -40,6 +41,7 @@ export default function Router() {
     () => dashboardRoutes(user, currentWorkspaceRole, { isCloud }),
     [user, currentWorkspaceRole, isCloud],
   );
+  registerPreloadRoutes(dashboardRoutesArray);
 
   // Confirmed read required, or a failed probe sends cloud users to /setup.
   let rootTarget = postLoginPath;

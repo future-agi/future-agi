@@ -1,4 +1,5 @@
 import re
+from typing import Any
 
 import pandas as pd
 import structlog
@@ -6,40 +7,30 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 
 from accounts.models.organization import Organization
-
+from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+from model_hub.models.choices import AnnotationTypeChoices, CellStatus, StatusType
+from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
+from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from tfc.constants.api_calls import APICallTypeChoices
 from tfc.ee_stub import _ee_stub
+from tfc.temporal import temporal_activity
+from tfc.utils.error_codes import get_error_message
 
-# from ee.agenthub.feedback_agent_updated.feedback_agent import FeedbackAgent
 try:
-    from ee.agenthub.deterministic_agent.deterministic_agent import (
-        DeterministicAgent,
-    )
+    from ee.agenthub.deterministic_agent.deterministic_agent import DeterministicAgent
 except ImportError:
     DeterministicAgent = _ee_stub("DeterministicAgent")
 
-# from ee.agenthub.feedback_agent_updated.utils import data_formatter, inputs_list, process_examples, retrieve_avg_rag_based_examples
-# from ee.agenthub.feedback_agent_updated.utils import RAG
-from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
-
-logger = structlog.get_logger(__name__)
-from model_hub.models.choices import (
-    AnnotationTypeChoices,
-    CellStatus,
-    StatusType,
-)
-from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from tfc.temporal import temporal_activity
-from tfc.utils.error_codes import get_error_message
-from tfc.constants.api_calls import APICallTypeChoices
 try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
 
-# from ee.agenthub.feedback_agent_updated.utils import delete_table
-
+logger = structlog.get_logger(__name__)
 
 RAG_TXT = "Rag"
 
@@ -49,11 +40,44 @@ def generate_annotations_task(
     annotation_label_id, annotation_id, org_id=None, row_id=None
 ):
     logger.info("Auto Annotation task started")
-    annotation_label = AnnotationsLabels.objects.get(id=annotation_label_id)
-    annotation = Annotations.objects.get(id=annotation_id)
+    if not org_id:
+        raise ValueError("An organization ID is required for auto annotation")
+    org = Organization.objects.get(id=org_id)
+    # Workers have no request workspace context. Establish an explicit tenant
+    # root before reading settings, charging usage, or changing any cells.
+    annotation = Annotations.no_workspace_objects.select_related("workspace").get(
+        id=annotation_id,
+        organization=org,
+    )
+    if (
+        annotation.workspace is not None
+        and annotation.workspace.organization_id != org.id
+    ):
+        raise ValueError("Workspace does not belong to the annotation organization")
+    workspace_scope = Q(workspace_id=annotation.workspace_id)
+    if annotation.workspace is None or annotation.workspace.is_default:
+        workspace_scope = Q(workspace__isnull=True) | Q(
+            workspace__is_default=True,
+            workspace__organization=org,
+        )
+    if annotation.dataset_id is None:
+        raise Dataset.DoesNotExist("Auto annotation requires an annotation dataset")
+    dataset = Dataset.no_workspace_objects.get(
+        workspace_scope,
+        id=annotation.dataset_id,
+        organization=org,
+    )
+    annotation_label = AnnotationsLabels.no_workspace_objects.get(
+        workspace_scope,
+        Q(project__isnull=True) | Q(project__organization=org, project__deleted=False),
+        id=annotation_label_id,
+        organization=org,
+        annotation_label=annotation,
+    )
+    annotation.dataset = dataset
+    if row_id is not None:
+        Row.objects.get(id=row_id, dataset=dataset)
     auto_annotation = AutoAnnotation(annotation_label, annotation)
-    if org_id:
-        org = Organization.objects.get(id=org_id)
     auto_annotation.generate_annotations(row_id, org)
     logger.info("Auto Annotation task ended")
 
@@ -70,7 +94,13 @@ def replace_dynamic_ids(value: str, row):
 
     for match in matches:
         try:
-            cell = Cell.objects.get(column__id=match, row=row)
+            cell = Cell.objects.get(
+                column_id=match,
+                row=row,
+                dataset_id=row.dataset_id,
+                column__dataset_id=row.dataset_id,
+                column__deleted=False,
+            )
             value = value.replace(f"{{{{{match}}}}}", str(cell.value))
         except ObjectDoesNotExist as e:
             raise ValueError(
@@ -83,7 +113,15 @@ def replace_dynamic_ids(value: str, row):
 def _get_input_values(inputs: list, dataset_id, row_id):
     outputs = []
     for col_id in inputs:
-        cell = Cell.objects.get(dataset_id=dataset_id, column_id=col_id, row_id=row_id)
+        cell = Cell.objects.get(
+            dataset_id=dataset_id,
+            column_id=col_id,
+            row_id=row_id,
+            column__dataset_id=dataset_id,
+            row__dataset_id=dataset_id,
+            column__deleted=False,
+            row__deleted=False,
+        )
         if cell:
             outputs.append(str(cell.value))
         else:
@@ -121,6 +159,11 @@ def dataset_to_dataframe(dataset_id, source_id):
     if source_id:
         # Get all feedback cells matching the criteria
         feedback_cells = Cell.objects.filter(
+            dataset=dataset,
+            row__dataset=dataset,
+            column__dataset=dataset,
+            row__deleted=False,
+            column__deleted=False,
             column__source_id=source_id,
             feedback_info__has_key="update",
             deleted=False,
@@ -131,7 +174,12 @@ def dataset_to_dataframe(dataset_id, source_id):
         for feedback_cell in feedback_cells:
             # Get all cells for this row first (excluding source_id columns)
             base_cells = (
-                Cell.objects.filter(row=feedback_cell.row)
+                Cell.objects.filter(
+                    row=feedback_cell.row,
+                    dataset=dataset,
+                    column__dataset=dataset,
+                    column__deleted=False,
+                )
                 .exclude(column__source=source_id)
                 .select_related("column")
             )
@@ -169,6 +217,8 @@ class AutoAnnotation:
                 raise Exception("Dataset not found")
 
             rows = Row.objects.filter(dataset=dataset, deleted=False)
+            if row_id is not None:
+                rows = rows.filter(id=row_id)
             columns = Column.objects.filter(
                 source_id=f"{self.annotation.id}-sourceid-{self.annotation_label.id}",
                 dataset=dataset,
@@ -221,29 +271,38 @@ class AutoAnnotation:
                         inputs, input_type, strict=False
                     ):
                         if input_type_item == "image":
-                            tokens = (count_tiktoken_tokens("", input_item) if count_tiktoken_tokens else 0)
+                            tokens = (
+                                count_tiktoken_tokens("", input_item)
+                                if count_tiktoken_tokens
+                                else 0
+                            )
                         else:
-                            tokens = (count_tiktoken_tokens(input_item) if count_tiktoken_tokens else 0)
+                            tokens = (
+                                count_tiktoken_tokens(input_item)
+                                if count_tiktoken_tokens
+                                else 0
+                            )
                         api_call_type = APICallTypeChoices.AUTO_ANNOTATION.value
                         config = {}
                         config["input_tokens"] = tokens
                         if log_and_deduct_cost_for_api_request is not None:
                             log_and_deduct_cost_for_api_request(
-                            org,
-                            api_call_type,
-                            config,
-                            source="auto_annotate",
-                            workspace=dataset.workspace,
-                        )
+                                org,
+                                api_call_type,
+                                config,
+                                source="auto_annotate",
+                                workspace=dataset.workspace,
+                            )
 
                     Cell.objects.filter(
+                        dataset=dataset,
+                        column__dataset=dataset,
+                        column__deleted=False,
                         column__source_id=f"{self.annotation.id}-sourceid-{self.annotation_label.id}",
                         row_id=row.id,
                     ).exclude(feedback_info__annotation__verified=True).exclude(
                         feedback_info__annotation__has_key="user_id"
-                    ).update(
-                        status=CellStatus.RUNNING.value, value=None
-                    )
+                    ).update(status=CellStatus.RUNNING.value, value=None)
 
                     if self.annotation_label.settings["strategy"] == RAG_TXT:
                         # Get cell values for each input column ID
@@ -251,7 +310,12 @@ class AutoAnnotation:
                         for column_id in self.annotation_label.settings["inputs"]:
                             try:
                                 cell = Cell.objects.get(
-                                    row=row, column_id=column_id, deleted=False
+                                    row=row,
+                                    column_id=column_id,
+                                    deleted=False,
+                                    dataset=dataset,
+                                    column__dataset=dataset,
+                                    column__deleted=False,
                                 )
                                 cell_inputs.append(cell.value)
                             except Cell.DoesNotExist:
@@ -304,7 +368,9 @@ class AutoAnnotation:
                                 llm_usage_properties,
                             )
                         except ImportError:
-                            llm_usage_properties = lambda obj: {}
+
+                            def llm_usage_properties(obj: Any) -> dict[str, int]:
+                                return {}
 
                         actual_cost = 0
                         if hasattr(agent, "llm") and agent.llm:
@@ -312,26 +378,29 @@ class AutoAnnotation:
                                 "total_cost", 0
                             )
                         if BillingConfig is not None:
-
-                            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-                        if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
-                            emit(
-                            UsageEvent(
-                                org_id=str(org.id),
-                                event_type=BillingEventType.AUTO_ANNOTATION,
-                                amount=credits,
-                                properties={
-                                    "source": "auto_annotate",
-                                    "annotation_id": str(self.annotation.id),
-                                    "row_id": str(row.id),
-                                    "raw_cost_usd": str(actual_cost),
-                                    **llm_usage_properties(agent),
-                                },
+                            credits = BillingConfig.get().calculate_ai_credits(
+                                actual_cost
                             )
-                        )
+
+                        if (
+                            emit is not None
+                            and UsageEvent is not None
+                            and BillingEventType is not None
+                        ):
+                            emit(
+                                UsageEvent(
+                                    org_id=str(org.id),
+                                    event_type=BillingEventType.AUTO_ANNOTATION,
+                                    amount=credits,
+                                    properties={
+                                        "source": "auto_annotate",
+                                        "annotation_id": str(self.annotation.id),
+                                        "row_id": str(row.id),
+                                        "raw_cost_usd": str(actual_cost),
+                                        **llm_usage_properties(agent),
+                                    },
+                                )
+                            )
                     except Exception:
                         pass
 
@@ -355,6 +424,8 @@ class AutoAnnotation:
             )
             for column in columns:
                 rows = Row.objects.filter(dataset=dataset, deleted=False)
+                if row_id is not None:
+                    rows = rows.filter(id=row_id)
                 for row in rows:
                     cell, _ = Cell.objects.get_or_create(
                         column=column,
@@ -367,19 +438,24 @@ class AutoAnnotation:
                         "verified"
                     ) and not cell.feedback_info.get("annotation", {}).get("user_id"):
                         cell.status = CellStatus.ERROR.value
+                        if not isinstance(cell.value_infos, dict):
+                            cell.value_infos = {}
                         cell.value_infos["reason"] = get_error_message(
                             "FAILED_TO_GENERATE_ANNOTATION"
                         )
                         cell.value = None
                         cell.save()
-            logger.error("Error in auto annotation", e)
+            logger.error("Error in auto annotation", error=str(e))
 
     def run_model(self, agent, payload, row):
+        if row.dataset_id != self.annotation.dataset_id:
+            raise ValueError("Row does not belong to the annotation dataset")
         response = None
         column = list(
             Column.objects.filter(
-                source_id=f"{self.annotation.id}-sourceid-{self.annotation_label.id}"
-            ).all()
+                source_id=f"{self.annotation.id}-sourceid-{self.annotation_label.id}",
+                dataset_id=self.annotation.dataset_id,
+            )
         )
         for col in column:
             cell, created = Cell.objects.get_or_create(

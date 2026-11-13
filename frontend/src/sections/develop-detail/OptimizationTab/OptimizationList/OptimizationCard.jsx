@@ -27,7 +27,7 @@ const OptimizationCard = ({ optimization, selected, onClick }) => {
       <Box sx={{ width: "50%", overflow: "hidden" }}>
         <Typography
           fontWeight={500}
-          fontSize="13px"
+          fontSize="12px"
           variant="subtitle2"
           noWrap
           sx={{
@@ -56,7 +56,7 @@ const OptimizationCard = ({ optimization, selected, onClick }) => {
         />
         <Typography
           fontWeight={400}
-          fontSize="13px"
+          fontSize="12px"
           variant="subtitle2"
           sx={{ whiteSpace: "nowrap" }}
         >

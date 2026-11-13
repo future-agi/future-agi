@@ -100,7 +100,7 @@ export default function MultiFilePreview({ thumbnail, files, onRemove, sx }) {
               primary={isNotFormatFile ? file : name}
               secondary={isNotFormatFile ? "" : fData(size)}
               primaryTypographyProps={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 500,
                 noWrap: true,
               }}

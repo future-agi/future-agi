@@ -125,7 +125,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                     variant="subtitle2"
                     sx={{
                       color: "text.primary",
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: 500,
                     }}
                   >

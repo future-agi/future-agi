@@ -157,7 +157,7 @@ function HighlightedContent({ content, evidence, brokeAt }) {
         borderColor: "divider",
         borderRadius: 1,
         bgcolor: "background.neutral",
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: 1.7,
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
@@ -301,7 +301,7 @@ function CitedImage({ runId, unitId, item }) {
           {caption && (
             <Typography
               variant="body2"
-              sx={{ mt: 1, maxWidth: 640, fontSize: 13 }}
+              sx={{ mt: 1, maxWidth: 640, fontSize: 12 }}
             >
               {caption}
             </Typography>
@@ -478,7 +478,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
               {data.summary && (
                 <Typography
                   variant="body2"
-                  sx={{ fontSize: 13, lineHeight: "21px" }}
+                  sx={{ fontSize: 12, lineHeight: "21px" }}
                 >
                   {data.summary}
                 </Typography>
@@ -493,7 +493,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                   }}
                 >
                   <Label>Answer to the report&apos;s question</Label>
-                  <Typography variant="body2" sx={{ fontSize: 13 }}>
+                  <Typography variant="body2" sx={{ fontSize: 12 }}>
                     {data.lens_answer}
                   </Typography>
                 </Box>
@@ -582,7 +582,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                       borderColor: "divider",
                       borderRadius: 1,
                       bgcolor: "background.neutral",
-                      fontSize: 13,
+                      fontSize: 12,
                       lineHeight: 1.7,
                       whiteSpace: "pre-wrap",
                       overflowWrap: "anywhere",

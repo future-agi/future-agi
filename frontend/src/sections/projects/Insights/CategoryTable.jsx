@@ -107,7 +107,7 @@ function ShareCell({ stats, color }) {
       </Box>
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {formatPercent(share)}
         {Number.isFinite(stats?.count) && (
@@ -201,7 +201,7 @@ function Muted({ children }) {
       variant="body2"
       component="span"
       color="text.disabled"
-      sx={{ fontSize: 13 }}
+      sx={{ fontSize: 12 }}
     >
       {children}
     </Typography>
@@ -333,7 +333,7 @@ function CategoryRow({
         bgcolor: child ? "background.neutral" : undefined,
         "& > td": {
           color: muted ? "text.secondary" : undefined,
-          fontSize: 13,
+          fontSize: 12,
           py: 1.25,
         },
         "&:hover .open-hint": { opacity: 1 },
@@ -376,7 +376,7 @@ function CategoryRow({
                 variant="body2"
                 title={category.name}
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: child ? 500 : 600,
                   display: "-webkit-box",
                   WebkitLineClamp: 2,

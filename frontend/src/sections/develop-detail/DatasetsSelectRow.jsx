@@ -284,7 +284,7 @@ const DatasetsSelectRow = ({
               <Box sx={{ fontSize: "12px", color: "text.secondary" }}>
                 Scenario
               </Box>
-              <Box sx={{ fontSize: "13px", fontWeight: 500 }}>
+              <Box sx={{ fontSize: "12px", fontWeight: 500 }}>
                 {scenarioName}
               </Box>
             </Box>
@@ -338,7 +338,7 @@ const DatasetsSelectRow = ({
                   }}
                 >
                   <CircularProgress size={16} />
-                  <Box sx={{ color: "text.secondary", fontSize: "13px" }}>
+                  <Box sx={{ color: "text.secondary", fontSize: "12px" }}>
                     {fromScenario
                       ? "Loading scenarios..."
                       : "Loading datasets..."}

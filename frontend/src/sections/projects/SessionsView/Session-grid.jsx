@@ -1,5 +1,6 @@
 import { Box, LinearProgress, Skeleton, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import React, {
   useMemo,

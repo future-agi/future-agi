@@ -118,7 +118,7 @@ function ensureSocket(token, workspaceId) {
       }, 30000);
       resolve(ws);
     };
-    ws.onerror = () => reject(new Error("Falcon socket error"));
+    ws.onerror = () => reject(new Error("Connection error"));
     ws.onclose = () => {
       clearInterval(pingTimer);
       if (socket === ws) {
@@ -781,7 +781,7 @@ export async function runFollowUp({
       {
         id: subagentMsgId,
         type: MESSAGE_TYPE.SUBAGENT,
-        title: "Falcon",
+        title: "AI",
         status: STREAM_STATUS.STREAMING,
         steps: [],
         answer: null,

@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { Suspense, lazy, useEffect } from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
@@ -14,7 +14,6 @@ import NavMini from "./nav-mini";
 import NavVertical from "./nav-vertical";
 import NavHorizontal from "./nav-horizontal";
 import NavGatewayPanel from "./NavGatewayPanel";
-import FalconAISidebar from "src/sections/falcon-ai/FalconAISidebar";
 import FalconAIFab from "src/sections/falcon-ai/components/FalconAIFab";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
@@ -23,6 +22,12 @@ import HostUpdateNotice from "src/components/host-update-status/HostUpdateNotice
 import { Typography } from "@mui/material";
 import { ShowComponent } from "../../components/show";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
+
+// Falcon AI (chat, Markdown, code highlighting) is a large chunk; load it after
+// the page instead of before the first paint.
+const FalconAISidebar = lazy(
+  () => import("src/sections/falcon-ai/FalconAISidebar"),
+);
 
 // ----------------------------------------------------------------------
 
@@ -119,7 +124,11 @@ export default function DashboardLayout({ children }) {
           <HostUpdateNotice />
           {children}
         </Main>
-        {falconAllowed && <FalconAISidebar />}
+        {falconAllowed && (
+          <Suspense fallback={null}>
+            <FalconAISidebar />
+          </Suspense>
+        )}
       </Box>
       <FalconAIFab />
     </>

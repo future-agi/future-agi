@@ -27,7 +27,7 @@ const EachTheoremComponent = ({ model }) => {
       />
       <Box display="flex" flexDirection="column" flex="1">
         <Typography
-          fontSize={13}
+          fontSize={12}
           lineHeight="20px"
           fontWeight="fontWeightMedium"
           color="text.primary"

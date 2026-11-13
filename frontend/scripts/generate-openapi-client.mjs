@@ -1181,6 +1181,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "expires_at: string | null;",
       "APIKeyBulkItemApi.expires_at nullable",
     );
+    // An organization API key without expiry is created with, and returned
+    // with, expires_at: null.
+    for (const [type, anchor] of [
+      ["CreateSecretKeyApi", "expires_at?: string;"],
+      ["SecretKeyCreateResultApi", "expires_at: string;"],
+      ["SecretKeyListItemApi", "expires_at: string;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${type} {`,
+        anchor,
+        anchor.replace("string;", "string | null;"),
+        `${type}.expires_at nullable`,
+      );
+    }
 
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
@@ -2234,6 +2249,20 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         / =[\s\S]*/,
         ` = ${getName};\n\n`,
         postName,
+      );
+    }
+    // The same organization API key expiry fields, in the zod schemas.
+    for (const name of [
+      "AccountsKeyGenerateSecretKeyBody",
+      "AccountsKeyGenerateSecretKeyResponse",
+      "AccountsKeyGetSecretKeysResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${name} =`,
+        /("expires_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+        "$1.nullable()",
+        `${name}.expires_at nullable`,
       );
     }
     fs.writeFileSync(zodOutputPath, zod);

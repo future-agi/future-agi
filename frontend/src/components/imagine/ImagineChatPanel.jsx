@@ -203,7 +203,7 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         <Typography
           sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
         >
-          Falcon AI
+          Chat
         </Typography>
         <Typography sx={{ fontSize: 12, color: "text.disabled", ml: "auto" }}>
           Trace context attached

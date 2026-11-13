@@ -413,7 +413,7 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
           sx={{
             padding: "12px 16px",
             fontWeight: 600,
-            fontSize: "13px",
+            fontSize: "12px",
             color: theme.palette.text.disabled,
             backgroundColor: theme.palette.divider,
           }}

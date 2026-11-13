@@ -351,10 +351,10 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="13px"
+              fontSize="12px"
               sx={{
                 textDecoration: "underline",
-                fontSize: "13px",
+                fontSize: "12px",
                 alignSelf: "center",
                 marginBottom: 1,
               }}

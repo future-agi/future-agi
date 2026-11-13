@@ -111,6 +111,9 @@ type CheckInput struct {
 
 // CheckResult is the output of a guardrail check.
 type CheckResult struct {
+	// Err is an execution/unavailability result, not a scored content decision.
+	// Realtime blocking policies must refuse it regardless of score threshold.
+	Err     error                  `json:"-"`
 	Pass    bool                   // true = safe, false = triggered
 	Score   float64                // 0.0 = safe, 1.0 = max violation
 	Action  Action                 // what action to take if triggered
@@ -154,4 +157,10 @@ func shouldTrigger(result *CheckResult, threshold float64) bool {
 		return true
 	}
 	return !result.Pass && result.Score <= 0
+}
+
+// RequestTextChecker is implemented by checks that inspect only request
+// messages. Realtime post-stage text is passed to them as a request message.
+type RequestTextChecker interface {
+	ChecksRequestTextOnly()
 }

@@ -413,7 +413,7 @@ export function LabelsAccordion({
                 >
                   <Typography
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                     }}
                   >
                     {option.label}
@@ -442,7 +442,7 @@ export function LabelsAccordion({
             left: 0,
             width: "100%",
             color: theme.palette.primary.main,
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: typography.fontWeightSemiBold,
             lineHeight: 1.6,
             display: "flex",

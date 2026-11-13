@@ -90,7 +90,7 @@ function ChangeCard({ card }) {
         component="span"
         noWrap
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: strong ? 500 : 400,
           minWidth: 0,
           flex: 1,
@@ -102,7 +102,7 @@ function ChangeCard({ card }) {
         variant="body2"
         component="span"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           flexShrink: 0,
           fontVariantNumeric: "tabular-nums",
           color: "text.secondary",

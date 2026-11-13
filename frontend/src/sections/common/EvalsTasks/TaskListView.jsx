@@ -131,8 +131,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
             maxWidth: 320,
             maxHeight: 280,
             overflowY: "auto",
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         }}

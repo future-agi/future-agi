@@ -148,7 +148,7 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={500} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="12px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>

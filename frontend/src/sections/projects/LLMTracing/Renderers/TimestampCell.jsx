@@ -23,7 +23,7 @@ const TimestampCell = ({ value }) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.secondary", px: 1.5 }}
+        sx={{ fontSize: 12, color: "text.secondary", px: 1.5 }}
       >
         -
       </Typography>
@@ -35,7 +35,7 @@ const TimestampCell = ({ value }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.secondary",
           textAlign: "right",
           width: "100%",

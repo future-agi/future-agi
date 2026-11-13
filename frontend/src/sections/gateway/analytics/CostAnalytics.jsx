@@ -119,7 +119,7 @@ function buildDonutChartOptions(theme, labels) {
             name: { show: false },
             value: {
               show: true,
-              fontSize: "13px",
+              fontSize: "12px",
               fontWeight: 600,
               formatter: (val) => formatCost(Number(val)),
             },
@@ -127,7 +127,7 @@ function buildDonutChartOptions(theme, labels) {
               show: true,
               showAlways: true,
               label: "Total",
-              fontSize: "13px",
+              fontSize: "12px",
               formatter: (w) => {
                 const total = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
                 return formatCost(total);
@@ -163,7 +163,7 @@ function buildDonutChartOptions(theme, labels) {
               donut: {
                 size: "70%",
                 labels: {
-                  value: { fontSize: "13px" },
+                  value: { fontSize: "12px" },
                   total: { fontSize: "12px" },
                 },
               },

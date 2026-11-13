@@ -117,7 +117,7 @@ function Finding({ finding, index }) {
               m: 0,
               mt: 0.5,
               pl: 2,
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: "20px",
               color: "text.secondary",
             }}
@@ -141,7 +141,7 @@ function Finding({ finding, index }) {
               component="p"
               sx={{
                 m: 0,
-                fontSize: 13,
+                fontSize: 12,
                 lineHeight: "20px",
                 color: "text.primary",
               }}

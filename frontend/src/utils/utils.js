@@ -674,7 +674,7 @@ export const customizeAgGridPopup = (theme, targetText, iconPath) => {
       // Basic styling
       element.style.fontWeight = 400;
       element.style.color = theme.palette.text.primary;
-      element.style.fontSize = "13px";
+      element.style.fontSize = "12px";
       element.style.fontFamily = "Inter, sans-serif";
       element.style.paddingLeft = "14px";
       element.style.paddingTop = "14px";

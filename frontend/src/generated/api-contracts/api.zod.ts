@@ -577,6 +577,14 @@ export const accountsKeyGenerateSecretKeyBodyTypeDefault = `user`;
 
 export const AccountsKeyGenerateSecretKeyBody = zod.object({
   key_name: zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax),
+  expires_at: zod
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional()
+    .describe(
+      "Optional expiry. Omit or send null for a key that never expires.",
+    ),
   type: zod
     .enum(["user", "coding_agent"])
     .default(accountsKeyGenerateSecretKeyBodyTypeDefault),
@@ -592,6 +600,7 @@ export const AccountsKeyGenerateSecretKeyResponse = zod.object({
     masked_api_key: zod.string().min(1),
     secret_key: zod.string().min(1),
     masked_secret_key: zod.string().min(1),
+    expires_at: zod.string().datetime({ offset: true }).nullable(),
   }),
 });
 
@@ -614,6 +623,8 @@ export const AccountsKeyGetSecretKeysResponse = zod.object({
         created_at: zod.string().datetime({ offset: true }),
         enabled: zod.boolean(),
         type: zod.string().min(1),
+        expires_at: zod.string().datetime({ offset: true }).nullable(),
+        is_expired: zod.boolean(),
       }),
     ),
   }),

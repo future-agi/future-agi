@@ -14,7 +14,7 @@ import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
 function defaultFixNotice() {
-  enqueueSnackbar("Fix with Falcon — not available in this view", {
+  enqueueSnackbar("Fix with AI isn’t available in this view", {
     variant: "info",
   });
 }
@@ -409,7 +409,7 @@ const EvalTableRow = ({
       </Box>
 
       {/* Expanded area — markdown explanation + error localization +
-          Fix with Falcon. Renders whenever any of those pieces exist. */}
+          Fix with AI. Renders whenever any of those pieces exist. */}
       {expanded && canExpand && (
         <Box
           sx={{
@@ -467,7 +467,7 @@ const EvalTableRow = ({
             />
           )}
 
-          {/* Fix with Falcon — hidden for passed evals (nothing to fix);
+          {/* Fix with AI — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
           {showFixWithFalcon && !isPassedEval(ev) && (
             <Button
@@ -486,7 +486,7 @@ const EvalTableRow = ({
               }}
               sx={{ alignSelf: "flex-start" }}
             >
-              Fix with Falcon
+              Fix with AI
             </Button>
           )}
         </Box>
@@ -507,7 +507,7 @@ EvalTableRow.propTypes = {
 
 /**
  * Main shared view. Renders:
- *  - summary bar (pass/fail counts, progress, optional "Fix with Falcon")
+ *  - summary bar (pass/fail counts, progress, optional "Fix with AI")
  *  - search + "Add Evals" toolbar
  *  - sticky table header + scrollable rows
  */
@@ -659,7 +659,7 @@ const EvalsTabView = ({
                 mb: 0.5,
               }}
             >
-              <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+              <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                 {totalPass}/{list.length} passed
               </Typography>
               {totalFail > 0 && (
@@ -704,7 +704,7 @@ const EvalsTabView = ({
           </Box>
         </Box>
 
-        {/* Summary-bar Fix with Falcon — hidden when every eval passed
+        {/* Summary-bar Fix with AI — hidden when every eval passed
             (nothing failing to escalate). Uses isPassedEval so unscored /
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
@@ -730,7 +730,7 @@ const EvalsTabView = ({
             }}
             sx={{ mt: 1 }}
           >
-            Fix with Falcon
+            Fix with AI
           </Button>
         )}
       </Box>

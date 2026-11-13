@@ -123,11 +123,11 @@ const TaskHeader = ({
             </IconButton>
           </Tooltip>
         )}
-        <Breadcrumbs separator="/" sx={{ fontSize: "13px" }}>
+        <Breadcrumbs separator="/" sx={{ fontSize: "12px" }}>
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate("/dashboard/tasks")}
           >
             Tasks
@@ -149,7 +149,7 @@ const TaskHeader = ({
               variant="standard"
               sx={{
                 "& .MuiInputBase-input": {
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 600,
                   py: 0.25,
                 },
@@ -160,7 +160,7 @@ const TaskHeader = ({
               <Typography
                 color="text.primary"
                 fontWeight={600}
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               >
                 {mode === "create" ? "Create Task" : name || "Untitled Task"}
               </Typography>

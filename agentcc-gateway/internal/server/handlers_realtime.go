@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -46,7 +45,7 @@ func NewRealtimeHandler(tracker *realtime.SessionTracker, registry *providers.Re
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.ReadBufferSize,
 			WriteBufferSize: cfg.WriteBufferSize,
-			CheckOrigin: makeOriginChecker(cfg.AllowedOrigins),
+			CheckOrigin:     makeOriginChecker(cfg.AllowedOrigins),
 		},
 		logger: slog.Default(),
 	}
@@ -128,107 +127,17 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 	}
 
 	// Resolve provider.
-	provider, err := rh.registry.Resolve(model)
+	_, err := rh.registry.Resolve(model)
 	if err != nil {
 		rh.tracker.Release(orgID)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"No provider for model %q","type":"not_found_error"}}`, model), http.StatusNotFound)
 		return
 	}
 
-	rp, ok := provider.(providers.RealtimeProvider)
-	if !ok {
-		rh.tracker.Release(orgID)
-		http.Error(w, `{"error":{"message":"Provider does not support realtime API","type":"not_found_error"}}`, http.StatusNotImplemented)
-		return
-	}
-
-	// Get upstream connection params.
-	providerURL, err := rp.RealtimeURL(model)
-	if err != nil {
-		rh.tracker.Release(orgID)
-		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider URL: %s","type":"server_error"}}`, err), http.StatusBadGateway)
-		return
-	}
-	providerHeaders, err := rp.RealtimeHeaders(model)
-	if err != nil {
-		rh.tracker.Release(orgID)
-		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider headers: %s","type":"server_error"}}`, err), http.StatusBadGateway)
-		return
-	}
-
-	// Upgrade client connection.
-	clientConn, err := rh.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		rh.tracker.Release(orgID)
-		rh.logger.Error("websocket upgrade failed", "error", err)
-		return
-	}
-
-	// Connect to upstream provider.
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		Subprotocols:     rp.RealtimeSubprotocols(),
-	}
-	providerConn, _, err := dialer.Dial(providerURL, providerHeaders)
-	if err != nil {
-		rh.tracker.Release(orgID)
-		closeMsg := websocket.FormatCloseMessage(4502, "Unable to connect to upstream provider: "+err.Error())
-		clientConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(2*time.Second))
-		clientConn.Close()
-		rh.logger.Error("upstream connection failed", "model", model, "error", err)
-		return
-	}
-
-	// Create session.
-	requestID := models.GetRequestID(r.Context())
-	sessionID := fmt.Sprintf("rt-%s", requestID)
-	session := realtime.NewSession(sessionID, requestID, orgID, model, provider.ID(), clientConn, providerConn)
-	rh.tracker.Register(session)
-
-	// Session timeout.
-	go func() {
-		select {
-		case <-time.After(rh.maxSessionDuration):
-			if !session.IsClosed() {
-				session.Close("timeout")
-			}
-		case <-session.StopChan():
-		}
-	}()
-
-	// Send gateway event.
-	gatewayEvent, _ := json.Marshal(map[string]string{
-		"type":       "gateway.session.created",
-		"session_id": sessionID,
-		"request_id": requestID,
-	})
-	clientConn.WriteMessage(websocket.TextMessage, gatewayEvent)
-
-	// Start relay (blocks until session is done).
-	relayConfig := realtime.RelayConfig{
-		ChannelBufferSize: 64,
-		PingInterval:      rh.pingInterval,
-		PongTimeout:       rh.pongTimeout,
-		MaxMessageSize:    rh.maxMessageSize,
-	}
-	relay := realtime.NewRelay(session, relayConfig, rh.logger)
-	relay.Start()
-
-	// Post-session cleanup.
-	session.Close("relay_done")
-	usage := session.Usage.Snapshot()
-
-	rh.logger.Info("realtime session ended",
-		"session_id", sessionID,
-		"model", model,
-		"provider", provider.ID(),
-		"duration", session.Duration(),
-		"input_tokens", usage.InputTokens,
-		"output_tokens", usage.OutputTokens,
-		"messages", usage.TotalMessages,
-		"close_reason", session.CloseReason,
-	)
-
+	// No shipped provider implements a supported generic realtime protocol. A
+	// provider URL interface alone does not establish protocol support.
 	rh.tracker.Release(orgID)
-	rh.tracker.Unregister(sessionID)
+	models.WriteError(w, &models.APIError{Status: http.StatusNotImplemented,
+		Type: models.ErrTypeServer, Code: "realtime_not_supported",
+		Message: "generic realtime is not supported; use a documented vendor speech route"})
 }

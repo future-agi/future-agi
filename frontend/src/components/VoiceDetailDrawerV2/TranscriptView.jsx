@@ -472,7 +472,7 @@ const TurnRow = React.forwardRef(
         <Box
           sx={{
             mt: 0.25,
-            fontSize: 13,
+            fontSize: 12,
             lineHeight: 1.45,
             color: "text.primary",
             "& p": { m: 0 },
@@ -493,7 +493,7 @@ const TurnRow = React.forwardRef(
             />
           ) : query ? (
             <Typography
-              sx={{ fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
+              sx={{ fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
             >
               {highlightMatches(turn.content, query)}
             </Typography>
