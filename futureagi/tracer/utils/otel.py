@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import structlog
+from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -782,7 +783,12 @@ DECODER = AttributeDecoder()
 
 
 def convert_otel_span_to_observation_span(
-    otel_span, organization_id=None, user_id=None, workspace_id=None
+    otel_span,
+    organization_id=None,
+    user_id=None,
+    workspace_id=None,
+    *,
+    attachment_binding=None,
 ):
     """
     Convert an OTel span dictionary to an ObservationSpan object with mapped fields.
@@ -825,6 +831,10 @@ def convert_otel_span_to_observation_span(
             user_id,
             workspace_id,
         )
+        if attachment_binding is not None:
+            attachment_binding.stage(
+                otel_span, project, organization_id, timezone.now()
+            )
         metadata = otel_span.get("metadata") or attributes.get(SpanAttributes.METADATA)
         project_version_id = otel_span.get("project_version_id")
         project_version = get_or_create_project_version(
@@ -947,7 +957,9 @@ def convert_otel_span_to_observation_span(
         observation_span = {
             "id": span_id,
             "name": otel_span.get("name", ""),
-            "observation_type": get_observation_type(span_kind),
+            "observation_type": resolve_observation_type(
+                span_kind, otel_span, attributes
+            ),
             "operation_name": operation_name,
             "start_time": timezone.make_aware(
                 datetime.fromtimestamp(otel_span.get("start_time", 0) / 1e9)
@@ -1054,12 +1066,21 @@ def process_attributes(attributes: dict[str, Any], org_id=None) -> dict[str, Any
         rf"^(?:{SpanAttributes.OUTPUT_MESSAGES}|{SpanAttributes.INPUT_MESSAGES}).*\.({MessageContentAttributes.MESSAGE_CONTENT_IMAGE}|{MessageContentAttributes.MESSAGE_CONTENT_AUDIO}|{MessageContentAttributes.MESSAGE_CONTENT_VIDEO})$"
     )
 
-    updated_attributes = attributes.copy()
+    from tracer.services.attachments.references import (
+        is_attachment_media,
+        normalize_attributes,
+    )
 
-    for key in attributes.keys():
+    updated_attributes = normalize_attributes(attributes)
+
+    for key in list(updated_attributes):
         match = pattern.match(key)
         if match:
-            content = attributes[key]
+            content = updated_attributes[key]
+            if is_attachment_media(content):
+                # New occurrences resolve only through the authenticated gateway.
+                # Even malformed scheme values must never reach legacy storage.
+                continue
             content_type = match.group(1).split(".")[-1]
 
             try:
@@ -1409,6 +1430,36 @@ def get_observation_type(span_kind: str) -> str:
     )
 
 
+# A LiveKit call's root span: ``job_entrypoint`` when tracing is set up before
+# the job starts, ``agent_session`` when it is set up inside the entrypoint
+# (the LiveKit README Quick Start), so there is no job_entrypoint span.
+LIVEKIT_JOB_ROOTS = frozenset(("job_entrypoint", "agent_session"))
+LIVEKIT_JOB_ID = "lk.job_id"
+
+
+def resolve_observation_type(span_kind: str, otel_span, attributes) -> str:
+    """``get_observation_type`` plus the LiveKit job root, attachments only.
+
+    The LiveKit SDK marks no conversation root. With attachments enabled, an
+    untyped, parentless ``job_entrypoint`` or ``agent_session`` span carrying
+    ``lk.job_id`` is the call's conversation root, so a LiveKit call with a
+    recording is listed in Voice. An ``agent_session`` under a
+    ``job_entrypoint`` has a parent and is unchanged. Disabled, this is
+    ``get_observation_type`` unchanged. Mirrors the collector's
+    ``liveKitJobRoot``.
+    """
+    observation_type = get_observation_type(span_kind)
+    if (
+        observation_type == "unknown"
+        and getattr(settings, "FI_ATTACHMENTS_ENABLED", False)
+        and not otel_span.get("parent_id")
+        and otel_span.get("name") in LIVEKIT_JOB_ROOTS
+        and attributes.get(LIVEKIT_JOB_ID) not in (None, "")
+    ):
+        return "conversation"
+    return observation_type
+
+
 def _extract_project_and_version_keys(
     otel_spans, organization_id, user_id, workspace_id
 ):
@@ -1475,7 +1526,9 @@ def _bulk_get_or_create_project_versions(version_keys, projects, organization_id
     return project_versions
 
 
-def _convert_single_span(otel_span, projects, project_versions, organization_id):
+def _convert_single_span(
+    otel_span, projects, project_versions, organization_id, *, attachment_binding=None
+):
     """
     Converts a single OTel span dictionary into the target ObservationSpan format.
 
@@ -1519,6 +1572,9 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         raise Exception(
             f"Project not found for version data: project_name={project_name}, project_type={project_type}"
         )
+
+    if attachment_binding is not None:
+        attachment_binding.stage(otel_span, project, organization_id, timezone.now())
 
     # Process Input/Output
     input_val = attributes.get("fi.llm.input") or attributes.get(
@@ -1630,7 +1686,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
     observation_span_dict = {
         "id": otel_span.get("span_id"),
         "name": otel_span.get("name", ""),
-        "observation_type": get_observation_type(span_kind),
+        "observation_type": resolve_observation_type(span_kind, otel_span, attributes),
         "operation_name": operation_name,
         "start_time": timezone.make_aware(
             datetime.fromtimestamp(otel_span.get("start_time", 0) / 1e9)
@@ -1688,7 +1744,12 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
 
 
 def bulk_convert_otel_spans_to_observation_spans(
-    otel_spans, organization_id=None, user_id=None, workspace_id=None
+    otel_spans,
+    organization_id=None,
+    user_id=None,
+    workspace_id=None,
+    *,
+    attachment_binding=None,
 ):
     """
     Converts a list of OTel span dictionaries to ObservationSpan objects with mapped fields in bulk.
@@ -1708,7 +1769,13 @@ def bulk_convert_otel_spans_to_observation_spans(
 
         # 3. Process each span individually with the pre-fetched data
         results = [
-            _convert_single_span(span, projects, project_versions, organization_id)
+            _convert_single_span(
+                span,
+                projects,
+                project_versions,
+                organization_id,
+                attachment_binding=attachment_binding,
+            )
             for span in otel_spans
         ]
 

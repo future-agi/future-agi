@@ -78,6 +78,13 @@ const VoiceAudioBridge = ({ data }) => {
       multitrackRef.current = multitrack;
       lastAppliedZoomRef.current = 0;
       setInstance({ multitrack, wavesurfers });
+      if (!multitrack) {
+        durationRef.current = 0;
+        setDuration(0);
+        setCurrentTime(0);
+        setIsPlaying(false);
+        return;
+      }
 
       // Seed duration from the longest wavesurfer.
       let maxDur = 0;

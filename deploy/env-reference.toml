@@ -1799,6 +1799,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "`stderr` sends the application's logs to stderr, for a one-off `manage.py` command whose output you redirect (`sqlmigrate`, `dumpdata`); `./bin/dev manage` sets it. Leave it unset for the services: some log collectors (GKE, for one) mark every stderr line as an error."
 
     [[part.section.row]]
+    keys = ["FI_ATTACHMENTS_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Trace attachments (audio, images, files): the upload, binding and playback routes, their schedules, and fi-collector's mapping of an untyped LiveKit call root to a Voice conversation. Set it where the app reads it; fi-collector follows it (Distributed reads the same `.env`, Helm copies the backend's value). Off, nothing of it runs."
+    audience = "internal"
+
+    [[part.section.row]]
     keys = ["ALLOWED_HOSTS"]
     default = "`*`"
     setups = ["S", "D", "H"]
