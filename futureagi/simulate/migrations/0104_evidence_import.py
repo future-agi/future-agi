@@ -9,7 +9,10 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("accounts", "0031_orgapikey_coding_agent"),
+        # Only Organization, Workspace and the user model are needed from accounts.
+        # Depending on its latest migration made this one a dependent that
+        # accounts' own migrate-back tests unapply and never re-apply.
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
         ("simulate", "0103_harness_job_verify_of"),
         ("tracer", "0130_observationspan_internal_type"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
