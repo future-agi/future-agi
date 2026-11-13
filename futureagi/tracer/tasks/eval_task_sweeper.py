@@ -108,13 +108,17 @@ def sweep_stranded_eval_tasks():
 def sweep_stale_recalculations():
     """Finish Recalculates whose request died mid-eval. Counts only.
 
-    Recalculate on an eval-task result runs the eval inside the user's
-    request, after retiring the previous result. A request killed meanwhile
-    (a deploy's SIGKILL, an OOM) leaves the replacement ``RUNNING`` and the
-    previous result retired; nothing in the engine finishes that on a
-    completed or paused task. This puts the previous result back, or keeps a
-    replacement that completed, once the recalculation is older than any run
-    may last (``tracer.services.eval_tasks.recalculate``).
+    Recalculate runs the eval inside the user's request, after retiring the
+    previous result. A request killed meanwhile (a deploy's SIGKILL, an OOM)
+    leaves that result retired:
+    * on an eval-task result, with its replacement ``RUNNING``; nothing in the
+      engine finishes that on a completed or paused task;
+    * on a result with no task (an inline Observe eval, an experiment span),
+      with no live result for the span and config at all.
+    This puts the previous result back, or keeps a new result that completed,
+    once the recalculation is older than any run may last; a new result that
+    is already there is kept after two minutes
+    (``tracer.services.eval_tasks.recalculate``).
 
     It spends nothing (no eval runs), so it is not gated on
     ``EVAL_TASK_SWEEP_MAX_TASKS``; pausing its schedule stops it.

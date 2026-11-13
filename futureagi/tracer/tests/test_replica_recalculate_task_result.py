@@ -1102,7 +1102,7 @@ def _not_draining():
 
 @pytest.mark.parametrize("task_status", _not_draining())
 @pytest.mark.parametrize("status", [EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING])
-def test_unfinished_result_of_a_task_that_will_not_finish_it_is_recalculated(
+def test_unfinished_result_of_a_stopped_task_is_refused_with_why(
     replica,
     auth_client,
     user,
@@ -1114,9 +1114,13 @@ def test_unfinished_result_of_a_task_that_will_not_finish_it_is_recalculated(
     task_status,
     status,
 ):
-    """A paused, failed or finished task never claims this entry again (the
-    reconciler requeued it after a config edit, then the run stopped). Its
-    result is recalculated instead of refused for good."""
+    """r10: a pending or running entry is never recalculated, whatever its
+    task's status. A paused task lets its in-flight evals finish, so the
+    entry may still be completed; and if it is not, a failed recompute has
+    no earlier result to put back. The message says why there is nothing to
+    recalculate, and nothing changes (the feedback's action included)."""
+    from tracer.services.eval_tasks.recalculate import NEVER_FINISHED
+
     previous, feedback = _write_result(
         replica,
         eval_task,
@@ -1126,57 +1130,20 @@ def test_unfinished_result_of_a_task_that_will_not_finish_it_is_recalculated(
         status=status,
     )
     _set_task_status(eval_task, task_status)
-
-    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
-
-    assert response.status_code == 200, response.data
-    assert _stored(previous.pk).deleted is True
-    (new,) = _live(observation_span, custom_eval_config)
-    assert new.pk != previous.pk
-    assert (new.status, new.eval_explanation) == (
-        EvalEntryStatus.COMPLETED,
-        "stubbed pass",
-    )
-    assert not _recalculation_rows().exists()
-    assert Feedback.objects.get(pk=feedback.pk).action_type == "recalculate"
-
-
-@pytest.mark.parametrize("task_status", _not_draining())
-def test_failed_recompute_of_an_unfinished_result_says_there_was_none_to_keep(
-    replica,
-    auth_client,
-    user,
-    observation_span,
-    custom_eval_config,
-    eval_task,
-    stub_cost_log,
-    monkeypatch,
-    task_status,
-):
-    """An unfinished entry is never put back: there was no earlier result.
-    The row is left with no live result (never two), and the user is told
-    why."""
-    _engine_down(monkeypatch)
-    previous, feedback = _write_result(
-        replica,
-        eval_task,
-        observation_span,
-        custom_eval_config,
-        user,
-        status=EvalEntryStatus.PENDING,
-    )
-    _set_task_status(eval_task, task_status)
+    before = _snapshot(observation_span, custom_eval_config)
 
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
-    assert (
-        "This result had not finished evaluating, so there was no earlier result "
-        "to keep."
-    ) in str(response.data)
-    assert _stored(previous.pk).deleted is True
-    assert _live(observation_span, custom_eval_config).count() == 0
+    assert NEVER_FINISHED in str(response.data)
+    assert "never finished because its evaluation task stopped" in NEVER_FINISHED
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert stub_run_eval.requests == []
     assert not _recalculation_rows().exists()
+    assert Feedback.objects.get(pk=feedback.pk).action_type is None
 
 
 @pytest.mark.parametrize(
@@ -1212,8 +1179,8 @@ def test_pending_result_of_a_draining_task_is_still_refused(
     assert stub_run_eval.requests == []
 
 
-@pytest.mark.parametrize("change", ["claimed", "requeued"])
-def test_unfinished_result_changed_between_the_check_and_the_retirement_is_kept(
+@pytest.mark.parametrize("change", ["requeued", "restamped"])
+def test_result_of_a_stopped_task_changed_before_the_retirement_is_kept(
     replica,
     auth_client,
     user,
@@ -1225,28 +1192,28 @@ def test_unfinished_result_changed_between_the_check_and_the_retirement_is_kept(
     monkeypatch,
     change,
 ):
-    """The fence is the status and stamp the request read, not "terminal":
-    a pending entry of a paused task that is claimed (resumed task) or
-    re-stamped meanwhile is not replaced."""
+    """The retirement is fenced on the result still being terminal, with the
+    stamp the request read: a finished result of a paused task that is
+    requeued (pending again) or re-stamped between the check and the
+    retirement is not replaced."""
     from django.utils import timezone
 
     import tracer.views.observation_span as view
+    from tracer.services.eval_tasks.recalculate import (
+        CHANGED_MEANWHILE,
+        NEVER_FINISHED,
+    )
 
     previous, feedback = _write_result(
-        replica,
-        eval_task,
-        observation_span,
-        custom_eval_config,
-        user,
-        status=EvalEntryStatus.PENDING,
+        replica, eval_task, observation_span, custom_eval_config, user
     )
     _set_task_status(eval_task, "paused")
     real_properties = view.get_mixpanel_properties
 
     def _changed_meanwhile(*args, **kwargs):
         update = {"updated_at": timezone.now()}
-        if change == "claimed":
-            update["status"] = EvalEntryStatus.RUNNING
+        if change == "requeued":
+            update["status"] = EvalEntryStatus.PENDING
         EvalLogger.objects.using("default").filter(pk=previous.pk).update(**update)
         return real_properties(*args, **kwargs)
 
@@ -1255,7 +1222,8 @@ def test_unfinished_result_changed_between_the_check_and_the_retirement_is_kept(
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
-    assert "has changed" in str(response.data)
+    expected = NEVER_FINISHED if change == "requeued" else CHANGED_MEANWHILE
+    assert expected in str(response.data)
     assert [
         (row.pk, row.deleted)
         for row in EvalLogger.all_objects.using("default").filter(
@@ -2081,84 +2049,6 @@ def test_sweep_does_not_restore_an_untasked_result_over_a_newer_one(
 # -- round 9 review follow-ups -------------------------------------------------
 
 
-def test_raised_recompute_of_an_unfinished_result_says_there_was_none_to_keep(
-    replica,
-    auth_client,
-    user,
-    observation_span,
-    custom_eval_config,
-    eval_task,
-    monkeypatch,
-):
-    """The run raised (an infrastructure error) on a pending entry of a
-    paused task: the user is told why there is no result, not "Unable to
-    submit feedback action"."""
-    previous, feedback = _write_result(
-        replica,
-        eval_task,
-        observation_span,
-        custom_eval_config,
-        user,
-        status=EvalEntryStatus.PENDING,
-    )
-    _set_task_status(eval_task, "paused")
-
-    def _raises(entry, **_kwargs):
-        raise RuntimeError("clickhouse unavailable")
-
-    monkeypatch.setattr("tracer.services.eval_tasks.run_entry.run_entry", _raises)
-
-    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
-
-    assert response.status_code == 400
-    assert "had not finished evaluating" in str(response.data)
-    assert not _live(observation_span, custom_eval_config).exists()
-    assert not _recalculation_rows().exists()
-
-
-def test_task_resumed_between_the_check_and_the_retirement_keeps_its_entry(
-    replica,
-    auth_client,
-    user,
-    observation_span,
-    custom_eval_config,
-    eval_task,
-    stub_run_eval,
-    stub_cost_log,
-    monkeypatch,
-):
-    """The request saw the task paused; the task was resumed before the
-    retirement. Its engine will claim the pending entry, so it is refused
-    and nothing changes."""
-    import tracer.views.observation_span as view
-
-    previous, feedback = _write_result(
-        replica,
-        eval_task,
-        observation_span,
-        custom_eval_config,
-        user,
-        status=EvalEntryStatus.PENDING,
-    )
-    _set_task_status(eval_task, "paused")
-    real_properties = view.get_mixpanel_properties
-
-    def _resumed_meanwhile(*args, **kwargs):
-        _set_task_status(eval_task, "running")
-        return real_properties(*args, **kwargs)
-
-    monkeypatch.setattr(view, "get_mixpanel_properties", _resumed_meanwhile)
-    before = _snapshot(observation_span, custom_eval_config)
-
-    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
-
-    assert response.status_code == 400
-    assert "still being evaluated" in str(response.data)
-    assert _snapshot(observation_span, custom_eval_config) == before
-    assert stub_run_eval.requests == []
-    assert not _recalculation_rows().exists()
-
-
 def test_untasked_result_landing_after_the_sweep_gave_up_replaces_the_restored_one(
     replica,
     auth_client,
@@ -2196,3 +2086,447 @@ def test_untasked_result_landing_after_the_sweep_gave_up_replaces_the_restored_o
     assert _stored(previous.pk).deleted is True
     assert _membership(member).deleted is True
     assert not _recalculation_rows().exists()
+
+
+# -- round 10 ------------------------------------------------------------------
+
+
+def test_untasked_request_after_the_first_wrote_its_result_is_refused(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+):
+    """The exact interleaving: A retired P and its eval wrote R1; before A
+    closes, B (which reads R1 as the live result) begins. B must be refused
+    while A's recalculation is open: had B retired R1, A would find the slot
+    empty and put P back, and the newer result would be lost."""
+    from tracer.services.eval_tasks.recalculate import (
+        ALREADY_RUNNING,
+        KEPT,
+        RecalculationRefused,
+        begin_untasked_recalculation,
+        close_untasked_recalculation,
+    )
+
+    previous, _feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    journal_a = begin_untasked_recalculation(previous)
+    r1 = _new_inline_result(observation_span, custom_eval_config)
+
+    with pytest.raises(RecalculationRefused) as refused:
+        begin_untasked_recalculation(r1)
+    assert refused.value.message == ALREADY_RUNNING
+    assert _stored(r1.pk).deleted is False
+    assert _recalculation_rows().count() == 1
+
+    assert close_untasked_recalculation(journal_a) == KEPT
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [r1.pk]
+    assert _stored(previous.pk).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_untasked_double_submit_after_the_first_result_landed_evaluates_once(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    """The same through the view: B is submitted after A's eval wrote its
+    result but before A closed. B gets "already running" and never
+    evaluates; A's result is the one live result."""
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    seen = {"evaluations": 0}
+
+    def _a_writes_then_b_arrives(*_args):
+        seen["evaluations"] += 1
+        new = _new_inline_result(
+            observation_span, custom_eval_config, f"answer {seen['evaluations']}"
+        )
+        if "b" not in seen:
+            seen["b"] = None
+            seen["b"] = _recalculate(
+                auth_client, observation_span, custom_eval_config, feedback
+            )
+        return bool(new)
+
+    _per_span_eval(monkeypatch, _a_writes_then_b_arrives)
+
+    a = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert a.status_code == 200, a.data
+    assert seen["b"].status_code == 400
+    assert "already running" in str(seen["b"].data)
+    assert seen["evaluations"] == 1
+    (new,) = _live(observation_span, custom_eval_config)
+    assert new.eval_explanation == "answer 1"
+    assert _stored(previous.pk).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def _feedback_save_raises(monkeypatch):
+    real_save = Feedback.save
+
+    def _save(self, *args, **kwargs):
+        if kwargs.get("update_fields") == ["action_type"]:
+            raise RuntimeError("feedback validation failed")
+        return real_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Feedback, "save", _save)
+
+
+def test_raising_feedback_save_puts_the_task_result_back(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """The feedback's action is recorded inside the recalculation's guarded
+    region: if saving it raises, the replacement is retired and the previous
+    result is live again, with no recalculation left open."""
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+    _feedback_save_raises(monkeypatch)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "previous result is kept" in str(response.data)
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+    assert stub_run_eval.requests == []
+
+
+def test_raising_feedback_save_puts_the_untasked_result_back(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+    _feedback_save_raises(monkeypatch)
+    seen = {"evaluations": 0}
+
+    def _evaluates(*_args):
+        seen["evaluations"] += 1
+        return bool(_new_inline_result(observation_span, custom_eval_config))
+
+    _per_span_eval(monkeypatch, _evaluates)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "previous result is kept" in str(response.data)
+    assert seen["evaluations"] == 0
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+
+
+def _delete_trace(span):
+    """Trace delete, as the trace view does it (``_soft_delete_trace_tree``)."""
+    from tracer.views.trace import _soft_delete_trace_tree
+
+    _soft_delete_trace_tree([span.trace])
+
+
+def _delete_eval_config(config):
+    """Template delete, as ``separate_evals`` does it: the template's configs
+    are retired, then their live results."""
+    from django.utils import timezone
+
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.services.eval_tasks.entries import soft_delete_eval_results
+
+    template = config.eval_template
+    CustomEvalConfig.objects.filter(eval_template=template).update(
+        deleted=True, deleted_at=timezone.now()
+    )
+    soft_delete_eval_results(
+        EvalLogger.objects.filter(custom_eval_config__eval_template=template)
+    )
+
+
+_DELETES = {"trace": _delete_trace, "eval_config": _delete_eval_config}
+
+
+@pytest.mark.parametrize("deleted", sorted(_DELETES))
+@pytest.mark.parametrize("how", ["raised", "returned"])
+def test_untasked_put_back_respects_a_delete_during_the_recalculation(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+    deleted,
+    how,
+):
+    """A delete that lands while the recalculation is open skips the retired
+    previous result (deletes act on live rows). The recompute then writes
+    nothing: the previous result must stay retired, not come back for a
+    deleted trace or eval, and its Feed membership is retired."""
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+
+    def _deleted_meanwhile(*_args):
+        _DELETES[deleted](
+            observation_span if deleted == "trace" else custom_eval_config
+        )
+        if how == "raised":
+            raise RuntimeError("the span is gone")
+        return False
+
+    _per_span_eval(monkeypatch, _deleted_meanwhile)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "was not kept" in str(response.data)
+    assert _stored(previous.pk).deleted is True
+    assert (
+        not EvalLogger.objects.using("default")
+        .filter(observation_span=observation_span)
+        .exists()
+    )
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+@pytest.mark.parametrize("deleted", sorted(_DELETES))
+def test_sweep_does_not_restore_an_untasked_result_deleted_meanwhile(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+    deleted,
+):
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    previous, _new, _issue, member = _crashed_untasked(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        observation_span,
+        custom_eval_config,
+        wrote=False,
+    )
+    _DELETES[deleted](observation_span if deleted == "trace" else custom_eval_config)
+    _age_untasked(RECOVER_AFTER_SECONDS + 60)
+
+    counts = _sweep()
+
+    assert (counts["restored"], counts["left_retired"]) == (0, 1)
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+@pytest.mark.parametrize("deleted", ["span", "trace", "eval_config"])
+def test_sweep_does_not_restore_a_task_result_whose_target_was_deleted(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+    deleted,
+):
+    """The task path's put-back has the same gate. A span, trace or eval
+    config marked deleted while the recalculation was open (here without
+    retiring the replacement, as a delete that only marks its own row) keeps
+    the previous result retired."""
+    from django.utils import timezone
+
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    model, pk = {
+        "span": (ObservationSpan, observation_span.pk),
+        "trace": (Trace, observation_span.trace_id),
+        "eval_config": (CustomEvalConfig, custom_eval_config.pk),
+    }[deleted]
+    model._base_manager.filter(pk=pk).update(deleted=True, deleted_at=timezone.now())
+
+    counts = _sweep()
+
+    assert (counts["restored"], counts["left_retired"]) == (0, 1)
+    assert _stored(previous.pk).deleted is True
+    assert _stored(replacement_id).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_reconcile_dropping_a_replacement_of_a_deleted_trace_keeps_it_retired(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+):
+    """``put_back_dropped_replacements`` goes through the same gate as every
+    put-back: not only a deleted eval config, a deleted trace too."""
+    from django.db import transaction
+    from django.utils import timezone
+
+    from tracer.models.trace import Trace
+    from tracer.services.eval_tasks.recalculate import (
+        begin_recalculation,
+        put_back_dropped_replacements,
+    )
+
+    previous, _feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    entry = begin_recalculation(previous)
+    Trace._base_manager.filter(pk=observation_span.trace_id).update(
+        deleted=True, deleted_at=timezone.now()
+    )
+
+    with transaction.atomic():  # the reconciler's transaction
+        assert put_back_dropped_replacements([entry.pk]) == 1
+
+    assert _stored(previous.pk).deleted is True
+    assert _stored(entry.pk).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_open_replacement_that_already_finished_is_not_recalculated_again(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """A replacement whose recalculation is still open, even once terminal,
+    is refused: a second journal chained on it could lose the original
+    previous result."""
+    from tracer.services.eval_tasks.recalculate import begin_recalculation
+
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    entry = begin_recalculation(previous)
+    EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+        status=EvalEntryStatus.COMPLETED
+    )
+    before = _snapshot(observation_span, custom_eval_config)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "already running" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert list(_recalculation_rows().values_list("replacement_id", flat=True)) == [
+        entry.pk
+    ]
+    assert stub_run_eval.requests == []
+
+
+def test_begin_refuses_an_open_replacement_read_before_its_check(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+):
+    """``begin_recalculation`` checks again in its own transaction."""
+    from tracer.services.eval_tasks.recalculate import (
+        ALREADY_RUNNING,
+        RecalculationRefused,
+        begin_recalculation,
+    )
+
+    previous, _feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    entry = begin_recalculation(previous)
+    EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+        status=EvalEntryStatus.COMPLETED
+    )
+    finished = EvalLogger.objects.using("default").get(pk=entry.pk)
+
+    with pytest.raises(RecalculationRefused) as refused:
+        begin_recalculation(finished)
+
+    assert refused.value.message == ALREADY_RUNNING
+    assert _recalculation_rows().count() == 1
+
+
+def test_untasked_put_back_is_decided_by_the_update_itself(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    """Another live result lands after ``_slot_has_live_result`` found the
+    slot empty: the put-back's own NOT EXISTS refuses it, so there is
+    exactly one live result."""
+    import tracer.services.eval_tasks.recalculate as recalc
+
+    previous, _feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    journal = recalc.begin_untasked_recalculation(previous)
+    real_check = recalc._slot_has_live_result
+    landed = {}
+
+    def _empty_then_another_lands(previous_id):
+        answer = real_check(previous_id)
+        assert answer is False
+        landed["other"] = _new_inline_result(
+            observation_span, custom_eval_config, "another writer"
+        )
+        return answer
+
+    monkeypatch.setattr(recalc, "_slot_has_live_result", _empty_then_another_lands)
+
+    outcome = recalc.close_untasked_recalculation(journal)
+
+    assert outcome == recalc.LEFT_RETIRED
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        landed["other"].pk
+    ]
+    assert _stored(previous.pk).deleted is True
