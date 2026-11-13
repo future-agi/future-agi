@@ -572,6 +572,22 @@ def test_direct_invocation_is_treated_as_the_last_attempt():
     assert _temporal_will_retry() is False
 
 
+@pytest.mark.parametrize(("attempt", "expected"), [(1, True), (2, True), (3, False)])
+def test_activity_attempts_left_decide_whether_temporal_will_retry(attempt, expected):
+    """Inside an activity, only attempts below the retry policy's cap retry."""
+    from temporalio import activity
+
+    from model_hub.tasks.annotation_export import _temporal_will_retry
+    from tfc.temporal.drop_in.workflow import DEFAULT_RETRY_POLICY
+
+    assert DEFAULT_RETRY_POLICY.maximum_attempts == 3
+    with (
+        mock.patch.object(activity, "in_activity", return_value=True),
+        mock.patch.object(activity, "info", return_value=mock.Mock(attempt=attempt)),
+    ):
+        assert _temporal_will_retry() is expected
+
+
 # ---------------------------------------------------------------------------
 # Source-type coverage above the cap.
 #

@@ -202,14 +202,13 @@ def _temporal_will_retry():
     Outside an activity context — direct invocation, tests — nothing retries,
     so this is False and the failure is final.
     """
-    try:
-        from temporalio import activity
+    from temporalio import activity
 
-        from tfc.temporal.drop_in.workflow import DEFAULT_RETRY_POLICY
+    from tfc.temporal.drop_in.workflow import DEFAULT_RETRY_POLICY
 
-        attempt = activity.info().attempt
-    except Exception:
+    if not activity.in_activity():
         return False
+    attempt = activity.info().attempt
 
     max_attempts = getattr(DEFAULT_RETRY_POLICY, "maximum_attempts", None)
     if not max_attempts:
