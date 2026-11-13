@@ -822,7 +822,7 @@ def certify_scenario_count(job: HostedHarnessJob) -> int:
     members = HarnessSuiteMember.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id
     ).count()
-    if members:
+    if members or job.suite_version_id is None:
         return members
     return (
         HarnessSuiteVersion._base_manager.filter(id=job.suite_version_id)
@@ -1007,6 +1007,8 @@ def _set_fill_attempt(
 
 def assembled_bundle_ready(job: HostedHarnessJob) -> bool:
     """Whether the bundle the job is bound to is cached."""
+    if job.assembled_bundle_id is None:
+        return False
     return HarnessAssembledBundle._base_manager.filter(
         id=job.assembled_bundle_id,
         state=HarnessAssembledBundle.State.READY,
