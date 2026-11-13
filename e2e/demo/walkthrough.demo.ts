@@ -148,7 +148,8 @@ test('skills walkthrough', async ({ browser, request }) => {
   // Page loads are marked so the edit can drop skeleton/blank frames; ready = first content the viewer should see.
   const loading = async (ready: Locator, fn: () => Promise<unknown>) => { mark('load-start'); await fn(); await ready.first().waitFor({ state: 'visible', timeout: 90_000 }); await page.waitForTimeout(400); mark('load-end'); };
   const goto = async (url: string, ready: Locator, next?: string) => {
-    if (next) mark('caption', { label: next });
+    // The caption for the next page is set before leaving, so the new page never opens under the previous caption.
+    if (next) { mark('caption', { label: next }); await setCaption(page, chip, next); }
     await loading(ready, async () => { await page.goto(url); await page.waitForLoadState('domcontentloaded'); });
     await setCaption(page, chip, events.filter((e) => e.kind === 'caption').at(-1)?.label ?? ''); };
   const waitCut = async (label: string, fn: () => Promise<void>) => { mark('cut-start', { label }); await fn(); mark('cut-end', { label }); };
@@ -366,6 +367,7 @@ test('skills walkthrough', async ({ browser, request }) => {
         await expect(page.getByText('Pin the application configuration')).toBeVisible();
         await page.getByRole('button', { name: 'Pin this configuration' }).click();
         await expect(page.getByText('Configuration pinned')).toBeVisible();
+        await expect(page.getByLabel(/^Loading/)).toHaveCount(0, { timeout: 30_000 });
         await page.waitForTimeout(400);
       });
       await glide(page.getByText('Configuration pinned').first());
@@ -374,6 +376,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       const prod = page.getByLabel('Production version');
       if (!(await prod.textContent())?.includes('v1')) { await click(prod, 500); await click(page.getByRole('option', { name: 'v1', exact: true }), 500); }
       await scrollTo(page.getByRole('group', { name: 'Examples to run' }), 600);
+      await expect(page.getByLabel('Loading test results')).toHaveCount(0, { timeout: 30_000 });
       await caption('Three reviewed cases: a damaged-item refund, a card dispute and a late package.', 2000);
       await click(page.getByRole('checkbox', { name: /I accept up to/ }), 500);
       await click(page.getByRole('button', { name: 'Run on the application', exact: true }), 800);
@@ -487,12 +490,16 @@ test('skills walkthrough', async ({ browser, request }) => {
       await click(page.getByRole('option', { name: /^Priya Shah/ }), 700);
       const authorAck = page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
       await click(authorAck, 500);
-      await click(page.getByRole('button', { name: 'Send review request', exact: true }), 1500);
+      const send = page.getByRole('button', { name: 'Send review request', exact: true });
+      await glide(send);
+      await loading(page.getByRole('button', { name: 'support-agent', exact: true }), () => send.click());
       await expect(page).toHaveURL(/mine=1/);
       await caption('The request is sent. Nothing has moved yet.', 1800);
       await as('priya', '/dashboard/skills', page.getByRole('cell').getByRole('link', { name: 'refund-policy', exact: true }));
       await caption('Now signed in as the reviewer: the request waits in her review inbox.', 1600);
-      await click(page.getByRole('tab', { name: 'Reviews', exact: true }), 1400);
+      await glide(page.getByRole('tab', { name: 'Reviews', exact: true }));
+      await loading(page.getByRole('button', { name: 'support-agent', exact: true }), () => page.getByRole('tab', { name: 'Reviews', exact: true }).click());
+      await dwell(800);
       const ack = page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
       await glide(page.getByRole('button', { name: 'support-agent', exact: true }).first());
       await loading(ack, () => page.getByRole('button', { name: 'support-agent', exact: true }).first().click());
