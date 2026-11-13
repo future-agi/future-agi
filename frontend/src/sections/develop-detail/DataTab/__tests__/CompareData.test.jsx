@@ -35,6 +35,7 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 vi.mock("src/api/develop/dataset-compare", () => ({
+  COMPARE_NOT_FOUND_CODE: "compare_not_found",
   useDeleteCompare: () => ({ mutate: deleteCompare }),
 }));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
@@ -440,9 +441,11 @@ describe("CompareData compare_id ownership", () => {
 describe("CompareData expired comparison", () => {
   const EXPIRED_ID = "00000000-0000-4000-8000-00000000000c";
   const FRESH_ID = "00000000-0000-4000-8000-00000000000d";
-  // CompareDatasetsView answers a compare_id it cannot resolve with 404.
+  // CompareDatasetsView answers a compare_id it cannot resolve with 404 and
+  // the error code compare_not_found.
   const notFound = () => ({
     statusCode: 404,
+    code: "compare_not_found",
     result: "This comparison was not found or has expired.",
   });
   const renderWithGrid = () => {
@@ -566,6 +569,73 @@ describe("CompareData expired comparison", () => {
       rowData: [],
       rowCount: 0,
     });
+  });
+
+  it("does not start over for a 404 with another error code", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    api.refreshServerSide.mockClear();
+
+    post.mockImplementationOnce(() =>
+      Promise.reject({
+        statusCode: 404,
+        code: "not_found",
+        result: "Not found.",
+      }),
+    );
+    const failed = await failPage(10);
+
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(failed.fail).not.toHaveBeenCalled();
+    expect(failed.success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    expect(props.compareId.current).toBe(EXPIRED_ID);
+  });
+
+  it("shows the empty grid when a compared dataset was deleted", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    api.refreshServerSide.mockClear();
+
+    // The comparison is no longer served once one of its datasets is gone,
+    // so the next block starts over once ...
+    post.mockImplementationOnce(() => Promise.reject(notFound()));
+    await failPage(10);
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+      purge: true,
+    });
+    api.refreshServerSide.mockClear();
+
+    // ... and the fresh comparison reports the missing dataset, which is
+    // shown as an empty grid rather than rebuilt again.
+    post.mockImplementationOnce(() =>
+      Promise.reject({
+        statusCode: 404,
+        code: "not_found",
+        result: "Dataset not found.",
+      }),
+    );
+    const fresh = await failPage(0);
+
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({ current_page_index: 0, compare_id: null }),
+    );
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(fresh.fail).not.toHaveBeenCalled();
+    expect(fresh.success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    expect(props.compareId.current).toBeNull();
   });
 
   it("does not start over for other failures", async () => {

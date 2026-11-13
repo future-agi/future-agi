@@ -24,7 +24,10 @@ import CustomExperimentGroupHeader from "src/sections/experiment-detail/Experime
 import ExperimentStatusBar from "src/sections/experiment-detail/ExperimentData/ExperimentStatusBar";
 import { getEachCompareColumnDef } from "./compareTableConfig";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
-import { useDeleteCompare } from "src/api/develop/dataset-compare";
+import {
+  COMPARE_NOT_FOUND_CODE,
+  useDeleteCompare,
+} from "src/api/develop/dataset-compare";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
@@ -525,8 +528,12 @@ const CompareData = ({
             params.fail?.();
             return;
           }
+          // Only a comparison the server reports unknown or expired is
+          // rebuilt; any other 404 (e.g. a deleted dataset) is a failure.
           const comparisonGone =
-            requestCompareId && error?.statusCode === RESPONSE_CODES.NOT_FOUND;
+            requestCompareId &&
+            error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
+            error?.code === COMPARE_NOT_FOUND_CODE;
           if (comparisonGone && requestCompareId !== compareId.current) {
             // Another block already started over with a fresh comparison.
             params.fail?.();
