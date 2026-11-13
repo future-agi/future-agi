@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 // The report the server answered, and what the buttons asked for.
 let report;
 let loading = false;
+let readinessError = null;
 let recheckPending = false;
 let recheckResult = {};
 let cases = { names: ["Refund over limit"], isError: false };
@@ -23,7 +24,15 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
   useReadiness: () =>
     loading
       ? { data: undefined, isLoading: true, isError: false }
-      : { data: report, isLoading: false, isError: false, refetch },
+      : readinessError
+        ? {
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            error: readinessError,
+            refetch,
+          }
+        : { data: report, isLoading: false, isError: false, refetch },
   useRecheck: () => ({
     mutate: recheck,
     isPending: recheckPending,
@@ -143,6 +152,7 @@ const picks = { agent: "agent-v2" };
 
 beforeEach(() => {
   loading = false;
+  readinessError = null;
   recheckPending = false;
   recheckResult = {};
   cases = { names: ["Refund over limit"], isError: false };
@@ -157,6 +167,13 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("says it waits for a saved version instead of failing", () => {
+    readinessError = { statusCode: 404, error: "versioning_disabled" };
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByTestId("ready-to-run-no-versions")).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't check/)).toBeNull();
+  });
+
   it("closes an open fix when other versions are picked", async () => {
     report = blockedReport("pair");
     const { rerender } = render(
