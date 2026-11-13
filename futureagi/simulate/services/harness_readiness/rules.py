@@ -171,7 +171,7 @@ def rows(
                 checked_at=reading.checked_at,
             )
         elif capability.id in gap:
-            found = gap[capability.id]
+            found = _with_measured(gap[capability.id], reading)
             if capability.id == "tool_routing" and named:
                 names = [one["action"] for one in named]
                 found = Reading(
@@ -288,6 +288,25 @@ def _agent_gap(
     contract = (pairing.environment_version.documents or {}).get("contract")
     return agent_findings(
         agent_tools, contract if isinstance(contract, Mapping) else None
+    )
+
+
+def _with_measured(found: Reading, measured: Reading) -> Reading:
+    """The agent-side gap with the row's own measured failure kept beside it: a tool
+    the evidence failed stays failed whatever the agent version changed. A failure
+    naming no tool, on either side, holds every case."""
+    if measured.finding != "failed":
+        return found
+    reason = f"{found.reason}; {measured.reason}"
+    if found.finding != "failed":
+        return Reading(found.finding, found.reason_code, reason, [], measured.evidence)
+    named = found.targets and measured.targets
+    return Reading(
+        "failed",
+        found.reason_code,
+        reason,
+        found.targets + measured.targets if named else [],
+        measured.evidence,
     )
 
 

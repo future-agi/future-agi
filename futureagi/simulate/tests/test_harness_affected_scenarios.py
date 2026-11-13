@@ -786,6 +786,90 @@ class TestAgentGapCases:
         )
         assert plan.view["running"] == 0
 
+    def test_a_changed_signature_keeps_another_tool_the_world_never_received(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "gap-cases-routing-both",
+            tools=(SAME_TOOLS[0], _tool(REFUND, "order_id")),
+        )
+        _suite(environment, _ten())
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        pairing = _pairing(environment, a2)
+        HarnessAssembledBundle._base_manager.filter(
+            id=harness_readiness.pair_bundle(pairing).id
+        ).update(
+            certificate={
+                "checks": PASSED,
+                "tool_routing": {
+                    "tools": [
+                        {"tool": REFUND, "routed": True},
+                        {"tool": LOOKUP, "routed": False, "reason": "not_received"},
+                    ]
+                },
+            }
+        )
+        cache.clear()
+
+        report = _select(environment, pairing=pairing)
+        routing = _rows(report)["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "tool_signature_changed",
+        )
+        assert {one["name"] for one in routing["targets"]} == {REFUND, LOOKUP}
+        assert "the test world never received it: " + LOOKUP in routing["reason"]
+        # A lookup case needs only the tool the world never received: it is held too.
+        assert set(report["selection"]["lists"]["blocked"]["keys"]) == set(
+            REFUND_KEYS + LOOKUP_KEYS
+        )
+        plan = harness_readiness.select_for_run(
+            pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
+        )
+        assert plan.view["running"] == 0
+
+    def test_a_tool_the_agent_lacks_keeps_another_tool_discovery_rejected(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user, workspace, storage, "gap-cases-discovery-both", tools=(SAME_TOOLS[0],)
+        )
+        _suite(environment, _ten())
+        _built(environment, contract=WORLD)
+        _certify(
+            environment,
+            storage,
+            agent=a2,
+            tools=[
+                {"tool": LOOKUP, "availability": "rejected", "reason": "no schema"},
+                {"tool": REFUND, "availability": "certified", "reason": ""},
+            ],
+        )
+        pairing = _pairing(environment, a2)
+
+        report = _select(environment, pairing=pairing)
+        discovery = _rows(report)["tool_discovery"]
+
+        assert (discovery["status"], discovery["reason_code"]) == (
+            "blocked",
+            "tool_not_in_agent",
+        )
+        assert {one["name"] for one in discovery["targets"]} == {REFUND, LOOKUP}
+        assert "Not discoverable: " + LOOKUP in discovery["reason"]
+        # A lookup case needs only the rejected tool: blocked, not left to run Untested.
+        assert set(report["selection"]["lists"]["blocked"]["keys"]) == set(
+            REFUND_KEYS + LOOKUP_KEYS
+        )
+        plan = harness_readiness.select_for_run(
+            pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
+        )
+        assert plan.view["running"] == 0
+
     def test_an_unread_version_holds_back_no_case(self, user, workspace, storage):
         environment, pairing = self._a2(
             user, workspace, storage, "gap-cases-unread", None

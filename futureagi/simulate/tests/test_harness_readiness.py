@@ -2346,6 +2346,27 @@ class TestAgentGap:
         ]
         assert routing["reason"].endswith("failed its probe: issue_refund")
 
+    def test_a_measured_failure_naming_no_tool_keeps_the_gap_holding_every_case(self):
+        from simulate.services.harness_readiness.catalogue import Reading, targets
+        from simulate.services.harness_readiness.rules import _with_measured
+
+        gap = Reading(
+            "failed",
+            "tool_signature_changed",
+            "Takes other arguments in this environment: issue_refund",
+            targets("tool", ["issue_refund"], "failed"),
+        )
+        measured = Reading("failed", "action_failed", "1 of 2 tool probes passed")
+
+        merged = _with_measured(gap, measured)
+
+        assert (merged.finding, merged.reason_code, merged.targets) == (
+            "failed",
+            "tool_signature_changed",
+            [],
+        )
+        assert merged.reason.endswith("; 1 of 2 tool probes passed")
+
 
 def _copy_version(version, **fields):
     """A new version of ``version``'s piece after it: ``fields`` override its own."""
