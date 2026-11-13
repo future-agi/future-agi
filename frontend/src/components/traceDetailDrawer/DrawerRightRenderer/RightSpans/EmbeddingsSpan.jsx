@@ -131,7 +131,7 @@ const EmbeddingsSpan = ({
               >
                 <Typography
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: typography["fontWeightSemiBold"],
                     color: "primary.main",
                     padding: 1.5,
@@ -143,7 +143,7 @@ const EmbeddingsSpan = ({
               <Typography
                 sx={{
                   padding: 1.5,
-                  fontSize: "13px",
+                  fontSize: "12px",
                 }}
               >
                 {["array", "json"].includes(dataType) &&

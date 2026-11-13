@@ -771,7 +771,7 @@ export default function AskHeatmap({
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13 }}
+          sx={{ fontSize: 12 }}
         >
           No {plural} to place yet.
         </Typography>
@@ -801,7 +801,7 @@ export default function AskHeatmap({
       );
   } else if (!matrix?.rows.length || !matrix.rows.some((r) => r.answered))
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
         No {plural} answered yet.
       </Typography>
     );

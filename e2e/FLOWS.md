@@ -1315,7 +1315,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload

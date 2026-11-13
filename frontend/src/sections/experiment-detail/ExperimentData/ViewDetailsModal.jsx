@@ -154,7 +154,7 @@ const ViewDetailsModal = ({
             <Typography
               sx={{
                 color: "text.primary",
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 500,
                 marginBottom: 0.5,
               }}
@@ -206,7 +206,7 @@ const ViewDetailsModal = ({
           <Box>
             <Typography
               fontWeight={500}
-              fontSize={13}
+              fontSize={12}
               color="text.primary"
               marginBottom={0.5}
             >
@@ -230,7 +230,7 @@ const ViewDetailsModal = ({
                   }}
                 >
                   <Typography
-                    fontSize="13px"
+                    fontSize="12px"
                     fontWeight={400}
                     color="text.primary"
                   >
@@ -244,7 +244,7 @@ const ViewDetailsModal = ({
             <Box>
               <Typography
                 fontWeight={500}
-                fontSize={13}
+                fontSize={12}
                 color="text.primary"
                 marginBottom={0.5}
               >
@@ -266,7 +266,7 @@ const ViewDetailsModal = ({
             <Box>
               <Typography
                 fontWeight={500}
-                fontSize={13}
+                fontSize={12}
                 color="text.primary"
                 marginBottom={0.5}
               >
@@ -308,7 +308,7 @@ const ViewDetailsModal = ({
                       />
                       <Typography
                         color="status.danger.fg"
-                        fontSize={13}
+                        fontSize={12}
                         fontWeight={500}
                       >
                         Evaluation Failed
@@ -326,7 +326,7 @@ const ViewDetailsModal = ({
                       <Button
                         aria-label="fetch-error"
                         style={{
-                          fontSize: "13px",
+                          fontSize: "12px",
                           textDecoration: "underline",
                           padding: 0,
                           fontWeight: 500,
@@ -341,7 +341,7 @@ const ViewDetailsModal = ({
                   {evalData?.metadata?.reason && (
                     <Typography
                       color="status.danger.fg"
-                      fontSize={13}
+                      fontSize={12}
                       fontWeight={400}
                       sx={{
                         wordBreak: "break-word",
@@ -373,7 +373,7 @@ const ViewDetailsModal = ({
                   })}
                 </Box>
               ) : (
-                <Typography fontSize="13px" color="text.primary">
+                <Typography fontSize="12px" color="text.primary">
                   No errors found.
                 </Typography>
               )}

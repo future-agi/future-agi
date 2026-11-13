@@ -79,7 +79,7 @@ export default function QuickActions({ onAction }) {
           <Typography
             variant="body2"
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               color: "text.secondary",
               whiteSpace: "nowrap",
             }}
