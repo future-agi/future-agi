@@ -12,7 +12,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
+from uuid import UUID
 
 from simulate.models import (
     HarnessAssembledBundle,
@@ -252,10 +253,7 @@ def _selected_answer(
     if not unused or found["kind"] != "blocked" or found["reason_code"] is not None:
         return found
     return answer(
-        [
-            {**row, "status": "supported"} if row["id"] in unused else row
-            for row in rows
-        ],
+        [_supported(row) if row["id"] in unused else row for row in rows],
         validating=False,
         failed=False,
         named=False,
@@ -425,14 +423,21 @@ def changed_since_last_run(
         return None, []
     since: ChangedSince = {
         "run_id": str(last.id),
-        "suite_version": version_refs(None, None, last.suite_version)["suite"],
+        "suite_version": cast(
+            "VersionRef | None", version_refs(None, None, last.suite_version)["suite"]
+        ),
     }
     before = _digests(last.suite_version_id, keys)
     now = _digests(pairing.suite_version.id, keys)
     return since, [key for key in keys if before.get(key) != now.get(key)]
 
 
-def _digests(suite_version_id: object, keys: list[str]) -> dict[str, str]:
+def _supported(row: SelectionRowView) -> SelectionRowView:
+    supported: SelectionRowView = {**row, "status": "supported"}
+    return supported
+
+
+def _digests(suite_version_id: UUID | None, keys: list[str]) -> dict[str, str]:
     return {
         key: canonical_digest(content)
         for key, content in HarnessSuiteMember.no_workspace_objects.filter(

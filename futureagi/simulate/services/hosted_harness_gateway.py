@@ -4891,12 +4891,13 @@ class HostedHarnessGateway:
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
             observed = bundle_cache.tool_routing_observations(sandbox)
-            if observed is None:
+            bundle_id = attempt.job.assembled_bundle_id
+            if observed is None or bundle_id is None:
                 return
             with transaction.atomic():
                 bundle = (
                     HarnessAssembledBundle._base_manager.select_for_update()
-                    .filter(id=attempt.job.assembled_bundle_id)
+                    .filter(id=bundle_id)
                     .first()
                 )
                 if bundle is None:
