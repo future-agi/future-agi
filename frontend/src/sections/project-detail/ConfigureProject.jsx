@@ -58,6 +58,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     defaultValues: {
       projectName: projectDetail?.name || "",
       samplingRate: getSamplingRatePercent(projectDetail, module),
+      samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
     },
     resolver: zodResolver(projectSchema),
     mode: "onChange",
@@ -98,6 +99,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     };
     if (module === "observe") {
       payload["sampling_rate"] = data.samplingRate / 100;
+      payload.sampling_contact_attribute = data.samplingContactAttribute || "";
     }
     updateProject(payload);
   };
@@ -107,6 +109,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       reset({
         projectName: projectDetail.name || "",
         samplingRate: getSamplingRatePercent(projectDetail, module),
+      samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
       });
     }
   }, [module, projectDetail, reset]);
@@ -190,6 +193,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               fieldType="text"
             />
             <ShowComponent condition={module === "observe"}>
+              <FormTextFieldV2 control={control} fieldName="samplingContactAttribute" label="Contact attribute for eval sampling" size="small" fullWidth helperText="Optional span attribute, such as contact_id. New custom-contact policies use this mapping; saved policies keep their original mapping." />
               <Box
                 sx={{
                   width: "100%",

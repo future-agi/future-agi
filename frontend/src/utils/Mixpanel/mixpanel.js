@@ -265,13 +265,6 @@ export const identifyUser = (userData = {}) => {
     mixpanel.get_group("org_id", userData?.organization?.id).set_once({
       "Organization Name": userData?.organization?.name,
     });
-
-    // Appcues identification
-    if (window.Appcues) {
-      window.Appcues.identify(id, {
-        email: email,
-      });
-    }
   } catch (error) {
     logger.error("Failed to identify user:", error);
     trackError({
@@ -284,15 +277,9 @@ export const identifyUser = (userData = {}) => {
 };
 
 export const resetUser = () => {
-  if (!MIXPANEL_ENABLED) {
-    if (window.Appcues) window.Appcues.reset();
-    return;
-  }
+  if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.reset();
-    if (window.Appcues) {
-      window.Appcues.reset();
-    }
   } catch (error) {
     logger.error("Failed to reset user:", error);
   }

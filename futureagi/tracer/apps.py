@@ -13,6 +13,7 @@ class SdkConfig(AppConfig):
             dashboard,  # noqa: F401
             entity_tag_assignment,  # noqa: F401
             eval_ci_cd,  # noqa: F401
+            eval_sampling,  # noqa: F401
             eval_task,  # noqa: F401
             external_eval_config,  # noqa: F401
             feed_alert,  # noqa: F401
@@ -26,9 +27,9 @@ class SdkConfig(AppConfig):
             project_version,  # noqa: F401
             replay_session,  # noqa: F401
             saved_view,  # noqa: F401
-            sql_query,  # noqa: F401
             shared_link,  # noqa: F401
             span_notes,  # noqa: F401
+            sql_query,  # noqa: F401
             trace,  # noqa: F401
             trace_annotation,  # noqa: F401
             trace_error_analysis,  # noqa: F401
