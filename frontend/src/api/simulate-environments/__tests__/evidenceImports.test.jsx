@@ -324,6 +324,8 @@ describe("evidence review bundles match the published contract", () => {
     scenario_name: "",
     new_checks: [],
     changed_since_import: false,
+    also_from: 0,
+    duplicate_of: null,
     trace_ids: [],
     started_at: null,
     ended_at: null,
@@ -388,6 +390,25 @@ describe("evidence review bundles match the published contract", () => {
       expect(result.skipped).toBeFalsy();
       expect(result.ok).toBe(true);
     }
+  });
+
+  it("accepts a case more sources hold, and one already imported", () => {
+    const repeated = reviewed({
+      id: "66666666-6666-6666-6666-666666666666",
+      status: "duplicate",
+      duplicate_of: {
+        import_id: "77777777-7777-7777-7777-777777777777",
+        case_id: "88888888-8888-8888-8888-888888888888",
+        scenario_name: "",
+      },
+    });
+    expect(
+      check(full({ cases: [reviewed({ also_from: 2 }), repeated] })).ok,
+    ).toBe(true);
+    // A count of sources is never negative.
+    expect(check(full({ cases: [reviewed({ also_from: -1 })] })).ok).toBe(
+      false,
+    );
   });
 
   it("accepts a label of any JSON value", () => {

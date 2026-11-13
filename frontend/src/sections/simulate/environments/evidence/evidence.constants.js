@@ -179,6 +179,15 @@ export const EVIDENCE_COPY = {
   unavailable: "Unavailable",
   pending: "Waiting",
   discarded: "Discarded",
+  duplicate: "Already imported",
+  // A case more than one source holds: the same source or the same conversation
+  // imported again. It is proposed once.
+  alsoFrom: (n) => `Also from ${n} more source${n === 1 ? "" : "s"}`,
+  importedBefore: (name) =>
+    name
+      ? `Imported before; its scenario is ${name}.`
+      : "Imported before, in an earlier import.",
+  openExisting: "Open the existing case",
   newCheck: "New check added by this import",
   scenario: "Scenario",
   has: "Has:",
@@ -279,6 +288,7 @@ export const CASE_ROLE = {
   blocked: "danger",
   unavailable: "neutral",
   discarded: "neutral",
+  duplicate: "neutral",
 };
 
 // A transcript's format from its file's extension, else from how it starts (a

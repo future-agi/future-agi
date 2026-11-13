@@ -568,6 +568,52 @@ describe("EvidenceReviewDrawer", () => {
     ).toBeInTheDocument();
   });
 
+  it("says in words how many more sources hold a case", async () => {
+    evidence = bundle({ cases: [item({ also_from: 2 })] });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(
+      within(card).getByText("Also from 2 more sources"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a case imported before as already imported, opening that import, with no ids", async () => {
+    const EARLIER = "33333333-3333-3333-3333-333333333333";
+    const ORIGINAL = "44444444-4444-4444-4444-444444444444";
+    evidence = bundle({
+      cases: [
+        item({
+          status: "duplicate",
+          duplicate_of: {
+            import_id: EARLIER,
+            case_id: ORIGINAL,
+            scenario_name: "Refund asked twice",
+          },
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).getByText("Already imported")).toBeInTheDocument();
+    expect(
+      within(card).getByText(
+        /Imported before; its scenario is Refund asked twice\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByRole("link", { name: "Open the existing case" }),
+    ).toHaveAttribute(
+      "href",
+      `/dashboard/simulate/environments/${ENV}?tab=scenarios&import=${EARLIER}`,
+    );
+    expect(card.textContent).not.toContain(EARLIER);
+    expect(card.textContent).not.toContain(ORIGINAL);
+    // It is proposed in that import: nothing here waits to be drafted.
+    expect(
+      screen.getByText("No case is waiting to be drafted."),
+    ).toBeInTheDocument();
+  });
+
   it("says when Observe no longer keeps a source", async () => {
     evidence = bundle({
       cases: [item({ status: "unavailable", source_available: false })],

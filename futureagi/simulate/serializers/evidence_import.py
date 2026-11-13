@@ -209,6 +209,14 @@ class EvidenceNewCheckSerializer(serializers.Serializer):
     what = serializers.CharField(allow_blank=True)
 
 
+class EvidenceDuplicateOfSerializer(serializers.Serializer):
+    import_id = serializers.UUIDField(help_text="The import holding the case.")
+    case_id = serializers.UUIDField()
+    scenario_name = serializers.CharField(
+        allow_blank=True, help_text="Its drafted scenario's title; blank until drafted."
+    )
+
+
 class EvidenceImportCaseSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     source_id = serializers.CharField()
@@ -243,6 +251,17 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
         help_text="Null when unknown: the source is gone, or part of it could not "
         "be read now or when the import was made. Always null for a transcript, "
         "which has no source to read again.",
+    )
+    also_from = serializers.IntegerField(
+        min_value=0,
+        help_text="How many more sources hold this case: the same source or the "
+        "same conversation imported again, in this import or a later one.",
+    )
+    duplicate_of = EvidenceDuplicateOfSerializer(
+        allow_null=True,
+        help_text="For a case already imported (status duplicate): the case of "
+        "another import it repeats, proposed there. Null otherwise, or once that "
+        "case is gone.",
     )
     trace_ids = serializers.ListField(child=serializers.CharField())
     started_at = serializers.DateTimeField(allow_null=True)

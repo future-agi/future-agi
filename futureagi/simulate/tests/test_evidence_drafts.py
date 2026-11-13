@@ -715,3 +715,49 @@ def test_discarding_a_partly_added_import_keeps_its_added_scenario(
     assert made.deleted is False
     assert kept.transcript is not None
     assert open_evidence_imports(environment) == []
+
+
+def test_a_repeated_case_keeps_every_source_once_added(environment, storage, user):
+    """The same transcript twice in one import, then once more in a later one:
+    one case is drafted and added, and the scenario it became names all three
+    sources as where it came from."""
+    from simulate.selectors.evidence_import import evidence_origins
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    chat = "User: Refund me\nAgent: Done twice."
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("first", "text", chat),
+            TranscriptInput("second", "text", chat),
+        ],
+        production=True,
+        user=user,
+    )
+    kept, repeated = list(made.cases.order_by("position"))
+    assert (repeated.status, repeated.duplicate_of_id) == ("duplicate", kept.id)
+    conversation, command = _command(environment, [kept], 72)
+    scenario_key = evidence_drafts.scenario_key_for(kept)
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 72)
+    with _certifies():
+        add_to_suite(
+            made, [str(kept.id)], expected={}, idempotency_key="add-r", user=user
+        )
+    later = create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput("later", "text", chat)],
+        production=True,
+        user=user,
+    )
+
+    origins = evidence_origins(environment, [scenario_key])
+
+    assert [(one.import_id, one.source_ids, one.scenario_keys) for one in origins] == [
+        (str(made.id), ["transcript-1", "transcript-2"], [scenario_key] * 2),
+        (str(later.id), ["transcript-1"], [scenario_key]),
+    ]

@@ -661,7 +661,11 @@ class TestEvidenceDocument:
         self, client, environment, project
     ):
         other = str(uuid.uuid4())
-        found = {SESSION: _evidence(), other: _evidence(other)}
+        # Another conversation: the same one would be proposed once, as one case.
+        found = {
+            SESSION: _evidence(),
+            other: _evidence(other, turns=_evidence().turns[:1]),
+        }
         evidence_import, made = self._import(
             client, environment, project, found, ids=(SESSION, other, MISSING)
         )

@@ -142,6 +142,10 @@ class EvidenceImportCase(BaseModel):
         ADDED = "added", "Added to the suite"
         # A person discarded it, keeping the cases of the import already added.
         DISCARDED = "discarded", "Discarded"
+        # Its source or its content is already a case of the environment
+        # (``duplicate_of``): it is proposed there, once, and counts as one more
+        # source of that case.
+        DUPLICATE = "duplicate", "Already imported"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     evidence_import = models.ForeignKey(
@@ -157,6 +161,21 @@ class EvidenceImportCase(BaseModel):
     # SHA-256 of what the source held when the import was made; blank when it
     # held nothing the project still keeps.
     digest = models.CharField(max_length=64, blank=True, default="")
+    # SHA-256 of the conversation alone (turns, tool calls, expected outcome; no
+    # ids or times), as the import stored it, so two sources holding the same
+    # case are told apart from two different ones; blank when unreadable.
+    content_digest = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+    # The case of the environment this one repeats; its sources are that case's
+    # provenance too.
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
     # The scenario the builder drafted for the case: its key and title, its
     # folder (suite files only, never the environment's) and the environment it
     # was proved on.

@@ -40409,6 +40409,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
   import_id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin = 0;
+
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin = 0;
@@ -40460,6 +40462,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         "blocked",
         "added",
         "discarded",
+        "duplicate",
       ]),
       reason: zod.string(),
       source_available: zod
@@ -40493,6 +40496,28 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         .boolean()
         .describe(
           "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+        ),
+      also_from: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin,
+        )
+        .describe(
+          "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+        ),
+      duplicate_of: zod
+        .object({
+          import_id: zod
+            .string()
+            .uuid()
+            .describe("The import holding the case."),
+          case_id: zod.string().uuid(),
+          scenario_name: zod
+            .string()
+            .describe("Its drafted scenario's title; blank until drafted."),
+        })
+        .describe(
+          "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
         ),
       trace_ids: zod.array(zod.string().min(1)),
       started_at: zod.string().datetime({ offset: true }),
@@ -40731,6 +40756,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
       ),
   });
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin = 0;
+
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin = 0;
@@ -40791,6 +40818,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
             "blocked",
             "added",
             "discarded",
+            "duplicate",
           ]),
           reason: zod.string(),
           source_available: zod
@@ -40824,6 +40852,28 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
             .boolean()
             .describe(
               "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+            ),
+          also_from: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin,
+            )
+            .describe(
+              "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+            ),
+          duplicate_of: zod
+            .object({
+              import_id: zod
+                .string()
+                .uuid()
+                .describe("The import holding the case."),
+              case_id: zod.string().uuid(),
+              scenario_name: zod
+                .string()
+                .describe("Its drafted scenario's title; blank until drafted."),
+            })
+            .describe(
+              "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
             ),
           trace_ids: zod.array(zod.string().min(1)),
           started_at: zod.string().datetime({ offset: true }),

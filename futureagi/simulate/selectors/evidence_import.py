@@ -245,20 +245,34 @@ def _open_status(evidence_import) -> str:
 
 def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEvidence]:
     """The evidence imports of ``environment`` that added any of ``scenario_keys`` to its
-    suite, oldest first, each with those cases' sources in import order. A scenario no
-    import added has no origin."""
+    suite, oldest first, each with those cases' sources in import order. A case
+    another import repeated counts that import's source too, under the scenario
+    it became. A scenario no import added has no origin."""
+    added = Q(
+        status=EvidenceImportCase.Status.ADDED,
+        scenario_key__in=list(scenario_keys),
+    )
+    repeated = Q(
+        status=EvidenceImportCase.Status.DUPLICATE,
+        duplicate_of__status=EvidenceImportCase.Status.ADDED,
+        duplicate_of__scenario_key__in=list(scenario_keys),
+    )
     cases = (
         EvidenceImportCase.no_workspace_objects.filter(
+            added | repeated,
             evidence_import__environment=environment,
             evidence_import__deleted=False,
-            status=EvidenceImportCase.Status.ADDED,
-            scenario_key__in=list(scenario_keys),
         )
-        .select_related("evidence_import")
+        .select_related("evidence_import", "duplicate_of")
         .order_by("evidence_import__created_at", "position")
     )
     origins: dict[str, FixEvidence] = {}
     for case in cases:
+        scenario_key = (
+            case.duplicate_of.scenario_key
+            if case.status == EvidenceImportCase.Status.DUPLICATE
+            else case.scenario_key
+        )
         origin = origins.setdefault(
             str(case.evidence_import_id),
             FixEvidence(
@@ -269,7 +283,7 @@ def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEv
             ),
         )
         origin.source_ids.append(case.source_id)
-        origin.scenario_keys.append(case.scenario_key)
+        origin.scenario_keys.append(scenario_key)
     return list(origins.values())
 
 
@@ -396,8 +410,13 @@ def _stored_evidence(case: EvidenceImportCase) -> SourceEvidence | None:
     stored = _stored(case)
     if stored is None:
         return None
+    return transcript_evidence(stored, case.source_id)
+
+
+def transcript_evidence(stored: StoredTranscript, source_id: str) -> SourceEvidence:
+    """A stored transcript as evidence: its turns, and no tool calls or labels."""
     return SourceEvidence(
-        source_id=case.source_id,
+        source_id=source_id,
         trace_ids=(),
         started_at=None,
         ended_at=None,
@@ -423,13 +442,42 @@ def evidence_digest(evidence: SourceEvidence) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+def content_digest(evidence: SourceEvidence) -> str:
+    """A fingerprint of the case a source holds: its turns, tool calls and expected
+    outcome, without ids or times, so two sources holding the same conversation
+    match. Taken on the evidence as the import cut it. Blank when part of it could
+    not be read or it holds no turn, since then nobody can tell."""
+    if (
+        evidence.tool_calls is None
+        or evidence.transcript_unreadable
+        or not evidence.turns
+    ):
+        return ""
+    body = json.dumps(
+        {
+            "turns": [[turn.role, turn.text] for turn in evidence.turns],
+            "tool_calls": [
+                [call.name, call.failed, call.error, call.input, call.output]
+                for call in evidence.tool_calls
+            ],
+            "expected": evidence.expected,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
 def import_bundle(
     evidence_import: EvidenceImport,
     evidence: dict[str, SourceEvidence] | None = None,
 ) -> dict:
     """The import as the review shows it. ``evidence`` is what its sources hold
-    now (``current_evidence``); it is read when not given."""
-    cases = list(evidence_import.cases.all())
+    now (``current_evidence``); it is read when not given. A case repeating another
+    of this import is left out: that one is proposed, and counts it as a source."""
+    every = list(evidence_import.cases.all())
+    own = {case.id for case in every}
+    cases = [case for case in every if case.duplicate_of_id not in own]
+    provenance = _provenance(cases)
     if evidence is None:
         evidence = current_evidence(evidence_import, cases)
     # A source the import found nothing for stays unavailable: it was frozen so.
@@ -451,15 +499,18 @@ def import_bundle(
         "simulated": is_simulated(evidence_import),
         "production": is_production(evidence_import),
         "cases": [
-            _case(
-                case,
-                current.get(case.source_id),
-                evidence_import.source_kind,
-                _stored(case) if transcript else None,
-                name=_row_name(evidence_import, case)
-                if is_dataset(evidence_import)
-                else "",
-            )
+            {
+                **_case(
+                    case,
+                    current.get(case.source_id),
+                    evidence_import.source_kind,
+                    _stored(case) if transcript else None,
+                    name=_row_name(evidence_import, case)
+                    if is_dataset(evidence_import)
+                    else "",
+                ),
+                **provenance(case),
+            }
             for case in cases
         ],
         "redaction": (
@@ -468,6 +519,44 @@ def import_bundle(
             else _redaction(cases, current)
         ),
     }
+
+
+def _provenance(cases: list[EvidenceImportCase]):
+    """What the review says of each case's other sources: how many more sources a
+    case has (its duplicates in any import still kept), and, for a case already
+    imported elsewhere, the case it repeats, to open that import's review."""
+    also = dict(
+        EvidenceImportCase.no_workspace_objects.filter(
+            duplicate_of__in=[case.id for case in cases],
+            evidence_import__deleted=False,
+        )
+        .order_by()
+        .values_list("duplicate_of_id")
+        .annotate(count=Count("id"))
+    )
+    repeated = {
+        one["id"]: one
+        for one in EvidenceImportCase.no_workspace_objects.filter(
+            id__in=[case.duplicate_of_id for case in cases if case.duplicate_of_id]
+        ).values("id", "evidence_import_id", "scenario_name")
+    }
+
+    def of(case: EvidenceImportCase) -> dict:
+        original = repeated.get(case.duplicate_of_id)
+        return {
+            "also_from": also.get(case.id, 0),
+            "duplicate_of": (
+                {
+                    "import_id": original["evidence_import_id"],
+                    "case_id": original["id"],
+                    "scenario_name": original["scenario_name"],
+                }
+                if original
+                else None
+            ),
+        }
+
+    return of
 
 
 def _stored_redaction(evidence_import: EvidenceImport) -> dict:

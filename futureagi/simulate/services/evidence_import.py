@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Dataset
@@ -21,10 +22,12 @@ from simulate.selectors.evidence_import import (
     OPEN_CASE_STATUSES,
     ROW_NOT_FOUND,
     SOURCE_NOT_FOUND,
+    content_digest,
     evidence_digest,
     import_evidence,
     import_rows,
     stored_transcripts,
+    transcript_evidence,
 )
 from simulate.services.evidence_drafts import CATALOGUE
 from simulate.services.harness_versioning import archives, drafts
@@ -54,6 +57,7 @@ def create_evidence_import(
     show it without reading Observe again."""
     evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
+        _lock(environment)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -64,10 +68,13 @@ def create_evidence_import(
             created_by=user,
         )
         EvidenceImportCase.objects.bulk_create(
-            [
-                _case(evidence_import, position, source_id, evidence.get(source_id))
-                for position, source_id in enumerate(source_ids)
-            ]
+            _deduplicated(
+                evidence_import,
+                [
+                    _case(evidence_import, position, source_id, evidence.get(source_id))
+                    for position, source_id in enumerate(source_ids)
+                ],
+            )
         )
     return evidence_import, evidence
 
@@ -90,6 +97,7 @@ def create_dataset_import(
     _check_columns(dataset, columns)
     evidence = import_rows(dataset, columns, row_ids)
     with transaction.atomic():
+        _lock(environment)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -102,16 +110,19 @@ def create_dataset_import(
             created_by=user,
         )
         EvidenceImportCase.objects.bulk_create(
-            [
-                _case(
-                    evidence_import,
-                    position,
-                    row_id,
-                    evidence.get(row_id),
-                    missing=ROW_NOT_FOUND,
-                )
-                for position, row_id in enumerate(row_ids)
-            ]
+            _deduplicated(
+                evidence_import,
+                [
+                    _case(
+                        evidence_import,
+                        position,
+                        row_id,
+                        evidence.get(row_id),
+                        missing=ROW_NOT_FOUND,
+                    )
+                    for position, row_id in enumerate(row_ids)
+                ],
+            )
         )
     return evidence_import, evidence
 
@@ -170,6 +181,7 @@ def create_transcript_import(
         [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
     )
     with transaction.atomic():
+        _lock(environment)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -181,15 +193,21 @@ def create_transcript_import(
             created_by=user,
         )
         EvidenceImportCase.objects.bulk_create(
-            [
-                EvidenceImportCase(
-                    evidence_import=evidence_import,
-                    position=position,
-                    source_id=f"transcript-{position + 1}",
-                    transcript=one.model_dump(mode="json"),
-                )
-                for position, one in enumerate(stored)
-            ]
+            _deduplicated(
+                evidence_import,
+                [
+                    EvidenceImportCase(
+                        evidence_import=evidence_import,
+                        position=position,
+                        source_id=(source_id := f"transcript-{position + 1}"),
+                        content_digest=content_digest(
+                            transcript_evidence(one, source_id)
+                        ),
+                        transcript=one.model_dump(mode="json"),
+                    )
+                    for position, one in enumerate(stored)
+                ],
+            )
         )
     return evidence_import
 
@@ -226,7 +244,92 @@ def _case(
         position=position,
         source_id=source_id,
         digest=evidence_digest(evidence),
+        content_digest=content_digest(evidence),
     )
+
+
+def _lock(environment: HostedHarnessJob) -> None:
+    """Holds the environment's row until the import commits, so two imports of
+    one source made at once cannot both propose it."""
+    HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",)).filter(
+        id=environment.id
+    ).first()
+
+
+# Cases one already in the environment repeats: still to draft or add, or added.
+# A blocked case is left out, since importing its source again is how a person
+# retries it.
+_REPEATED_STATUSES = (
+    EvidenceImportCase.Status.PENDING,
+    EvidenceImportCase.Status.DRAFTED,
+    EvidenceImportCase.Status.ADDED,
+)
+
+
+def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
+    """What names one source across imports: an Observe session or call by its
+    id, a dataset row by its dataset and id. A transcript has no source to name."""
+    if evidence_import.source_kind == EvidenceImport.SourceKind.TRANSCRIPT:
+        return None
+    return (evidence_import.source_kind, evidence_import.dataset_id, source_id)
+
+
+def _deduplicated(
+    evidence_import: EvidenceImport, cases: list[EvidenceImportCase]
+) -> list[EvidenceImportCase]:
+    """``cases`` with each one the environment already holds marked a duplicate of
+    that case: the same source, or the same conversation (content digest), in an
+    open or added case of another import, or earlier in this one. The case it
+    repeats is proposed once and keeps it as one more source. Run under the
+    environment's lock."""
+    readable = [
+        case for case in cases if case.status == EvidenceImportCase.Status.PENDING
+    ]
+    digests = {case.content_digest for case in readable if case.content_digest}
+    keyed = {
+        key
+        for case in readable
+        if (key := _source_key(evidence_import, case.source_id))
+    }
+    by_source: dict[tuple, EvidenceImportCase] = {}
+    by_digest: dict[str, EvidenceImportCase] = {}
+    if digests or keyed:
+        same_source = Q()
+        for kind, dataset_id, source_id in keyed:
+            same_source |= Q(
+                evidence_import__source_kind=kind,
+                evidence_import__dataset_id=dataset_id,
+                source_id=source_id,
+            )
+        held = (
+            EvidenceImportCase.objects.filter(
+                same_source | Q(content_digest__in=digests),
+                evidence_import__environment_id=evidence_import.environment_id,
+                evidence_import__deleted=False,
+                status__in=_REPEATED_STATUSES,
+                duplicate_of__isnull=True,
+            )
+            .select_related("evidence_import")
+            .order_by("evidence_import__created_at", "position")
+        )
+        for case in held:
+            key = _source_key(case.evidence_import, case.source_id)
+            if key:
+                by_source.setdefault(key, case)
+            if case.content_digest:
+                by_digest.setdefault(case.content_digest, case)
+    for case in readable:
+        key = _source_key(evidence_import, case.source_id)
+        original = (by_source.get(key) if key else None) or by_digest.get(
+            case.content_digest
+        )
+        if original is not None:
+            case.status = EvidenceImportCase.Status.DUPLICATE
+            case.duplicate_of_id = original.id
+            continue
+        if case.content_digest:
+            by_digest[case.content_digest] = case
+    return cases
 
 
 def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
@@ -247,12 +350,39 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
             )
         cases = EvidenceImportCase.objects.filter(evidence_import=locked)
         if not cases.filter(status=EvidenceImportCase.Status.ADDED).exists():
+            _promote_duplicates(locked, cases)
             locked.delete()
             return True
-        cases.filter(status__in=OPEN_CASE_STATUSES).update(
+        leaving = cases.filter(status__in=OPEN_CASE_STATUSES)
+        _promote_duplicates(locked, leaving)
+        leaving.update(
             status=EvidenceImportCase.Status.DISCARDED, updated_at=timezone.now()
         )
         return False
+
+
+def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
+    """For each of ``leaving`` another import repeats, its earliest duplicate
+    there becomes the case to draft, and the rest repeat that one instead, so an
+    import's "already imported" never points at a discarded case."""
+    duplicates = (
+        EvidenceImportCase.objects.select_for_update(of=("self",))
+        .filter(duplicate_of__in=leaving)
+        .exclude(evidence_import=evidence_import)
+        .filter(evidence_import__deleted=False)
+        .order_by("evidence_import__created_at", "position")
+    )
+    successor: dict = {}
+    now = timezone.now()
+    for case in duplicates:
+        first = successor.setdefault(case.duplicate_of_id, case)
+        if first is case:
+            case.status = EvidenceImportCase.Status.PENDING
+            case.duplicate_of_id = None
+        else:
+            case.duplicate_of_id = first.id
+        case.updated_at = now
+        case.save(update_fields=["status", "duplicate_of", "updated_at"])
 
 
 def add_to_suite(

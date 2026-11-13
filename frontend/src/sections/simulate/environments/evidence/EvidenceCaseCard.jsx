@@ -104,6 +104,28 @@ Origin.propTypes = {
   datasetHref: PropTypes.string,
 };
 
+// A case already imported: proposed in that import, which the link opens.
+function ImportedBefore({ item, existingHref }) {
+  return (
+    <Typography sx={{ ...BODY, mb: 1 }}>
+      {EVIDENCE_COPY.importedBefore(item.duplicate_of?.scenario_name)}
+      {existingHref ? (
+        <>
+          {" "}
+          <Link component={RouterLink} href={existingHref} underline="hover">
+            {EVIDENCE_COPY.openExisting}
+          </Link>
+        </>
+      ) : null}
+    </Typography>
+  );
+}
+
+ImportedBefore.propTypes = {
+  item: PropTypes.object.isRequired,
+  existingHref: PropTypes.string,
+};
+
 // One imported case: what its source holds and lacks, what became of it, and —
 // while it waits — what the person wants its new scenario to be. A simulated
 // source (a Simulator project's) says so, and a transcript is labelled the
@@ -114,6 +136,7 @@ export default function EvidenceCaseCard({
   simulated,
   production,
   datasetHref,
+  existingHref,
   shows,
   onShowsChange,
 }) {
@@ -150,6 +173,14 @@ export default function EvidenceCaseCard({
             {caseTitle(item, kind)}
           </Typography>
           <Origin item={item} kind={kind} datasetHref={datasetHref} />
+          {item.also_from ? (
+            <Typography
+              component="div"
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {EVIDENCE_COPY.alsoFrom(item.also_from)}
+            </Typography>
+          ) : null}
         </Box>
         {simulated ? (
           <StatusBadge
@@ -183,6 +214,9 @@ export default function EvidenceCaseCard({
       </Stack>
       {item.reason ? (
         <Typography sx={{ ...BODY, mb: 1 }}>{item.reason}</Typography>
+      ) : null}
+      {item.status === "duplicate" ? (
+        <ImportedBefore item={item} existingHref={existingHref} />
       ) : null}
       {!item.source_available ? (
         <Typography sx={{ ...BODY, mb: 1 }}>
@@ -279,6 +313,7 @@ EvidenceCaseCard.propTypes = {
   simulated: PropTypes.bool,
   production: PropTypes.bool,
   datasetHref: PropTypes.string,
+  existingHref: PropTypes.string,
   shows: PropTypes.string,
   onShowsChange: PropTypes.func,
 };

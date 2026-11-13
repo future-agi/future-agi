@@ -100560,6 +100560,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scenario_name",
         "new_checks",
         "changed_since_import",
+        "also_from",
+        "duplicate_of",
         "trace_ids",
         "started_at",
         "ended_at",
@@ -100599,6 +100601,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "blocked",
             "added",
             "discarded",
+            "duplicate",
           ],
         },
         reason: {
@@ -100636,6 +100639,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
           type: "boolean",
           "x-nullable": true,
+        },
+        also_from: {
+          title: "Also from",
+          description:
+            "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+          type: "integer",
+          minimum: 0,
+        },
+        duplicate_of: {
+          $ref: "#/definitions/EvidenceDuplicateOf",
         },
         trace_ids: {
           type: "array",
@@ -121704,6 +121717,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       additionalProperties: true,
+    },
+    EvidenceDuplicateOf: {
+      description:
+        "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+      required: ["import_id", "case_id", "scenario_name"],
+      type: "object",
+      properties: {
+        import_id: {
+          title: "Import id",
+          description: "The import holding the case.",
+          type: "string",
+          format: "uuid",
+        },
+        case_id: {
+          title: "Case id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description: "Its drafted scenario's title; blank until drafted.",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     EvidenceExpectedOutcome: {
       description:

@@ -20172,6 +20172,7 @@ export const EvidenceImportCaseApiStatus = {
   blocked: "blocked",
   added: "added",
   discarded: "discarded",
+  duplicate: "duplicate",
 } as const;
 
 /**
@@ -20181,6 +20182,17 @@ export interface EvidenceNewCheckApi {
   /** @minLength 1 */
   name: string;
   what: string;
+}
+
+/**
+ * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
+ */
+export interface EvidenceDuplicateOfApi {
+  /** The import holding the case. */
+  import_id: string;
+  case_id: string;
+  /** Its drafted scenario's title; blank until drafted. */
+  scenario_name: string;
 }
 
 export type EvidenceTranscriptApiStatus =
@@ -20353,6 +20365,12 @@ export interface EvidenceImportCaseApi {
   new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
   changed_since_import: boolean;
+  /**
+   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
+   * @minimum 0
+   */
+  also_from: number;
+  duplicate_of: EvidenceDuplicateOfApi;
   trace_ids: string[];
   started_at: string;
   ended_at: string;

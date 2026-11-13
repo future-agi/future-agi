@@ -18,6 +18,7 @@ import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
 import {
   EVIDENCE_COPY,
+  IMPORT_PARAM,
   caseShowsDefault,
   errorText,
 } from "./evidence.constants";
@@ -232,6 +233,12 @@ export default function EvidenceReviewDrawer({
                   datasetHref={
                     dataset && data.dataset_id
                       ? `${paths.dashboard.develop}/${data.dataset_id}?tab=data`
+                      : null
+                  }
+                  // A case already imported opens the import proposing it.
+                  existingHref={
+                    one.duplicate_of
+                      ? `${paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios")}&${IMPORT_PARAM}=${one.duplicate_of.import_id}`
                       : null
                   }
                   shows={shows[one.id]}
