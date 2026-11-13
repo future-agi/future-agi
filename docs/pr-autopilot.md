@@ -494,16 +494,23 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    If the PR waits behind `dev` again later, the bot edits that comment
    back. GitHub sends no notification for an edited comment, so the bot
    first posts one short new comment that names the head and points to the
-   note. So the author is notified each time the note comes back, not for
-   each push. That comment comes first: if it fails, the run fails,
-   the note stays cleared and does not park the PR, and the next sweep
+   note. It does the same when the note is still live but names an older
+   head, and the new head has taken in `dev` since that head. This happens
+   when the author merges `dev` in and pushes, and `dev` moves again before
+   the first run on the new head. The bot compares both heads with the live
+   `dev` tip (GitHub's compare API). If their merge bases differ, the new
+   head has taken in `dev`. A new head that only adds commits keeps the
+   merge base and gets only the edit, because the author was already told
+   about that wait. If the older head's compare fails, a merge base is
+   missing, or the note names no head, the bot posts the comment. Anyone
+   with write access can edit the note, so the head it names decides only
+   whether this comment is posted. So the author is notified each time a
+   wait starts: the first note, a note that comes back, and a merge of
+   `dev` that `dev` overtakes. A push that does not merge `dev` in starts no
+   new wait. The comment comes first: if it fails, the run fails, the note
+   does not name the new head and does not park the PR, and the next sweep
    tries again. If the edit then fails, the next run posts the comment a
-   second time. A new head that is still behind while the note is live
-   gets only the edit. So if `dev` moves between the author's merge of `dev`
-   and the first run on that head, the author is not told again. That
-   window lasts from the push until the first run on the new head: the run
-   that the PR event dispatches, or the next sweep (about every 15 minutes)
-   when PR-event runs are blocked. A change to the trusted-author
+   second time. A change to the trusted-author
    list starts no run, and the sweep does not dispatch a PR that the list
    no longer covers. The note on such a PR stays live until the PR's next
    event (a push, a label, a draft change) or a manual dispatch. `dev`
@@ -1230,7 +1237,11 @@ Suggested rollout:
    merges `dev` in, merge another PR into `dev` while CI runs: the bot posts
    one new comment naming the head, edits the note back to live, and the
    author receives a notification for the new comment; development did not
-   observe that notification), a branch behind `dev` with a push by an
+   observe that notification), an overtaken catch-up (while the note is
+   live, the author merges `dev` in and pushes, and another PR merges into
+   `dev` before the first run on that head: the bot posts one new comment
+   naming the head and edits the note to name it; a plain push instead
+   gets only the edit), a branch behind `dev` with a push by an
    account not on the list (an escalation and no behind-dev note), a push
    by an account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
@@ -1262,7 +1273,10 @@ a person is escalated at once instead; cleared once the branch contains the
 tip, once a person has the head, or once the PR is a draft, held, not LOW or
 no longer from a trusted author, but not for hours or mergeability; edited
 back to live when it applies again, after one new comment that notifies the
-author, with a retry when that comment fails; and parked by the sweep), the PR-event
+author, with a retry when that comment fails; the same new comment when a
+live note moves to a head whose merge base with the tip differs, or whose
+older head cannot be compared, and none for a plain push; and parked by the
+sweep), the PR-event
 types that clear it, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads, and `dev`

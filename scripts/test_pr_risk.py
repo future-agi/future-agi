@@ -269,6 +269,10 @@ class FakeGitHub:
         self.dev_tip = BASE
         self.behind = 1
         self.behind_override = None
+        # The dev commit each earlier head contains, recorded when it was
+        # pushed over; and each compared head with the merge base answered.
+        self.contained = {}
+        self.compared = []
         self.refuse_approval = None
         # HTTP status (or "no answer") the App's dismissal of its own approval fails with.
         self.refuse_dismissal = None
@@ -287,6 +291,7 @@ class FakeGitHub:
 
     def push(self, sha, force=False, actor="trusted-author"):
         old = self.pr["head"]["sha"]
+        self.contained[old] = self.pr["base"]["sha"]
         self.pr["head"]["sha"] = sha
         self.push_log.append((old, sha, actor))
         if force:
@@ -420,11 +425,24 @@ class FakeGitHub:
         if method == "GET" and route == "git/ref/heads/dev":
             return {"object": {"sha": self.dev_tip}}
         if method == "GET" and route.startswith("compare/"):
-            # By default the PR contains the dev tip only when its recorded base
-            # is that tip; behind_override models a stale branch opened later.
-            if self.behind_override is not None:
-                return {"behind_by": self.behind_override}
-            return {"behind_by": 0 if self.pr["base"]["sha"] == self.dev_tip else self.behind}
+            # compare/{tip}...{head}. By default the PR's head contains the dev
+            # tip only when its recorded base is that tip; behind_override
+            # models a stale branch opened later. An earlier head contains the
+            # dev commit recorded when it was pushed over (push). GitHub
+            # answers 404 for a commit it does not know (read 13 Nov 2026).
+            head = route.partition("...")[2]
+            if head == self.pr["head"]["sha"]:
+                contained = self.pr["base"]["sha"]
+                behind = (self.behind_override if self.behind_override is not None
+                          else 0 if contained == self.dev_tip else self.behind)
+            elif head in self.contained:
+                contained = self.contained[head]
+                behind = 0 if contained == self.dev_tip else self.behind
+            else:
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 404)", 404)
+            self.compared.append((head, contained))
+            # The real payload's merge_base_commit is a full commit object.
+            return {"behind_by": behind, "merge_base_commit": {"sha": contained}}
         if method == "GET" and route.startswith("activity?"):
             params = urllib.parse.parse_qs(route.partition("?")[2])
             assert params["ref"] == ["refs/heads/" + self.pr["head"]["ref"]], params
@@ -2533,11 +2551,12 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len([c for c in self.api.comments
                               if c["body"].startswith(risk.BEHIND_DEV_MARKER)]), 1)
         self.assertFalse(self.reservations())
-        # The note was live throughout, so it needs no second comment.
+        # The note was live throughout and the new head took in no dev
+        # commit (same merge base), so it needs no second comment.
         self.assertEqual(self.behind_again(), [])
 
     def behind_again(self):
-        """The unmarked comments that say a cleared behind-dev note applies again."""
+        """The unmarked comments that tell the author about a new behind-dev wait."""
         prefix = risk.BEHIND_DEV_AGAIN.split("`", 1)[0]
         return [c["body"] for c in self.api.comments
                 if risk.bot_comment(c) and c["body"].startswith(prefix)]
@@ -2596,6 +2615,102 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(risk.parked(self.api, {"number": 42, "head": {"sha": merged}}))
         self.prepare()
         self.assertEqual(len(self.behind_again()), 1)
+        [body] = self.behind_notes()
+        self.assertIn(f"Head: `{merged}`.", body)
+
+    def overtake_live_note(self, merge_dev):
+        """The note is live on HEAD. The author pushes a new head, which merges
+        dev (tip OTHER) in when `merge_dev`, else only adds a commit. Another
+        PR merges into dev before any run compares that head. Returns the
+        note's comment, the new head and the index of the next request."""
+        self.fall_behind()
+        self.prepare()
+        [note] = [c for c in self.api.comments if c["body"].startswith(risk.BEHIND_DEV_MARKER)]
+        head = "1" * 40
+        self.api.push(head)
+        if merge_dev:
+            self.api.pr["base"]["sha"] = OTHER
+        self.api.dev_tip = "e" * 40
+        os.environ["POLICY_SHA"] = os.environ["GITHUB_SHA"] = "e" * 40
+        return note, head, len(self.api.requests)
+
+    def comment_writes(self, start):
+        """Comment writes since request `start`, except the tier comment's
+        edit to name the new head."""
+        return [w[:2] for w in self.api.requests[start:]
+                if w[0] in {"POST", "PATCH"} and "comments" in w[1]
+                and not str((w[2] or {}).get("body", "")).startswith(risk.TIER_MARKER)]
+
+    def test_a_catch_up_that_dev_overtakes_before_any_run_posts_a_new_comment(self):
+        # The note is still live, so without the new comment the author would
+        # get only an edit, and GitHub sends no notification for an edit.
+        note, merged, start = self.overtake_live_note(merge_dev=True)
+        self.prepare()
+        self.assertEqual(self.comment_writes(start), [("POST", "issues/42/comments"),
+                                                      ("PATCH", f"issues/comments/{note['id']}")])
+        [again] = self.behind_again()
+        self.assertEqual(again, risk.BEHIND_DEV_AGAIN.format(head=merged))
+        [body] = self.behind_notes()
+        self.assertFalse(body.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        self.assertIn(f"Head: `{merged}`.", body)
+        # The two merge bases decided, not a failed read: both heads were
+        # compared with the same tip, and GitHub answered both.
+        self.assertIn(("GET", f"compare/{'e' * 40}...{HEAD}", None), self.api.requests[start:])
+        self.assertEqual(self.api.compared[-2:], [(merged, OTHER), (HEAD, BASE)])
+        self.assertFalse(self.reservations())
+        # The same head again: no comment is posted or edited.
+        start = len(self.api.requests)
+        self.prepare()
+        self.assertEqual(self.comment_writes(start), [])
+        self.assertEqual(len(self.behind_again()), 1)
+
+    def test_a_plain_push_on_a_behind_head_gets_only_the_edit_when_dev_moves_too(self):
+        # The merge base is unchanged: the author was told about this wait already.
+        note, head, start = self.overtake_live_note(merge_dev=False)
+        self.prepare()
+        self.assertEqual(self.comment_writes(start), [("PATCH", f"issues/comments/{note['id']}")])
+        self.assertEqual(self.behind_again(), [])
+        [body] = self.behind_notes()
+        self.assertIn(f"Head: `{head}`.", body)
+        self.assertEqual(self.api.compared[-2:], [(head, BASE), (HEAD, BASE)])
+
+    def test_a_note_on_a_head_whose_merge_base_is_unknown_gets_the_new_comment(self):
+        # Anyone with write access can edit the note, and GitHub answers 404
+        # for a commit it does not know. When in doubt the author is told.
+        cases = {
+            "noted head unknown to GitHub": lambda note: note.update(
+                body=note["body"].replace(HEAD, "f" * 40)),
+            "no head in the note": lambda note: note.update(
+                body=note["body"].replace(f"Head: `{HEAD}`.", "")),
+            "compare fails": lambda note: self.failing(
+                lambda method, route, data: route == f"compare/{'e' * 40}...{HEAD}", 1),
+            "no merge base in the answer": lambda note: self.api.contained.update({HEAD: "not-a-sha"}),
+        }
+        for name, arrange in cases.items():
+            with self.subTest(name):
+                self.api = FakeGitHub()
+                note, head, start = self.overtake_live_note(merge_dev=False)
+                arrange(note)
+                self.prepare()
+                self.assertEqual(self.comment_writes(start),
+                                 [("POST", "issues/42/comments"),
+                                  ("PATCH", f"issues/comments/{note['id']}")])
+                self.assertEqual(self.behind_again(), [risk.BEHIND_DEV_AGAIN.format(head=head)])
+                [body] = self.behind_notes()
+                self.assertIn(f"Head: `{head}`.", body)
+
+    def test_a_failed_comment_for_an_overtaken_catch_up_is_retried_by_the_next_run(self):
+        note, merged, _ = self.overtake_live_note(merge_dev=True)
+        self.failing(lambda method, route, data: method == "POST" and route == "issues/42/comments"
+                     and not str((data or {}).get("body", "")).startswith("<!--"), 1)
+        with self.assertRaises(risk.ApiError):
+            self.prepare()
+        # The note still names the earlier head, so it does not park this one.
+        self.assertEqual(self.behind_again(), [])
+        self.assertIn(f"Head: `{HEAD}`.", note["body"])
+        self.assertFalse(risk.parked(self.api, {"number": 42, "head": {"sha": merged}}))
+        self.prepare()
+        self.assertEqual(self.behind_again(), [risk.BEHIND_DEV_AGAIN.format(head=merged)])
         [body] = self.behind_notes()
         self.assertIn(f"Head: `{merged}`.", body)
 

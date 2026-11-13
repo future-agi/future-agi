@@ -55,9 +55,10 @@ BEHIND_DEV_NOTE = (
     "push, and about once an hour until then."
 )
 BEHIND_DEV_CLEARED = "The branch now contains the live `dev` tip."
-# Posted, without a marker, when a cleared behind-dev note applies again
-# (behind_dev). GitHub sends no notification for an edited comment, so the
-# edit back to live alone would not tell the author about the new wait.
+# Posted, without a marker, when a cleared behind-dev note applies again, or
+# when a live note moves to a head that has taken in dev since the head it
+# named (tell_author_again). GitHub sends no notification for an edited
+# comment, so the edit alone would not tell the author about the new wait.
 BEHIND_DEV_AGAIN = (
     "The autopilot is waiting again: head `{head}` does not contain the latest "
     "`dev` commit. Merge `dev` into the branch and push. The behind-dev note "
@@ -1073,17 +1074,29 @@ def protection(api, policy):
     return requirements
 
 
+def dev_compare(api, head):
+    """The live dev tip, and GitHub's comparison of `head` with it
+    (compare/{tip}...{head}: behind_by, merge_base_commit)."""
+    tip = (api.request("GET", "git/ref/heads/dev").get("object") or {}).get("sha", "")
+    if not SHA.fullmatch(tip):
+        raise PolicyError("dev tip is unknown")
+    return tip, api.request("GET", f"compare/{tip}...{head}")
+
+
 def current_base(api, pr):
     """The live dev tip if this PR's branch contains it, else None (behind dev).
 
     Always compare: pulls.base.sha equal to the tip only means the PR was opened
     after that dev commit, not that its head contains it.
     """
-    tip = (api.request("GET", "git/ref/heads/dev").get("object") or {}).get("sha", "")
-    if not SHA.fullmatch(tip):
-        raise PolicyError("dev tip is unknown")
-    compare = api.request("GET", f"compare/{tip}...{pr['head']['sha']}")
+    tip, compare = dev_compare(api, pr["head"]["sha"])
     return tip if compare.get("behind_by") == 0 else None
+
+
+def merge_base(compare):
+    """The merge base a compare payload names, or None."""
+    sha = ((compare if isinstance(compare, dict) else {}).get("merge_base_commit") or {}).get("sha")
+    return sha if isinstance(sha, str) and SHA.fullmatch(sha) else None
 
 
 def checks_for(api, head):
@@ -1706,12 +1719,45 @@ def require_initial_attempt():
         )
 
 
-def behind_dev(api, policy, settings, pr, comments, decision):
+def tell_author_again(api, comments, head, tip, compare):
+    """Whether the author needs a new comment (BEHIND_DEV_AGAIN) before the
+    behind-dev note names `head`. GitHub sends no notification for an edited
+    comment, so the edit alone tells nobody.
+
+    Yes when the note was cleared: the wait is new. Yes also when the live
+    note names an older head and `head` has taken in dev since: its merge base
+    with the tip (`compare`, for `head`) differs from the noted head's. The
+    author merged dev in, and dev moved again before a run compared the new
+    head. A plain push on a behind head keeps the merge base, and the author
+    was told already. Anyone with write access can edit the note, so the head
+    it names decides only this comment. If that head or either merge base is
+    unknown, the comment is posted."""
+    note = standing_note(comments, BEHIND_DEV_MARKER)
+    if not note:
+        return False
+    if note["body"].startswith(BEHIND_DEV_MARKER + NO_LONGER_APPLIES):
+        return True
+    noted = NOTED_HEAD.search(note["body"])
+    if not noted:
+        return True
+    if noted[1] == head:
+        return False
+    try:
+        earlier = merge_base(api.request("GET", f"compare/{tip}...{noted[1]}"))
+    except PolicyError:
+        return True
+    later = merge_base(compare)
+    return earlier is None or later is None or earlier != later
+
+
+def behind_dev(api, policy, settings, pr, comments, decision, tip, compare):
     """The branch does not contain the live dev tip, so the author merges dev
     in; no review round is spent. The behind-dev note is the PR's only sign of
     this wait, and it parks the PR until the head changes (PARKING_NOTES).
-    When a cleared note applies again, a new comment (BEHIND_DEV_AGAIN)
-    notifies the author first.
+    When the note comes back after it was cleared, or moves to a head that
+    has taken in dev since the head it named, a new comment (BEHIND_DEV_AGAIN)
+    notifies the author first (tell_author_again). `tip` and `compare` are the
+    live dev tip and its comparison with this head (dev_compare).
 
     The note goes only on a head that merging dev in would let continue: the
     merge decision would otherwise allow it, no escalation names it, and its
@@ -1737,12 +1783,11 @@ def behind_dev(api, policy, settings, pr, comments, decision):
             # A head the history has not recorded yet may come from a push by
             # someone else; wait for it, as the review path does.
             if pushes[0].get("after") == head:
-                # A cleared note that applies again is a new wait: tell the
-                # author with a new comment before the note is edited back.
-                # In this order a failed comment fails the run, the note stays
-                # cleared, nothing parks the PR and the next run tries again.
-                previous = standing_note(comments, BEHIND_DEV_MARKER)
-                if previous and previous["body"].startswith(BEHIND_DEV_MARKER + NO_LONGER_APPLIES):
+                # A new wait gets a new comment before the note is edited.
+                # In this order a failed comment fails the run, the note does
+                # not name this head, nothing parks the PR at it, and the next
+                # run tries again.
+                if tell_author_again(api, comments, head, tip, compare):
                     comment(api, number, BEHIND_DEV_AGAIN.format(head=head))
                 post_note(api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, head)
             summary(waiting)
@@ -1803,10 +1848,11 @@ def prepare(api, policy, settings, event, event_name):
         review_passed=True,
         now=now_utc(),
     )
-    base = current_base(api, pr)
-    if base is None:
-        behind_dev(api, policy, settings, pr, comments, decision)
+    tip, compare = dev_compare(api, pr["head"]["sha"])
+    if compare.get("behind_by") != 0:
+        behind_dev(api, policy, settings, pr, comments, decision, tip, compare)
         return
+    base = tip
     if live_note(comments, BEHIND_DEV_MARKER):
         clear_note(api, number, BEHIND_DEV_MARKER, BEHIND_DEV_CLEARED)
     if base != os.environ["POLICY_SHA"]:
