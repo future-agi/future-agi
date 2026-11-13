@@ -179,35 +179,63 @@ def drop_task_connection_on_first_marker():
     """Kill the task thread's session server-side on the first terminal write.
 
     This is what a pooler restart or failover does to the task's connection.
-    The real marker then runs on the dead session. Returns the row ids whose
-    write hit the dead session.
+    The real marker then runs on the dead session. Returns a record of the
+    kill (``rows`` holds the row ids whose write hit the dead session) and
+    the patch. Tests must call ``assert_marker_write_failed`` on the record:
+    a kill that misfires lets the write succeed, and the test would then
+    pass without reaching the error handling it covers.
     """
     real_marker = eval_cell_status.mark_rerun_cells_failed
-    lost_rows = []
+    kill = SimpleNamespace(
+        rows=[], terminated=None, killer_error=None, write_error=None
+    )
 
     def terminate(pid):
         from django.db import connection as killer
 
+        # Record rather than raise: an exception in this thread would only
+        # surface as a pytest warning.
         try:
             with killer.cursor() as cursor:
                 cursor.execute("SELECT pg_terminate_backend(%s, 10000)", [pid])
+                kill.terminated = cursor.fetchone()[0]
+        except Exception as error:
+            kill.killer_error = error
         finally:
             killer.close()
 
     def marker(metric_id, row_ids, **kwargs):
-        if not lost_rows:
-            lost_rows.extend(str(row_id) for row_id in row_ids)
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_backend_pid()")
-                pid = cursor.fetchone()[0]
-            killer = Thread(target=terminate, args=(pid,))
-            killer.start()
-            killer.join(20)
-        return real_marker(metric_id, row_ids, **kwargs)
+        if kill.rows:
+            return real_marker(metric_id, row_ids, **kwargs)
+        kill.rows.extend(str(row_id) for row_id in row_ids)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_backend_pid()")
+            pid = cursor.fetchone()[0]
+        killer = Thread(target=terminate, args=(pid,))
+        killer.start()
+        killer.join(20)
+        # Assertions here would be swallowed by the handler under test, so
+        # keep the outcome for the test body to check.
+        try:
+            return real_marker(metric_id, row_ids, **kwargs)
+        except Exception as error:
+            kill.write_error = error
+            raise
 
-    return lost_rows, patch(
+    return kill, patch(
         "model_hub.utils.eval_cell_status.mark_rerun_cells_failed", side_effect=marker
     )
+
+
+def assert_marker_write_failed(kill, rerun):
+    """The kill landed and the first terminal write really failed, so the
+    lost rows' score cells are still RUNNING from the start of the task."""
+    assert kill.killer_error is None, kill.killer_error
+    assert kill.terminated is True
+    assert isinstance(kill.write_error, OperationalError), kill.write_error
+    for row_id in kill.rows:
+        cell = Cell.objects.get(row_id=row_id, column=rerun.column)
+        assert (cell.status, cell.value) == (CellStatus.RUNNING.value, None)
 
 
 def test_selected_rows_do_not_share_runner_initialization(rerun):
@@ -741,7 +769,7 @@ def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
     first terminal write. The other failed row is still finished, and the
     healthy metric keeps its completed result and completion event."""
     healthy, healthy_column = add_healthy_metric(rerun)
-    lost_rows, marker = drop_task_connection_on_first_marker()
+    kill, marker = drop_task_connection_on_first_marker()
     try:
         with (
             marker,
@@ -754,9 +782,10 @@ def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
     finally:
         connection.close()
 
-    assert len(lost_rows) == 1
+    assert len(kill.rows) == 1
     # The write that hit the dead session is logged; it cannot be stored.
-    other_row = next(row for row in rerun.rows[:2] if str(row.id) not in lost_rows)
+    assert_marker_write_failed(kill, rerun)
+    other_row = next(row for row in rerun.rows[:2] if str(row.id) not in kill.rows)
     for column in (rerun.column, rerun.reason_column):
         cell = Cell.objects.get(row=other_row, column=column)
         assert (cell.status, cell.value) == (CellStatus.ERROR.value, FAILED_REASON)
@@ -779,7 +808,7 @@ def test_lost_connection_after_initialization_failure_still_runs_later_metrics(
     """The first metric fails before fan-out and its terminal write hits a dead
     session. The next metric must still be submitted and complete."""
     healthy, healthy_column = add_healthy_metric(rerun)
-    lost_rows, marker = drop_task_connection_on_first_marker()
+    kill, marker = drop_task_connection_on_first_marker()
     original_wrap = dataset_views.wrap_for_thread
     wrapped = []
 
@@ -799,7 +828,8 @@ def test_lost_connection_after_initialization_failure_still_runs_later_metrics(
     finally:
         connection.close()
 
-    assert sorted(lost_rows) == sorted(str(row.id) for row in rerun.rows[:2])
+    assert sorted(kill.rows) == sorted(str(row.id) for row in rerun.rows[:2])
+    assert_marker_write_failed(kill, rerun)
     assert status_of(rerun.metric) == StatusType.FAILED.value
     assert status_of(healthy) == StatusType.COMPLETED.value
     assert column_state(healthy_column) == [
