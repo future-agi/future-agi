@@ -1309,7 +1309,7 @@ export default function EnvironmentWorkspace() {
         enqueueSnackbar(
           out.passed
             ? "Connection ready — every check passed."
-            : `${failed} check${failed === 1 ? "" : "s"} failed — each has a Fix in the list.`,
+            : `${failed} check${failed === 1 ? "" : "s"} failed — open ${failed === 1 ? "it" : "them"} in Ready to run to see the fix.`,
           { variant: out.passed ? "success" : "warning" },
         );
       },
