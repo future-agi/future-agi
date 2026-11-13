@@ -1,82 +1,622 @@
 [
     {
         "id": "BG_01",
-        "file_name": "birdsong_and_wind_through_trees_in_park.wav",
-        "path": "final/birdsong_and_wind_through_trees_in_park.wav",
+        "file_name": "existing-bg_01.wav",
+        "path": "bg/existing-bg_01.wav",
         "title": "Gentle Park Sounds",
         "intensity": "quiet",
         "environment": "outdoors",
         "description": "This audio features calming sounds of birdsong and wind rustling through trees. The overall atmosphere is peaceful and relaxing, creating a serene backdrop. It's a pleasant soundscape perfect for unwinding.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/b726a674-6405-4ea8-9876-98c15a3a986b"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_01.wav"
     },
     {
         "id": "BG_02",
-        "file_name": "car_driving_ambience.wav",
-        "path": "final/car_driving_ambience.wav",
+        "file_name": "existing-bg_02.wav",
+        "path": "bg/existing-bg_02.wav",
         "title": "Car Driving Ambiance",
         "intensity": "moderate",
         "environment": "vehicle",
         "description": "This audio features the consistent sound of a car driving on a road. You can hear the engine hum and the low rumble of the tires on the asphalt. It's a continuous sound, creating a calming and slightly hypnotic atmosphere.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/681f501a-4ecc-48c8-9ecf-709a4dc9c8e0"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_02.wav"
     },
     {
         "id": "BG_04",
-        "file_name": "grocery_store_ambience_new.wav",
-        "path": "final/grocery_store_ambience_new.wav",
+        "file_name": "existing-bg_04.wav",
+        "path": "bg/existing-bg_04.wav",
         "title": "Grocery Store Ambience",
         "intensity": "moderate",
         "environment": "retail",
         "description": "This audio captures a typical grocery store environment with a mix of sounds: hushed conversations, the gentle hum of refrigerators, and the soft clatter of shopping carts. It's a moderately busy atmosphere, not overly loud, creating a relaxed and familiar soundscape. The sounds are fairly continuous, making it suitable for background ambiance.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/dcf2c713-622e-404e-81b1-aa1d954d752f"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_04.wav"
     },
     {
         "id": "BG_05",
-        "file_name": "office_ambience_mix.wav",
-        "path": "final/office_ambience_mix.wav",
+        "file_name": "existing-bg_05.wav",
+        "path": "bg/existing-bg_05.wav",
         "title": "Office Ambience",
         "intensity": "moderate",
         "environment": "office",
         "description": "This audio features a mix of typical office sounds: keyboard clicks, faint conversations, and the hum of office equipment. It's a generally quiet and unobtrusive soundscape, creating a comfortable and focused atmosphere. The sounds are continuous and provide a subtle background.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/212d2f8c-7049-415d-98e5-861864b9a9ab"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_05.wav"
     },
     {
         "id": "BG_06",
-        "file_name": "people_at_airport_room.wav",
-        "path": "final/people_at_airport_room.wav",
+        "file_name": "existing-bg_06.wav",
+        "path": "bg/existing-bg_06.wav",
         "title": "Airport Terminal Activity",
         "intensity": "moderate",
         "environment": "transit",
         "description": "This audio captures the sounds of a busy airport terminal, with overlapping conversations, rolling suitcases, and the hum of machinery. It's a moderately loud and continuous soundscape, reflecting the constant activity of travelers. The overall mood is bustling and somewhat impersonal.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/e3d58a42-79bb-472f-ae1b-8cf0c3fac65f"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_06.wav"
     },
     {
         "id": "BG_07",
-        "file_name": "shopping_mall.wav",
-        "path": "final/shopping_mall.wav",
+        "file_name": "existing-bg_07.wav",
+        "path": "bg/existing-bg_07.wav",
         "title": "Shopping Mall Ambience",
         "intensity": "moderate",
         "environment": "retail",
         "description": "This audio captures the typical sounds of a bustling shopping mall. You can hear a mix of muted chatter, distant music, and the faint hum of air conditioning, creating a somewhat busy and lively atmosphere. The overall soundscape feels moderately intrusive.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/124c01ee-6d86-4ee4-85cb-4fba4d5a14a6"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_07.wav"
     },
     {
         "id": "BG_08",
-        "file_name": "traffic_jam.wav",
-        "path": "final/traffic_jam.wav",
+        "file_name": "existing-bg_08.wav",
+        "path": "bg/existing-bg_08.wav",
         "title": "Heavy Manila Traffic",
         "intensity": "loud",
         "environment": "street",
         "description": "This audio captures the sounds of a significant traffic jam. You can hear a constant low rumble of engines, intermittent honking, and the occasional squealing of brakes. It's a very busy and potentially stressful soundscape.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/db8b4e97-705e-47d3-8a67-61cb400ca447"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_08.wav"
     },
     {
         "id": "BG_9",
-        "file_name": "train_station_ambience.wav",
-        "path": "final/train_station_ambience.wav",
+        "file_name": "existing-bg_9.wav",
+        "path": "bg/existing-bg_9.wav",
         "title": "Train Station Ambience",
         "intensity": "moderate",
         "environment": "transit",
         "description": "This audio captures the typical sounds of a busy train station, including the rumble of trains, announcements, and general chatter. It's a moderately loud soundscape, creating a bustling yet functional atmosphere. The sounds are mostly continuous, contributing to a sense of transit.",
-        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/a392cead-41c7-4db2-b286-38b48f29f78b"
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/existing-bg_9.wav"
+    },
+    {
+        "id": "BG_AIRPORT_01",
+        "file_name": "airport-01.wav",
+        "path": "bg/airport-01.wav",
+        "title": "Sydney domestic airport terminal with announcements",
+        "intensity": "moderate",
+        "environment": "airport",
+        "description": "Steady background sound of an airport terminal, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/airport-01.wav"
+    },
+    {
+        "id": "BG_AIRPORT_02",
+        "file_name": "airport-02.wav",
+        "path": "bg/airport-02.wav",
+        "title": "Madrid airport",
+        "intensity": "moderate",
+        "environment": "airport",
+        "description": "Steady background sound of an airport terminal, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/airport-02.wav"
+    },
+    {
+        "id": "BG_AIRPORT_03",
+        "file_name": "airport-03.wav",
+        "path": "bg/airport-03.wav",
+        "title": "Airport",
+        "intensity": "moderate",
+        "environment": "airport",
+        "description": "Steady background sound of an airport terminal, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/airport-03.wav"
+    },
+    {
+        "id": "BG_AIRPORT_04",
+        "file_name": "airport-04.wav",
+        "path": "bg/airport-04.wav",
+        "title": "012307_Amsterdam Airport Schiphol Plaza Ambience",
+        "intensity": "moderate",
+        "environment": "airport",
+        "description": "Steady background sound of an airport terminal, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/airport-04.wav"
+    },
+    {
+        "id": "BG_AIRPORT_05",
+        "file_name": "airport-05.wav",
+        "path": "bg/airport-05.wav",
+        "title": "Kuala Lumpur Airport ambience, Terminal P6",
+        "intensity": "moderate",
+        "environment": "airport",
+        "description": "Steady background sound of an airport terminal, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/airport-05.wav"
+    },
+    {
+        "id": "BG_CROWD_01",
+        "file_name": "crowd-01.wav",
+        "path": "bg/crowd-01.wav",
+        "title": "restaurant ambience",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-01.wav"
+    },
+    {
+        "id": "BG_CROWD_02",
+        "file_name": "crowd-02.wav",
+        "path": "bg/crowd-02.wav",
+        "title": "Busy Restaurant Dining Room Ambience",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-02.wav"
+    },
+    {
+        "id": "BG_CROWD_03",
+        "file_name": "crowd-03.wav",
+        "path": "bg/crowd-03.wav",
+        "title": "Ambience-cafe001",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-03.wav"
+    },
+    {
+        "id": "BG_CROWD_04",
+        "file_name": "crowd-04.wav",
+        "path": "bg/crowd-04.wav",
+        "title": "Cofee shop Ambience",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-04.wav"
+    },
+    {
+        "id": "BG_CROWD_05",
+        "file_name": "crowd-05.wav",
+        "path": "bg/crowd-05.wav",
+        "title": "Quiet Cafe, Chatter, Milk Frothing Machine, Atmos Atmosphere Wildtrack Ambience",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-05.wav"
+    },
+    {
+        "id": "BG_CROWD_06",
+        "file_name": "crowd-06.wav",
+        "path": "bg/crowd-06.wav",
+        "title": "italian restaurant ambient",
+        "intensity": "moderate",
+        "environment": "crowd",
+        "description": "Steady background sound of a busy, crowded room, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/crowd-06.wav"
+    },
+    {
+        "id": "BG_HOME_01",
+        "file_name": "home-01.wav",
+        "path": "bg/home-01.wav",
+        "title": "TV Playing in the Next Room – Distant and Indistinct Television Sound",
+        "intensity": "moderate",
+        "environment": "home",
+        "description": "Steady background sound of a home, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/home-01.wav"
+    },
+    {
+        "id": "BG_HOME_02",
+        "file_name": "home-02.wav",
+        "path": "bg/home-02.wav",
+        "title": "Room Tone Int Living Room_Poa_Horns_trafic_kitchen noises_M",
+        "intensity": "moderate",
+        "environment": "home",
+        "description": "Steady background sound of a home, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/home-02.wav"
+    },
+    {
+        "id": "BG_HOME_03",
+        "file_name": "home-03.wav",
+        "path": "bg/home-03.wav",
+        "title": "Apartment kitchen ambience",
+        "intensity": "moderate",
+        "environment": "home",
+        "description": "Steady background sound of a home, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/home-03.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_01",
+        "file_name": "hospital-01.wav",
+        "path": "bg/hospital-01.wav",
+        "title": "Hospital_Ambience_waiting room_crowd_01",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-01.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_02",
+        "file_name": "hospital-02.wav",
+        "path": "bg/hospital-02.wav",
+        "title": "Hospital_Ambience_waiting rom_crowd_002",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-02.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_03",
+        "file_name": "hospital-03.wav",
+        "path": "bg/hospital-03.wav",
+        "title": "012174_kwun tong hospital ambience9.wav",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-03.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_04",
+        "file_name": "hospital-04.wav",
+        "path": "bg/hospital-04.wav",
+        "title": "004404_Dr's waiting room.wav",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-04.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_05",
+        "file_name": "hospital-05.wav",
+        "path": "bg/hospital-05.wav",
+        "title": "salaEsperaHospital_01",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-05.wav"
+    },
+    {
+        "id": "BG_HOSPITAL_06",
+        "file_name": "hospital-06.wav",
+        "path": "bg/hospital-06.wav",
+        "title": "Hospital reception, seating area ambience",
+        "intensity": "moderate",
+        "environment": "hospital",
+        "description": "Steady background sound of a hospital, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/hospital-06.wav"
+    },
+    {
+        "id": "BG_OFFICE_01",
+        "file_name": "office-01.wav",
+        "path": "bg/office-01.wav",
+        "title": "Office ambience",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-01.wav"
+    },
+    {
+        "id": "BG_OFFICE_02",
+        "file_name": "office-02.wav",
+        "path": "bg/office-02.wav",
+        "title": "Office Ambience 01 OWI",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-02.wav"
+    },
+    {
+        "id": "BG_OFFICE_03",
+        "file_name": "office-03.wav",
+        "path": "bg/office-03.wav",
+        "title": "Company-Office-Work-Modern-Contemporary",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-03.wav"
+    },
+    {
+        "id": "BG_OFFICE_04",
+        "file_name": "office-04.wav",
+        "path": "bg/office-04.wav",
+        "title": "Office-Room-Ambience-Printer",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-04.wav"
+    },
+    {
+        "id": "BG_OFFICE_05",
+        "file_name": "office-05.wav",
+        "path": "bg/office-05.wav",
+        "title": "Office Ambience",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-05.wav"
+    },
+    {
+        "id": "BG_OFFICE_06",
+        "file_name": "office-06.wav",
+        "path": "bg/office-06.wav",
+        "title": "Room Tone Office 12",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "Steady background sound of an office, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/office-06.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_01",
+        "file_name": "outdoors-01.wav",
+        "path": "bg/outdoors-01.wav",
+        "title": "Ambiance - Quiet City Park 1",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-01.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_02",
+        "file_name": "outdoors-02.wav",
+        "path": "bg/outdoors-02.wav",
+        "title": "Quiet Park",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-02.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_03",
+        "file_name": "outdoors-03.wav",
+        "path": "bg/outdoors-03.wav",
+        "title": "Parque centenario",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-03.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_04",
+        "file_name": "outdoors-04.wav",
+        "path": "bg/outdoors-04.wav",
+        "title": "020188_Bird Park Ambience",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-04.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_05",
+        "file_name": "outdoors-05.wav",
+        "path": "bg/outdoors-05.wav",
+        "title": "park_children_110111.wav",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-05.wav"
+    },
+    {
+        "id": "BG_OUTDOORS_06",
+        "file_name": "outdoors-06.wav",
+        "path": "bg/outdoors-06.wav",
+        "title": "Bees-park-city",
+        "intensity": "moderate",
+        "environment": "outdoors",
+        "description": "Steady background sound of the outdoors, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/outdoors-06.wav"
+    },
+    {
+        "id": "BG_RETAIL_01",
+        "file_name": "retail-01.wav",
+        "path": "bg/retail-01.wav",
+        "title": "Supermarket",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "Steady background sound of a shop, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/retail-01.wav"
+    },
+    {
+        "id": "BG_RETAIL_02",
+        "file_name": "retail-02.wav",
+        "path": "bg/retail-02.wav",
+        "title": "Supermarket Ambience",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "Steady background sound of a shop, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/retail-02.wav"
+    },
+    {
+        "id": "BG_RETAIL_03",
+        "file_name": "retail-03.wav",
+        "path": "bg/retail-03.wav",
+        "title": "Supermarket ambience",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "Steady background sound of a shop, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/retail-03.wav"
+    },
+    {
+        "id": "BG_RETAIL_04",
+        "file_name": "retail-04.wav",
+        "path": "bg/retail-04.wav",
+        "title": "Shopping Mall Ambience",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "Steady background sound of a shop, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/retail-04.wav"
+    },
+    {
+        "id": "BG_RETAIL_05",
+        "file_name": "retail-05.wav",
+        "path": "bg/retail-05.wav",
+        "title": "German Shopping Mall",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "Steady background sound of a shop, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/retail-05.wav"
+    },
+    {
+        "id": "BG_STREET_01",
+        "file_name": "street-01.wav",
+        "path": "bg/street-01.wav",
+        "title": "Street Ambience traffic",
+        "intensity": "moderate",
+        "environment": "street",
+        "description": "Steady background sound of a city street, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/street-01.wav"
+    },
+    {
+        "id": "BG_STREET_02",
+        "file_name": "street-02.wav",
+        "path": "bg/street-02.wav",
+        "title": "Urban Traffic Noise",
+        "intensity": "moderate",
+        "environment": "street",
+        "description": "Steady background sound of a city street, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/street-02.wav"
+    },
+    {
+        "id": "BG_STREET_03",
+        "file_name": "street-03.wav",
+        "path": "bg/street-03.wav",
+        "title": "Ambience inner city traffic",
+        "intensity": "moderate",
+        "environment": "street",
+        "description": "Steady background sound of a city street, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/street-03.wav"
+    },
+    {
+        "id": "BG_STREET_04",
+        "file_name": "street-04.wav",
+        "path": "bg/street-04.wav",
+        "title": "Recording of Busy New York City Street",
+        "intensity": "moderate",
+        "environment": "street",
+        "description": "Steady background sound of a city street, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/street-04.wav"
+    },
+    {
+        "id": "BG_STREET_05",
+        "file_name": "street-05.wav",
+        "path": "bg/street-05.wav",
+        "title": "Indian City Road Ambience – Soundque Field Recording",
+        "intensity": "moderate",
+        "environment": "street",
+        "description": "Steady background sound of a city street, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/street-05.wav"
+    },
+    {
+        "id": "BG_TRANSIT_01",
+        "file_name": "transit-01.wav",
+        "path": "bg/transit-01.wav",
+        "title": "Train station ambience",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-01.wav"
+    },
+    {
+        "id": "BG_TRANSIT_02",
+        "file_name": "transit-02.wav",
+        "path": "bg/transit-02.wav",
+        "title": "Train Station ambience",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-02.wav"
+    },
+    {
+        "id": "BG_TRANSIT_03",
+        "file_name": "transit-03.wav",
+        "path": "bg/transit-03.wav",
+        "title": "Subway Underground The Tube The Metro",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-03.wav"
+    },
+    {
+        "id": "BG_TRANSIT_04",
+        "file_name": "transit-04.wav",
+        "path": "bg/transit-04.wav",
+        "title": "Subway",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-04.wav"
+    },
+    {
+        "id": "BG_TRANSIT_05",
+        "file_name": "transit-05.wav",
+        "path": "bg/transit-05.wav",
+        "title": "crowd waitingarea bus station",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-05.wav"
+    },
+    {
+        "id": "BG_TRANSIT_06",
+        "file_name": "transit-06.wav",
+        "path": "bg/transit-06.wav",
+        "title": "Warsaw bus station",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "Steady background sound of a station or public transport, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/transit-06.wav"
+    },
+    {
+        "id": "BG_VEHICLE_01",
+        "file_name": "vehicle-01.wav",
+        "path": "bg/vehicle-01.wav",
+        "title": "Car Driving Interior Perspective",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-01.wav"
+    },
+    {
+        "id": "BG_VEHICLE_02",
+        "file_name": "vehicle-02.wav",
+        "path": "bg/vehicle-02.wav",
+        "title": "Interior Car Driving Through City with Road Noise and Engine Hum",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-02.wav"
+    },
+    {
+        "id": "BG_VEHICLE_03",
+        "file_name": "vehicle-03.wav",
+        "path": "bg/vehicle-03.wav",
+        "title": "Interior Car on Highway with High RPM Engine and Road Noise",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-03.wav"
+    },
+    {
+        "id": "BG_VEHICLE_04",
+        "file_name": "vehicle-04.wav",
+        "path": "bg/vehicle-04.wav",
+        "title": "Car Driving Interior",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-04.wav"
+    },
+    {
+        "id": "BG_VEHICLE_05",
+        "file_name": "vehicle-05.wav",
+        "path": "bg/vehicle-05.wav",
+        "title": "Driving car- interior",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-05.wav"
+    },
+    {
+        "id": "BG_VEHICLE_06",
+        "file_name": "vehicle-06.wav",
+        "path": "bg/vehicle-06.wav",
+        "title": "Short drive, interior",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "Steady background sound of the inside of a moving car, with no intelligible speech.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/bg/vehicle-06.wav"
     }
 ]

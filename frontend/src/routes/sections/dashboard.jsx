@@ -2,12 +2,15 @@
 import React from "react";
 import { Suspense } from "react";
 import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
+import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
 
 import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
 
 import { LoadingScreen } from "src/components/loading-screen";
+import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
+import HarnessToEnvironment from "../components/harness-to-environment";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
@@ -15,6 +18,7 @@ import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import CapabilityGate from "src/components/capability-gate";
 import { CAPABILITY } from "src/hooks/useCapabilities";
+import { paths } from "src/routes/paths";
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -93,6 +97,9 @@ const UserManagementV2 = lazyWithRetry(
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
 );
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
+);
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
 );
@@ -121,9 +128,6 @@ const EvalsIndividualGroup = lazyWithRetry(
 );
 const AddNewPrompt = lazyWithRetry(
   () => import("src/pages/dashboard/Prompt/AddNewPrompt"),
-);
-const ProjectList = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectList"),
 );
 const GatewayOverview = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayOverview"),
@@ -172,9 +176,6 @@ const ObserveList = lazyWithRetry(
 );
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
-);
-const ProjectDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectDetail"),
 );
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
@@ -225,8 +226,8 @@ const IndividualExperimentSummary = lazyWithRetry(
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
 );
-const RunInsidePage = lazyWithRetry(
-  () => import("src/pages/dashboard/run-inside/run-inside"),
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
@@ -242,6 +243,12 @@ const VoiceFullPage = lazyWithRetry(
 // );
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
+);
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
 );
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
@@ -296,17 +303,11 @@ const CreatePrompt = lazyWithRetry(
 const Scenarios = lazyWithRetry(
   () => import("src/pages/dashboard/scenarios/Scenarios"),
 );
-const Personas = lazyWithRetry(
-  () => import("src/pages/dashboard/personas/Personas"),
-);
 const CreateScenario = lazyWithRetry(
   () => import("src/pages/dashboard/scenarios/CreateScenario"),
 );
 const ScenarioDatasetView = lazyWithRetry(
   () => import("src/sections/scenarios/scenario-detail/ScenarioDatasetView"),
-);
-const AgentDefinitions = lazyWithRetry(
-  () => import("src/pages/dashboard/agent-definitions/AgentDefinitions"),
 );
 const AgentDetails = lazyWithRetry(
   () => import("src/pages/dashboard/agent-definitions/AgentDetails"),
@@ -320,6 +321,32 @@ const CreateNewAgentDefinition = lazyWithRetry(
 // );
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
+);
+const SimulateEnvironmentsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
+);
+const SimulatePrebuiltEnvironments = lazyWithRetry(
+  () =>
+    import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+);
+const SimulateUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+);
+const SimulateEnvironmentWorkspace = lazyWithRetry(
+  () =>
+    import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+);
+const WorkspaceExecutionDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
+);
+const WorkspaceImprovementDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/improvements/WorkspaceImprovementDetail"
+    ),
 );
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
@@ -399,6 +426,9 @@ const FalconAIPage = lazyWithRetry(
 const ErrorFeed = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeed"),
 );
+const ErrorFeedAlerts = lazyWithRetry(
+  () => import("src/pages/dashboard/error-feed/ErrorFeedAlerts"),
+);
 const ErrorFeedDetail = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeedDetail"),
 );
@@ -451,6 +481,43 @@ const WidgetEditorView = lazyWithRetry(
 const Agents = lazyWithRetry(
   () => import("src/sections/agent-playground/Agents"),
 );
+const AgentsIndexRedirect = lazyWithRetry(
+  () => import("src/sections/agent-playground/AgentsIndexRedirect"),
+);
+const ConnectedAgentsTab = lazyWithRetry(
+  () => import("src/sections/agent-playground/ConnectedAgentsTab"),
+);
+const PlaygroundAgentsTab = lazyWithRetry(
+  () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
+);
+const AgentDetailLayout = lazyWithRetry(
+  () =>
+    import("src/sections/agent-playground/connected/detail/AgentDetailLayout"),
+);
+const AgentDetailIndexRedirect = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/agent-playground/connected/detail/AgentDetailIndexRedirect"
+    ),
+);
+const AgentOverviewTab = lazyWithRetry(
+  () =>
+    import("src/sections/agent-playground/connected/detail/AgentOverviewTab"),
+);
+const AgentDefinitionTab = lazyWithRetry(
+  () =>
+    import("src/sections/agent-playground/connected/detail/AgentDefinitionTab"),
+);
+const AgentVersionsTab = lazyWithRetry(
+  () =>
+    import("src/sections/agent-playground/connected/detail/AgentVersionsTab"),
+);
+const AgentEnvironmentsTab = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/agent-playground/connected/detail/AgentEnvironmentsTab"
+    ),
+);
 const AgentPlayground = lazyWithRetry(
   () => import("src/sections/agent-playground/AgentPlayground"),
 );
@@ -463,7 +530,6 @@ const Overview = lazyWithRetry(
 const Executions = lazyWithRetry(
   () => import("src/sections/agent-playground/Executions/Executions"),
 );
-
 
 const DashboardRoutes = () => {
   const location = useLocation();
@@ -498,6 +564,11 @@ export const dashboardRoutes = (
   const effectiveWsRole = workspaceRole || userDefaultWsRole;
   const isAdmin =
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
+  // Orgs created after the cutoff see only Environments in Simulate; the other
+  // Simulate pages are not registered for them, so their URLs reach the 404.
+  const restrictSimulateToEnvironments = Boolean(
+    user?.restrict_simulate_to_environments,
+  );
   const settingsRoute = [
     {
       index: true,
@@ -531,6 +602,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -671,8 +745,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -837,7 +916,7 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to="/dashboard/develop" replace />,
     },
     {
       path: "/dashboard/get-started",
@@ -1008,29 +1087,29 @@ export const dashboardRoutes = (
     //     },
     //   ],
     // },
-    {
-      path: "prototype",
-      element: <ProjectWrapper />,
-      children: [
-        {
-          index: true,
-          element: <ProjectList />,
-        },
-      ],
-    },
-    {
-      path: "prototype/:projectId",
-      children: [
-        {
-          index: true,
-          element: <ProjectDetail />,
-        },
-        {
-          path: ":runId",
-          element: <RunInsidePage />,
-        },
-      ],
-    },
+    // {
+    //   path: "prototype",
+    //   element: <ProjectWrapper />,
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectList />,
+    //     },
+    //   ],
+    // },
+    // {
+    //   path: "prototype/:projectId",
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectDetail />,
+    //     },
+    //     {
+    //       path: ":runId",
+    //       element: <RunInsidePage />,
+    //     },
+    //   ],
+    // },
     // {
     //   path: "projects",
     //   element: <ProjectWrapper />,
@@ -1101,16 +1180,16 @@ export const dashboardRoutes = (
         //   element: <LogsView />,
         // },
         {
+          path: "query",
+          element: <SQLQueryView />,
+        },
+        {
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
         {
           path: "voice",
-          element: (
-            <div style={{ padding: 32, color: "#888", textAlign: "center" }}>
-              Voice observability coming soon.
-            </div>
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",
@@ -1119,6 +1198,25 @@ export const dashboardRoutes = (
         {
           path: "users",
           element: <UsersView />,
+        },
+        // Insights and Instant eval are Enterprise: without the capability
+        // (e.g. open source) the route shows the upgrade gate, as Error Feed.
+        {
+          path: "insights",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSIGHTS}>
+              <InsightsView />
+            </CapabilityGate>
+          ),
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSTANT_EVAL}>
+              <AskPage />
+            </CapabilityGate>
+          ),
         },
       ],
     },
@@ -1250,8 +1348,23 @@ export const dashboardRoutes = (
       path: "agents",
       children: [
         {
-          index: true,
           element: <Agents />,
+          children: [
+            { index: true, element: <AgentsIndexRedirect /> },
+            { path: "connected", element: <ConnectedAgentsTab /> },
+            { path: "playground", element: <PlaygroundAgentsTab /> },
+          ],
+        },
+        {
+          path: "connected/:agentId",
+          element: <AgentDetailLayout />,
+          children: [
+            { index: true, element: <AgentDetailIndexRedirect /> },
+            { path: "overview", element: <AgentOverviewTab /> },
+            { path: "definition", element: <AgentDefinitionTab /> },
+            { path: "versions", element: <AgentVersionsTab /> },
+            { path: "environments", element: <AgentEnvironmentsTab /> },
+          ],
         },
         {
           path: "playground/:agentId",
@@ -1306,6 +1419,14 @@ export const dashboardRoutes = (
           ),
         },
         {
+          path: "alerts",
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeedAlerts />
+            </CapabilityGate>
+          ),
+        },
+        {
           path: ":id",
           element: (
             <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
@@ -1327,103 +1448,217 @@ export const dashboardRoutes = (
       path: "simulate",
       children: [
         {
-          path: "agent-definitions",
-          element: <AgentDefinitions />,
+          index: true,
+          element: (
+            <Navigate to={paths.dashboard.simulate.environments.root} replace />
+          ),
         },
         {
-          path: "agent-definitions/create-new-agent-definition",
-          element: <CreateNewAgentDefinition />,
+          path: "environments",
+          element: <SimulateEnvironmentsHome />,
         },
         {
-          path: "agent-definitions/:agentDefinitionId",
-          element: <AgentDetails />,
+          path: "environments/templates",
+          element: <SimulatePrebuiltEnvironments />,
         },
         {
-          path: "scenarios",
+          path: "environments/templates/:templateId",
+          element: <SimulateUseTemplate />,
+        },
+        {
+          // Build is no longer a page of its own — the source panels create the
+          // job and route straight to the workspace, which hosts the build. An
+          // old /build link lands back on the Build entry tab.
+          path: "environments/build",
+          element: (
+            <Navigate
+              to={`${paths.dashboard.simulate.environments.root}?tab=build`}
+              replace
+            />
+          ),
+        },
+        {
+          path: "environments/:envId",
+          element: <SimulateEnvironmentWorkspace />,
           children: [
             {
-              index: true,
-              element: <Scenarios />,
+              path: "improvements/:fixId",
+              element: <WorkspaceImprovementDetail />,
             },
             {
-              path: "create",
-              element: <CreateScenario />,
+              path: "runs/:testId/:executionId",
+              element: <WorkspaceExecutionDetail />,
+              children: [
+                {
+                  index: true,
+                  element: <Navigate to="call-details" replace />,
+                },
+                {
+                  path: "call-details",
+                  element: <TestExecutionCallDetail />,
+                },
+                {
+                  path: "performance",
+                  element: <TestExecutionPerformanceDetail />,
+                },
+                {
+                  path: "analytics",
+                  element: <TestExecutionAnalyticsDetail />,
+                },
+                {
+                  path: "optimization_runs",
+                  element: <TestExecutionOptimizationRunsDetail />,
+                },
+              ],
             },
           ],
         },
         {
-          path: "scenarios/:scenarioId",
-          element: <ScenarioDatasetView />,
+          // The harness pages were the first version of Environments.
+          path: "harness",
+          children: [
+            {
+              index: true,
+              element: (
+                <Navigate
+                  to={paths.dashboard.simulate.environments.root}
+                  replace
+                />
+              ),
+            },
+            {
+              path: "new",
+              element: (
+                <Navigate
+                  to={`${paths.dashboard.simulate.environments.root}?tab=build`}
+                  replace
+                />
+              ),
+            },
+            { path: ":jobId", element: <HarnessToEnvironment /> },
+            {
+              path: "*",
+              element: (
+                <Navigate
+                  to={paths.dashboard.simulate.environments.root}
+                  replace
+                />
+              ),
+            },
+          ],
         },
-        // {
-        //   path: "simulator-agent",
-        //   element: <SimulatorAgent />,
-        // },
+        {
+          path: "simulator-agent",
+          element: (
+            <Navigate to={paths.dashboard.simulate.environments.root} replace />
+          ),
+        },
+        // Agent Definition is retiring: its old list link opens Connected
+        // agents. The agent and version pages under it still work.
+        {
+          path: "agent-definitions",
+          element: <Navigate to={CONNECTED_AGENTS_PATH} replace />,
+        },
+        // Personas is a tab on Environments.
         {
           path: "personas",
-          element: <Personas />,
+          element: (
+            <Navigate
+              to={`${paths.dashboard.simulate.environments.root}?tab=personas`}
+              replace
+            />
+          ),
         },
-        {
-          path: "test",
-          element: <RunTests />,
-        },
-        {
-          path: "test/:testId",
-          element: <RunTestDetail />,
+        ...(restrictSimulateToEnvironments
+          ? []
+          : [
+              {
+                path: "agent-definitions/create-new-agent-definition",
+                element: <CreateNewAgentDefinition />,
+              },
+              {
+                path: "agent-definitions/:agentDefinitionId",
+                element: <AgentDetails />,
+              },
+              {
+                path: "scenarios",
+                children: [
+                  {
+                    index: true,
+                    element: <Scenarios />,
+                  },
+                  {
+                    path: "create",
+                    element: <CreateScenario />,
+                  },
+                ],
+              },
+              {
+                path: "scenarios/:scenarioId",
+                element: <ScenarioDatasetView />,
+              },
+              {
+                path: "test",
+                element: <RunTests />,
+              },
+              {
+                path: "test/:testId",
+                element: <RunTestDetail />,
 
-          children: [
-            {
-              index: true,
-              element: <Navigate to="runs" replace />,
-            },
-            {
-              path: "runs",
-              element: <TestRuns />,
-            },
-            {
-              path: "call-logs",
-              element: <CallLogs />,
-            },
-            {
-              path: "analytics",
-              element: <TestAnalytics />,
-            },
-          ],
-        },
-        {
-          path: "test/:testId/:executionId",
-          element: <TestDetail />,
-          children: [
-            {
-              index: true,
-              element: <Navigate to="call-details" replace />,
-            },
-            {
-              path: "call-details",
-              element: <TestExecutionCallDetail />,
-            },
-            {
-              path: "performance",
-              element: <TestExecutionPerformanceDetail />,
-            },
-            {
-              path: "analytics",
-              element: <TestExecutionAnalyticsDetail />,
-            },
-            {
-              path: "optimization_runs",
-              element: <TestExecutionOptimizationRunsDetail />,
-            },
-          ],
-        },
-        {
-          path: "test/:testId/:executionId/:optimizationId",
-          element: <TestExecutionOptimizationDetail />,
-        },
-        {
-          path: "test/:testId/:executionId/:optimizationId/:trialId",
-          element: <TestExecutionOptimizationTrialDetail />,
-        },
+                children: [
+                  {
+                    index: true,
+                    element: <Navigate to="runs" replace />,
+                  },
+                  {
+                    path: "runs",
+                    element: <TestRuns />,
+                  },
+                  {
+                    path: "call-logs",
+                    element: <CallLogs />,
+                  },
+                  {
+                    path: "analytics",
+                    element: <TestAnalytics />,
+                  },
+                ],
+              },
+              {
+                path: "test/:testId/:executionId",
+                element: <TestDetail />,
+                children: [
+                  {
+                    index: true,
+                    element: <Navigate to="call-details" replace />,
+                  },
+                  {
+                    path: "call-details",
+                    element: <TestExecutionCallDetail />,
+                  },
+                  {
+                    path: "performance",
+                    element: <TestExecutionPerformanceDetail />,
+                  },
+                  {
+                    path: "analytics",
+                    element: <TestExecutionAnalyticsDetail />,
+                  },
+                  {
+                    path: "optimization_runs",
+                    element: <TestExecutionOptimizationRunsDetail />,
+                  },
+                ],
+              },
+              {
+                path: "test/:testId/:executionId/:optimizationId",
+                element: <TestExecutionOptimizationDetail />,
+              },
+              {
+                path: "test/:testId/:executionId/:optimizationId/:trialId",
+                element: <TestExecutionOptimizationTrialDetail />,
+              },
+            ]),
       ],
     },
     {

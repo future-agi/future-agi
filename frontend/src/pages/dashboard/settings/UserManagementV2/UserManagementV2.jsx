@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import { Box, Button } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -14,7 +15,8 @@ import UserHeaders from "./UserHeaders";
 import GridTable from "./GridTable";
 import { getUserQueryOptions } from "./getUserQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import {
   ProcessingStatusCell,
   ActionRender,
@@ -118,8 +120,13 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         headerName: "Start date",
         field: "created_at",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value ? format(new Date(params?.value), "dd/MM/yyyy") : "",
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            emptyText="No start date recorded"
+          />
+        ),
       },
       ...(useInviteLinks
         ? [
@@ -268,29 +275,15 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
             <BackButton onBack={() => navigate(-1)} />
           </Box>
         )}
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            {pageTitle}
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            {workspaceScope
+        <PageHeader
+          title={pageTitle}
+          description={
+            workspaceScope
               ? "Manage workspace members and their roles"
-              : "Manage who has access to workspace"}
-          </Typography>
-        </Box>
+              : "Manage who has access to workspace"
+          }
+          sx={{ mb: 0 }}
+        />
         <Box
           sx={{
             paddingX: 0,

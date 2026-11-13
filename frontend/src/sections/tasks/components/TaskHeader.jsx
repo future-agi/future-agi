@@ -35,9 +35,6 @@ const StatusChip = ({ status }) => {
       variant="outlined"
       icon={<Iconify icon={cfg.icon} width={14} />}
       sx={{
-        fontWeight: 500,
-        fontSize: "12px",
-        height: 24,
         "& .MuiChip-icon": { ml: 0.5 },
       }}
     />
@@ -122,15 +119,15 @@ const TaskHeader = ({
               onClick={() => navigate(backTo)}
               sx={{ p: 0.25, color: "text.secondary" }}
             >
-              <Iconify icon="mdi:arrow-left" width={18} />
+              <Iconify icon="solar:arrow-left-linear" width={20} />
             </IconButton>
           </Tooltip>
         )}
-        <Breadcrumbs separator="/" sx={{ fontSize: "13px" }}>
+        <Breadcrumbs separator="/" sx={{ fontSize: "12px" }}>
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate("/dashboard/tasks")}
           >
             Tasks
@@ -152,7 +149,7 @@ const TaskHeader = ({
               variant="standard"
               sx={{
                 "& .MuiInputBase-input": {
-                  fontSize: "14px",
+                  fontSize: "12px",
                   fontWeight: 600,
                   py: 0.25,
                 },
@@ -163,7 +160,7 @@ const TaskHeader = ({
               <Typography
                 color="text.primary"
                 fontWeight={600}
-                sx={{ fontSize: "14px" }}
+                sx={{ fontSize: "12px" }}
               >
                 {mode === "create" ? "Create Task" : name || "Untitled Task"}
               </Typography>
@@ -188,10 +185,8 @@ const TaskHeader = ({
             label={projectName}
             size="small"
             variant="outlined"
-            icon={<Iconify icon="mdi:folder-outline" width={14} />}
+            icon={<Iconify icon="solar:folder-linear" width={14} />}
             sx={{
-              fontSize: "11px",
-              height: 22,
               borderColor: "divider",
               "& .MuiChip-icon": { ml: 0.5 },
             }}

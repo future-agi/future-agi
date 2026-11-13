@@ -1,4 +1,4 @@
-import { format, formatISO } from "date-fns";
+import { format } from "date-fns";
 import React, { useCallback, useEffect, useRef } from "react";
 import { palette } from "src/theme/palette";
 
@@ -6,15 +6,25 @@ import { extractJinjaVariables } from "./jinjaVariables";
 import { logger } from "./logger";
 
 export const colorPalette = [
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#846EFF", graphBgColor: "#D7D0FF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#F17F2B", graphBgColor: "#FBD8BF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#26BD78", graphBgColor: "#B3EAD1" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#559FF7", graphBgColor: "#CFE5FD" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#F9E8FD", textColor: "#D65EEC", graphBgColor: "#F2D1FA" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#573FCC", graphBgColor: "#B8AFFF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#B5520A", graphBgColor: "#F8B98A" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#007C3E", graphBgColor: "#80DBB3" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#276DBD", graphBgColor: "#A3CDFB" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#9F46B5", graphBgColor: "#E8A9F5" },
 ];
 
@@ -418,9 +428,6 @@ export function stringAvatar(name) {
   if (!name || typeof name !== "string") {
     // Handle invalid input by returning default values
     return {
-      sx: {
-        bgcolor: "#cccccc", // Default background color
-      },
       children: "?", // Default placeholder character
     };
   }
@@ -432,25 +439,10 @@ export function stringAvatar(name) {
       : `${nameParts[0][0]}`; // First letter of a single word
 
   return {
-    sx: {
-      bgcolor: stringToColor(name),
-    },
     children: initials.toUpperCase(),
   };
 }
 
-export function stringToColor(string) {
-  let hash = 0;
-  for (let i = 0; i < string.length; i++) {
-    hash = string.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  let color = "#";
-  for (let i = 0; i < 3; i++) {
-    const value = (hash >> (i * 8)) & 0xff;
-    color += `00${value.toString(16)}`.slice(-2);
-  }
-  return color;
-}
 export function formatEvalType(str) {
   // Handle empty or non-string input
   if (!str || typeof str !== "string") {
@@ -554,16 +546,22 @@ export const getMarkColor = (weight, isOverlap = false, alpha = 0.5) => {
   let baseColor = "";
 
   if (weight > 0 && weight < 0.2) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#FA9B78";
   } else if (weight > 0.2 && weight < 0.4) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#fa8f7e";
   } else if (weight > 0.4 && weight < 0.6) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f98881";
   } else if (weight > 0.6 && weight < 0.8) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f78185";
   } else if (weight > 0.8 && weight < 1) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   } else {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   }
 
@@ -601,7 +599,7 @@ const hexToRgba = (hex, alpha) => {
 };
 
 export const formatISOCustom = (date) => {
-  return formatISO(date).split("+")[0] + ".000Z";
+  return new Date(date).toISOString();
 };
 
 // Start Generation Here
@@ -676,7 +674,7 @@ export const customizeAgGridPopup = (theme, targetText, iconPath) => {
       // Basic styling
       element.style.fontWeight = 400;
       element.style.color = theme.palette.text.primary;
-      element.style.fontSize = "14px";
+      element.style.fontSize = "12px";
       element.style.fontFamily = "Inter, sans-serif";
       element.style.paddingLeft = "14px";
       element.style.paddingTop = "14px";
@@ -1048,7 +1046,7 @@ export function interpolateColorTokenBasedOnScore(
   } else if (factor < 60) {
     return {
       bgcolor: palette("light").orange.o5,
-      color: palette("light").orange[500] ?? "#A64B00",
+      color: palette("light").orange[500],
     };
   } else if (factor < 80) {
     return {
@@ -1130,7 +1128,17 @@ export const formatStartTimeByRequiredFormat = (startTime, dateFormat) => {
  */
 export const normalizeRecordings = (recordings) => {
   if (!recordings)
-    return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
+    return {
+      stereo: "",
+      assistant: "",
+      customer: "",
+      combined: "",
+      mono: "",
+      stereoChannels: null,
+    };
+  // Which speaker each stereo channel carries, e.g. { left: "customer",
+  // right: "assistant" }, when the backend sends it.
+  const stereoChannels = recordings.stereo_channels ?? null;
 
   // Nested format: backend sends snake_case (stereo_url / mono.*_url);
   // keep camelCase fallback for the aliased/main response shape.
@@ -1146,6 +1154,7 @@ export const normalizeRecordings = (recordings) => {
       customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
+      stereoChannels,
     };
   }
 
@@ -1157,6 +1166,7 @@ export const normalizeRecordings = (recordings) => {
     customer: recordings.customer || "",
     combined,
     mono: combined, // alias for AudioDownloadButton
+    stereoChannels,
   };
 };
 

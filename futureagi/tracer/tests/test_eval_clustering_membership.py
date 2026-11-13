@@ -41,17 +41,15 @@ _EMBEDDING = [0.1, 0.2, 0.3]
 def no_clickhouse():
     """Stub the centroid store and the cheap-LLM metadata helper.
 
-    ``execute`` returns [] so the centroid read takes its "no existing centroid"
-    branch — the vector store isn't what these tests are about.
+    ``execute_read`` returns [] so the centroid read takes its "no existing
+    centroid" branch — the vector store isn't what these tests are about.
     """
     ch = MagicMock()
-    ch.return_value.client.execute.return_value = []
-    with patch(
-        "tracer.queries.eval_clustering.ClickHouseVectorDB", ch
-    ), patch(
-        "tracer.queries.eval_clustering.ensure_centroid_table", MagicMock()
-    ), patch(
-        "tracer.ee_boundary.generate_eval_cluster_meta", return_value=None
+    ch.return_value.execute_read.return_value = []
+    with (
+        patch("tracer.queries.eval_clustering.ClickHouseVectorDB", ch),
+        patch("tracer.queries.eval_clustering.ensure_centroid_table", MagicMock()),
+        patch("tracer.ee_boundary.generate_eval_cluster_meta", return_value=None),
     ):
         yield
 
@@ -106,9 +104,7 @@ def test_repeat_failure_on_one_trace_records_every_eval(
         cluster_id, str(project.id), _result(second, trace=trace), _EMBEDDING
     )
 
-    cluster = TraceErrorGroup.objects.get(
-        cluster_id=cluster_id, project_id=project.id
-    )
+    cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project.id)
     rows = ErrorClusterTraces.objects.filter(cluster=cluster)
     assert rows.count() == 2, "each failing eval needs its own membership row"
     assert {str(r.eval_logger_id) for r in rows} == {str(first.id), str(second.id)}
@@ -146,9 +142,7 @@ def test_session_already_member_still_records_the_eval(
         _EMBEDDING,
     )
 
-    cluster = TraceErrorGroup.objects.get(
-        cluster_id=cluster_id, project_id=project.id
-    )
+    cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project.id)
     provenance = ErrorClusterTraces.objects.get(cluster=cluster, eval_logger=second)
     assert provenance.trace_session_id is None, "session membership is already taken"
     assert provenance.trace_id is None
@@ -174,7 +168,5 @@ def test_reassigning_the_same_eval_does_not_strand_it(
     assign_to_cluster(cluster_id, str(project.id), _result(ev, trace=trace), _EMBEDDING)
 
     assert _unclustered_ids(project) == set()
-    cluster = TraceErrorGroup.objects.get(
-        cluster_id=cluster_id, project_id=project.id
-    )
+    cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project.id)
     assert cluster.unique_traces == 1

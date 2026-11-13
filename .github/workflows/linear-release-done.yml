@@ -1,6 +1,7 @@
-# On a stable platform release (vX.Y.Z tag — the dev→main promotion), move every
-# Linear ticket shipped in the release to Done, comment the release link on each,
-# and post a Slack summary. Mirrors the trigger used by release-images.yml.
+# On a stable platform release (vX.Y.Z tag — the dev→main promotion), reconcile
+# Tech (TH-) Linear tickets shipped in the release: auto-close "Ready to Merge"
+# ones to Done, nudge the owner (or #tech if unassigned) for still-in-flight
+# ones, and post a Slack summary. Mirrors the trigger used by release-images.yml.
 name: linear-release-done
 
 on:
@@ -13,7 +14,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: 'Log intended changes without writing to Linear'
+        description: 'Log intended changes without writing to Linear/Slack'
         required: false
         default: true
         type: boolean
@@ -42,10 +43,12 @@ jobs:
           sparse-checkout: .github/scripts
           sparse-checkout-cone-mode: false
 
-      - name: Move shipped Linear tickets to Done
+      - name: Reconcile shipped Linear tickets
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_TECH_CHANNEL: ${{ vars.SLACK_TECH_CHANNEL || 'C06UJCJ3NQZ' }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           VERSION: ${{ github.event.inputs.version || github.ref_name }}

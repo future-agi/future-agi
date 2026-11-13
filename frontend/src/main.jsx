@@ -12,38 +12,14 @@ import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 
 import App from "./app";
+import { bootstrapSamlSession } from "./auth/saml-bootstrap";
 import { SplashScreen } from "./components/loading-screen";
-import {
-  CellSelectionModule,
-  ClipboardModule,
-  MasterDetailModule,
-  MenuModule,
-  RichSelectModule,
-  ServerSideRowModelApiModule,
-  ServerSideRowModelModule,
-  StatusBarModule,
-} from "ag-grid-enterprise";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
-
-ModuleRegistry.registerModules([
-  AllCommunityModule,
-  ServerSideRowModelModule,
-  ServerSideRowModelApiModule,
-  StatusBarModule,
-  MasterDetailModule,
-  RichSelectModule,
-  MenuModule,
-  ClipboardModule,
-  CellSelectionModule,
-]);
-import { LicenseManager } from "ag-grid-enterprise";
 import {
   CURRENT_ENVIRONMENT,
   GOOGLE_SITE_KEY,
   HOST_API,
   SENTRY_DSN,
 } from "./config-global";
-import { worker } from "./_mock/api/browser";
 import * as Sentry from "@sentry/react";
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
@@ -182,10 +158,11 @@ if (
   import.meta.env.VITE_ENABLE_MSW !== "false"
 ) {
   logger.debug("STARTING MOCK SERVER");
-  worker.start({ onUnhandledRequest: "bypass" });
+  // Loaded only here so the mock server never ships in the first-load bundle.
+  import("./_mock/api/browser").then(({ worker }) =>
+    worker.start({ onUnhandledRequest: "bypass" }),
+  );
 }
-
-LicenseManager.setLicenseKey(import.meta.env.VITE_AG_GRID_LICENSE_KEY);
 
 // Register service worker in production
 if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
@@ -243,6 +220,8 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 // ----------------------------------------------------------------------
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
+
+bootstrapSamlSession();
 
 root.render(
   <HelmetProvider>

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 func isInferenceProfile(modelID string) bool {
@@ -457,7 +458,7 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock converse: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -623,7 +624,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 				Index:    idx,
 				ID:       e.Start.ToolUse.ToolUseID,
 				Type:     "function",
-				Function: &models.FunctionCall{Name: e.Start.ToolUse.Name, Arguments: ""},
+				Function: &models.FunctionCallDelta{Name: e.Start.ToolUse.Name, Arguments: ""},
 			}}}}},
 		}, false, nil
 
@@ -660,7 +661,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 				Created: s.created,
 				Choices: []models.StreamChoice{{Index: 0, Delta: models.Delta{ToolCalls: []models.ToolCallDelta{{
 					Index:    idx,
-					Function: &models.FunctionCall{Arguments: e.Delta.ToolUse.Input},
+					Function: &models.FunctionCallDelta{Arguments: e.Delta.ToolUse.Input},
 				}}}}},
 			}, false, nil
 		}

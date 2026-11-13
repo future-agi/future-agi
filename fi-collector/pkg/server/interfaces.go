@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 )
 
 // UsageEmitter is the billing emission contract the server depends on.
@@ -14,6 +15,13 @@ type UsageEmitter interface {
 // Metering is the quota enforcement contract the server depends on.
 type Metering interface {
 	CheckUsage(ctx context.Context, orgID, eventType string, amount int64) auth.CheckResult
+}
+
+// PropertyCatalogWriter receives canonical rows plus authenticated tenant
+// scope out-of-band. It must not require workspace metadata to be persisted in
+// the existing spans table.
+type PropertyCatalogWriter interface {
+	EnqueueCanonicalSpans([]observedcatalog.ScopedSpan) error
 }
 
 // NoopUsageEmitter is used when Redis is not configured — all calls are silent no-ops.

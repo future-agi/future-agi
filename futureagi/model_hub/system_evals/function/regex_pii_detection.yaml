@@ -47,9 +47,28 @@ config:
                 dt = json.loads(dt)
             except (json.JSONDecodeError, ValueError):
                 dt = [t.strip() for t in dt.split(",")]
-        active = {k: v for k, v in patterns.items() if k in dt}
-        if not active:
-            return {"score": 0.0, "reason": "detect_types must include at least one supported type"}
+        # A JSON scalar such as '"ssn"' decodes to a str, which would otherwise be
+        # iterated one character at a time below.
+        if isinstance(dt, str):
+            dt = [dt]
+        if not isinstance(dt, (list, tuple, set)):
+            dt = [dt]
+        requested = [str(t).strip().lower() for t in dt if str(t).strip()]
+        unsupported = sorted(set(requested) - set(patterns))
+        # Fail closed. Previously an unrecognized type was dropped silently, so a
+        # partially-valid list narrowed the scan instead of rejecting it, and
+        # detect_types="SSN,email" scanned email only -- reporting "No PII" over
+        # text containing a real SSN.
+        if not requested or unsupported:
+            named = ", ".join(unsupported) or "(none given)"
+            return {
+                "score": 0.0,
+                "reason": (
+                    "Unsupported detect_types: " + named
+                    + ". Supported types: " + ", ".join(patterns.keys())
+                ),
+            }
+        active = {k: v for k, v in patterns.items() if k in requested}
         found = []
         for ptype, (pat, label) in active.items():
             matches = re.findall(pat, text)

@@ -1,5 +1,7 @@
 import {
+  Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Collapse,
@@ -17,6 +19,9 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
+import { readEvalTaskLogs } from "./task_log_read";
+import { warningMessage, warningTypeLabel } from "./warningTypes";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Stat Card ──
 
@@ -47,21 +52,21 @@ const StatCard = ({ icon, label, value, color, bgColor }) => (
     >
       <Iconify
         icon={icon}
-        width={18}
+        width={20}
         sx={{ color: color || "text.secondary" }}
       />
     </Box>
     <Box>
       <Typography
         variant="h6"
-        sx={{ fontSize: "18px", fontWeight: 700, lineHeight: 1.2 }}
+        sx={{ fontSize: "16px", fontWeight: 600, lineHeight: 1.2 }}
       >
         {value}
       </Typography>
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px" }}
+        sx={{ fontSize: "12px" }}
       >
         {label}
       </Typography>
@@ -107,16 +112,13 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette[sev].main, 0.3),
-        bgcolor: alpha(
-          t.palette[sev].main,
-          t.palette.mode === "dark" ? 0.08 : 0.04,
-        ),
+        borderColor: "status.danger.border",
+        bgcolor: "status.danger.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       {/* Header — always visible, click to expand */}
       <Box
@@ -141,7 +143,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             flexShrink: 0,
           })}
         >
-          <Iconify icon={group.icon} width={18} sx={{ color: `${sev}.main` }} />
+          <Iconify icon={group.icon} width={20} sx={{ color: `${sev}.main` }} />
         </Box>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -157,7 +159,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {group.title}
             </Typography>
@@ -168,7 +170,6 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color={sev}
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -192,7 +193,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 }}
                 sx={{
                   ml: 0.5,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: "primary.main",
                   cursor: "pointer",
                   fontFamily: "inherit",
@@ -220,7 +221,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
       {/* Expandable body — actionable hints + raw examples */}
       <Collapse in={expanded} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box
           sx={{
             px: 1.5,
@@ -240,8 +241,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -286,8 +287,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -311,7 +312,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                   >
                     <Typography
                       sx={{
-                        fontSize: "11px",
+                        fontSize: "12px",
                         fontFamily: "monospace",
                         color: "text.secondary",
                         wordBreak: "break-word",
@@ -350,22 +351,18 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const emptyKeys = group.empty_keys || [];
   const filledKeys = group.filled_keys || [];
-  const message =
-    group.message ||
-    "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional.";
+  const message = warningMessage(group);
+  const hasKeyBreakdown = emptyKeys.length > 0 || filledKeys.length > 0;
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette.warning.main, 0.35),
-        bgcolor: alpha(
-          t.palette.warning.main,
-          t.palette.mode === "dark" ? 0.1 : 0.05,
-        ),
+        borderColor: "status.warning.border",
+        bgcolor: "status.warning.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       <Box
         sx={{
@@ -373,9 +370,9 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
           alignItems: "flex-start",
           gap: 1.25,
           p: 1.5,
-          cursor: "pointer",
+          cursor: hasKeyBreakdown ? "pointer" : "default",
         }}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => hasKeyBreakdown && setExpanded((v) => !v)}
       >
         <Box
           sx={(t) => ({
@@ -391,7 +388,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
         >
           <Iconify
             icon="solar:danger-triangle-linear"
-            width={18}
+            width={20}
             sx={{ color: "warning.main" }}
           />
         </Box>
@@ -408,9 +405,9 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
-              Partial inputs
+              {warningTypeLabel(group.type)}
             </Typography>
             <Chip
               label={`${group.count} ${
@@ -419,7 +416,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -430,27 +426,29 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
             {message}
           </Typography>
         </Box>
-        <IconButton size="small" sx={{ p: 0.25, mt: 0.25, flexShrink: 0 }}>
-          <Iconify
-            icon={
-              expanded
-                ? "solar:alt-arrow-up-linear"
-                : "solar:alt-arrow-down-linear"
-            }
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
-        </IconButton>
+        {hasKeyBreakdown && (
+          <IconButton size="small" sx={{ p: 0.25, mt: 0.25, flexShrink: 0 }}>
+            <Iconify
+              icon={
+                expanded
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
+              width={14}
+              sx={{ color: "text.disabled" }}
+            />
+          </IconButton>
+        )}
       </Box>
-      <Collapse in={expanded} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+      <Collapse in={expanded && hasKeyBreakdown} unmountOnExit>
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box sx={{ px: 1.5, pb: 1.5, pt: 0.5 }}>
           <Typography
             variant="overline"
             sx={{
               display: "block",
               mb: 0.5,
-              fontSize: "10px",
+              fontSize: "12px",
               color: "text.disabled",
             }}
           >
@@ -465,7 +463,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                   size="small"
                   color="warning"
                   variant="outlined"
-                  sx={{ fontSize: "10px", height: 18 }}
                 />
               ))
             ) : (
@@ -481,7 +478,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: "text.disabled",
                 }}
               >
@@ -489,13 +486,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               </Typography>
               <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
                 {filledKeys.map((key) => (
-                  <Chip
-                    key={key}
-                    label={key}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "10px", height: 18 }}
-                  />
+                  <Chip key={key} label={key} size="small" variant="outlined" />
                 ))}
               </Box>
             </>
@@ -522,18 +513,25 @@ WarningGroupCard.propTypes = {
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const theme = useTheme();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalTaskLogs(), {
-        params: { eval_task_id: evalTaskId },
-      }),
-    select: (d) => d?.data?.result,
+    queryFn: ({ signal }) =>
+      readEvalTaskLogs(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskLogs(), {
+            signal: requestSignal,
+            timeout,
+            params: { eval_task_id: evalTaskId },
+          }),
+        signal,
+      ),
     enabled: !!evalTaskId,
+    retry: false,
     // Poll off the response's own status (not the prop) so the same fetch that
     // reports "completed" also carries the final counts — no stale tick.
     refetchInterval: (query) => {
-      const status = query?.state?.data?.data?.result?.status ?? taskStatus;
+      if (query?.state?.status === "error") return false;
+      const status = query?.state?.data?.status ?? taskStatus;
       return status === "pending" || status === "running" ? 3000 : false;
     },
   });
@@ -571,27 +569,38 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           minHeight: 200,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }
 
-  if (!data) {
+  if (isError && !data) {
     return (
       <Box
         sx={{
+          flexDirection: "column",
+          gap: 1,
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
           minHeight: 200,
         }}
       >
-        <Typography variant="body2" color="text.disabled">
-          No log data available
-        </Typography>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          We couldn&apos;t load evaluation task logs.
+        </Alert>
       </Box>
     );
   }
+
+  if (!data) return null;
 
   // Response keys are snake_case — the DRF camelCase middleware was
   // removed, so we alias locally to keep the rest of the component
@@ -602,6 +611,9 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     skipped_count: skippedCount = 0,
     warnings_count: warningsCount = data?.warningsCount ?? 0,
     total_count: totalCount = 0,
+    // total_count is one per (target, eval) run; target_count is the
+    // distinct spans/traces/sessions/calls those runs cover.
+    target_count: targetCount = totalCount,
     start_time: startTime,
     end_time: endTime,
     row_type: rowType = "spans",
@@ -626,12 +638,31 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
   const hasWarnings = warningGroups.length > 0;
+  // Groups sort by count, and a group with no key breakdown cannot expand, so
+  // auto-expand the largest one that actually has something behind it.
+  const firstExpandableWarningGroup = warningGroups.find(
+    (group) =>
+      (group.empty_keys || []).length > 0 ||
+      (group.filled_keys || []).length > 0,
+  );
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
   const isHighErrorRate = errorRate > 50;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not refresh task logs. The previous summary is still shown.
+        </Alert>
+      )}
       {/* Progress Bar */}
       <Box>
         <Box
@@ -706,7 +737,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         {warningsCount > 0 && (
           <StatCard
             icon="solar:danger-triangle-linear"
-            label="Partial Inputs"
+            label="Runs with warnings"
             value={warningsCount}
             color="warning.main"
             bgColor={alpha(theme.palette.warning.main, 0.1)}
@@ -715,10 +746,19 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         <StatCard
           icon="solar:layers-linear"
           label={totalLabel}
-          value={totalCount ?? 0}
+          value={targetCount ?? 0}
           color="info.main"
           bgColor={alpha(theme.palette.info.main, 0.1)}
         />
+        {targetCount !== totalCount && (
+          <StatCard
+            icon="solar:clipboard-list-linear"
+            label="Eval Runs"
+            value={totalCount ?? 0}
+            color="info.main"
+            bgColor={alpha(theme.palette.info.main, 0.1)}
+          />
+        )}
         {showDuration && (
           <StatCard
             icon="solar:clock-circle-linear"
@@ -745,7 +785,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               Started
             </Typography>
@@ -758,7 +798,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Completed
               </Typography>
@@ -772,7 +812,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Status
               </Typography>
@@ -800,8 +840,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
-                Partial Input Warnings
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
+                Warnings
               </Typography>
               <Chip
                 label={`${warningGroups.length} ${
@@ -810,16 +850,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="warning"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
-              {warningsCount} total warning
-              {warningsCount !== 1 ? "s" : ""} — grouped by missing variables
+              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with warnings,
+              grouped by type below
             </Typography>
           </Box>
           {warningGroupsTruncated && (
@@ -843,7 +882,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the most common warning types. Rarer warning groups are
                 hidden.
@@ -851,11 +890,11 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             </Box>
           )}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {warningGroups.map((group, index) => (
+            {warningGroups.map((group) => (
               <WarningGroupCard
                 key={`${group.type}-${(group.empty_keys || []).join(",")}`}
                 group={group}
-                defaultExpanded={index === 0}
+                defaultExpanded={group === firstExpandableWarningGroup}
               />
             ))}
           </Box>
@@ -876,7 +915,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
                 Error Log
               </Typography>
               <Chip
@@ -886,13 +925,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="error"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {errorsCount} total error
               {errorsCount !== 1 ? "s" : ""} — grouped by type
@@ -922,7 +960,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the top {errorGroups.length} error types by frequency.
                 Rarer error types are hidden — fix the biggest groups first and
@@ -965,7 +1003,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             All evaluations completed successfully
           </Typography>

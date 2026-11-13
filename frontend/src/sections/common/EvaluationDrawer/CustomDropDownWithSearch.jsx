@@ -203,37 +203,17 @@ const CustomDropDownWithSearch = ({
             key={option.value}
             value={option.value}
             sx={{
-              fontSize: "14px",
-              fontWeight: 400,
-              color: "text.primary",
               py: 0.5,
-              minHeight: "32px",
             }}
           >
             <Checkbox
               checked={selectedValues && selectedValues.includes(option.value)}
               sx={{ padding: "4px" }}
-              icon={
-                <Iconify
-                  icon="system-uicons:checkbox-empty"
-                  color="action.selected"
-                  width={16}
-                  height={16}
-                />
-              }
-              checkedIcon={
-                <Iconify
-                  icon="famicons:checkbox"
-                  color="primary.light"
-                  width={16}
-                  height={16}
-                />
-              }
             />
             <ListItemText
               primary={option.label}
               primaryTypographyProps={{
-                fontSize: "14px",
+                fontSize: "12px",
                 fontWeight: 400,
                 color: "text.primary",
                 noWrap: true, // this is important for ellipsis
@@ -250,10 +230,7 @@ const CustomDropDownWithSearch = ({
           </MenuItem>
         ))}
         {filteredOptions.length === 0 && (
-          <MenuItem
-            disabled
-            sx={{ opacity: 0.7, fontStyle: "italic", fontSize: "14px" }}
-          >
+          <MenuItem disabled sx={{ opacity: 0.7, fontStyle: "italic" }}>
             No options found
           </MenuItem>
         )}
