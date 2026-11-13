@@ -8187,73 +8187,12 @@ export interface QueueReviewItemResponseApi {
   result: QueueReviewItemResultApi;
 }
 
-export type UserApiOrganizationRole =
-  (typeof UserApiOrganizationRole)[keyof typeof UserApiOrganizationRole];
-
-export const UserApiOrganizationRole = {
-  Owner: "Owner",
-  Admin: "Admin",
-  Member: "Member",
-  Viewer: "Viewer",
-  workspace_admin: "workspace_admin",
-  workspace_member: "workspace_member",
-  workspace_viewer: "workspace_viewer",
-} as const;
-
-export interface OrganizationApi {
+export interface AnnotationTaskAssigneeApi {
   readonly id?: string;
-  readonly created_at?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  /** @maxLength 255 */
-  display_name?: string;
-  is_new?: boolean;
-  ws_enabled?: boolean;
-  /**
-   * @minLength 1
-   * @maxLength 16
-   */
-  region?: string;
-  require_2fa?: boolean;
-  /**
-   * @minimum 0
-   * @maximum 32767
-   */
-  require_2fa_grace_period_days?: number;
-  require_2fa_enforced_at?: string;
-}
-
-/**
- * List of user's goals for using the platform
- */
-export type UserApiGoals = { [key: string]: unknown };
-
-export interface UserApi {
-  readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 254
-   */
-  email: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  organization_role?: UserApiOrganizationRole;
-  organization?: OrganizationApi;
-  readonly created_at?: string;
-  readonly status?: string;
-  /**
-   * User's job role (e.g., Data Scientist, ML Engineer, or custom role)
-   * @maxLength 255
-   */
-  role?: string;
-  /** List of user's goals for using the platform */
-  goals?: UserApiGoals;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly email?: string;
 }
 
 export type MonitorApiMonitorType =
@@ -8348,7 +8287,7 @@ export interface AIModelApi {
 
 export interface AnnotationTaskApi {
   readonly id?: string;
-  readonly assigned_users?: readonly UserApi[];
+  readonly assigned_users?: readonly AnnotationTaskAssigneeApi[];
   readonly created_at?: string;
   readonly updated_at?: string;
   ai_model?: AIModelApi;
@@ -26699,6 +26638,75 @@ export interface CustomEvalConfigApi {
   /** @maxLength 255 */
   model?: string;
   readonly eval_group?: string;
+}
+
+export type UserApiOrganizationRole =
+  (typeof UserApiOrganizationRole)[keyof typeof UserApiOrganizationRole];
+
+export const UserApiOrganizationRole = {
+  Owner: "Owner",
+  Admin: "Admin",
+  Member: "Member",
+  Viewer: "Viewer",
+  workspace_admin: "workspace_admin",
+  workspace_member: "workspace_member",
+  workspace_viewer: "workspace_viewer",
+} as const;
+
+export interface OrganizationApi {
+  readonly id?: string;
+  readonly created_at?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @maxLength 255 */
+  display_name?: string;
+  is_new?: boolean;
+  ws_enabled?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  region?: string;
+  require_2fa?: boolean;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  require_2fa_grace_period_days?: number;
+  require_2fa_enforced_at?: string;
+}
+
+/**
+ * List of user's goals for using the platform
+ */
+export type UserApiGoals = { [key: string]: unknown };
+
+export interface UserApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 254
+   */
+  email: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  organization_role?: UserApiOrganizationRole;
+  organization?: OrganizationApi;
+  readonly created_at?: string;
+  readonly status?: string;
+  /**
+   * User's job role (e.g., Data Scientist, ML Engineer, or custom role)
+   * @maxLength 255
+   */
+  role?: string;
+  /** List of user's goals for using the platform */
+  goals?: UserApiGoals;
 }
 
 export interface DashboardApi {

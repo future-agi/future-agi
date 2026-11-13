@@ -2249,39 +2249,11 @@ def evaluate_observation_span_observe(
 
         return True
     except ValueError as e:
-        # Expected validation failure (missing/invalid eval input). Persisted as
-        # a failed span below; WARNING keeps it out of the Sentry issue stream.
+        # Expected validation failure (missing/invalid eval input). WARNING
+        # keeps it out of the Sentry issue stream.
         logger.warning(
             f"Error during evaluation in evaluate_observation_span_observe: {e}"
         )
-        if eval_task_id:
-            try:
-                with transaction.atomic():
-                    eval_task = EvalTask.objects.select_for_update().get(
-                        id=eval_task_id
-                    )
-                    failed_spans = (
-                        eval_task.failed_spans if eval_task.failed_spans else []
-                    )
-
-                    failed_spans.append(
-                        {
-                            "observation_span_id": observation_span_id,
-                            "custom_eval_config_id": custom_eval_config_id,
-                            "error": str(e),
-                        }
-                    )
-
-                    eval_task.failed_spans = failed_spans
-                    eval_task.save(update_fields=["failed_spans", "updated_at"])
-            except EvalTask.DoesNotExist:
-                # Expected race: the EvalTask was deleted before this async task
-                # ran. Nothing to update; downgrade to warning.
-                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
-            except Exception as e:
-                logger.error(
-                    f"Error during updating failed spans in exception handling evaluate_observation_span_observe: {e}"
-                )
         _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
 
         return False

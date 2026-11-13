@@ -69,8 +69,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ruff
-        run: python -m pip install --quiet "ruff==${RUFF_VERSION}"
+      - name: Install ruff for head self-tests
+        run: |
+          if [ ! -f scripts/test_check_python_lint_delta.py ]; then
+            echo "This branch predates the gate's self-test; no head Ruff is needed."
+            exit 0
+          fi
+          # The workflow comes from the merge ref, but self-tests use the head.
+          head_ruff_version="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' .github/workflows/python-lint.yml)"
+          if ! [[ "$head_ruff_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the head workflow."
+            exit 1
+          fi
+          python3 -I -m pip install --quiet "ruff==${head_ruff_version}"
       - name: Self-test the gate
         # Only a branch that carries the gate's tests can test its own copy of
         # the gate. Branches older than the gate have none; the gate below runs
@@ -85,13 +96,24 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          base="$(git merge-base "origin/${BASE_REF}" HEAD)"
-          # Run the gate as the base branch has it, against the PR's code: a
-          # branch older than the gate does not contain it, and a PR must not be
-          # able to weaken the gate that judges it.
+          trusted_ref="$(git rev-parse "origin/${BASE_REF}")"
+          base="$(git merge-base "$trusted_ref" HEAD)"
+          # Take the gate AND its Ruff pin from the same base-branch commit.
+          # Head self-tests above use the head pin; an upgrade must not run the
+          # old gate with the new Ruff, or let a PR weaken its own judging gate.
           gate="$RUNNER_TEMP/check_python_lint_delta.py"
-          git show "origin/${BASE_REF}:scripts/check_python_lint_delta.py" > "$gate"
-          python3 -I "$gate" --base "$base" --expect-ruff-version "$RUFF_VERSION"
+          git show "${trusted_ref}:scripts/check_python_lint_delta.py" > "$gate"
+          git show "${trusted_ref}:.github/workflows/python-lint.yml" > "$RUNNER_TEMP/python-lint-base.yml"
+          RUFF_VERSION="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' "$RUNNER_TEMP/python-lint-base.yml")"
+          if ! [[ "$RUFF_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the base workflow."
+            exit 1
+          fi
+          # Isolate the trusted Ruff from the head's self-test installation.
+          venv="$RUNNER_TEMP/python-lint-base-venv"
+          python3 -I -m venv "$venv"
+          "$venv/bin/python" -I -m pip install --quiet "ruff==${RUFF_VERSION}"
+          python3 -I "$gate" --base "$base" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
 
   python-lint-pass:
     name: Python Lint Pass
