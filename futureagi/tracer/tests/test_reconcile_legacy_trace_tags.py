@@ -19,7 +19,7 @@ from tracer.tests.test_entity_tag_target import PROJECT
 from tracer.tests.test_entity_tag_targets_ch25 import OTHER_PROJECT
 
 
-def test_upgrade_docs_run_reconcile_before_releasing_editor():
+def test_upgrade_docs_run_second_reconcile_immediately_after_rollout():
     guide = (Path(__file__).resolve().parents[3] / "deploy/README.md").read_text()
     upgrade = guide.split("### Upgrading a production install", 1)[1].split("### ", 1)[
         0
@@ -29,11 +29,13 @@ def test_upgrade_docs_run_reconcile_before_releasing_editor():
         "reconcile_legacy_trace_tags\n",
         "$COMPOSE up -d",
         "reconcile_legacy_trace_tags\n",
-        "Release the new editor",
+        "If it reports rows changed during the scan",
     )
     position = 0
     for step in steps:
         position = upgrade.index(step, position) + len(step)
+    assert "run the second apply immediately after" in upgrade
+    assert "there is no mechanism to gate the new editor" in upgrade
     assert "collector's root-span writes" in upgrade
     assert "tags DEFAULT '[]'" in upgrade
 

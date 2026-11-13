@@ -513,27 +513,27 @@ $COMPOSE pull
 # Before enabling the new trace/span tag editor, compare PG legacy tags against
 # curated CH tags, review the count, then apply. Run after migrations and native
 # CH setup while stores are up. Old backend PATCH requests can still change PG
-# tags after this scan; repeat the apply immediately after up -d, before exposing
-# the new editor. Both applies need the operator authorization pair or Django's
-# startup guard refuses them.
+# tags after this scan; run the second apply immediately after up -d to minimize
+# the unavoidable window when the new editor can be used. Both applies need
+# the operator authorization pair or Django's startup guard refuses them.
 $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
 $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 # Catch legacy PATCH writes made while the old backend was still serving,
-# including edits after the first scan. Do not announce the new editor until
-# this second apply succeeds; keep the editor unavailable during both passes.
+# including edits after the first scan. Run the second apply immediately after
+# rollout; there is no mechanism to gate the new editor in between.
 $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags
-# Release the new editor only now.
+# If it reports rows changed during the scan, run this apply again.
 ```
 
 Check the final `changed during scan` count after each dry-run/apply. If it is
 nonzero, the command prints a rerun instruction: repeat that pass from the
-beginning (without `--after-id`) before advancing the rollout or releasing the
-editor. The command still exits successfully so the scripted two-pass rollout
-and Helm Job completion are not interrupted by a concurrent edit.
+beginning (without `--after-id`) before moving to the next step. The command
+still exits successfully so the scripted two-pass rollout and Helm Job
+completion are not interrupted by a concurrent edit.
 
 The new trace/span tag PATCH stores manual assignments, **not**
 `tracer_trace.tags`. Langfuse ingestion (`tracer/utils/langfuse_upsert.py`)

@@ -803,18 +803,19 @@ rendered from the **new** chart's bootstrap Job (not a new Helm hook):
    stops serving; legacy PATCH requests can still update PG tags after this pass.
 3. Complete the `helm upgrade` below and wait for the new backend rollout.
 4. Run `python manage.py reconcile_legacy_trace_tags` again immediately after
-   rollout, **before announcing the new tag editor**. Do not expose the new
-   editor during either pass. For Argo CD/Flux, use the same two-pass handoff
-   around the controller-managed rollout. The bootstrap hook only runs
-   `bootstrap_install`, so it does not do this for you.
+   rollout. The tag editor can be used before this second apply; there is no
+   editor gate, so run the second apply immediately and minimize this unavoidable
+   window. Rerun if it reports rows changed during the scan. For Argo CD/Flux,
+   use the same two-pass handoff around the controller-managed rollout. The
+   bootstrap hook only runs `bootstrap_install`, so it does not do this for you.
 
 The new editor writes manual assignments rather than PG `tracer_trace.tags`;
 Langfuse ingestion still updates PG tags and mirrors traces to ClickHouse.
 See the runbook for the Job command and operator authorization pair. For
 [Standalone](UPGRADING.md#standalone), use the new app image to run the same
 `reconcile_legacy_trace_tags --dry-run`, then apply, `docker compose up -d`,
-then apply again before announcing its tag editor; its bootstrap script also
-does not perform this handoff.
+then apply again immediately to minimize the window when its tag editor can
+be used; its bootstrap script also does not perform this handoff.
 
 - **Supported paths:** follow the release-specific migration and chart upgrade
   notes. A patch or adjacent minor version is not itself proof of compatibility.

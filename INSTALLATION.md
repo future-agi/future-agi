@@ -1004,6 +1004,23 @@ release this way; one whose version keys are set, by you or by `./bin/update`,
 keeps running those versions until you change the keys (or use
 `./bin/update`, below).
 
+**One-time trace/span tag-editor upgrade:** before upgrading an install that
+still uses legacy PG trace tags, follow the [Standalone handoff](deploy/helm/futureagi/UPGRADING.md#standalone)
+or [Distributed production handoff](deploy/README.md#upgrading-a-production-install).
+Run `reconcile_legacy_trace_tags --dry-run`, review the count, then apply with
+the new app/backend image and operator authorization; run the second apply
+immediately after rollout if the old backend could still write tags during
+staging. The
+new editor can already be available before that second apply. Neither
+`./bin/install` nor `./bin/update apply` performs this handoff automatically.
+If automatic updates are enabled, pause them **before** the release introducing
+the editor is applied, follow the [manual-operations handoff](deploy/update/README.md#safe-handoff-to-manual-operations),
+and use the operator-run reconciliation rather than assuming an unattended
+update will mirror legacy tags. A cold-stopped Standalone app needs only one
+successful apply after its last old-editor write; the linked two-pass procedure
+also covers upgrades where the old app serves during staging. Rerun an apply if
+it reports rows changed during the scan.
+
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
