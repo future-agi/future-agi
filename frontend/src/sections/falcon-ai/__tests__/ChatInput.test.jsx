@@ -78,7 +78,7 @@ describe("ChatInput", () => {
             target: { files: [file] },
           });
         } else {
-          fireEvent.drop(screen.getByPlaceholderText("Message Falcon AI..."), {
+          fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
             dataTransfer: { files: [file] },
           });
         }
