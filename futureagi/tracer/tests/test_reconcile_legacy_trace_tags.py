@@ -69,7 +69,9 @@ def stores(request, django_db_blocker, monkeypatch):
         lambda: {**cfg, "database": database},
     )
 
-    def seed(project, pg_tags, ch_tags=None, *, ch_version=1):
+    def seed(
+        project, pg_tags, ch_tags=None, *, ch_version=1, ch_name=None, ch_deleted=0
+    ):
         trace = str(uuid4())
         with django_db_blocker.unblock(), connection.cursor() as cursor:
             cursor.execute(
@@ -82,8 +84,24 @@ def stores(request, django_db_blocker, monkeypatch):
         if ch_tags is not None:
             ch.insert(
                 "traces",
-                [[trace, project, json.dumps(ch_tags), ch_version]],
-                column_names=["id", "project_id", "tags", "_version"],
+                [
+                    [
+                        trace,
+                        project,
+                        json.dumps(ch_tags),
+                        ch_version,
+                        ch_name,
+                        ch_deleted,
+                    ]
+                ],
+                column_names=[
+                    "id",
+                    "project_id",
+                    "tags",
+                    "_version",
+                    "name",
+                    "is_deleted",
+                ],
             )
         return trace
 
@@ -109,6 +127,12 @@ def stores(request, django_db_blocker, monkeypatch):
         attach_legacy_trace_tags(execute, [row])
         return json.loads(row["trace_tags"])
 
+    def column(trace, name):
+        return ch.query(
+            f"SELECT {name} FROM traces FINAL WHERE id = %(id)s", {"id": trace}
+        ).result_rows[0][0]
+
+    latest.column = column
     try:
         yield seed, latest, version, legacy_tags
     finally:
@@ -140,7 +164,7 @@ def test_dry_run_reconcile_and_second_run_do_not_duplicate(stores):
         "--dry-run",
         stdout=output,
     )
-    assert "would mirror 3 trace(s)" in output.getvalue()
+    assert "would mirror 2 trace(s)" in output.getvalue()
     assert {trace: version(trace) for trace in before} == before
     assert latest(stale) == ["stale"] and latest(missing) is None
     assert legacy_tags(stale) == ["stale"]
@@ -154,14 +178,17 @@ def test_dry_run_reconcile_and_second_run_do_not_duplicate(stores):
         "2",
         stdout=output,
     )
-    assert "mirrored 3 trace(s)" in output.getvalue()
+    # A trace with no CH row is a mirror gap, not a tag difference: skipped.
+    assert "mirrored 2 trace(s)" in output.getvalue()
+    assert "no CH trace row 1" in output.getvalue()
     assert latest(cleared) == []
     assert latest(stale) == [{"name": "old", "color": "#123456"}]
     assert legacy_tags(stale) == [{"name": "old", "color": "#123456"}]
-    assert latest(missing) == ["missing"]
+    assert latest(missing) is None
     assert latest(equal) == ["equal"] and latest(other) == ["stale"]
     assert version(equal) == before[equal] and version(other) == before[other]
-    assert version(stale) > before[stale] and version(cleared) > before[cleared]
+    assert version(stale) == before[stale] + 1
+    assert version(cleared) == before[cleared] + 1
     after = {trace: version(trace) for trace in before}
 
     output = StringIO()
@@ -191,3 +218,17 @@ def test_organization_scope_and_newest_ch_tags_replaced(stores):
     )
     assert latest(trace) == ["pg"]
     assert version(trace) > original[0]
+
+
+def test_only_tags_change_and_deleted_traces_stay_deleted(stores):
+    """The latest CH row keeps every other column; a deleted row is skipped."""
+    seed, latest, version, _ = stores
+    renamed = seed(PROJECT, ["pg"], ["ch"], ch_name="name written to CH only")
+    deleted = seed(PROJECT, ["pg"], ["ch"], ch_deleted=1)
+    before = version(deleted)
+    call_command(
+        "reconcile_legacy_trace_tags", "--project-id", PROJECT, stdout=StringIO()
+    )
+    assert latest(renamed) == ["pg"]
+    assert latest.column(renamed, "name") == "name written to CH only"
+    assert version(deleted) == before

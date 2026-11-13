@@ -1,4 +1,4 @@
-"""Re-mirror PG-only editor tags into the curated CH traces.tags read replica.
+"""Copy PG-only editor tags into the curated CH traces.tags read replica.
 
 The tag grid, picker and filters read legacy tags from CH traces.tags, with a
 saved EntityTagAssignment (including an explicit clear) taking precedence.
@@ -14,7 +14,6 @@ from uuid import UUID
 from django.core.management.base import BaseCommand, CommandError
 
 from tracer.services.clickhouse.v2 import get_v2_config
-from tracer.services.clickhouse.v2.trace_writer import _TRACE_COLUMNS, _trace_to_row
 
 
 class Command(BaseCommand):
@@ -55,7 +54,7 @@ class Command(BaseCommand):
         if opts["organization_id"]:
             qs = qs.filter(project__organization_id=opts["organization_id"])
 
-        scanned = different = written = 0
+        scanned = different = written = missing = 0
         last_id = None
         try:
             while True:
@@ -64,44 +63,54 @@ class Command(BaseCommand):
                     break
                 last_id = page[-1].id
                 scanned += len(page)
-                rows = client.query(
-                    """SELECT toString(project_id), toString(id),
-                        argMax(tuple(tags, _version), _version) AS latest
-                    FROM traces
+                result = client.query(
+                    """SELECT * FROM traces
                     WHERE project_id IN %(projects)s AND id IN %(ids)s
-                    GROUP BY project_id, id""",
+                    ORDER BY _version DESC
+                    LIMIT 1 BY project_id, id""",
                     parameters={
                         "projects": tuple({str(t.project_id) for t in page}),
                         "ids": tuple(str(t.id) for t in page),
                     },
-                ).result_rows
-                latest = {
-                    (project, trace): (tags, version)
-                    for project, trace, (tags, version) in rows
-                }
+                )
+                columns = list(result.column_names)
+                latest = {}
+                for values in result.result_rows:
+                    row = dict(zip(columns, values, strict=True))
+                    latest[(str(row["project_id"]), str(row["id"]))] = row
                 changes = []
                 for trace in page:
                     prior = latest.get((str(trace.project_id), str(trace.id)))
+                    if prior is None or prior.get("is_deleted") or trace.deleted:
+                        # Not a tag difference: no live CH trace row to correct.
+                        # Never backfill or resurrect a trace from here.
+                        missing += prior is None
+                        continue
                     pg_tags = trace.tags if trace.tags is not None else []
                     try:
-                        equal = prior is not None and json.loads(prior[0]) == pg_tags
+                        equal = json.loads(prior["tags"]) == pg_tags
                     except (ValueError, TypeError):
                         equal = False
                     if equal:
                         continue
                     different += 1
                     if not opts["dry_run"]:
-                        # This is a reconciliation of the *current* PG source of
-                        # truth, not a historical backfill: beat the latest CH
-                        # version even if a previous writer used a future clock.
-                        row = _trace_to_row(trace)
-                        row[-1] = max(row[-1], prior[1] + 1 if prior else 0)
-                        changes.append(row)
+                        # Only the tags change: every other column keeps the
+                        # latest CH value, which can be newer than PG's copy.
+                        row = {
+                            **prior,
+                            "tags": json.dumps(
+                                pg_tags, default=str, ensure_ascii=False
+                            ),
+                            "_version": prior["_version"] + 1,
+                        }
+                        changes.append([row[column] for column in columns])
                 if changes:
-                    client.insert("traces", changes, column_names=list(_TRACE_COLUMNS))
+                    client.insert("traces", changes, column_names=columns)
                     written += len(changes)
                 self.stdout.write(
-                    f"  scanned {scanned} trace(s); differing {different}"
+                    f"  scanned {scanned} trace(s); differing {different}; "
+                    f"no CH trace row {missing}"
                 )
         finally:
             client.close()
