@@ -6,6 +6,17 @@ import { RESPONSE_CODES } from "src/utils/constants";
 // The backend's error code for a comparison that is unknown or expired. Other
 // 404s (e.g. a compared dataset that was deleted) are reported as errors.
 export const COMPARE_NOT_FOUND_CODE = "compare_not_found";
+// The backend's error code (503) when the comparison's storage could not be
+// read. The comparison may still exist, so it is not rebuilt; the error is
+// shown and the user tries again.
+export const COMPARE_STORAGE_UNAVAILABLE_CODE = "compare_storage_unavailable";
+
+export const COMPARE_STORAGE_UNAVAILABLE_MESSAGE =
+  "Comparison data is temporarily unavailable. Please try again.";
+
+export const isCompareStorageUnavailable = (error) =>
+  error?.statusCode === RESPONSE_CODES.MAINTENANCE &&
+  error?.code === COMPARE_STORAGE_UNAVAILABLE_CODE;
 
 export const COMPARISON_EXPIRED_MESSAGE =
   "This comparison expired and is being rebuilt. Download it again once the table has loaded.";
@@ -31,7 +42,9 @@ export const useDeleteCompare = () => {
 // Downloads the comparison as CSV. A comparison that expired answers 404 with
 // COMPARE_NOT_FOUND_CODE: that is not an error to show. The table is rebuilt
 // (onComparisonExpired) and the user is asked to download again once it has
-// loaded.
+// loaded. A comparison whose storage could not be read (503,
+// COMPARE_STORAGE_UNAVAILABLE_CODE) is not rebuilt: the user is asked to try
+// again.
 export const useDownloadCompare = ({
   compareId,
   selectedDatasetsValues,
@@ -61,10 +74,19 @@ export const useDownloadCompare = ({
         ) {
           return { expiredCompareId: requestCompareId };
         }
+        if (isCompareStorageUnavailable(error)) {
+          return { storageUnavailable: true };
+        }
         throw error;
       }
     },
-    onSuccess: ({ response, expiredCompareId }) => {
+    onSuccess: ({ response, expiredCompareId, storageUnavailable }) => {
+      if (storageUnavailable) {
+        enqueueSnackbar(COMPARE_STORAGE_UNAVAILABLE_MESSAGE, {
+          variant: "error",
+        });
+        return;
+      }
       if (expiredCompareId) {
         // Rebuild only if the table has not already moved on to a new one;
         // the message is shown only when a rebuild starts.

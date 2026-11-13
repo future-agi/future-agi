@@ -625,6 +625,82 @@ def test_gcs_uses_a_compare_bucket_only_from_the_credentials_project(
     assert client.listings == 2
 
 
+class _ObjectClient(_CreationClient):
+    """An existing private bucket whose object reads answer ``outcome``."""
+
+    def __init__(self, outcome):
+        super().__init__(exists=True)
+        self.outcome = outcome
+
+    def get_object(self, bucket, name):
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        body = self.outcome
+
+        class _Response:
+            def read(self):
+                return body
+
+            def close(self):
+                pass
+
+            def release_conn(self):
+                pass
+
+        return _Response()
+
+
+@pytest.mark.parametrize(
+    "outcome, expected",
+    [
+        (_storage_error("NoSuchKey"), "missing"),
+        (b"{not json", "missing"),
+        (b"\xff\xfe", "missing"),
+        (_storage_error("InternalError"), "unavailable"),
+        (_storage_error("AccessDenied"), "unavailable"),
+        (ConnectionError("storage unreachable"), "unavailable"),
+    ],
+    ids=[
+        "no-such-key",
+        "not-json",
+        "not-text",
+        "server-error",
+        "access-denied",
+        "unreachable",
+    ],
+)
+def test_a_missing_object_is_told_apart_from_a_storage_error(
+    monkeypatch, settings, outcome, expected
+):
+    from model_hub.utils.compare_storage import (
+        CompareObjectUnavailable,
+        CompareStorageUnavailable,
+        read_compare_json,
+    )
+
+    _use_creation_client(monkeypatch, settings, _ObjectClient(outcome), "s3")
+    expected_error = (
+        CompareObjectUnavailable if expected == "missing" else CompareStorageUnavailable
+    )
+    with pytest.raises(expected_error):
+        read_compare_json(str(uuid.uuid4()), "metadata.json")
+
+
+def test_a_refused_compare_bucket_is_a_storage_error(monkeypatch, settings):
+    from model_hub.utils.compare_storage import (
+        CompareStorageUnavailable,
+        read_compare_json,
+    )
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    client = _ObjectClient(b"{}")
+    client.exists = False
+    _use_creation_client(monkeypatch, settings, client, "s3")
+    with pytest.raises(CompareStorageUnavailable) as unavailable:
+        read_compare_json(str(uuid.uuid4()), "metadata.json")
+    assert isinstance(unavailable.value.__cause__, PrivateBucketRefused)
+
+
 class _PolicyTextClient:
     """An existing bucket whose policy read returns the given text."""
 

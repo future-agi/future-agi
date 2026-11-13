@@ -513,6 +513,49 @@ def test_unknown_compare_id_is_not_found_without_server_details(
     assert worker == []
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_storage_error_is_unavailable_not_an_unknown_comparison(
+    auth_client, organization, workspace, page_store, worker, monkeypatch
+):
+    from model_hub.utils.compare_storage import CompareStorageUnavailable
+
+    shared = [f"unavailable-{index:02d}" for index in range(3)]
+    left, _, _ = _make_dataset(
+        organization, workspace, "Unavailable left", shared, "left"
+    )
+    right, _, _ = _make_dataset(
+        organization, workspace, "Unavailable right", shared, "right"
+    )
+    compare_id = str(uuid.uuid4())
+
+    def unavailable(compare_id, name):
+        raise CompareStorageUnavailable(name)
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.read_compare_json", unavailable
+    )
+
+    for response in (
+        auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=uuid.uuid4())),
+        _post(auth_client, left.id, [right.id], 1, compare_id),
+        _download(auth_client, left.id, [right.id], compare_id),
+        auth_client.delete(DELETE_URL.format(compare_id=compare_id)),
+    ):
+        # Not "not found": the comparison may still exist, so the client
+        # must not rebuild it.
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE, (
+            response.content[:500]
+        )
+        assert response.json()["code"] == "compare_storage_unavailable"
+        body = response.content.decode()
+        for detail in ("metadata.json", "CompareStorageUnavailable", compare_id):
+            assert detail not in body
+
+    # Nothing was built or removed under the supplied id.
+    assert _stored(page_store, compare_id) == {}
+    assert worker == []
+
+
 def _rows_by_input(dataset):
     return {
         cell.value: str(cell.row_id)

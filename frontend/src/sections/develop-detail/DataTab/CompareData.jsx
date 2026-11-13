@@ -26,8 +26,11 @@ import { getEachCompareColumnDef } from "./compareTableConfig";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
 import {
   COMPARE_NOT_FOUND_CODE,
+  COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
+  isCompareStorageUnavailable,
   useDeleteCompare,
 } from "src/api/develop/dataset-compare";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
@@ -525,6 +528,16 @@ const CompareData = ({
           setColumnAvgs(averages);
         } catch (error) {
           if (isStale()) {
+            params.fail?.();
+            return;
+          }
+          if (isCompareStorageUnavailable(error)) {
+            // The comparison could not be read just now, but may still
+            // exist: keep it and the rows already shown, and ask the user to
+            // try again rather than rebuilding it.
+            enqueueSnackbar(COMPARE_STORAGE_UNAVAILABLE_MESSAGE, {
+              variant: "error",
+            });
             params.fail?.();
             return;
           }

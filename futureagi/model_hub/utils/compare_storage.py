@@ -41,7 +41,16 @@ LOCAL_SWEEP_INTERVAL_SECONDS = 10 * 60
 
 
 class CompareObjectUnavailable(ValueError):
-    """A comparison object that is missing or could not be read."""
+    """A comparison object that is missing or whose content is unreadable."""
+
+
+class CompareStorageUnavailable(Exception):
+    """The compare bucket could not be used or answered with an error, so
+    whether a comparison object exists is not known."""
+
+
+# Storage answers that mean the object itself is not there.
+_MISSING_OBJECT_CODES = ("NoSuchKey", "NoSuchObject")
 
 
 def compare_bucket_name() -> str:
@@ -80,13 +89,33 @@ def write_compare_json(compare_id, name: str, data) -> None:
 
 def read_compare_json(compare_id, name: str):
     """One comparison object, read with the backend's credentials. Raises
-    CompareObjectUnavailable when it is missing or cannot be read."""
+    CompareObjectUnavailable when it is missing or its content is unreadable,
+    and CompareStorageUnavailable when the bucket was refused or the storage
+    answered with any other error."""
     response = None
     try:
         client, bucket = _client_and_bucket()
         response = client.get_object(bucket, compare_object_key(compare_id, name))
-        return json.loads(response.read().decode("utf-8"))
+        payload = response.read()
     except Exception as exc:
+        fields = {
+            "compare_id": str(compare_id),
+            "object_name": name,
+            "error": type(exc).__name__,
+        }
+        if getattr(exc, "code", None) in _MISSING_OBJECT_CODES:
+            logger.warning("compare_object_unavailable", **fields)
+            raise CompareObjectUnavailable(name) from exc
+        logger.error("compare_storage_unavailable", **fields)
+        raise CompareStorageUnavailable(name) from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except ValueError as exc:
+        # UnicodeDecodeError and json.JSONDecodeError are both ValueErrors.
         logger.warning(
             "compare_object_unavailable",
             compare_id=str(compare_id),
@@ -94,10 +123,6 @@ def read_compare_json(compare_id, name: str):
             error=type(exc).__name__,
         )
         raise CompareObjectUnavailable(name) from exc
-    finally:
-        if response is not None:
-            response.close()
-            response.release_conn()
 
 
 def delete_compare_objects(compare_id) -> None:

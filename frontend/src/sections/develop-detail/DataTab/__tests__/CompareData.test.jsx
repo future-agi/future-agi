@@ -2,13 +2,16 @@ import React from "react";
 import { act, render } from "src/utils/test-utils.jsx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { grid, post, deleteCompare, Null, Passthrough } = vi.hoisted(() => ({
-  grid: { props: null, inRouterContext: false, spacing: null },
-  post: vi.fn(),
-  deleteCompare: vi.fn(),
-  Null: () => null,
-  Passthrough: ({ children }) => children,
-}));
+const { grid, post, deleteCompare, snackbar, Null, Passthrough } = vi.hoisted(
+  () => ({
+    grid: { props: null, inRouterContext: false, spacing: null },
+    post: vi.fn(),
+    deleteCompare: vi.fn(),
+    Null: () => null,
+    snackbar: { enqueueSnackbar: vi.fn() },
+    Passthrough: ({ children }) => children,
+  }),
+);
 
 // Exercise the component's real datasource and column builder; AG Grid owns
 // viewport measurements, so capture the props it consumes rather than faking
@@ -34,10 +37,11 @@ vi.mock("src/utils/axios", () => ({
     },
   },
 }));
-vi.mock("src/api/develop/dataset-compare", () => ({
-  COMPARE_NOT_FOUND_CODE: "compare_not_found",
+vi.mock("src/api/develop/dataset-compare", async (importOriginal) => ({
+  ...(await importOriginal()),
   useDeleteCompare: () => ({ mutate: deleteCompare }),
 }));
+vi.mock("src/components/snackbar", () => snackbar);
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
 vi.mock("src/hooks/use-local-storage", () => ({
   useLocalStorage: () => ({ state: { vals: [] }, update: vi.fn() }),
@@ -636,6 +640,45 @@ describe("CompareData expired comparison", () => {
       rowCount: 0,
     });
     expect(props.compareId.current).toBeNull();
+  });
+
+  it("keeps the comparison and asks to try again when its storage is unavailable", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    api.refreshServerSide.mockClear();
+    api.showNoRowsOverlay.mockClear();
+
+    post.mockImplementationOnce(() =>
+      Promise.reject({
+        statusCode: 503,
+        code: "compare_storage_unavailable",
+        result: "Comparison data is temporarily unavailable. Please try again.",
+      }),
+    );
+    const failed = await failPage(10);
+
+    // Not rebuilt, not emptied: the block fails and the user is told.
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(failed.success).not.toHaveBeenCalled();
+    expect(failed.fail).toHaveBeenCalledTimes(1);
+    expect(props.compareId.current).toBe(EXPIRED_ID);
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      "Comparison data is temporarily unavailable. Please try again.",
+      { variant: "error" },
+    );
+
+    // The next request still reads the same comparison.
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({ compare_id: EXPIRED_ID }),
+    );
   });
 
   it("does not start over for other failures", async () => {

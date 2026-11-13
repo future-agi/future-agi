@@ -265,6 +265,7 @@ from model_hub.utils.annotation_queue_helpers import (
 from model_hub.utils.compare_storage import (
     COMPARE_METADATA_OBJECT,
     CompareObjectUnavailable,
+    CompareStorageUnavailable,
     created_at_now,
     delete_compare_metadata,
     is_expired,
@@ -627,6 +628,10 @@ COMPARE_NOT_FOUND_MESSAGE = (
     "This comparison was not found or has expired. Open the comparison again."
 )
 COMPARE_NOT_FOUND_CODE = "compare_not_found"
+COMPARE_STORAGE_UNAVAILABLE_MESSAGE = (
+    "Comparison data is temporarily unavailable. Please try again."
+)
+COMPARE_STORAGE_UNAVAILABLE_CODE = "compare_storage_unavailable"
 COMPARE_ROW_ERROR_MESSAGE = "Unable to retrieve the compared row. Please try again."
 
 
@@ -639,7 +644,8 @@ def _load_compare_metadata(compare_id):
     try:
         metadata = read_compare_json(compare_id, COMPARE_METADATA_OBJECT)
     except CompareObjectUnavailable:
-        # Raised for a missing object as for any other read failure.
+        # A missing or unreadable object. A storage error is not caught here:
+        # CompareStorageUnavailable is answered with 503 by the views.
         return None
     if not isinstance(metadata, dict) or metadata.get("status") != "completed":
         return None
@@ -712,6 +718,20 @@ def _compare_not_found_response(gm):
             code=COMPARE_NOT_FOUND_CODE,
         ),
         status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _compare_storage_unavailable_response():
+    # The comparison may well still exist: answering it as not found would
+    # make the client rebuild it. CompareStorageUnavailable is logged where it
+    # is raised.
+    return Response(
+        build_error_envelope(
+            COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=COMPARE_STORAGE_UNAVAILABLE_CODE,
+        ),
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
 
 
@@ -13470,6 +13490,7 @@ class GetCompareDatasetRow(APIView):
         responses={
             200: CompareDatasetRowResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
         }
     )
     def get(self, request, compare_id, row_id=None, *args, **kwargs):
@@ -13685,6 +13706,8 @@ class GetCompareDatasetRow(APIView):
 
             return self._gm.success_response(response)
 
+        except CompareStorageUnavailable:
+            return _compare_storage_unavailable_response()
         except Exception as e:
             logger.exception(f"Error in fetching compare dataset row: {str(e)}")
             return self._gm.internal_server_error_response(COMPARE_ROW_ERROR_MESSAGE)
@@ -13699,6 +13722,7 @@ class GetCompareDatasetRow(APIView):
         responses={
             200: CompareDatasetDeleteResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
         }
     )
     def delete(self, request, compare_id, row_id=None, *args, **kwargs):
@@ -13762,6 +13786,8 @@ class GetCompareDatasetRow(APIView):
             return self._gm.success_response(
                 {"message": "File(s) deleted successfully"}
             )
+        except CompareStorageUnavailable:
+            return _compare_storage_unavailable_response()
         except Exception as e:
             logger.exception(f"Error in deleting compare dataset file: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14203,7 +14229,11 @@ class CompareDatasetsView(APIView):
 
     @validated_request(
         request_serializer=CompareDatasetSerializer,
-        responses={200: CompareDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompareDatasetResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -14633,6 +14663,8 @@ class CompareDatasetsView(APIView):
 
             return self._gm.success_response(compare_json)
 
+        except CompareStorageUnavailable:
+            return _compare_storage_unavailable_response()
         except Exception as e:
             logger.exception(f"Error in comparing the datasets: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_COMPARE_DATASETS"))
@@ -14650,6 +14682,7 @@ class DownloadComparisonDatasetView(APIView):
                 schema=openapi.Schema(type=openapi.TYPE_FILE),
             ),
             **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
@@ -14763,6 +14796,8 @@ class DownloadComparisonDatasetView(APIView):
 
         except Http404:
             return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+        except CompareStorageUnavailable:
+            return _compare_storage_unavailable_response()
         except Exception as e:
             logger.exception(f"Error in downloading the dataset: {str(e)}")
             return self._gm.internal_server_error_response(

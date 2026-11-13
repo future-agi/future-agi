@@ -26,6 +26,8 @@ vi.mock("src/components/snackbar", () => snackbar);
 
 import {
   COMPARE_NOT_FOUND_CODE,
+  COMPARE_STORAGE_UNAVAILABLE_CODE,
+  COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
   COMPARISON_EXPIRED_MESSAGE,
   useDeleteCompare,
   useDownloadCompare,
@@ -235,6 +237,30 @@ describe("useDownloadCompare", () => {
     expect(snackbar.enqueueSnackbar).not.toHaveBeenCalledWith(
       COMPARISON_EXPIRED_MESSAGE,
       expect.anything(),
+    );
+  });
+
+  it("asks to try again, without rebuilding, when the comparison storage is unavailable", async () => {
+    mocks.post.mockRejectedValue({
+      statusCode: 503,
+      code: COMPARE_STORAGE_UNAVAILABLE_CODE,
+      result: "Comparison data is temporarily unavailable. Please try again.",
+    });
+    const onComparisonExpired = vi.fn();
+    const { result, onError } = renderDownloadCompare(
+      { current: COMPARE_ID },
+      onComparisonExpired,
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(onComparisonExpired).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
+      { variant: "error" },
     );
   });
 
