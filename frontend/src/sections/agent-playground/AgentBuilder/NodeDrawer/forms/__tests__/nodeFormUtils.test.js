@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { NODE_TYPES } from "../../../../utils/constants";
 import { mapNodeDetailToNodeData } from "../../nodeFormUtils";
 
-vi.mock("src/utils/utils", () => ({
+vi.mock("src/utils/getRandomId", () => ({
   getRandomId: vi.fn(() => "random-id"),
 }));
 
