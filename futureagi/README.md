@@ -39,7 +39,7 @@ baseline. See `scripts/mypy_baseline.py`.
 
 #### What do they check?
 
-- ✅ Code formatting (Black, isort)
+- ✅ Code formatting and import sorting (Ruff)
 - ✅ Linting (Ruff)
 - ✅ Security (Bandit, detect-secrets)
 - ✅ Django checks (migrations, system checks)
@@ -184,8 +184,8 @@ make pre-commit-all
 | `make pre-commit-install` | Install pre-commit hooks (one-time) |
 | `make pre-commit` | Run on staged files |
 | `make pre-commit-all` | Run on all files |
-| `make format` | Auto-format code (black + isort) |
-| `make lint` | Run linters (ruff, black, isort) |
+| `make format` | Auto-fix and format code (`ruff check --fix`, `ruff format`) |
+| `make lint` | Run linters (`ruff check`, `ruff format --check`) |
 | `make check-secrets` | Check for secrets |
 | `make check-all` | Run all quality checks |
 | `make fix` | Auto-fix common issues |
@@ -223,15 +223,14 @@ detect-secrets scan > .secrets.baseline
 git commit --no-verify
 
 # Skip specific hook
-SKIP=ruff git commit -m "Message"
+SKIP=ruff-check,ruff-format git commit -m "Message"
 ```
 
 ## Installed Hooks
 
 ### Auto-fixing Hooks
-✅ **black** - Python formatter
-✅ **isort** - Import sorter
-✅ **ruff** - Linter with auto-fix
+✅ **ruff-check** - Linter and import sorter, with auto-fix
+✅ **ruff-format** - Python formatter
 ✅ **django-upgrade** - Upgrade Django code
 ✅ **djlint** - Django template formatter
 

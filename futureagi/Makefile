@@ -44,13 +44,28 @@ test-shell:
 	@bin/test shell
 
 # Code Quality
-lint:
-	@ruff check . --fix
-	@black --check .
+# The same ruff as CI and the lint-staged hook: RUFF_VERSION is pinned in
+# .github/workflows/python-lint.yml and scripts/lint-staged-python.sh too, and
+# scripts/test_check_python_lint_delta.py checks they match. Override RUFF to
+# use another binary, e.g. `make lint RUFF=ruff`.
+RUFF_VERSION := 0.17.3
+RUFF ?= uv run --quiet --with "ruff==$(RUFF_VERSION)" ruff
+# CI checks only Python files. Without this, ruff 0.17 would also check and
+# format notebooks, and format the Python code blocks in Markdown files.
+RUFF_PYTHON_ONLY := --config "extend-exclude = ['*.md', '*.ipynb']"
 
+# Both commands always run, and the target fails if either one does. `ruff check`
+# reports the whole tree, so old violations show up as well as new ones (CI
+# fails only on new ones; see scripts/check_python_lint_delta.py).
+lint:
+	@$(RUFF) check $(RUFF_PYTHON_ONLY) . ; status=$$?; \
+	$(RUFF) format --check $(RUFF_PYTHON_ONLY) . || status=$$?; exit $$status
+
+# `ruff check --fix` exits non-zero while unfixable violations remain, so the
+# formatter runs regardless; the target still fails if either command does.
 format:
-	@black .
-	@isort .
+	@$(RUFF) check --fix $(RUFF_PYTHON_ONLY) . ; status=$$?; \
+	$(RUFF) format $(RUFF_PYTHON_ONLY) . || status=$$?; exit $$status
 
 # Whole-repo mypy compared with mypy-baseline.txt, as CI's "Mypy (baseline)"
 # job does (scripts/mypy_baseline.py). mypy's output is kept in
