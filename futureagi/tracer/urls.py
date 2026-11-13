@@ -1,6 +1,7 @@
 from django.urls import path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
+from tracer.views import attachments
 from tracer.views.alerts import (
     AlertDetailView,
     AlertOptionsView,
@@ -353,6 +354,77 @@ urlpatterns = [
     # path("v1/traces", OTLPTraceView.as_view(), name="otlp-traces"),
     # path("v1/traces/", OTLPTraceView.as_view(), name="otlp-traces-slash"),
     path("v1/health", OTLPHealthView.as_view(), name="otlp-health"),
+    # F01 attachment contract (dark unless FI_ATTACHMENTS_ENABLED).
+    path(
+        "v1/attachment-sessions",
+        attachments.AttachmentSessionView.as_view(),
+        name="attachment-sessions",
+    ),
+    path(
+        "v1/attachment-media-sessions",
+        attachments.AttachmentMediaSessionView.as_view(),
+        name="attachment-media-sessions",
+    ),
+    path(
+        "v1/attachment-media/<str:occurrence_id>/<str:grant_id>",
+        attachments.AttachmentMediaView.as_view(),
+        name="attachment-media",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/uploads",
+        attachments.AttachmentUploadView.as_view(),
+        name="attachment-uploads",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/uploads/<str:upload_id>/content",
+        attachments.AttachmentContentView.as_view(),
+        name="attachment-upload-content",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/uploads/<str:upload_id>/complete",
+        attachments.AttachmentCompleteView.as_view(),
+        name="attachment-upload-complete",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/uploads/<str:upload_id>/abort",
+        attachments.AttachmentAbortView.as_view(),
+        name="attachment-upload-abort",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/uploads/<str:upload_id>/status",
+        attachments.AttachmentUploadStatusView.as_view(),
+        name="attachment-upload-status",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/imports",
+        attachments.AttachmentImportView.as_view(),
+        name="attachment-imports",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/imports/<str:job_id>/status",
+        attachments.AttachmentImportStatusView.as_view(),
+        name="attachment-import-status",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/occurrences",
+        attachments.AttachmentOccurrencesView.as_view(),
+        name="attachment-occurrences",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/occurrences/<str:occurrence_id>",
+        attachments.AttachmentOccurrenceView.as_view(),
+        name="attachment-occurrence",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/resolve",
+        attachments.AttachmentResolveView.as_view(),
+        name="attachment-resolve",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/recordings/<str:recording_id>/manifest",
+        attachments.AttachmentManifestView.as_view(),
+        name="attachment-recording-manifest",
+    ),
     # Legacy endpoint (deprecated, use v1/traces)
     # path("otlp/v1/traces", OTLPTraceHTTPView.as_view(), name="otel-traces-http-legacy"),
     path("bulk-annotation/", BulkAnnotationView.as_view(), name="bulk-annotations"),
