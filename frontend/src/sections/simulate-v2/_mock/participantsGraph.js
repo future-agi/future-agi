@@ -323,10 +323,28 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
   lines.forEach((ln, i) => {
     ln.n = i + 1;
   });
+  /* A turn that handed work on replies only once that work is done: "after
+     2–3", so the pairing doesn't read as if the reply came first. */
+  lines.forEach((ln, i) => {
+    if (!ln.turn || ln.alone) return;
+    let j = i + 1;
+    while (lines[j] && !lines[j].turn) j += 1;
+    if (j > i + 1) ln.after = j === i + 2 ? `${i + 2}` : `${i + 2}–${j}`;
+  });
   const stepsOf = {};
   lines.forEach((ln) =>
     ln.edgeKeys.forEach((k) => {
       (stepsOf[k] ||= []).push(ln.n);
+    }),
+  );
+
+  /* Chintan, 13 Nov: both directions. The answer that came back carries
+     the same number as the hand-off it answers (1 → and ← 1). */
+  const backOf = {};
+  lines.forEach((ln) =>
+    ln.to.forEach((id, i) => {
+      if (ln.outcomes[i] !== "answered") return;
+      (backOf[`${id}->${ln.from}`] ||= []).push(ln.n);
     }),
   );
 
@@ -397,8 +415,33 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
       trace_count: 1,
       is_self_loop: false,
       _return: true,
+      ...(backOf[k] && { _stepLabel: backOf[k].join(", ") }),
     });
   });
+
+  /* The answer that never came back is drawn too, in red with its number
+     crossed (13 Nov) — the list's red ← line, on the graph. */
+  lines.forEach((ln) =>
+    ln.to.forEach((id, i) => {
+      const o = ln.outcomes[i];
+      if (o !== "no answer came back" && o !== "no reply") return;
+      if (!nodeIds.has(id) || !nodeIds.has(ln.from)) return;
+      graph.edges.push({
+        source: id,
+        target: ln.from,
+        transition_count: 1,
+        avg_latency_ms: 0,
+        total_tokens: 0,
+        total_cost: 0,
+        error_count: 0,
+        trace_count: 1,
+        is_self_loop: false,
+        _return: true,
+        _missing: true,
+        _stepLabel: `${ln.n} ✕`,
+      });
+    }),
+  );
 
   const nameOf = Object.fromEntries(
     buildTraceGraph(spans).nodes.map((nd) => [nd.id, nd.name]),

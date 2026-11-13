@@ -160,34 +160,93 @@ Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
 const BAD = new Set(["no answer came back", "failed", "no reply"]);
 
-/* What came back, short, for the right-hand column: "both answered", or
-   each target's outcome when they differ. Turns read "replied". */
-const outcomeOf = (h) => {
-  if (h.turn) return h.outcomes[0] === "no reply" ? "no reply" : "replied";
-  const o = h.outcomes;
-  if (o.every((x) => x === o[0])) {
-    if (o.length === 1) return o[0];
-    const who = o.length === 2 ? "both" : `all ${o.length}`;
-    return o[0] === "no answer came back"
-      ? "no answer from either"
-      : `${who} ${o[0]}`;
+/* The way back (Chintan, 13 Nov: both directions): one line per outcome,
+   "Front desk ← Refunds specialist + Escalations · both answered". Turns
+   read "replied". */
+const backLinesOf = (h) => {
+  if (h.turn) {
+    const o = h.outcomes[0];
+    const each = h.turns > 1 ? " each time" : "";
+    return [
+      {
+        names: h.toNames,
+        text:
+          o === "no reply"
+            ? "no reply"
+            : `replied${each}${h.alone ? ", on its own" : ""}${
+                h.after ? ` after ${h.after}` : ""
+              }`,
+      },
+    ];
   }
-  return h.toNames.map((n, i) => `${n}: ${o[i]}`).join(" · ");
+  const groups = [];
+  h.outcomes.forEach((o, i) => {
+    const g = groups.find((x) => x.o === o);
+    if (g) g.names.push(h.toNames[i]);
+    else groups.push({ o, names: [h.toNames[i]] });
+  });
+  return groups.map(({ o, names }) => ({
+    names,
+    text:
+      names.length === 1
+        ? o
+        : o === "answered"
+          ? `${names.length === 2 ? "both" : `all ${names.length}`} answered`
+          : o === "no answer came back"
+            ? "no answer from either"
+            : `${names.length === 2 ? "both" : `all ${names.length}`} ${o}`,
+  }));
 };
 
-/* The quiet second line: parallel work, or turns the coordinator answered
-   on its own (folded). */
-const detailOf = (h) => {
-  if (h.together) return "At the same time";
-  if (h.turn && h.alone)
-    return h.turns > 1
-      ? `${h.turns} turns in a row, each answered by ${h.toNames[0]} alone`
-      : `Answered by ${h.toNames[0]} alone`;
-  return null;
+/* One direction of a hand-off: "From → To" or "From ← To", with a quiet
+   note after it. */
+function Leg({ from, to, back, note, bad }) {
+  return (
+    <Typography
+      sx={{
+        typography: "s2",
+        fontWeight: back ? 400 : 500,
+        color: back ? "text.secondary" : "text.primary",
+      }}
+    >
+      {from}
+      <Box
+        component="span"
+        sx={{
+          color: bad ? "error.main" : "text.disabled",
+          fontWeight: 400,
+          mx: 0.75,
+        }}
+      >
+        {back ? "←" : "→"}
+      </Box>
+      {to}
+      {note && (
+        <Box
+          component="span"
+          sx={{
+            typography: "s3",
+            color: bad ? "error.main" : "text.tertiary",
+            fontWeight: bad ? 500 : 400,
+          }}
+        >
+          {` · ${note}`}
+        </Box>
+      )}
+    </Typography>
+  );
+}
+Leg.propTypes = {
+  from: PropTypes.string,
+  to: PropTypes.string,
+  back: PropTypes.bool,
+  note: PropTypes.string,
+  bad: PropTypes.bool,
 };
 
 /* Hand-offs (Nosang, 12 Nov): a short numbered list, one row per time work
-   was handed on, with the same numbers on the graph's arrows. Hovering a
+   was handed on, with the same numbers on the graph's arrows; each row
+   shows the way out and the way back (Chintan, 13 Nov). Hovering a
    row lights up its arrows and boxes; clicking it shows who got the work in
    the tree, as a box does. */
 function HandoffList({ handoffs, onHover, onPick }) {
@@ -206,9 +265,6 @@ function HandoffList({ handoffs, onHover, onPick }) {
         }}
       >
         {handoffs.map((h, i) => {
-          const outcome = outcomeOf(h);
-          const bad = h.outcomes.some((o) => BAD.has(o));
-          const detail = detailOf(h);
           const pick = () => onPick(h.to.length === 1 ? h.to[0] : h.from);
           return (
             <Box
@@ -221,7 +277,7 @@ function HandoffList({ handoffs, onHover, onPick }) {
               onKeyDown={(e) => e.key === "Enter" && pick()}
               sx={{
                 display: "grid",
-                gridTemplateColumns: "24px minmax(0, 1fr) auto",
+                gridTemplateColumns: "24px minmax(0, 1fr)",
                 columnGap: 1.25,
                 alignItems: "start",
                 px: 1.25,
@@ -251,34 +307,28 @@ function HandoffList({ handoffs, onHover, onPick }) {
                 {h.n}
               </Box>
               <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                  {h.fromName}
-                  <Box
-                    component="span"
-                    sx={{ color: "text.disabled", fontWeight: 400, mx: 0.75 }}
-                  >
-                    {"→"}
-                  </Box>
-                  {h.toNames.join(" + ")}
-                </Typography>
-                {detail && (
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {detail}
-                  </Typography>
-                )}
+                <Leg
+                  from={h.fromName}
+                  to={h.toNames.join(" + ")}
+                  note={
+                    h.together
+                      ? "at the same time"
+                      : h.turns > 1
+                        ? `${h.turns} turns in a row`
+                        : null
+                  }
+                />
+                {backLinesOf(h).map((b) => (
+                  <Leg
+                    key={b.names.join()}
+                    back
+                    from={h.fromName}
+                    to={b.names.join(" + ")}
+                    note={b.text}
+                    bad={BAD.has(b.text) || b.text === "no answer from either"}
+                  />
+                ))}
               </Box>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  lineHeight: "22px",
-                  textAlign: "right",
-                  whiteSpace: "nowrap",
-                  color: bad ? "error.main" : "text.secondary",
-                  fontWeight: bad ? 500 : 400,
-                }}
-              >
-                {outcome}
-              </Typography>
             </Box>
           );
         })}
@@ -302,7 +352,9 @@ const handoffHighlightSx = (handoffs, edges, i) => {
     .map((e, idx) =>
       !e._return && e.source === h.from && h.to.includes(e.target)
         ? `e-${idx}`
-        : null,
+        : e._return && e.target === h.from && h.to.includes(e.source)
+          ? `e-ret-${idx}`
+          : null,
     )
     .filter(Boolean);
   const nodeSel = ids.map((id) => `[data-id="${CSS.escape(id)}"]`);
@@ -367,7 +419,9 @@ function EdgeKey({ edges }) {
   const parts = [
     edges.some((e) => !e._return && !e._control && !e._ghost) &&
       "Solid: handed work",
-    edges.some((e) => e._return) && "Dotted: answer came back",
+    edges.some((e) => e._return && !e._missing) &&
+      "Dotted: answer back, same number",
+    edges.some((e) => e._missing) && "Red: no answer",
     dashedKey(edges),
   ].filter(Boolean);
   if (parts.length < 2) return null;

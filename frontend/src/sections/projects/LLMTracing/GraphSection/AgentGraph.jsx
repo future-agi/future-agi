@@ -831,6 +831,42 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
     // Optional return (simulate's Participants view): an answer going back
     // up to whoever handed the work. Dotted, on the nodes' side handles, and
     // left out of the layout so the graph keeps its top-down shape.
+    // An answer that never came back (Participants): the same return path,
+    // red and dashed, its number crossed — like the skipped-path edge above.
+    if (edge._return && edge._missing) {
+      const missColor = errorPalette.main;
+      return {
+        id: `e-ret-${idx}`,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: "ret-out",
+        targetHandle: "ret-in",
+        type: "default",
+        data: { _return: true },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: missColor,
+          width: 8,
+          height: 8,
+        },
+        style: { stroke: missColor, strokeWidth: 1.2, strokeDasharray: "4 3" },
+        label: edge._stepLabel,
+        labelStyle: {
+          fontSize: 12,
+          fill: missColor,
+          fontWeight: 600,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        },
+        labelBgStyle: {
+          fill: theme ? theme.palette.background.paper : "#fff",
+          stroke: missColor,
+          fillOpacity: 1,
+        },
+        labelBgPadding: [5, 3],
+        labelBgBorderRadius: 4,
+      };
+    }
+
     if (edge._return) {
       return {
         id: `e-ret-${idx}`,
@@ -846,13 +882,35 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
           width: 8,
           height: 8,
         },
-        style: { stroke: edgeColor, strokeWidth: 1, strokeDasharray: "1 3" },
-        ...(count > 1 && {
-          label: edge._countLabel || `×${count}`,
-          labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
-          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
-          labelBgPadding: [3, 2],
+        style: {
+          stroke: edgeColor,
+          strokeWidth: edge._stepLabel ? 1.2 : 1,
+          strokeDasharray: edge._stepLabel ? "2 3" : "1 3",
+        },
+        // Numbered like the hand-off it answers, so 1 → reads back as ← 1.
+        ...(edge._stepLabel && {
+          label: edge._stepLabel,
+          labelStyle: {
+            fontSize: 12,
+            fill: theme ? theme.palette.text.secondary : "#52525b",
+            fontWeight: 600,
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          },
+          labelBgStyle: {
+            fill: theme ? theme.palette.background.paper : "#fff",
+            stroke: theme ? theme.palette.divider : "#e4e4e7",
+            fillOpacity: 1,
+          },
+          labelBgPadding: [5, 3],
+          labelBgBorderRadius: 4,
         }),
+        ...(!edge._stepLabel &&
+          count > 1 && {
+            label: edge._countLabel || `×${count}`,
+            labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
+            labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
+            labelBgPadding: [3, 2],
+          }),
       };
     }
 
