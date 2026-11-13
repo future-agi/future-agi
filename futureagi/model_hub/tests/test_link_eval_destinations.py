@@ -290,6 +290,61 @@ class LinkAcceptance(unittest.TestCase):
                     self.assertEqual(result["score"], score)
                     check.assert_not_called()
 
+    def test_code_comments_and_build_labels_are_not_links(self):
+        for text in (
+            "//TODO tidy this up",
+            "//nolint:errcheck",
+            "//go:build linux",
+            "//pkg:target",
+            "//foo/bar:baz",
+            "x = 1; //increment",
+            "f(); //console.log(x)",
+            "//eslint-disable-next-line no-console",
+        ):
+            for name in NAMES:
+                evaluate = load(name)
+                check = mock.Mock(return_value=200)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+                ):
+                    self.assertEqual(evaluate.__globals__["_links"](text), [])
+                    result = evaluate(None, text, None, None)
+                    if name == "no_invalid_links":
+                        self.assertEqual(result["score"], 1.0)
+                    else:
+                        self.assertEqual(result["score"], 0.0)
+                        self.assertEqual(result["reason"], "No link found in output")
+                    check.assert_not_called()
+
+    def test_scheme_relative_link_forms_are_found(self):
+        for text, link in (
+            ("//allowed.example", "//allowed.example"),
+            ("See //allowed.example/docs.", "//allowed.example/docs"),
+            ('href="//allowed.example/x"', "//allowed.example/x"),
+            ("(//allowed.example)", "//allowed.example"),
+            ("[//allowed.example/x]", "//allowed.example/x"),
+            ("<//allowed.example/x>", "//allowed.example/x"),
+            ("Use //allowed.example:8080/x", "//allowed.example:8080/x"),
+            ("Use //allowed.example?q=1", "//allowed.example?q=1"),
+            ("Use //allowed.example#top", "//allowed.example#top"),
+            ("Use //10.0.0.1/x", "//10.0.0.1/x"),
+            ("Use //[2001:db8::1]/x", "//[2001:db8::1]/x"),
+            ("Use //user@allowed.example/x", "//user@allowed.example/x"),
+        ):
+            for name in NAMES:
+                evaluate = load(name)
+                check = mock.Mock(return_value=200)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+                ):
+                    self.assertEqual(evaluate.__globals__["_links"](text), [link])
+                    result = evaluate(None, text, None, None)
+                    self.assertEqual(result["score"], 0.0)
+                    self.assertIn("not http or https", result["reason"])
+                    check.assert_not_called()
+
     def test_link_matching_stays_fast_on_long_input(self):
         inputs = (
             "a" * 1_000_000,
@@ -298,6 +353,13 @@ class LinkAcceptance(unittest.TestCase):
             "/" * 1_000_000,
             "a." * 500_000,
             "x://" * 250_000,
+            " //a" * 250_000,
+            " //" + "a." * 500_000,
+            " //a.bc" + "." * 1_000_000 + "x",
+            " //[" + ":" * 1_000_000,
+            " //a@" * 250_000,
+            " //a.b" * 200_000,
+            " //" + "a" * 1_000_000,
         )
         for name in NAMES:
             links = load(name).__globals__["_links"]

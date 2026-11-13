@@ -26,10 +26,18 @@ config:
         # Explicit schemes retain malformed/private candidates for refusal rather
         # than treating them as link-free prose: any "<scheme>://" (RFC 3986
         # scheme characters, so ftp://, ws:// and typos such as htp:// too) and
-        # scheme-relative "//host". Bare domains need alphabetic TLDs.
+        # scheme-relative "//host". A "//host" starts a word and names a dotted
+        # domain, an IPv4 address or a bracketed IPv6 address, followed by the
+        # end, a port, "/", "?" or "#", so code comments and build labels such
+        # as "//TODO", "//go:build" or "//pkg:target" are not links.
+        # Bare domains need alphabetic TLDs.
         pattern = (
             r"(?<![\w@.+-])[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"']*|"
-            r"(?<![\w@.+/:-])//[A-Za-z0-9\[][^\s<>\"']*|"
+            r"(?<![^\s\"'`(\[{<])//(?:[^\s/?#@<>\"'\[\]]*@)?"
+            r"(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\.?|"
+            r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9A-Fa-f.]*:[0-9A-Za-z:.%~_-]*\])"
+            r"(?::[0-9]+)?(?=[/?#\s<>\"')\]}]|[.,;!?:]+(?:[\s<>\"')\]}]|$)|$)"
+            r"(?:[/?#][^\s<>\"']*)?|"
             r"(?<![\w@.+/:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
             r"[A-Za-z]{2,}(?![\w-]|\.[A-Za-z0-9])(?::[0-9]+)?(?:[/?#][^\s<>\"']*)?"
         )
