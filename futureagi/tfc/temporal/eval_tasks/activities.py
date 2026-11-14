@@ -7,6 +7,9 @@ logic and are unit-tested directly; the wrappers add heartbeating and OTel
 context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 """
 
+import asyncio
+import time
+
 import structlog
 from django.db import close_old_connections
 from temporalio import activity
@@ -172,7 +175,8 @@ def _run_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.run_entry import run_entry
 
         with eval_ch_guardrails():
-            entry = EvalLogger.objects.filter(id=entry_id).first()
+            # Primary: the workflow claimed this entry moments ago.
+            entry = EvalLogger.objects.using("default").filter(id=entry_id).first()
             if entry is None:
                 return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
             if _task_paused(entry.eval_task_id):
@@ -226,12 +230,19 @@ def _fail_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
 
-        entry = EvalLogger.objects.filter(
-            id=entry_id, status=EvalEntryStatus.RUNNING
-        ).first()
+        # Primary: the claim this fences on was written moments ago.
+        entry = (
+            EvalLogger.objects.using("default")
+            .filter(id=entry_id, status=EvalEntryStatus.RUNNING)
+            .first()
+        )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
-        config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+        # Primary, as run_entry reads it: stamp the hash of the config the
+        # failed run used, not an older one a lagging replica still holds.
+        config = CustomEvalConfig.objects.using("default").get(
+            id=entry.custom_eval_config_id
+        )
         landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
@@ -283,7 +294,10 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                     "entry_id": str(entry_id),
                     "status": str(EvalEntryStatus.PENDING),
                 }
-            config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+            # Primary, as run_entry reads it, for the hash stamped below.
+            config = CustomEvalConfig.objects.using("default").get(
+                id=entry.custom_eval_config_id
+            )
             mark_terminal(
                 entry,
                 EvalEntryStatus.ERRORED,
@@ -396,7 +410,9 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
         )
         project = task.project
         org = getattr(project, "organization", None)
-        eval_count = task.evals.count()
+        # Primary: the workflow reads its labels as it starts, right after the
+        # request that set the task's evals.
+        eval_count = task.evals.using("default").count()
         config_summary = (
             f"row_type={task.row_type}, sampling={task.sampling_rate}, "
             f"limit={task.spans_limit}, evals={eval_count}"
@@ -536,6 +552,16 @@ def _prewarm_instant_summary(task_id: str) -> None:
 # =============================================================================
 
 
+# Poll a busy sampling cohort lease until it can have expired.
+_BUSY_LEASE_POLL_SECONDS = 10
+_BUSY_LEASE_MARGIN_SECONDS = 30
+_busy_clock = time.monotonic
+
+
+async def _busy_wait(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
 @activity.defn
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
@@ -544,12 +570,32 @@ async def reconcile_eval_task_activity(
         EvalTaskReadBudgetExceeded,
         EvalTaskSelectionRejected,
     )
+    from tracer.services.eval_tasks.sampling.errors import SamplingReconcileBusy
+    from tracer.services.eval_tasks.sampling.service import reconcile_lease_duration
 
     try:
         async with Heartbeater():
-            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-                input.task_id
+            # A reconcile that was killed or cancelled (deploy, pause + rerun)
+            # keeps its cohort lease until the lease expires. Wait that lease
+            # out here, heartbeating, instead of spending the activity's short
+            # retry budget inside the lease window and failing the task. A lease
+            # that is still held after a full lease period belongs to a live,
+            # renewing reconcile: report busy as before.
+            busy_deadline = (
+                _busy_clock()
+                + reconcile_lease_duration().total_seconds()
+                + _BUSY_LEASE_MARGIN_SECONDS
             )
+            while True:
+                try:
+                    result = await otel_sync_to_async(
+                        _reconcile_sync, thread_sensitive=False
+                    )(input.task_id)
+                    break
+                except SamplingReconcileBusy:
+                    if _busy_clock() >= busy_deadline:
+                        raise
+                    await _busy_wait(_BUSY_LEASE_POLL_SECONDS)
             logger.info(
                 "eval_task_reconciled",
                 task_id=result["task_id"],
