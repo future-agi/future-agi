@@ -237,7 +237,7 @@ export default function RequestLogRetentionCard() {
               <Typography variant="s3" color="text.secondary">
                 Last run
               </Typography>
-              {data.last_run ? (
+              {data.last_run?.started_at || data.last_run?.finished_at ? (
                 <Stack spacing={0.5}>
                   <Typography variant="s1">
                     {data.last_run.finished_at ? (

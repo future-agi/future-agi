@@ -253,21 +253,33 @@ def purge_org_request_logs(
                     deleted=deleted,
                     pass_=column,
                 )
-                return {"deleted": deleted, "complete": False}
-            with transaction.atomic(using=DB_ALIAS):
-                with connections[DB_ALIAS].cursor() as cursor:
-                    cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
-                    cursor.execute(
-                        f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"
-                    )
-                    cursor.execute(sql, [organization_id, cutoff, batch_size])
-                    count = cursor.rowcount
+                return {"deleted": deleted, "complete": False, "error": ""}
+            try:
+                with transaction.atomic(using=DB_ALIAS):
+                    with connections[DB_ALIAS].cursor() as cursor:
+                        cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+                        cursor.execute(
+                            f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"
+                        )
+                        cursor.execute(sql, [organization_id, cutoff, batch_size])
+                        count = cursor.rowcount
+            except DatabaseError as exc:
+                # A lock or statement timeout, most likely. The batches before
+                # this one are committed and counted; the next run goes on.
+                error = str(exc)[:500]
+                logger.warning(
+                    "request_log_retention_failed",
+                    organization_id=str(organization_id),
+                    deleted=deleted,
+                    error=error,
+                )
+                return {"deleted": deleted, "complete": False, "error": error}
             deleted += count
             if count < batch_size:
                 break
             if sleep_s:
                 time.sleep(sleep_s)
-    return {"deleted": deleted, "complete": True}
+    return {"deleted": deleted, "complete": True, "error": ""}
 
 
 def run_retention(organization_id=None, *, dry_run=False, now=None):
@@ -319,26 +331,15 @@ def run_retention(organization_id=None, *, dry_run=False, now=None):
         AgentccRequestLogRetention.all_objects.filter(pk=row.pk).update(
             last_run_started_at=timezone.now()
         )
-        error = ""
-        purged = {"deleted": 0, "complete": False}
-        try:
-            purged = purge_org_request_logs(
-                org_id,
-                cutoff,
-                time_budget_s=min(ORG_TIME_BUDGET_SECONDS, remaining),
-            )
-        except DatabaseError as exc:
-            # A lock or statement timeout, most likely: the next run goes on.
-            error = str(exc)[:500]
-            logger.warning(
-                "request_log_retention_failed",
-                organization_id=str(org_id),
-                error=error,
-            )
+        purged = purge_org_request_logs(
+            org_id,
+            cutoff,
+            time_budget_s=min(ORG_TIME_BUDGET_SECONDS, remaining),
+        )
         AgentccRequestLogRetention.all_objects.filter(pk=row.pk).update(
             last_run_finished_at=timezone.now(),
             last_run_deleted_rows=purged["deleted"],
-            last_run_error=error,
+            last_run_error=purged["error"],
         )
         logger.info(
             "request_log_retention_run",
@@ -347,7 +348,7 @@ def run_retention(organization_id=None, *, dry_run=False, now=None):
             deleted=purged["deleted"],
             complete=purged["complete"],
         )
-        results.append({**result, **purged, "error": error})
+        results.append({**result, **purged})
     return results
 
 

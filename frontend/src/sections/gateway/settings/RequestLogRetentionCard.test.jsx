@@ -32,7 +32,13 @@ const response = (overrides = {}) => ({
     next_run_at: "2026-11-15T04:00:00Z",
     estimated_rows: 0,
     estimate_capped: false,
-    last_run: null,
+    // The API always sends last_run; a retention that never ran has nulls.
+    last_run: {
+      started_at: null,
+      finished_at: null,
+      deleted_rows: 0,
+      error: "",
+    },
     ...overrides,
   },
 });
@@ -193,5 +199,20 @@ describe("RequestLogRetentionCard", () => {
         /retention must be at least 31 days because a monthly budget is configured/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows a cleanup that started but has not finished as in progress", async () => {
+    mockGet.mockResolvedValue({
+      data: response({
+        last_run: {
+          started_at: "2026-11-14T03:00:00Z",
+          finished_at: null,
+          deleted_rows: 0,
+          error: "",
+        },
+      }),
+    });
+    renderCard();
+    expect(await screen.findByText(/In progress/)).toBeInTheDocument();
   });
 });

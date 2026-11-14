@@ -1,4 +1,5 @@
 import structlog
+from django.db import IntegrityError, transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -115,10 +116,19 @@ class RequestLogRetentionView(APIView):
             )
         row = _retention(org)
         if row is None:
-            row = AgentccRequestLogRetention(organization=org)
+            try:
+                with transaction.atomic():
+                    row = AgentccRequestLogRetention.no_workspace_objects.create(
+                        organization=org, retention_days=days, updated_by=request.user
+                    )
+            except IntegrityError:
+                # Another admin's first save won the race: update that row.
+                row = AgentccRequestLogRetention.no_workspace_objects.get(
+                    organization=org
+                )
         row.retention_days = days
         row.updated_by = request.user
-        row.save()
+        row.save(update_fields=["retention_days", "updated_by", "updated_at"])
         logger.info(
             "request_log_retention_updated",
             organization_id=str(org.id),

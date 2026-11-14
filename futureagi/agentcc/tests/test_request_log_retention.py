@@ -184,7 +184,7 @@ class TestPurge:
             organization.id, timezone.now() - timedelta(days=1)
         )
 
-        assert result == {"deleted": 1, "complete": True}
+        assert result == {"deleted": 1, "complete": True, "error": ""}
         assert _ids(organization) == {undated_new.pk}
         assert undated_old.pk not in _ids(organization)
 
@@ -197,7 +197,7 @@ class TestPurge:
                 organization.id, timezone.now() - timedelta(days=1), batch_size=2
             )
 
-        assert result == {"deleted": 5, "complete": True}
+        assert result == {"deleted": 5, "complete": True, "error": ""}
         # Batches of 2, 2 and 1: a pause after each full one.
         assert pause.call_count == 2
 
@@ -209,7 +209,7 @@ class TestPurge:
             organization.id, timezone.now() - timedelta(days=1), time_budget_s=0
         )
 
-        assert result == {"deleted": 0, "complete": False}
+        assert result == {"deleted": 0, "complete": False, "error": ""}
         assert len(_ids(organization)) == 3
 
     def test_a_total_budget_skips_the_org(self, organization):
@@ -476,3 +476,38 @@ class TestAPI:
         _keep(other_org, 3)
 
         assert auth_client.get(URL).json()["result"]["retention_days"] is None
+
+
+@pytest.mark.integration
+def test_a_failed_batch_keeps_the_count_of_the_batches_before_it(organization):
+    for _ in range(3):
+        _log(organization, timedelta(days=3))
+    _keep(organization, 1)
+
+    # The dated pass deletes its rows; the undated pass then fails.
+    with patch.dict(retention._PURGE_SQL, {"created_at": "SELECT broken FROM nowhere"}):
+        (result,) = retention.run_retention()
+
+    assert result["deleted"] == 3
+    assert result["complete"] is False
+    assert result["error"]
+    row = AgentccRequestLogRetention.no_workspace_objects.get(organization=organization)
+    assert row.last_run_deleted_rows == 3
+    assert row.last_run_error
+
+
+@pytest.mark.integration
+@pytest.mark.api
+def test_a_first_save_racing_another_does_not_fail(auth_client, user):
+    from agentcc.views import request_log_retention as view
+
+    # Another admin's first save lands between this one's read and its insert.
+    _keep(user.organization, 10)
+    with patch.object(view, "_retention", side_effect=[None, None]):
+        response = auth_client.put(URL, {"retention_days": 30}, format="json")
+
+    assert response.status_code == 200, response.content
+    rows = AgentccRequestLogRetention.no_workspace_objects.filter(
+        organization=user.organization
+    )
+    assert [r.retention_days for r in rows] == [30]
