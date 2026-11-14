@@ -1,10 +1,12 @@
 import copy
+import uuid
 
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
+from agentcc.models import AgentccAPIKey
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -81,6 +83,57 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def validate_name(self, value):
+        if value.startswith("__"):
+            raise serializers.ValidationError("Names starting with __ are reserved")
+        return value
+
+    def validate_applied_keys(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("applied_keys must be a list")
+        normalized = []
+        malformed = []
+        for key_id in value:
+            try:
+                parsed = str(uuid.UUID(key_id)) if isinstance(key_id, str) else None
+            except (ValueError, AttributeError):
+                parsed = None
+            if parsed is None:
+                malformed.append(str(key_id))
+            elif parsed not in normalized:
+                normalized.append(parsed)
+        org = self.context.get("organization")
+        known = set()
+        if org is not None and normalized:
+            known = {
+                str(key_id)
+                for key_id in AgentccAPIKey.no_workspace_objects.filter(
+                    organization=org, deleted=False, id__in=normalized
+                ).values_list("id", flat=True)
+            }
+        invalid = malformed + [key_id for key_id in normalized if key_id not in known]
+        if invalid:
+            raise serializers.ValidationError(
+                f"Unknown or unauthorized key IDs: {invalid}"
+            )
+        return normalized
+
+    def validate(self, attrs):
+        scope = attrs.get("scope", self.instance.scope if self.instance else "global")
+        keys = attrs.get(
+            "applied_keys", self.instance.applied_keys if self.instance else []
+        )
+        if scope == AgentccGuardrailPolicy.SCOPE_KEY and not keys:
+            raise serializers.ValidationError(
+                {"applied_keys": "Key policies require at least one applied key"}
+            )
+        if scope != AgentccGuardrailPolicy.SCOPE_KEY and keys:
+            raise serializers.ValidationError(
+                {"applied_keys": "Only key policies may have applied keys"}
+            )
+        # Project policies are persisted but not evaluated by the gateway yet.
+        return attrs
+
     def validate_checks(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("checks must be a JSON array")
@@ -89,9 +142,30 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must be a JSON object"
                 )
-            if "name" not in check:
+            if not isinstance(check.get("name"), str) or not check["name"].strip():
                 raise serializers.ValidationError(
-                    f"Check at index {i} must have a 'name' field"
+                    f"Check at index {i} must have a non-empty name"
+                )
+            if "action" in check and check["action"] not in ("block", "warn", "log"):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid action"
+                )
+            for field in ("threshold", "confidence_threshold"):
+                if field in check and (
+                    isinstance(check[field], bool)
+                    or not isinstance(check[field], (int, float))
+                    or not 0 <= check[field] <= 1
+                ):
+                    raise serializers.ValidationError(
+                        f"Check at index {i} has invalid {field}"
+                    )
+            if "enabled" in check and not isinstance(check["enabled"], bool):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid enabled"
+                )
+            if "config" in check and not isinstance(check["config"], dict):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid config"
                 )
         return value
 

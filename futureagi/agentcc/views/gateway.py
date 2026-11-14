@@ -77,6 +77,7 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.org_config_service import get_or_create_org_config
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -1791,34 +1792,7 @@ class AgentccGatewayViewSet(ViewSet):
     # --- Per-org config helpers ---
 
     def _get_or_create_org_config(self, org):
-        with transaction.atomic():
-            config = (
-                AgentccOrgConfig.no_workspace_objects.select_for_update()
-                .filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                )
-                .first()
-            )
-            if config:
-                normalized = normalize_cost_tracking_config(config.cost_tracking)
-                if normalized != config.cost_tracking:
-                    config.cost_tracking = normalized
-                    config.save(update_fields=["cost_tracking", "updated_at"])
-                return config
-            config, _ = AgentccOrgConfig.no_workspace_objects.get_or_create(
-                organization=org,
-                version=1,
-                is_active=True,
-                deleted=False,
-                defaults={"cost_tracking": default_cost_tracking_config()},
-            )
-            normalized = normalize_cost_tracking_config(config.cost_tracking)
-            if normalized != config.cost_tracking:
-                config.cost_tracking = normalized
-                config.save(update_fields=["cost_tracking", "updated_at"])
-            return config
+        return get_or_create_org_config(org)
 
     def _update_org_config(self, org, updater_fn, user=None, desc=""):
         with transaction.atomic():
