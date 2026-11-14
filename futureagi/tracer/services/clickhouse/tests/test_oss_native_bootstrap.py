@@ -220,7 +220,11 @@ def test_default_manifest_final_fields_and_order():
     assert "attributes_extra String DEFAULT '{}' CODEC(ZSTD(3))" in definitions["spans"]
     assert columns["max_tokens"][0] == ("Nullable", "(", "Int32", ")")
     assert columns["_peerdb_is_deleted"] == (("UInt8",), "ALIAS", ("is_deleted",))
-    assert f"'{DATABASE}.trace_dict'" in definitions["spans"]
+    assert (
+        "trace_name String MATERIALIZED if(empty(parent_span_id), name, '')"
+        in definitions["spans"]
+    )
+    assert "trace_dict" not in definitions["spans"]
     assert set(indexes) >= {
         "idx_trace_name",
         "idx_attrs_str_values",
@@ -375,7 +379,7 @@ def test_existing_engine_and_keys_are_not_repaired(field, value):
     [
         ("trace_dict", "TABLE 'traces'", "TABLE 'tracer_trace'"),
         ("trace_dict", "TABLE 'traces'", "DB 'foreign' TABLE 'traces'"),
-        ("spans", f"'{DATABASE}.trace_dict'", "'foreign.trace_dict'"),
+        ("spans", "if(empty(parent_span_id), name, '')", "name"),
         ("traces", f"{DATABASE}.traces", "foreign.traces"),
         (
             "trace_count_rollup_mv",
