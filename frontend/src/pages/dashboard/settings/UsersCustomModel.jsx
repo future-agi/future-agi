@@ -11,6 +11,7 @@ import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { preventHeaderSelection } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { fDateLocal } from "src/utils/format-time";
 import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import { ConfirmDialog } from "src/components/custom-dialog";

@@ -361,7 +361,6 @@ class _EvalRunResult:
 
 
 class _FullTemplate:
-
     def __init__(
         self,
         output="score",
@@ -484,9 +483,7 @@ class TestScoreEvalOutputRawRunResult:
         assert score_eval_output(run_result, template) == 0.42
 
     def test_raw_pass_fail_output(self):
-        template = _FullTemplate(
-            output="Pass/Fail", output_type_normalized="pass_fail"
-        )
+        template = _FullTemplate(output="Pass/Fail", output_type_normalized="pass_fail")
         run_result = _EvalRunResult(
             eval_results=[
                 {

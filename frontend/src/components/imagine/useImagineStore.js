@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 
 const useImagineStore = create((set, get) => ({
   widgets: [],

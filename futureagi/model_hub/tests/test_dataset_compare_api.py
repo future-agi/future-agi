@@ -4,8 +4,14 @@ from pathlib import Path
 import pytest
 from rest_framework import status
 
-from model_hub.models.choices import DataTypeChoices, SourceChoices
+from model_hub.models.choices import (
+    CellStatus,
+    DataTypeChoices,
+    SourceChoices,
+    StatusType,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.views.develop_dataset import CompareDatasetsView
 from tfc.utils.storage import get_compare_local_dir
 
@@ -87,6 +93,131 @@ def compare_datasets(db, organization, workspace):
         "base_row": base_row,
         "other_row": other_row,
     }
+
+
+@pytest.fixture
+def compare_eval_metrics(compare_datasets, organization, workspace, user):
+    template = EvalTemplate.objects.create(
+        name="Compare score template",
+        organization=organization,
+        workspace=workspace,
+        config={"output": "score"},
+    )
+    metrics = []
+    for key in ("base_dataset", "other_dataset"):
+        dataset = compare_datasets[key]
+        dataset.column_order = list(
+            Column.objects.filter(dataset=dataset).values_list("id", flat=True)
+        )
+        dataset.column_order = [str(column_id) for column_id in dataset.column_order]
+        dataset.save(update_fields=["column_order"])
+        metrics.append(
+            UserEvalMetric.objects.create(
+                name="Compare score",
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                dataset=dataset,
+                template=template,
+                status=StatusType.INACTIVE.value,
+            )
+        )
+    return metrics
+
+
+@pytest.mark.django_db
+def test_compare_start_evals_creates_columns(auth_client, compare_eval_metrics):
+    base_metric, other_metric = compare_eval_metrics
+    original_orders = {
+        metric.dataset_id: list(metric.dataset.column_order)
+        for metric in compare_eval_metrics
+    }
+
+    response = auth_client.post(
+        f"/model-hub/datasets/{base_metric.dataset_id}/compare-datasets/start-eval/",
+        {
+            "user_eval_names": [base_metric.name],
+            "dataset_ids": [str(other_metric.dataset_id)],
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.data
+    for metric in compare_eval_metrics:
+        metric.refresh_from_db()
+        metric.dataset.refresh_from_db()
+        assert metric.status == StatusType.NOT_STARTED.value
+        column = Column.objects.get(dataset=metric.dataset, source_id=str(metric.id))
+        reason = Column.objects.get(
+            dataset=metric.dataset,
+            source_id=f"{column.id}-sourceid-{metric.id}",
+        )
+        assert column.name == metric.name
+        assert column.source == SourceChoices.EVALUATION.value
+        assert column.data_type == DataTypeChoices.FLOAT.value
+        assert reason.name == f"{metric.name}-reason"
+        assert reason.source == SourceChoices.EVALUATION_REASON.value
+        assert reason.data_type == DataTypeChoices.TEXT.value
+        assert metric.dataset.column_order == [
+            *original_orders[metric.dataset_id],
+            str(column.id),
+            str(reason.id),
+        ]
+
+
+@pytest.mark.django_db
+def test_compare_start_evals_reuses_existing_columns(auth_client, compare_eval_metrics):
+    base_metric, other_metric = compare_eval_metrics
+    original_orders = {}
+    reason_cells = []
+    for metric in compare_eval_metrics:
+        column = Column.objects.create(
+            name=metric.name,
+            dataset=metric.dataset,
+            source_id=str(metric.id),
+            source=SourceChoices.EVALUATION.value,
+            data_type=DataTypeChoices.FLOAT.value,
+        )
+        reason = Column.objects.create(
+            name=f"{metric.name}-reason",
+            dataset=metric.dataset,
+            source_id=f"{column.id}-sourceid-{metric.id}",
+            source=SourceChoices.EVALUATION_REASON.value,
+            data_type=DataTypeChoices.TEXT.value,
+        )
+        metric.dataset.column_order.extend([str(column.id), str(reason.id)])
+        metric.dataset.save(update_fields=["column_order"])
+        original_orders[metric.dataset_id] = list(metric.dataset.column_order)
+        reason_cells.append(
+            Cell.objects.create(
+                dataset=metric.dataset,
+                column=reason,
+                row=Row.objects.get(dataset=metric.dataset),
+                value="Previous reason",
+                status=CellStatus.PASS.value,
+            )
+        )
+
+    response = auth_client.post(
+        f"/model-hub/datasets/{base_metric.dataset_id}/compare-datasets/start-eval/",
+        {
+            "user_eval_names": [base_metric.name],
+            "dataset_ids": [str(other_metric.dataset_id)],
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.data
+    for metric in compare_eval_metrics:
+        metric.refresh_from_db()
+        metric.dataset.refresh_from_db()
+        assert metric.status == StatusType.NOT_STARTED.value
+        assert metric.dataset.column_order == original_orders[metric.dataset_id]
+        assert Column.objects.filter(dataset=metric.dataset).count() == 4
+    for cell in reason_cells:
+        cell.refresh_from_db()
+        assert cell.status == CellStatus.RUNNING.value
+        assert cell.value == "Previous reason"
 
 
 @pytest.mark.django_db

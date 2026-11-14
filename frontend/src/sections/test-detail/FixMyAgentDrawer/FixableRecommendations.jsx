@@ -103,7 +103,7 @@ const FixableRecommendations = ({
               src="/assets/icons/bulb_start.svg"
               sx={{ width: 16, height: 16, color: "status.warning.fg" }}
             />
-            <Typography fontSize={13} fontWeight="fontWeightSemiBold">
+            <Typography fontSize={12} fontWeight="fontWeightSemiBold">
               Prompt based suggestions
             </Typography>
           </Stack>

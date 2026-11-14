@@ -392,8 +392,13 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-# guardrails:
-#   enabled: true
+# Exercise org-configured checks; no static rules are installed for other flows.
+# The deliberately permissive global value must not opt any tenant in.
+guardrails:
+  enabled: true
+  fail_open: true
+  default_timeout: 5s
+# Example static rules:
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
 #   default_timeout: 5s                 # Default per-guardrail timeout
 #   rules:

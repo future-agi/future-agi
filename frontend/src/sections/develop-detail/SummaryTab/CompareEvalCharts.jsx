@@ -73,7 +73,7 @@ const CustomXAxisTick = (props) => {
       x={x}
       y={y + 20}
       textAnchor="middle"
-      fontSize={13}
+      fontSize={12}
       fill="currentColor"
     >
       {payload.value}%
@@ -139,7 +139,7 @@ const CompareEvalCharts = ({ multiChartData, metricColumns }) => {
                 </IconButton>
                 <Typography
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 500,
                     color: "text.primary",
                   }}

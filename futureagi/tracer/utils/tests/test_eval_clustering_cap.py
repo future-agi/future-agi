@@ -63,18 +63,18 @@ def _run_batch(n_results: int, cluster_raises: bool = False) -> EvalClusteringSu
         else MagicMock(return_value="E-X")
     )
     task = MagicMock()
-    with patch(
-        "tracer.utils.eval_clustering.get_unclustered_eval_results",
-        return_value=results,
-    ), patch(
-        "tracer.utils.eval_clustering.embed_texts",
-        return_value=[[0.0] for _ in results],
-    ), patch(
-        "tracer.utils.eval_clustering.find_nearest_centroid", return_value=None
-    ), patch(
-        "tracer.utils.eval_clustering.create_cluster", create
-    ), patch(
-        "tracer.tasks.eval_clustering.cluster_eval_results_task", task
+    with (
+        patch(
+            "tracer.utils.eval_clustering.get_unclustered_eval_results",
+            return_value=results,
+        ),
+        patch(
+            "tracer.utils.eval_clustering.embed_texts",
+            return_value=[[0.0] for _ in results],
+        ),
+        patch("tracer.utils.eval_clustering.find_nearest_centroid", return_value=None),
+        patch("tracer.utils.eval_clustering.create_cluster", create),
+        patch("tracer.tasks.eval_clustering.cluster_eval_results_task", task),
     ):
         summary = cluster_eval_results("proj-1")
     task.apply_async.assert_not_called()  # inner batch must never self-continue
@@ -144,9 +144,7 @@ def _drain_with(summaries):
         calls["n"] += 1
         return seq[i] if i < len(seq) else seq[-1]
 
-    with patch(
-        "tracer.utils.eval_clustering.cluster_eval_results", side_effect=_next
-    ):
+    with patch("tracer.utils.eval_clustering.cluster_eval_results", side_effect=_next):
         result = cluster_eval_results_task("proj-1")
     return result, calls["n"]
 

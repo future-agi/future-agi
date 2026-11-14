@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import { ROW_HEIGHT } from "src/theme/sizes";
 

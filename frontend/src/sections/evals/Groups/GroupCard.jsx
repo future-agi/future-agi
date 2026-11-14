@@ -282,7 +282,7 @@ export default function GroupCard({
           <ListItemText
             primary="Edit"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />
@@ -300,7 +300,7 @@ export default function GroupCard({
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

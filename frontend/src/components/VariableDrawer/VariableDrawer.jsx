@@ -18,6 +18,7 @@ import PropTypes from "prop-types";
 import Iconify from "../iconify";
 import { LoadingButton } from "@mui/lab";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemePromptWith } from "src/hooks/use-ag-theme";
 import "./grid.css";
 import DeleteAction from "./Renderers/DeleteAction";

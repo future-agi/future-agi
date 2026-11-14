@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useParams } from "src/routes/hooks";
-import { Button, LinearProgress } from "@mui/material";
+import { Button } from "@mui/material";
 import {
   useInfiniteQuery,
   useMutation,
@@ -14,6 +14,7 @@ import CustomizeColumnsModal from "../datasets/CustomizeColumnsModal";
 import OptimizeDrawer from "./OptimizeDrawer";
 import OptimizeTable from "./OptimizeTable";
 import NoOptimizationData from "./NoOptimizationData";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const OptimizeList = () => {
   const [isCustomizeColumnOpen, setIsCustomizeColumnOpen] = useState(false);
@@ -151,7 +152,7 @@ const OptimizeList = () => {
         }}
         viewData={viewOptimization}
       />
-      {isLoading ? <LinearProgress /> : null}
+      {isLoading ? <LoadingScreen /> : null}
       {!isLoading && !optimizationData?.length && <NoOptimizationData />}
       {!isLoading && Boolean(optimizationData?.length) && (
         <OptimizeTable

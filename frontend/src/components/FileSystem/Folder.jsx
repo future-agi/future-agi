@@ -190,7 +190,7 @@ export default function Folder({
         </Box>
 
         <Typography
-          fontSize={13}
+          fontSize={12}
           lineHeight="20px"
           fontWeight={isLinkActive ? 500 : 400}
           color={isLinkActive ? "text.primary" : "text.secondary"}

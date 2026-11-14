@@ -1,11 +1,5 @@
 import React from "react";
-import {
-  Box,
-  Divider,
-  IconButton,
-  LinearProgress,
-  Typography,
-} from "@mui/material";
+import { Box, Divider, IconButton, Typography } from "@mui/material";
 import {
   Accordion,
   AccordionDetails,
@@ -18,9 +12,10 @@ import { enqueueSnackbar } from "notistack";
 import CustomJsonViewer from "../custom-json-viewer/CustomJsonViewer";
 
 import "./jsonStyle.css";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
-  if (isLoading) return <LinearProgress />;
+  if (isLoading) return <LoadingScreen compact />;
   if (!observationSpan) {
     return (
       <Box
@@ -72,7 +67,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
         <Box
           sx={{
             backgroundColor: "background.paper",
-            fontSize: "13px",
+            fontSize: "12px",
             whiteSpace: "pre-wrap",
             maxHeight: "72vh",
             overflow: "auto",

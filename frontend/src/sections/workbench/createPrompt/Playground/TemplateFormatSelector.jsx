@@ -49,7 +49,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
       >
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: 600,
             fontFamily: "monospace",
             color: "text.secondary",
@@ -101,7 +101,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 fontFamily: "monospace",
                 width: 40,
@@ -114,7 +114,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
             <Box>
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", fontWeight: 600 }}
+                sx={{ fontSize: "12px", fontWeight: 600 }}
               >
                 {fmt.label}
               </Typography>

@@ -230,7 +230,7 @@ const CustomColumnDialog = ({
                     />
                   }
                   label={
-                    <Typography variant="body2" sx={{ fontSize: 13 }}>
+                    <Typography variant="body2" sx={{ fontSize: 12 }}>
                       {key}
                     </Typography>
                   }

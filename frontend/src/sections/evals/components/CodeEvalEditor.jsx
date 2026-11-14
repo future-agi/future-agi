@@ -307,7 +307,7 @@ const CodeEvalEditor = ({
                 <Typography
                   variant="body2"
                   color="text.secondary"
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   Generating...
                 </Typography>
@@ -332,14 +332,14 @@ const CodeEvalEditor = ({
                   }
                   if (e.key === "Escape") handleClose();
                 }}
-                sx={{ fontSize: "13px", flex: 1 }}
+                sx={{ fontSize: "12px", flex: 1 }}
               />
             ) : (
               <Typography
                 variant="body2"
                 sx={{
                   flex: 1,
-                  fontSize: "13px",
+                  fontSize: "12px",
                   color: "text.secondary",
                   fontStyle: "italic",
                 }}
@@ -418,7 +418,7 @@ const CodeEvalEditor = ({
                   if (e.key === "Escape") handleClose();
                 }}
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   borderTop: "1px solid",
                   borderColor: "divider",
                   pt: 0.75,
@@ -445,7 +445,7 @@ const CodeEvalEditor = ({
         {/* Falcon AI button — floating bottom-right inside editor */}
         {!aiMode && !disabled && (
           <Tooltip
-            title="Generate Eval code with Falcon AI"
+            title="Generate eval code with AI"
             arrow
             placement="left"
           >

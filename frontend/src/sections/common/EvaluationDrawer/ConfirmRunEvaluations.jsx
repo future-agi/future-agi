@@ -131,7 +131,7 @@ const ConfirmRunEvaluations = ({
               p={theme.spacing(1.5)}
               borderRadius="8px"
             >
-              <Typography fontSize={13} fontWeight={500}>
+              <Typography fontSize={12} fontWeight={500}>
                 {evalItem.name}
               </Typography>
               {evalsToRun.length > 1 && (

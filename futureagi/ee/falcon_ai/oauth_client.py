@@ -80,7 +80,7 @@ def discover_oauth_metadata(server_url: str) -> dict:
             continue
 
     raise RuntimeError(
-        f"Could not discover OAuth metadata from {origin}. " f"Last error: {last_error}"
+        f"Could not discover OAuth metadata from {origin}. Last error: {last_error}"
     )
 
 

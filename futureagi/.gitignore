@@ -23,8 +23,6 @@ activate/
 # Legacy WSGI leftover
 wsgi
 
-# Type-check baseline backups
-mypy-baseline.txt.backup
 # === Python virtualenvs + caches (added by setup) ===
 .venv
 .venv/

@@ -237,9 +237,7 @@ class TestEntitlementsUnit:
             with patch(
                 "ee.usage.models.usage.OrganizationSubscription.objects"
             ) as mock_qs:
-                mock_qs.filter.return_value.values_list.return_value.first.return_value = (
-                    "boost"
-                )
+                mock_qs.filter.return_value.values_list.return_value.first.return_value = "boost"
 
                 assert _get_cached_plan("org-1") == "boost"
 

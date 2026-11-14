@@ -132,9 +132,7 @@ class TestBlankCompletedBackfill:
     """Blank-status rows written by the legacy writer: stamp ``completed`` only
     when the row verifiably succeeded (no error/skip, real output present)."""
 
-    def test_blank_row_with_output_becomes_completed(
-        self, project, custom_eval_config
-    ):
+    def test_blank_row_with_output_becomes_completed(self, project, custom_eval_config):
         entry = _blank_entry(project, custom_eval_config, output_float=0.9)
         changed = backfill_blank_completed_status()
         entry.refresh_from_db()
@@ -152,9 +150,7 @@ class TestBlankCompletedBackfill:
             entry.refresh_from_db()
             assert entry.status == EvalEntryStatus.COMPLETED
 
-    def test_blank_row_without_output_left_untouched(
-        self, project, custom_eval_config
-    ):
+    def test_blank_row_without_output_left_untouched(self, project, custom_eval_config):
         entry = _blank_entry(project, custom_eval_config)
         changed = backfill_blank_completed_status()
         entry.refresh_from_db()
@@ -172,9 +168,7 @@ class TestBlankCompletedBackfill:
         assert changed == 0
         assert entry.status == ""
 
-    def test_error_sentinel_without_flag_not_stamped(
-        self, project, custom_eval_config
-    ):
+    def test_error_sentinel_without_flag_not_stamped(self, project, custom_eval_config):
         entry = _blank_entry(project, custom_eval_config, output_str="ERROR")
         backfill_blank_completed_status()
         entry.refresh_from_db()

@@ -1268,12 +1268,12 @@ export default function DashboardDetailView() {
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
           </Link>
-          <Typography color="text.primary" fontSize="13px">
+          <Typography color="text.primary" fontSize="12px">
             {dashboard.name}
           </Typography>
         </Breadcrumbs>
@@ -1451,7 +1451,7 @@ export default function DashboardDetailView() {
             sx: {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
-              fontSize: "13px",
+              fontSize: "12px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             },

@@ -9,6 +9,9 @@ import { useQuery } from "@tanstack/react-query";
 import { menuesConstant } from "./constant";
 import { useSearchParams } from "src/routes/hooks";
 import { ShowComponent } from "src/components/show";
+import { Loader } from "src/components/loading-screen";
+import ErrorState from "src/components/error-state";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 const TryOutFeatures = React.lazy(
   () => import("./try-out-features/TryOutFeatures"),
@@ -45,7 +48,7 @@ const GetStartedView = () => {
     return label;
   };
 
-  const { data } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["currentLabel"],
     queryFn: () => axios.get(endpoints.getStarted.getTabs),
     staleTime: 2 * 1000,
@@ -74,6 +77,20 @@ const GetStartedView = () => {
       gap={"24px"}
     >
       <GetStartedHeaderView setShowDemoModal={setShowDemoModal} />
+      {/* The steps wait on the setup status; show the one loader meanwhile. */}
+      <ShowComponent condition={isLoading}>
+        <Loader />
+      </ShowComponent>
+      <ShowComponent condition={isError}>
+        <ErrorState
+          title="Could not load your setup steps"
+          detail={getRequestErrorMessage(
+            error,
+            "Could not load your setup steps",
+          )}
+          onRetry={() => refetch()}
+        />
+      </ShowComponent>
       <ShowComponent condition={Boolean(data)}>
         <SetupStepsView
           setShowDemoModal={setShowDemoModal}

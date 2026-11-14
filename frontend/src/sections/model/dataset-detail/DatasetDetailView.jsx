@@ -2,18 +2,19 @@ import React from "react";
 import { useParams, useSearchParams } from "src/routes/hooks";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
-import { Box, LinearProgress } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 
 import DatasetOverview from "./DatasetDetail/DatasetOverview";
 import DatasetDetail from "./DatasetDetail/DatasetDetail";
+import { LoadingScreen } from "src/components/loading-screen";
 
 function CustomTabPanel(props) {
   const { children, value, panelValue, loading, ...other } = props;
 
   return (
     <div hidden={panelValue !== value} role="tabpanel" {...other}>
-      {loading ? <LinearProgress /> : null}
+      {loading ? <LoadingScreen /> : null}
       {value === panelValue && !loading && <Box>{children}</Box>}
     </div>
   );

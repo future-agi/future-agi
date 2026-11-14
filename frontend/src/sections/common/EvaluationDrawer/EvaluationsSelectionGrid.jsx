@@ -150,7 +150,7 @@ const EvaluationsSelectionGrid = ({
         >
           <Typography
             color={theme.palette.text.primary}
-            fontSize={13}
+            fontSize={12}
             fontWeight={400}
           >
             Choose from our evaluations that best match your goals, or you can

@@ -1,5 +1,6 @@
 import React, { forwardRef, useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";

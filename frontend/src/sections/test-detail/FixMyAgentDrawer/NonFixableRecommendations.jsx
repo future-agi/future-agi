@@ -53,7 +53,7 @@ const NonFixableRecommendations = ({
               src="/assets/icons/bulb_start.svg"
               sx={{ width: 16, height: 16, color: "status.warning.fg" }}
             />
-            <Typography fontSize={13} fontWeight="fontWeightSemiBold">
+            <Typography fontSize={12} fontWeight="fontWeightSemiBold">
               Infra based suggestions (
               {notFixableActionableRecommendations?.length ?? 0})
             </Typography>

@@ -917,8 +917,7 @@ def _apply_receipt_to_call(
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed). "
             + (
-                "The trial ended with "
-                f"{failure.get('code') or failure.get('message')}."
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
                 if failure
                 else "This is a grading failure, not an agent failure."
             )
