@@ -254,6 +254,88 @@ class TestScrubPiiInSpanBatch:
 
         assert spans[0]["attributes"]["fi.input.value"] == "Email: a@b.com"
 
+    @staticmethod
+    def _engines(*, analyze=None, anonymize=None):
+        """Ready stand-in engines; ``analyze``/``anonymize`` are side effects."""
+        from tracer.utils import pii_scrubber
+
+        analyzer = mock.Mock()
+        analyzer.analyze = mock.Mock(side_effect=analyze, return_value=[mock.Mock()])
+        anonymizer = mock.Mock()
+        anonymizer.anonymize = mock.Mock(side_effect=anonymize)
+        pii_scrubber._analyzer = analyzer
+        pii_scrubber._anonymizer = anonymizer
+        return mock.patch.object(pii_scrubber, "_get_operator_config", return_value={})
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            {"analyze": ValueError("[E088] Text of length 1000001 exceeds maximum.")},
+            {"anonymize": RuntimeError("anonymizer failed")},
+        ],
+        ids=["analysis", "anonymization"],
+    )
+    def test_enabled_project_rejects_the_batch_when_a_value_cannot_be_scrubbed(
+        self, failure
+    ):
+        # With the engines installed, a failure must not keep the raw value.
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with self._engines(**failure):
+            with pytest.raises(RuntimeError) as raised:
+                scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert type(raised.value).__name__ == "PIIScrubError"
+        assert "a@b.com" not in str(raised.value)
+
+    def test_a_json_encoded_value_fails_closed_too(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "resource_attributes": {
+                    "fi.input.value": json.dumps({"messages": ["mail a@b.com"]})
+                },
+            }
+        ]
+        with self._engines(analyze=ValueError("boom")):
+            with pytest.raises(RuntimeError) as raised:
+                scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert type(raised.value).__name__ == "PIIScrubError"
+
+    def test_a_disabled_project_is_untouched_when_the_engines_fail(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with self._engines(analyze=ValueError("boom")):
+            scrub_pii_in_span_batch(spans, {"proj": False})
+
+        assert spans[0]["attributes"]["fi.input.value"] == "Email: a@b.com"
+
+    def test_explicit_callers_stay_best_effort(self):
+        from tracer.utils.pii_scrubber import scrub_span_attributes
+
+        with self._engines(analyze=ValueError("boom")):
+            with mock.patch(
+                "tracer.utils.pii_scrubber._ensure_engines", return_value=True
+            ):
+                scrubbed = scrub_span_attributes({"fi.input.value": "a@b.com"})
+
+        assert scrubbed == {"fi.input.value": "a@b.com"}
+
     def test_disabled_projects_do_not_require_engines(self):
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 

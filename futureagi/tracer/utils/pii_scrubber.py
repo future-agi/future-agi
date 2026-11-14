@@ -2,9 +2,10 @@
 PII Scrubber — Presidio-powered server-side PII redaction.
 
 Replaces detected PII with <ENTITY_TYPE> tokens (e.g., <EMAIL_ADDRESS>).
-Low-level helpers preserve their historical fail-open behavior.  Batch
-ingestion fails closed when a project explicitly enables PII redaction but
-the configured Presidio engines cannot be initialized.
+Low-level helpers preserve their historical fail-open behavior for explicit
+callers.  Batch ingestion fails closed when a project explicitly enables PII
+redaction and the Presidio engines cannot be initialized, or a value cannot be
+analysed or anonymized: the batch is rejected before anything is stored.
 """
 
 import json
@@ -55,7 +56,6 @@ def _ensure_engines() -> bool:
     try:
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
         from presidio_anonymizer import AnonymizerEngine
-        from presidio_anonymizer.entities import OperatorConfig
 
         # Custom recognizer for API keys (sk-live-..., pk_test-..., etc.)
         api_key_recognizer = PatternRecognizer(
@@ -186,8 +186,16 @@ def _is_content_key(key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def scrub_pii_in_string(text: str) -> str:
-    """Analyse and anonymize PII in *text* using Presidio."""
+class PIIScrubError(RuntimeError):
+    """A value of a PII-enabled project could not be scrubbed. Never carries the value."""
+
+
+def scrub_pii_in_string(text: str, *, strict: bool = False) -> str:
+    """Analyse and anonymize PII in *text* using Presidio.
+
+    Best effort by default: a failure returns *text* unchanged. With *strict*,
+    it raises ``PIIScrubError`` instead, so the caller never keeps raw text.
+    """
     if not text or not _ensure_engines():
         return text
     try:
@@ -204,7 +212,13 @@ def scrub_pii_in_string(text: str) -> str:
             operators=_get_operator_config(),
         )
         return anonymized.text
-    except Exception:
+    except Exception as exc:
+        if strict:
+            # The value stays out of the error: spaCy's E088, for one, is raised
+            # for text too long to analyse, and the text is exactly what must not leak.
+            raise PIIScrubError(
+                f"PII redaction failed ({type(exc).__name__}); the value is not stored."
+            ) from exc
         logger.warning("pii_scrub_string_failed", exc_info=True)
         return text
 
@@ -217,11 +231,12 @@ _MEDIA_PREFIXES = (
 )
 
 
-def scrub_pii_in_value(value: Any) -> Any:
+def scrub_pii_in_value(value: Any, *, strict: bool = False) -> Any:
     """Recursively scrub PII from *value*.
 
     Handles str (including JSON-encoded strings), dict, list.
     Skips binary/media data (base64 images, audio, video).
+    *strict* is passed to ``scrub_pii_in_string``.
     """
     if isinstance(value, str):
         # Skip base64-encoded media data
@@ -231,24 +246,24 @@ def scrub_pii_in_value(value: Any) -> Any:
         try:
             parsed = json.loads(value)
             if isinstance(parsed, (dict, list)):
-                scrubbed = scrub_pii_in_value(parsed)
+                scrubbed = scrub_pii_in_value(parsed, strict=strict)
                 return json.dumps(scrubbed)
         except (json.JSONDecodeError, TypeError):
             pass
-        return scrub_pii_in_string(value)
+        return scrub_pii_in_string(value, strict=strict)
     if isinstance(value, dict):
-        return {k: scrub_pii_in_value(v) for k, v in value.items()}
+        return {k: scrub_pii_in_value(v, strict=strict) for k, v in value.items()}
     if isinstance(value, list):
-        return [scrub_pii_in_value(item) for item in value]
+        return [scrub_pii_in_value(item, strict=strict) for item in value]
     return value
 
 
-def scrub_span_attributes(attributes: dict) -> dict:
+def scrub_span_attributes(attributes: dict, *, strict: bool = False) -> dict:
     """Walk *attributes* dict and scrub content-bearing keys."""
     scrubbed = {}
     for key, value in attributes.items():
         if _is_content_key(key):
-            scrubbed[key] = scrub_pii_in_value(value)
+            scrubbed[key] = scrub_pii_in_value(value, strict=strict)
         else:
             scrubbed[key] = value
     return scrubbed
@@ -260,7 +275,10 @@ def scrub_pii_in_span_batch(
 ) -> None:
     """Scrub PII in-place across a batch of span dicts.
 
-    Only scrubs spans whose project has PII redaction enabled.
+    Only scrubs spans whose project has PII redaction enabled. Fails closed for
+    those spans: unavailable engines raise ``RuntimeError``, and a value that
+    cannot be analysed or anonymized raises ``PIIScrubError``, so the caller
+    stores nothing of the batch.
     """
     pii_enabled = any(
         span_data.get("project_name")
@@ -280,8 +298,10 @@ def scrub_pii_in_span_batch(
         # Scrub attributes
         attrs = span_data.get("attributes")
         if isinstance(attrs, dict):
-            span_data["attributes"] = scrub_span_attributes(attrs)
+            span_data["attributes"] = scrub_span_attributes(attrs, strict=True)
         # Scrub resource attributes (may also contain content)
         res_attrs = span_data.get("resource_attributes")
         if isinstance(res_attrs, dict):
-            span_data["resource_attributes"] = scrub_span_attributes(res_attrs)
+            span_data["resource_attributes"] = scrub_span_attributes(
+                res_attrs, strict=True
+            )
