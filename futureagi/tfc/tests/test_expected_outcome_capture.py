@@ -247,15 +247,29 @@ async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
         )
 
     activity_input = SimpleNamespace(fn=activity_fn, args=[])
-    denial = ApplicationError(
-        "Synthetic free tier limit reached",
-        {"code": "FREE_TIER_LIMIT", "message": "Synthetic free tier limit reached"},
-        type="EvaluationDenied",
-        non_retryable=True,
-    )
-    with pytest.raises(ApplicationError):
-        await interceptor_raising(denial).execute_activity(activity_input)
-    assert transport.events == []
+    denials = [
+        ApplicationError(
+            "Synthetic free tier limit reached",
+            {"code": "FREE_TIER_LIMIT", "message": "Synthetic free tier limit reached"},
+            type="EvaluationDenied",
+            non_retryable=True,
+        ),
+        # Existing emitters do not all carry structured capability reasons.
+        ApplicationError(
+            "Synthetic feature denial", type="CapabilityDenied", non_retryable=True
+        ),
+        ApplicationError(
+            "Synthetic license denial",
+            "license",
+            type="CapabilityDenied",
+            non_retryable=True,
+        ),
+    ]
+    for denial in denials:
+        with pytest.raises(ApplicationError) as raised:
+            await interceptor_raising(denial).execute_activity(activity_input)
+        assert raised.value is denial
+        assert transport.events == []
 
     genuine = [
         RuntimeError("synthetic activity fault"),
@@ -321,6 +335,9 @@ async def test_capability_gate_activity_denial_is_not_an_issue(
         )
     assert raised.value.type == "CapabilityDenied"
     assert raised.value.non_retryable is True
+    assert raised.value.details == (
+        {"feature_id": "insights", "reason_code": "PLAN_FEATURE_MISSING"},
+    )
     capture.assert_not_called()
     assert transport.events == []
 
@@ -331,6 +348,111 @@ async def test_capability_gate_activity_denial_is_not_an_issue(
         crumb.get("message") == "Activity failed: denied_activity"
         for crumb in event["breadcrumbs"]["values"]
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    [
+        "cloud_resolver_missing",
+        "license_resolver_missing",
+        "org_missing",
+        "org_blank",
+        "lookup_error",
+        "plan_feature_missing",
+    ],
+)
+async def test_capability_gate_activity_capture_distinguishes_lookup_outages(
+    source, transport, monkeypatch
+):
+    from temporalio.exceptions import ApplicationError
+
+    from tfc.capabilities import service
+    from tfc.ee_gating import check_ee_feature
+    from tfc.licensing.types import DeploymentFlavor, DeploymentLocation
+    from tfc.temporal.common import sentry_interceptor
+
+    resolver = SimpleNamespace(
+        has_feature=MagicMock(return_value=False),
+        get_upgrade_cta=MagicMock(return_value=None),
+    )
+    if source == "lookup_error":
+        resolver.has_feature.side_effect = RuntimeError("synthetic lookup failure")
+    self_hosted = source == "license_resolver_missing"
+    monkeypatch.setattr(service, "_configured", True)
+    monkeypatch.setattr(
+        service,
+        "_deployment_flavor",
+        DeploymentFlavor.SELF_HOSTED_EE if self_hosted else DeploymentFlavor.CLOUD,
+    )
+    monkeypatch.setattr(
+        service,
+        "_deployment_location",
+        DeploymentLocation.SELF_HOSTED if self_hosted else DeploymentLocation.CLOUD,
+    )
+    monkeypatch.setattr(service, "_license_resolver", None)
+    monkeypatch.setattr(
+        service,
+        "_cloud_plan_resolver",
+        None if source == "cloud_resolver_missing" else resolver,
+    )
+    org_id = "11111111-1111-1111-1111-111111111111"
+    if source == "org_missing":
+        org_id = None
+    elif source == "org_blank":
+        org_id = "   "
+
+    monkeypatch.setattr(sentry_interceptor, "_get_sentry_sdk", lambda: sentry_sdk)
+    capture = MagicMock(wraps=sentry_sdk.capture_exception)
+    monkeypatch.setattr(sentry_sdk, "capture_exception", capture)
+
+    async def gated_activity(_):
+        # Keep the real service.check -> denial emitter path, as in the Imagine
+        # activity. Only the resolver is synthetic; no database or provider call.
+        check_ee_feature("falcon_ai", org_id=org_id, activity=True)
+
+    interceptor = sentry_interceptor.SentryActivityInboundInterceptor(
+        SimpleNamespace(execute_activity=gated_activity)
+    )
+    with pytest.raises(ApplicationError) as raised:
+        await interceptor.execute_activity(SimpleNamespace(fn=gated_activity, args=[]))
+
+    # Observability must not change the existing failure type or retry policy.
+    assert raised.value.non_retryable is True
+    if source == "lookup_error":
+        assert raised.value.type == "FeatureUnavailable"
+        assert raised.value.message == "Feature entitlement service is unavailable."
+    else:
+        assert raised.value.type == "CapabilityDenied"
+        reason = (
+            "PLAN_FEATURE_MISSING"
+            if source == "plan_feature_missing"
+            else "RESOLVER_UNAVAILABLE"
+        )
+        assert raised.value.details == (
+            {"feature_id": "falcon_ai", "reason_code": reason},
+        )
+        assert raised.value.message == (
+            "Falcon AI isn't included in your plan."
+            if source == "plan_feature_missing"
+            else "Falcon AI is not available."
+        )
+
+    if source == "plan_feature_missing":
+        capture.assert_not_called()
+        assert transport.events == []
+    else:
+        capture.assert_called_once_with(raised.value)
+        # A raised lookup failure is logged separately; the emitted failure must
+        # also survive capture, not just that original log record.
+        assert transport.events[-1]["exception"]["values"][-1]["type"] == (
+            "ApplicationError"
+        )
+        assert len(transport.events) == (2 if source == "lookup_error" else 1)
+        if source == "lookup_error":
+            assert transport.events[0]["exception"]["values"][-1]["type"] == (
+                "RuntimeError"
+            )
 
 
 @pytest.mark.parametrize("source", ["ee_stub", "capability_gate"])

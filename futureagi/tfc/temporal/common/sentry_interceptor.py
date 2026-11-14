@@ -26,16 +26,28 @@ from temporalio.worker import (
 # Non-retryable ApplicationError types that an activity raises to report an
 # expected refusal rather than a fault. An evaluation usage or entitlement
 # denial is the activity's answer: the workflow records it and stops, so it is
-# not a Sentry issue. Any other type, or a retryable one, is still captured.
+# not a Sentry issue. Resolver failures, any other type, or a retryable one are
+# still captured.
 EXPECTED_ACTIVITY_FAILURE_TYPES = frozenset({"EvaluationDenied", "CapabilityDenied"})
 
 
 def _is_expected_activity_failure(error: BaseException) -> bool:
-    return (
+    if not (
         isinstance(error, ApplicationError)
         and error.non_retryable
         and error.type in EXPECTED_ACTIVITY_FAILURE_TYPES
-    )
+    ):
+        return False
+    # The capability service also uses CapabilityDenied when its resolver cannot
+    # answer. Keep those faults without changing the failure's Temporal contract.
+    # Other emitters still use no details or a string (the Insights license code).
+    if error.type == "CapabilityDenied":
+        return not any(
+            isinstance(detail, dict)
+            and detail.get("reason_code") == "RESOLVER_UNAVAILABLE"
+            for detail in error.details
+        )
+    return True
 
 
 def _get_sentry_sdk():
