@@ -25,12 +25,17 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
+    boolean_meta_presence_condition,
     build_annotation_value_predicate,
     normalize_filter_op,
+    parse_boolean_meta_filter,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
     compile_span_attribute_row_predicate,
+    is_internal_simulator_call_filter,
+    is_internal_trace_root_filter,
+    simulator_call_root_predicate,
 )
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
@@ -72,6 +77,10 @@ class ExactGraphRowPredicatePlan:
     # excluded range and then incorrectly aggregate the excluded sibling too.
     contribution_predicates: tuple[str, ...]
     params: dict[str, Any]
+    # The private trace-root leaf (a voice call) restricts contributions to the
+    # trace's root. Until ClickHouse merges them, a re-polled root has several
+    # live physical versions, and a raw read must count that call once.
+    root_contribution: bool = False
 
 
 def _filter_parts(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -122,18 +131,6 @@ def _local_param(params: dict[str, Any], prefix: str, value: Any) -> str:
         name = f"{prefix}_{index}"
     params[name] = value
     return name
-
-
-def _parse_boolean_filter(column_id: str, value: Any, operator: str | None) -> bool:
-    if normalize_filter_op(operator) != "equals":
-        raise UnsupportedFilterShapeError(
-            f"{column_id} supports only the equals operation"
-        )
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-        return value.strip().lower() == "true"
-    raise UnsupportedFilterShapeError(f"{column_id} requires a boolean value")
 
 
 def _validated_uuid(value: Any, *, field: str) -> str:
@@ -261,7 +258,10 @@ def _compile_annotation_filter(
     params: dict[str, Any] = {}
 
     if column_id == "has_annotation":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         if annotation_label_ids is not None:
             if not annotation_label_ids:
                 # Completeness across an authoritative empty label set is
@@ -293,7 +293,10 @@ def _compile_annotation_filter(
         return [(predicate, required, relation_params)]
 
     if column_id == "my_annotations":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         user_id = config.get("user_id") or config.get("userId")
         if not user_id:
             return [("0 = 1", True, {})]
@@ -468,10 +471,14 @@ def _compile_has_eval_filter(
         eval_logger_version_column,
     )
 
-    required = _parse_boolean_filter(
+    filter_op = config.get("filter_op") or config.get("filterOp")
+    presence = boolean_meta_presence_condition(filter_op)
+    if presence is not None:
+        return presence, True, {}
+    required = parse_boolean_meta_filter(
         "has_eval",
         config.get("filter_value", config.get("filterValue")),
-        config.get("filter_op") or config.get("filterOp"),
+        filter_op,
     )
     try:
         config_ids = tuple(
@@ -643,6 +650,7 @@ def compile_exact_graph_row_predicates(
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
+    root_contribution = False
     bound_params: dict[str, Any] = {}
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
@@ -663,7 +671,16 @@ def compile_exact_graph_row_predicates(
         # Explicit property provenance wins over legacy name aliases here,
         # before the native relation adapters bypass the shared compiler.
         is_raw_attribute = normalized_col_type == "SPAN_ATTRIBUTE"
-        if not is_raw_attribute and column_id == "has_eval":
+        if is_internal_simulator_call_filter(original_item):
+            if normalized_observe_type != "trace":
+                raise UnsupportedFilterShapeError(
+                    "the simulator-call leaf requires a trace graph"
+                )
+            # The Voice list's simulator toggle: no live root of the trace is
+            # a simulator call, a negative any-sibling requirement.
+            simulator_root, simulator_params = simulator_call_root_predicate()
+            relation_requirements = [(simulator_root, False, simulator_params)]
+        elif not is_raw_attribute and column_id == "has_eval":
             relation_predicate, required, relation_params = _compile_has_eval_filter(
                 config=config,
                 project_id=project_id,
@@ -725,15 +742,19 @@ def compile_exact_graph_row_predicates(
                 predicates.append(predicate)
                 output_window_only.append(False)
                 required_matches.append(required)
+            annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (
                 column_id == "has_annotation"
                 and annotation_label_ids
                 and requirement_predicate_indexes
+                # A presence operator compiles to one constant predicate, not
+                # to the per-label completeness fan-out below.
+                and boolean_meta_presence_condition(annotation_filter_op) is None
             ):
-                wants_complete = _parse_boolean_filter(
+                wants_complete = parse_boolean_meta_filter(
                     column_id,
                     raw_value,
-                    config.get("filter_op") or config.get("filterOp"),
+                    annotation_filter_op,
                 )
                 if wants_complete:
                     match_condition_groups.extend(
@@ -811,11 +832,18 @@ def compile_exact_graph_row_predicates(
                 f"graph filter {column_id!r} produced an unsupported relation"
             )
 
+        # The private conversation-root invariant (voice calls) is a root leaf
+        # exactly like the root-only system metrics.
         if (
             normalized_observe_type == "trace"
             and builder is not None
-            and normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
-            and _is_root_only_system_metric(builder, column_id)
+            and (
+                (
+                    normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
+                    and _is_root_only_system_metric(builder, column_id)
+                )
+                or is_internal_trace_root_filter(original_item)
+            )
         ):
             predicate = (
                 f"(parent_span_id IS NULL OR parent_span_id = '') AND ({predicate})"
@@ -830,6 +858,14 @@ def compile_exact_graph_row_predicates(
         if duplicate_params:  # pragma: no cover - namespace invariant
             raise AssertionError(f"duplicate graph bind params: {duplicate_params}")
         bound_params.update(predicate_params)
+        if normalized_observe_type == "trace" and is_internal_trace_root_filter(
+            original_item
+        ):
+            # A voice call is its conversation root: only that row
+            # contributes, so traffic counts calls and latency/cost/tokens/
+            # errors are the call's own, as list_voice_calls reports them.
+            contribution_predicates.append(predicate)
+            root_contribution = True
         predicates.append(predicate)
         output_window_only.append(structured_attribute)
         required_matches.append(True)
@@ -856,6 +892,7 @@ def compile_exact_graph_row_predicates(
         match_condition_groups=tuple(match_condition_groups),
         contribution_predicates=tuple(contribution_predicates),
         params=bound_params,
+        root_contribution=root_contribution,
     )
 
 

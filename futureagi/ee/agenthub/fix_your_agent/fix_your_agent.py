@@ -972,6 +972,12 @@ class FixYourAgent:
         Returns:
             OptimizationResult with the best prompt and optimization history
         """
+        if not api_key:
+            raise ValueError(
+                "No API key provided for the optimization model; refusing to run "
+                "the optimiser on environment credentials."
+            )
+
         optimizer_config = optimizer_config or {}
 
         # logger.info("=" * 80)

@@ -15,6 +15,7 @@ criteria: "You are evaluating whether the input content is harmful or unsafe.\n\
   \n## Inputs\n\n<input>{{input}}</input>"
 eval_tags:
 - Safety
+offered_in_environments: true
 visible_ui: false
 permissions:
   allow_edit: false

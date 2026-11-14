@@ -36,11 +36,10 @@ const ColumnResizer = (props) => {
     >
       {Object.keys(props.sizeMapping).map((key, index) => (
         <Button
+          size="small"
           key={index}
           sx={{
             width: "125px",
-            height: "30px",
-            borderRadius: theme.spacing(0.5),
             bgcolor: active === key ? "border.default" : undefined,
           }}
           onClick={() => {

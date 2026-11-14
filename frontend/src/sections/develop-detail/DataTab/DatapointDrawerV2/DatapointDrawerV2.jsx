@@ -28,6 +28,7 @@ import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
@@ -58,6 +59,7 @@ import {
   runDatasetPointReadAction,
 } from "../dataset_point_read";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const SkeletonLoader = () => (
   <Box
@@ -77,7 +79,6 @@ const hasRenderableCellValue = (value) =>
 
 const ViewDetailsCellRenderer = (props) => {
   const { data = {}, node, setRunEval, disabled } = props;
-  const theme = useTheme();
 
   const handleClick = () => {
     const metadata = data?.data?.column?.col?.metadata;
@@ -92,24 +93,14 @@ const ViewDetailsCellRenderer = (props) => {
   };
 
   return (
-    <Box
-      component="span"
+    <Button
+      size="small"
+      variant="text"
       onClick={handleClick}
-      sx={{
-        color: disabled
-          ? theme.palette.text.disabled
-          : theme.palette.primary.main,
-        cursor: disabled ? "not-allowed" : "pointer",
-        pointerEvents: disabled ? "none" : "auto",
-        fontFamily: "inherit",
-        fontSize: "13px",
-        fontWeight: 500,
-        textDecoration: "none",
-        "&:hover": { textDecoration: disabled ? "none" : "underline" },
-      }}
+      disabled={disabled}
     >
       View Detail
-    </Box>
+    </Button>
   );
 };
 
@@ -132,38 +123,19 @@ const STATUS = {
 const DATAPOINT_DRAWER_THEME_PARAMS = {
   headerColumnBorder: { width: "0px" },
   headerBackgroundColor: "whiteSpace.50",
-  headerFontFamily: "IBM Plex Sans",
-  headerFontWeight: "fontWeightMedium",
-  headerFontSize: "14px",
 };
 
 const NavIconButton = ({ icon, tooltip, onClick, disabled, loading }) => (
   <Tooltip title={tooltip} arrow placement="bottom">
     <span>
-      <Box
-        component="button"
-        type="button"
+      <IconButton
+        size="small"
         onClick={onClick}
         disabled={disabled}
         sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 24,
-          height: 24,
-          p: 0,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "2px",
-          bgcolor: "background.paper",
-          cursor: disabled ? "default" : "pointer",
-          opacity: disabled ? 0.4 : 1,
           flexShrink: 0,
-          "&:hover:not(:disabled)": {
-            bgcolor: "action.hover",
-            borderColor: "text.disabled",
-          },
-          transition: "all 120ms",
         }}
       >
         {loading ? (
@@ -171,7 +143,7 @@ const NavIconButton = ({ icon, tooltip, onClick, disabled, loading }) => (
         ) : (
           <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
         )}
-      </Box>
+      </IconButton>
     </span>
   </Tooltip>
 );
@@ -415,7 +387,22 @@ const DatapointDrawerChild = () => {
       headerName: "Evaluation Metrics",
       field: "data.eval_name",
       flex: 1,
-      cellRenderer: (params) => (loading ? <SkeletonLoader /> : params.value),
+      cellRenderer: (params) =>
+        loading ? (
+          <SkeletonLoader />
+        ) : (
+          <Box
+            component="span"
+            title={params.value}
+            sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {params.value}
+          </Box>
+        ),
     },
     {
       headerName: "Score",
@@ -467,6 +454,8 @@ const DatapointDrawerChild = () => {
   }, [column]);
 
   const defaultColDef = {
+    // Centre every cell, so a badge or button lines up with plain text.
+    cellStyle: { display: "flex", alignItems: "center" },
     lockVisible: true,
     sortable: true,
     filter: false,
@@ -710,7 +699,8 @@ const DatapointDrawerChild = () => {
                 minHeight: "100vh",
                 maxHeight: "100vh",
                 width: "400px",
-                borderRight: "2px solid rgba(147, 143, 163, 0.2)",
+                borderRight: "1px solid",
+                borderColor: "divider",
               }}
             >
               <AnnotationSidebarContent
@@ -745,7 +735,8 @@ const DatapointDrawerChild = () => {
                 width: "550px",
                 position: "relative",
                 overflowY: "auto",
-                borderRight: "2px solid rgba(147, 143, 163, 0.2)",
+                borderRight: "1px solid",
+                borderColor: "divider",
               }}
             >
               <Box
@@ -799,7 +790,7 @@ const DatapointDrawerChild = () => {
                 >
                   <Typography
                     fontWeight={500}
-                    fontSize={14}
+                    fontSize={12}
                     color="text.primary"
                   >
                     Score
@@ -809,7 +800,7 @@ const DatapointDrawerChild = () => {
                       <Box
                         sx={{
                           color: theme.palette.error.main,
-                          fontSize: "14px",
+                          fontSize: "12px",
                         }}
                       >
                         Error
@@ -842,12 +833,14 @@ const DatapointDrawerChild = () => {
                                 label={"None"}
                                 size="small"
                                 sx={{
-                                  backgroundColor: theme.palette.red.o10,
-                                  color: theme.palette.red[500],
+                                  backgroundColor:
+                                    theme.palette.status.danger.bg,
+                                  color: theme.palette.status.danger.fg,
                                   marginRight: "10px",
                                   transition: "none",
                                   "&:hover": {
-                                    backgroundColor: theme.palette.red[500],
+                                    backgroundColor:
+                                      theme.palette.status.danger.solid,
                                     boxShadow: "none",
                                   },
                                 }}
@@ -895,7 +888,7 @@ const DatapointDrawerChild = () => {
                 >
                   <Typography
                     fontWeight={500}
-                    fontSize={14}
+                    fontSize={12}
                     color="text.primary"
                   >
                     Explanation
@@ -1000,10 +993,6 @@ const DatapointDrawerChild = () => {
                       });
                       setEvalOpen(null);
                     }}
-                    sx={{
-                      fontSize: "14px",
-                      height: "40px",
-                    }}
                   >
                     Improve Prompt
                   </Button>
@@ -1026,7 +1015,8 @@ const DatapointDrawerChild = () => {
                       setAddEvaluationFeeback({
                         ...evalColumn,
                         ...datapoint,
-                        sourceId: evalOpen?.evalMetricId ?? evalColumn?.source_id,
+                        sourceId:
+                          evalOpen?.evalMetricId ?? evalColumn?.source_id,
                         rowData: datapoint?.rowData,
                         value:
                           evalOpen?.cell_value ??
@@ -1047,10 +1037,6 @@ const DatapointDrawerChild = () => {
                           datapoint?.rowData?.row_id ??
                           datapoint?.rowData?.rowId,
                       });
-                    }}
-                    sx={{
-                      fontSize: "14px",
-                      height: "40px",
                     }}
                   >
                     Add Feedback
@@ -1094,7 +1080,7 @@ const DatapointDrawerChild = () => {
                     setAnnotateOpen((prev) => !prev);
                     if (!annotateOpen) setEvalOpen(null);
                   }}
-                  startIcon={<Iconify icon="eva:edit-2-fill" width={16} />}
+                  startIcon={<Iconify icon="solar:pen-linear" width={16} />}
                   sx={{
                     marginRight: theme.spacing(1.5),
                     color: annotateOpen
@@ -1103,7 +1089,6 @@ const DatapointDrawerChild = () => {
                     backgroundColor: annotateOpen
                       ? "primary.main"
                       : "action.hover",
-                    fontWeight: "fontWeightMedium",
                     typography: "s1",
                   }}
                 >
@@ -1111,13 +1096,13 @@ const DatapointDrawerChild = () => {
                 </Button>
                 <Box sx={{ display: "flex", gap: 0.5, mr: 1 }}>
                   <NavIconButton
-                    icon="mdi:chevron-up"
+                    icon="solar:alt-arrow-up-linear"
                     tooltip="Previous datapoint (K)"
                     onClick={() => onNavigate("previous")}
                     disabled={datapoint?.index === 0}
                   />
                   <NavIconButton
-                    icon="mdi:chevron-down"
+                    icon="solar:alt-arrow-down-linear"
                     tooltip="Next datapoint (J)"
                     onClick={() => onNavigate("next")}
                     disabled={
@@ -1130,7 +1115,7 @@ const DatapointDrawerChild = () => {
                 </Box>
                 <IconButton onClick={onClose} size="small">
                   <Iconify
-                    icon="akar-icons:cross"
+                    icon="solar:close-linear"
                     sx={{ color: "text.primary" }}
                   />
                 </IconButton>
@@ -1539,11 +1524,8 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             py: 1.25,
             borderRadius: "6px",
             border: "1px solid",
-            borderColor: "primary.main",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(124, 77, 255, 0.08)"
-                : "rgba(124, 77, 255, 0.04)",
+            borderColor: "status.discovery.border",
+            backgroundColor: "status.discovery.bg",
           }}
         >
           <CircularProgress size={14} thickness={5} />
@@ -1558,7 +1540,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ display: "block", fontSize: "11px" }}
+              sx={{ display: "block", fontSize: "12px" }}
             >
               Pinpointing which parts of the input caused the failure. Usually
               30–90 seconds.
@@ -1575,11 +1557,8 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             py: 1.25,
             borderRadius: "6px",
             border: "1px solid",
-            borderColor: "error.light",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255, 86, 48, 0.08)"
-                : "rgba(255, 86, 48, 0.04)",
+            borderColor: "status.danger.border",
+            backgroundColor: "status.danger.bg",
           }}
         >
           <Typography variant="caption" fontWeight={600} color="error.main">
@@ -1589,7 +1568,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {pollData.error_message}
             </Typography>
@@ -1601,7 +1580,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
               color="primary"
               onClick={() => triggerMutation.mutate()}
               disabled={triggerMutation.isPending}
-              sx={{ textTransform: "none", fontSize: "12px", mt: 0.5 }}
+              sx={{ mt: 0.5 }}
             >
               Retry
             </Button>
@@ -1620,15 +1599,12 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             borderRadius: "6px",
             border: "1px dashed",
             borderColor: "divider",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.02)"
-                : "rgba(0,0,0,0.02)",
+            backgroundColor: "background.neutral",
           }}
         >
           <Iconify
             icon="solar:target-bold"
-            width={18}
+            width={20}
             sx={{ color: "primary.main", flexShrink: 0 }}
           />
           <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -1642,7 +1618,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ display: "block", fontSize: "11px" }}
+              sx={{ display: "block", fontSize: "12px" }}
             >
               Pinpoint which parts of the input caused this eval to fail.
             </Typography>
@@ -1654,10 +1630,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
             loading={triggerMutation.isPending}
             onClick={() => triggerMutation.mutate()}
             sx={{
-              textTransform: "none",
-              fontSize: "12px",
               flexShrink: 0,
-              height: 30,
             }}
           >
             Run
@@ -1674,7 +1647,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
         <Typography
           variant="caption"
           color="error.main"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {triggerMutation.error?.response?.data?.result ||
             triggerMutation.error?.message ||
@@ -1699,10 +1672,12 @@ const DatapointDrawerV2 = () => {
     setDrawerColumn(null);
   };
 
+  const covered = useDrawerCovered(Boolean(datapoint));
   return (
     <Drawer
       anchor="right"
       open={Boolean(datapoint)}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
@@ -1710,8 +1685,7 @@ const DatapointDrawerV2 = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

@@ -1,0 +1,31 @@
+# Artifact Hub repository metadata for oci://ghcr.io/future-agi/charts/futureagi
+# (https://artifacthub.io/docs/topics/repositories/helm-charts/).
+#
+# It is not part of the chart. .github/workflows/helm-release.yml pushes it with
+# oras to ghcr.io/future-agi/charts/futureagi:artifacthub.io on every publish;
+# Artifact Hub reads it from there, never from git. The push is skipped while
+# repositoryID below still holds the placeholder.
+#
+# One-time setup, by a future-agi GitHub org owner:
+#   1. On artifacthub.io, create the organization future-agi and add a
+#      repository: kind "Helm charts", name futureagi,
+#      URL oci://ghcr.io/future-agi/charts/futureagi. List only this OCI
+#      repository (never a second HTTP repository: it would duplicate the
+#      package).
+#   2. Copy the repository ID Artifact Hub shows for it into repositoryID
+#      below (replace the whole placeholder), and merge that change.
+#   3. The next release pushes this file. A re-run of an older release does
+#      not: it reads this file at that older tag, placeholder included. To
+#      push it sooner, from deploy/helm after `oras login ghcr.io`:
+#        oras push ghcr.io/future-agi/charts/futureagi:artifacthub.io \
+#          --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+#          artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+#      Artifact Hub then grants the Verified publisher badge. Request the
+#      Official badge from the Artifact Hub maintainers afterwards.
+repositoryID: REPLACE_WITH_ARTIFACT_HUB_REPOSITORY_ID
+# Artifact Hub users who may claim ownership of the repository (the email of
+# their Artifact Hub account). Optional; the repositoryID alone gives the
+# Verified publisher badge.
+# owners:
+#   - name: Future AGI
+#     email: team@futureagi.com

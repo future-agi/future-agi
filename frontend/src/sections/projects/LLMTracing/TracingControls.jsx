@@ -1,4 +1,5 @@
-import { Box, Button, ButtonGroup, useTheme } from "@mui/material";
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
+import { Box, Button, ButtonGroup } from "@mui/material";
 import {
   format,
   startOfToday,
@@ -23,7 +24,6 @@ const TracingControls = ({
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
   const customDatePickerAnc = useRef(null);
-  const theme = useTheme();
 
   const handleDataOptionChange = (newOption) => {
     let filter = null;
@@ -99,7 +99,7 @@ const TracingControls = ({
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected) {
-      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter.dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter.dateFilter), "dd/MM/yyyy")}`;
     }
 
     return option;
@@ -145,15 +145,14 @@ const TracingControls = ({
 
               return (
                 <Button
+                  size="small"
                   color={selected ? "primary" : "inherit"}
                   sx={{
                     flex: isCustomSelected ? "0 1 auto" : "1 0 auto", // Adjust flex behavior
                     backgroundColor: selected ? "action.hover" : undefined,
-                    fontWeight: selected ? 600 : 400,
 
                     borderColor: "divider",
-                    borderWidth: "1px",
-                    px: 1.5, // Slightly more padding
+                    borderWidth: "1px", // Slightly more padding
                     minWidth: 0,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
@@ -165,8 +164,6 @@ const TracingControls = ({
                       transition:
                         "background-color 0.2s ease, font-weight 0.2s ease, color 0.2s ease, border-color 0.2s ease",
                     },
-                    height: "28px",
-                    borderRadius: theme.spacing(0.5),
                   }}
                   ref={(ref) => {
                     if (isCustom) {
@@ -182,7 +179,11 @@ const TracingControls = ({
                   key={option.title}
                   startIcon={
                     isCustomSelected ? (
-                      <Iconify icon="uil:calender" height={20} width={20} />
+                      <Iconify
+                        icon="solar:calendar-linear"
+                        height={20}
+                        width={20}
+                      />
                     ) : null
                   }
                 >
@@ -196,6 +197,7 @@ const TracingControls = ({
           open={isDatePickerOpen}
           onClose={() => setIsDatePickerOpen(false)}
           anchorEl={customDatePickerAnc?.current}
+          value={dateFilter?.dateFilter}
           setDateFilter={(range) =>
             setDateFilter((prev) => ({
               ...prev,
