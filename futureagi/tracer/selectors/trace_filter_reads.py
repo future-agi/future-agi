@@ -2848,14 +2848,16 @@ def read_bounded_filter_page(
                 # Once per request, before the first batch: every batch binds
                 # the resolved set instead of looking its roots up again.
                 prepare_trace_name_roots(
-                    lambda root_query, root_params: execute(
-                        kind="trace_name_roots",
-                        query=root_query,
-                        params=root_params,
-                        active_start=active_start,
-                        active_end=active_end,
-                        result_limit=TRACE_NAME_ROOT_SET_MAX_ROOTS + 1,
-                    ).data
+                    lambda root_query, root_params: (
+                        execute(
+                            kind="trace_name_roots",
+                            query=root_query,
+                            params=root_params,
+                            active_start=active_start,
+                            active_end=active_end,
+                            result_limit=TRACE_NAME_ROOT_SET_MAX_ROOTS + 1,
+                        ).data
+                    )
                 )
             if not identity_batch:
                 match_result = None

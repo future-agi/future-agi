@@ -49,6 +49,13 @@ UNKNOWN = "An unknown error occurred."
             "Too many values to browse exactly. Enter a more specific search.",
         ),
         (
+            ApiErrorCode.TRACE_NAME_FILTER_TOO_BROAD,
+            "trace_name_filter_too_broad",
+            "TRACE_NAME_FILTER_TOO_BROAD",
+            "This Trace Name filter matches more than 2,048 traces in the selected "
+            "time range. Narrow the time range or the trace name and retry.",
+        ),
+        (
             ApiErrorCode.API_KEY_EXPIRED,
             "api_key_expired",
             "API_KEY_EXPIRED",

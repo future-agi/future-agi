@@ -20,7 +20,11 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
-from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
+from tracer.services.clickhouse.trace_name_sql import (
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
+    scope_trace_name_roots,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
@@ -979,7 +983,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return self._scope_walk_trace_name_roots(query), params
+        return self._scope_walk_trace_name_roots(query, params)
 
     def build_matching_activity_instant_query(
         self,
@@ -1038,7 +1042,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return self._scope_walk_trace_name_roots(query), params
+        return self._scope_walk_trace_name_roots(query, params)
 
     def build_matching_activity_existence_query(
         self,
@@ -1073,7 +1077,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT 1
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return self._scope_walk_trace_name_roots(query), params
+        return self._scope_walk_trace_name_roots(query, params)
 
     def build_matching_activity_presence_query(
         self, *, range_start: Any, range_end: Any
@@ -1199,23 +1203,43 @@ class UserListQueryBuilder(BaseQueryBuilder):
             )
         return {**witness.params, **range_params, "_witness_sql": witness.sql}
 
-    def _scope_walk_trace_name_roots(self, query: str) -> str:
-        """Bound a walk statement's trace_name root lookups by its own range.
+    # The walk's trace-name roots, resolved once per request over its frozen
+    # window (``users_matching_walk._resolve_walk_trace_name_roots``) and bound
+    # into each statement in place of its root lookup.
+    trace_name_root_sets: TraceNameRootSets | None = None
 
-        A trace_name leaf resolves a span through its trace's live root. The
-        walk's statements are bounded by their slice or probe range, never by
-        the request window, so the root lookup returns only the roots of the
-        traces with a span in that range. That narrows what it returns
+    def _bind_trace_name_root_sets(
+        self, query: str, params: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        if not self.trace_name_root_sets:
+            return query, params
+        query, root_params = bind_trace_name_root_sets(query, self.trace_name_root_sets)
+        return query, {**params, **root_params}
+
+    def _scope_walk_trace_name_roots(
+        self, query: str, params: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Bind or bound a walk statement's trace_name root lookups.
+
+        A trace_name leaf resolves a span through its trace's live root. When
+        the walk resolved its roots once (``trace_name_root_sets``), each
+        statement binds that set and reads no roots of its own. Otherwise the
+        lookup returns only the roots of the traces with a span in the
+        statement's slice or probe range; that narrows what it returns
         (memory), not what it reads: under FINAL with
         use_skip_indexes_if_final=0 the trace_id bloom index prunes nothing,
-        so each statement still reads the request window's root hours.
+        so such a statement still reads the request window's root hours.
         """
 
-        return scope_trace_name_roots(
-            query,
-            # A code-owned predicate over bound parameters.
-            "trace_id IN (SELECT trace_id FROM spans "  # noqa: S608
-            f"PREWHERE {self._matching_activity_range_predicate()})",
+        query, params = self._bind_trace_name_root_sets(query, params)
+        return (
+            scope_trace_name_roots(
+                query,
+                # A code-owned predicate over bound parameters.
+                "trace_id IN (SELECT trace_id FROM spans "  # noqa: S608
+                f"PREWHERE {self._matching_activity_range_predicate()})",
+            ),
+            params,
         )
 
     def _matching_activity_range_predicate(self) -> str:
@@ -2311,8 +2335,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
         ) AS native_span_flags
         GROUP BY end_user_id
         """
-        # A trace_name leaf looks up the live roots of these users' own
-        # candidate traces only, not of every trace in the window.
+        # A trace_name leaf binds the walk's roots when it resolved them once;
+        # otherwise it looks up the live roots of these users' own candidate
+        # traces only, not of every trace in the window.
+        query, params = self._bind_trace_name_root_sets(query, params)
         query = scope_trace_name_roots(
             query,
             "trace_id IN (SELECT trace_id FROM latest_candidate_spans)",

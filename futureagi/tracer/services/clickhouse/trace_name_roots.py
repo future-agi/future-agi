@@ -25,7 +25,6 @@ the start of the request instead of one per statement.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -36,12 +35,26 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 from tracer.services.clickhouse.trace_name_sql import (
     TRACE_NAME_ROOT_SET_MAX_BYTES,
     TRACE_NAME_ROOT_SET_MAX_ROOTS,
+    TraceNameRootSet,
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
+    tagged_trace_name_root_lookups,
+    trace_name_root_set_params,
 )
 
-# One resolved leaf: ((project_id, (trace_id, ...)), ...), grouped by project
-# and sorted, so a statement binds each project's trace ids once.
-TraceNameRootSet = tuple[tuple[str, tuple[str, ...]], ...]
-TraceNameRootSets = Mapping[str, TraceNameRootSet]
+__all__ = [
+    "TRACE_NAME_FILTER_TOO_BROAD_CODE",
+    "TRACE_NAME_FILTER_TOO_BROAD_MESSAGE",
+    "TraceNameFilterTooBroad",
+    "TraceNameRootSet",
+    "TraceNameRootSets",
+    "bind_trace_name_root_sets",
+    "has_trace_name_leaf",
+    "resolve_trace_name_root_sets",
+    "tagged_trace_name_root_lookups",
+    "trace_name_root_set_params",
+]
+
 
 TRACE_NAME_FILTER_TOO_BROAD_CODE = "trace_name_filter_too_broad"
 TRACE_NAME_FILTER_TOO_BROAD_MESSAGE = (
@@ -50,11 +63,6 @@ TRACE_NAME_FILTER_TOO_BROAD_MESSAGE = (
     "name and retry."
 )
 
-# ``(project_id, trace_id) IN (SELECT ... /* trace-name roots <key> */)``, as
-# ``ClickHouseFilterBuilder`` emits it for a span-mode trace_name leaf: the tag
-# closes the subquery.
-_LOOKUP_OPENING = "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans FINAL "
-_LOOKUP_TAG = re.compile(r"/\* trace-name roots ([0-9a-f]{16}) \*/\Z")
 _PER_PROJECT_OVERHEAD_BYTES = 64
 
 
@@ -70,106 +78,6 @@ class TraceNameFilterTooBroad(UnsupportedFilterShapeError):
 
     def __init__(self, message: str = TRACE_NAME_FILTER_TOO_BROAD_MESSAGE) -> None:
         super().__init__(message)
-
-
-def _closing_paren(sql: str, open_index: int) -> int:
-    """The index of the ``)`` closing the ``(`` at ``open_index``.
-
-    Quoted text is skipped. The lookup is compiled with bound parameters, so
-    it carries no user text, but a placeholder ``%(name)s`` and SQL string
-    literals such as ``''`` must not miscount.
-    """
-
-    depth = 0
-    quote = ""
-    index = open_index
-    length = len(sql)
-    while index < length:
-        char = sql[index]
-        if quote:
-            if char == "\\":
-                index += 2
-                continue
-            if char == quote:
-                quote = ""
-        elif char in "'\"`":
-            quote = char
-        elif char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return index
-        index += 1
-    raise ValueError("unbalanced trace-name root lookup")
-
-
-def tagged_trace_name_root_lookups(sql: str) -> list[tuple[str, int, int, str]]:
-    """Every tagged root lookup in ``sql``: (key, start, end, subquery).
-
-    ``sql[start:end]`` is the whole ``(project_id, trace_id) IN (...)`` term
-    and ``subquery`` the SELECT inside its parentheses. An untagged lookup
-    (no leaf key) is not returned.
-    """
-
-    lookups = []
-    start = sql.find(_LOOKUP_OPENING)
-    while start != -1:
-        open_index = start + len("(project_id, trace_id) IN ")
-        close_index = _closing_paren(sql, open_index)
-        subquery = sql[open_index + 1 : close_index]
-        tag = _LOOKUP_TAG.search(subquery.rstrip())
-        if tag is not None:
-            lookups.append((tag.group(1), start, close_index + 1, subquery))
-        start = sql.find(_LOOKUP_OPENING, close_index)
-    return lookups
-
-
-def _root_set_param(key: str, index: int, part: str) -> str:
-    return f"trace_name_roots_{key}_{index}_{part}"
-
-
-def _root_set_predicate(key: str, roots: TraceNameRootSet) -> str:
-    if not roots:
-        # No matching root: the semi-join matched nothing, and so does this.
-        return "(0 = 1)"
-    branches = [
-        f"(project_id = %({_root_set_param(key, index, 'project')})s "
-        f"AND trace_id IN %({_root_set_param(key, index, 'traces')})s)"
-        for index in range(len(roots))
-    ]
-    return "(" + " OR ".join(branches) + ")"
-
-
-def trace_name_root_set_params(key: str, roots: TraceNameRootSet) -> dict[str, Any]:
-    params: dict[str, Any] = {}
-    for index, (project_id, trace_ids) in enumerate(roots):
-        params[_root_set_param(key, index, "project")] = project_id
-        params[_root_set_param(key, index, "traces")] = tuple(trace_ids)
-    return params
-
-
-def bind_trace_name_root_sets(
-    sql: str, root_sets: TraceNameRootSets | None
-) -> tuple[str, dict[str, Any]]:
-    """Replace each tagged root lookup in ``sql`` with its resolved set.
-
-    Returns the statement and the parameters its bound sets add. A lookup
-    whose leaf was not resolved is left as it is (still correct, just read
-    per statement), and ``None`` binds nothing.
-    """
-
-    if not root_sets:
-        return sql, {}
-    params: dict[str, Any] = {}
-    # Right to left, so earlier offsets stay valid.
-    for key, start, end, _subquery in reversed(tagged_trace_name_root_lookups(sql)):
-        roots = root_sets.get(key)
-        if roots is None:
-            continue
-        sql = sql[:start] + _root_set_predicate(key, roots) + sql[end:]
-        params.update(trace_name_root_set_params(key, roots))
-    return sql, params
 
 
 def _trace_name_leaves(filters: Iterable[dict[str, Any]] | None) -> list[dict]:

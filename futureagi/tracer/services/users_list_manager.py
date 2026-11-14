@@ -39,6 +39,7 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_size_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_roots import TraceNameRootSets
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
 )
@@ -244,6 +245,17 @@ def _candidate_statement_timeout(deadline: ReadDeadline | None) -> dict[str, Any
     return _statement_timeout(
         replace(deadline, enforce_on_server=True) if deadline is not None else None,
         USER_LIST_QUERY_TIMEOUT_MS,
+    )
+
+
+def _utc_window(window: Any) -> tuple[datetime | None, ...]:
+    """A window's bounds as aware UTC datetimes, so naive and aware compare."""
+
+    return tuple(
+        (value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC))
+        if isinstance(value, datetime)
+        else value
+        for value in window
     )
 
 
@@ -628,6 +640,11 @@ class UsersListManager:
         self._native_matching_activity_by_user: dict[str, dict[int, datetime]] = {}
         # Public cost rounding/JSON dates are presentation, never filter truth.
         self._native_filter_values_by_user: dict[str, dict[str, Any]] = {}
+        # The matching-activity walk's trace-name roots, resolved once per
+        # request over its frozen window (``use_trace_name_root_sets``): every
+        # certification over that same window binds them.
+        self._trace_name_root_sets: TraceNameRootSets | None = None
+        self._trace_name_root_sets_window: tuple[datetime, datetime] | None = None
         # Per page user, each native leaf's decision keyed by filter index.
         self._native_dimension_matches_by_user: dict[str, dict[int, bool]] = {}
         self._unqualified_attribute_fallback_used = False
@@ -1665,7 +1682,7 @@ class UsersListManager:
             for item in frozen_filters
             if UserListQueryBuilderV2._is_date_filter(item)
         ]
-        return UserListQueryBuilderV2(
+        builder = UserListQueryBuilderV2(
             organization_id=self.organization_id,
             project_ids=self.scoped_project_ids,
             search=self.search,
@@ -1678,6 +1695,19 @@ class UsersListManager:
             include_num_sessions=self.approximate_num_sessions,
             empty_scope=self.empty_scope,
         )
+        if self._trace_name_root_sets and self._trace_name_root_sets_window == tuple(
+            _utc_window(builder.parse_time_range(date_filters))
+        ):
+            builder.trace_name_root_sets = self._trace_name_root_sets
+        return builder
+
+    def use_trace_name_root_sets(
+        self, root_sets: TraceNameRootSets, *, window: tuple[datetime, datetime]
+    ) -> None:
+        """Bind ``root_sets`` into every certification over ``window``."""
+
+        self._trace_name_root_sets = root_sets
+        self._trace_name_root_sets_window = tuple(_utc_window(window))
 
     def _read_exact_candidate_rows(
         self,

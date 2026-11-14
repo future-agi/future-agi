@@ -489,3 +489,55 @@ def test_a_family_less_is_null_walks_on_its_absence_flag(ch_client, survivor_of_
     assert slices and all("NOT ifNull(" in s for s in slices)
     natives = [s for s in statements if "native_span_flags" in s]
     assert natives and all("_absent) AS native_leaf_1_newest" in s for s in natives)
+
+
+ROOT_LOOKUP = "FROM spans FINAL PREWHERE"
+ROOT_RESOLUTION = "SELECT DISTINCT project_id, trace_id FROM ("
+
+
+def _walk_pages(ch_client, items, *, resolve_once):
+    """Every page of a walk, each page's statements kept apart (one request each)."""
+
+    pages = []
+    cursor = None
+    resolve = (
+        walk._resolve_walk_trace_name_roots if resolve_once else (lambda state: None)
+    )
+    with (
+        patch.object(walk, "_resolve_walk_trace_name_roots", resolve),
+        patch.object(walk, "USER_LIST_WALK_SLICE_USER_LIMIT", 2),
+        patch.object(walk, "USER_LIST_WALK_MAX_STATEMENTS", 64),
+        patch.object(walk, "USER_LIST_PAGE_WALL_MS", 120_000),
+        patch.object(walk, "USER_LIST_WALK_FINISH_WALL_MS", 240_000),
+    ):
+        while True:
+            read, executor, _manager = _walk_page(
+                ch_client, items, page_size=2, cursor=cursor
+            )
+            assert read.payload["query_status"] == "complete"
+            pages.append((read.payload["table"], executor.statements))
+            if not read.has_more:
+                return pages
+            cursor = _cursor(read)
+            assert len(pages) < 40
+
+
+def test_a_trace_name_walk_resolves_its_roots_once_per_page(ch_client, survivor_of_e):
+    item = _native("trace_name", "equals", "checkout")
+    pages = _walk_pages(ch_client, [item], resolve_once=True)
+    old_pages = _walk_pages(ch_client, [item], resolve_once=False)
+
+    def names(walked):
+        return [row["user_id"] for table, _statements in walked for row in table]
+
+    assert names(pages) == names(old_pages) == _ordered(survivor_of_e, GPT_MEMBERS)
+    assert len(pages) >= 2
+    for _table, statements in pages:
+        # One resolution per request, before its slices; no other statement
+        # (slice, instant, probe, estimate, certification) reads roots.
+        assert sum(s.lstrip().startswith(ROOT_RESOLUTION) for s in statements) == 1
+        assert sum(ROOT_LOOKUP in s for s in statements) == 1
+        assert len(statements) > 2
+    # Before: every statement with the leaf looked its roots up again.
+    for _table, statements in old_pages:
+        assert sum(ROOT_LOOKUP in s for s in statements) > 1

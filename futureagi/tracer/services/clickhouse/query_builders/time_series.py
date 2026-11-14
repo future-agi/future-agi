@@ -34,7 +34,11 @@ from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
     hourly_aggregate_state_source,
 )
 from tracer.services.clickhouse.query_builders.trace_usage import usage_coverage_sql
-from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
+from tracer.services.clickhouse.trace_name_sql import (
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
+    scope_trace_name_roots,
+)
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
@@ -165,6 +169,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # Denormalized raw table. Both the filtered scan and the unfiltered
     # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
+
+    # A span graph's trace-name roots, resolved once per request over the
+    # request window (``exact_graph_reads._read_exact_filtered_span_graph``)
+    # and bound into every partition statement.
+    trace_name_root_sets: TraceNameRootSets | None = None
 
     def __init__(
         self,
@@ -1098,7 +1107,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
-        # A trace_name leaf looks up live roots. One graph runs one statement
+        # A trace_name leaf binds the roots the graph resolved once for the
+        # request (``trace_name_root_sets``), so no partition reads them.
+        if self.trace_name_root_sets:
+            query, root_params = bind_trace_name_root_sets(
+                query, self.trace_name_root_sets
+            )
+            self.params.update(root_params)
+        # Otherwise it looks up live roots. One graph runs one statement
         # per partition, so restrict each lookup to the traces with a span in
         # this partition's storage hours. That narrows the roots the lookup
         # returns (memory), not what it reads: under FINAL with
