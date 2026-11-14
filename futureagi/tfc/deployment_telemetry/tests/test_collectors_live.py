@@ -157,6 +157,7 @@ def _seed_spans(insert, window_start, window_end):
 def _seed_evaluations(organization, workspace, user, window_start, window_end):
     """N EvalLoggers, M model_hub Evaluations and K evaluation Cells in the
     window, plus one of each outside it and a non-evaluation cell inside it."""
+    from model_hub.models.ai_model import AIModel
     from model_hub.models.choices import DataTypeChoices, OwnerChoices, SourceChoices
     from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
     from model_hub.models.evals_metric import EvalTemplate
@@ -177,7 +178,7 @@ def _seed_evaluations(organization, workspace, user, window_start, window_end):
         organization=organization,
         workspace=workspace,
         trace_type="observe",
-        model_type=Project._meta.get_field("model_type").choices[0][0],
+        model_type=AIModel.ModelTypes.NUMERIC,
     )
     session = TraceSession.no_workspace_objects.create(project=project)
     loggers = [
@@ -245,7 +246,9 @@ def _seed_evaluations(organization, workspace, user, window_start, window_end):
         data_type=DataTypeChoices.TEXT.value,
         source=SourceChoices.OTHERS.value,
     )
-    eval_cells, outside_cells, other_cells = [], [], []
+    eval_cells: list[uuid.UUID] = []
+    outside_cells: list[uuid.UUID] = []
+    other_cells: list[uuid.UUID] = []
     for order in range(DATASET_EVAL_RUNS + 1):
         row = Row.no_workspace_objects.create(dataset=dataset, order=order)
         cell = Cell.no_workspace_objects.create(
@@ -301,11 +304,13 @@ def test_heartbeat_counts_activity_in_the_window(
     ]
 
     # The heartbeat carries them as collected.
-    payload = build_heartbeat_payload(
-        instance_id=str(uuid.uuid4()),
-        window_start=window_start,
-        window_end=window_end,
-        counts=counts,
+    payload: dict[str, object] = dict(
+        build_heartbeat_payload(
+            instance_id=uuid.uuid4(),
+            window_start=window_start,
+            window_end=window_end,
+            counts=counts,
+        )
     )
     assert payload["traces_count"] == 2
     assert payload["spans_count"] == 3
