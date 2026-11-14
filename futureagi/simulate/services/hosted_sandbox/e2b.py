@@ -76,6 +76,10 @@ class E2BFilesystem:
 
 class E2BProcess:
     _COMMAND_DIR = "/run/futureagi/provider-commands"
+    # An ALK image whose harness can run each customer process as its own OS user has this.
+    _ISOLATION_MARKER = "/opt/alk/process-isolation"
+    # What that harness holds: start a declared user, then stop and remove what it owns.
+    _ISOLATION_CAPABILITIES = "+chown,+dac_override,+fowner,+kill,+setgid,+setuid"
 
     def __init__(self, sandbox: Any, os_user: str) -> None:
         self._sandbox = sandbox
@@ -136,20 +140,45 @@ class E2BProcess:
         command_token = uuid.uuid4().hex
         log_path = f"{self._COMMAND_DIR}/{command_token}.log"
         exit_path = f"{self._COMMAND_DIR}/{command_token}.exit"
+        isolate = (
+            request.isolate_processes
+            and self.exec(f"test -f {self._ISOLATION_MARKER}").exit_code == 0
+        )
+        command = request.command
+        if isolate:
+            # Default-deny before any customer code starts: no other user can read what /work
+            # already holds, and what the harness writes stays its own.
+            command = (
+                f"umask 077; chmod -R go-rwx /work && chmod 0711 /work && {command}"
+            )
         wrapped = (
             f"mkdir -p {shlex.quote(self._COMMAND_DIR)}; set +e; "
-            f"( {request.command} ) > {shlex.quote(log_path)} 2>&1; "
+            f"( {command} ) > {shlex.quote(log_path)} 2>&1; "
             "_futureagi_code=$?; "
             f"printf '%s' \"$_futureagi_code\" > {shlex.quote(exit_path)}; "
             'exit "$_futureagi_code"'
         )
+        user = self._os_user
+        if isolate:
+            # Root only to grant the capabilities: everything, the log and exit files included,
+            # runs as the sandbox user. The request is set here and nowhere else, so the harness
+            # asks for isolation exactly when it was granted.
+            user = "root"
+            wrapped = (
+                f"exec setpriv --reuid={self._os_user} --regid={self._os_user} "
+                f"--init-groups --inh-caps={self._ISOLATION_CAPABILITIES} "
+                f"--ambient-caps={self._ISOLATION_CAPABILITIES} -- "
+                f"env HOME=/home/{self._os_user} USER={self._os_user} "
+                f"LOGNAME={self._os_user} ALK_PROCESS_ISOLATION=required "
+                f"sh -c {shlex.quote(wrapped)}"
+            )
         handle = _call(
             self._sandbox.commands.run,
             wrapped,
             background=True,
             timeout=0,
             envs=request.env,
-            user=self._os_user,
+            user=user,
         )
         return SandboxCommand(cmd_id=f"{handle.pid}:{command_token}", status="running")
 

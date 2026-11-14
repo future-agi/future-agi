@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from types import SimpleNamespace
 
@@ -359,6 +360,86 @@ def test_e2b_process_preserves_exit_code_and_reconnectable_command(monkeypatch):
     submitted_command, submitted_options = raw.commands.calls[-1]
     assert secret not in submitted_command
     assert submitted_options["envs"] == {"PROVIDER_TOKEN": secret}
+
+
+class _E2BIsolationCommands(_E2BCommands):
+    """An image that has, or lacks, the per-user isolation marker."""
+
+    def __init__(self, marker: bool):
+        super().__init__()
+        self.marker = marker
+
+    def run(self, command, **kwargs):
+        if "test -f /opt/alk/process-isolation" in command:
+            self.calls.append((command, kwargs))
+            found = re.search(r"(__FUTUREAGI_EXIT_[0-9a-f]+__)", command).group(1)
+            return SimpleNamespace(
+                stdout=f"{found}{0 if self.marker else 1}\n", stderr=""
+            )
+        return super().run(command, **kwargs)
+
+
+def _session(process, *, isolate):
+    process.execute_session_command(
+        "alk-harness",
+        SandboxCommandRequest(
+            command="python -m fi.alk.harness.hosted_entrypoint /work/job.json",
+            env={"PATH": "/usr/bin"},
+            run_async=True,
+            isolate_processes=isolate,
+        ),
+    )
+    return process._sandbox.commands.calls[-1]
+
+
+def test_e2b_isolation_runs_the_harness_as_itself_with_the_grant(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, options = _session(E2BProcess(raw, "svc-control"), isolate=True)
+
+    assert options["user"] == "root"  # only to grant the capabilities
+    assert command.startswith(
+        "exec setpriv --reuid=svc-control --regid=svc-control --init-groups "
+        "--inh-caps=+chown,+dac_override,+fowner,+kill,+setgid,+setuid "
+        "--ambient-caps=+chown,+dac_override,+fowner,+kill,+setgid,+setuid -- "
+        "env HOME=/home/svc-control USER=svc-control LOGNAME=svc-control "
+        "ALK_PROCESS_ISOLATION=required sh -c "
+    )
+    # The log and exit files are written inside the drop, as the sandbox user.
+    inner = shlex.split(command)[-1]
+    assert inner.startswith(
+        "mkdir -p /run/futureagi/provider-commands; set +e; ( umask 077; "
+    )
+    assert "chmod -R go-rwx /work && chmod 0711 /work && python -m fi.alk" in inner
+    assert options["envs"] == {"PATH": "/usr/bin"}
+
+
+def test_e2b_without_the_image_marker_runs_exactly_today_s_command(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=False)
+    process = E2BProcess(raw, "svc-control")
+
+    asked, asked_options = _session(process, isolate=True)
+    plain, plain_options = _session(process, isolate=False)
+
+    pattern = re.compile(r"provider-commands/[0-9a-f]+\.")
+    assert pattern.sub("X.", asked) == pattern.sub("X.", plain)
+    assert asked_options["user"] == plain_options["user"] == "svc-control"
+    assert "ALK_PROCESS_ISOLATION" not in asked and "setpriv" not in asked
+
+
+def test_e2b_a_request_without_isolation_never_checks_the_image(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, options = _session(E2BProcess(raw, "svc-control"), isolate=False)
+
+    assert options["user"] == "svc-control" and "setpriv" not in command
+    assert not any("process-isolation" in sent for sent, _ in raw.commands.calls)
 
 
 def test_e2b_process_fails_when_command_disappears_without_exit_marker(monkeypatch):

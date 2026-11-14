@@ -1903,6 +1903,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # The entrypoint, and only the entrypoint, asks for each customer process its own user.
+    assert client.sandbox.process.session_request.isolate_processes is True
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
@@ -3297,6 +3299,13 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
     assert client.deleted is False
+    # What the builder writes after the lock-down stays the harness's own: the workspace is
+    # closed before chat starts, and chat writes with a private umask.
+    prepare = next(
+        call for call in client.sandbox.process.exec_calls if "/work/authoring" in call
+    )
+    assert "chmod -R go-rwx /work/authoring" in prepare
+    assert client.sandbox.process.session_request.command.startswith("umask 077 && ")
 
 
 @pytest.mark.django_db
