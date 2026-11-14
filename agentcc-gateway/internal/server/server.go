@@ -184,13 +184,22 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	// Create health monitor.
+	// Share the router's monitor so adaptive weights are driven by actual
+	// request outcomes. A separate monitor would stay empty forever.
 	var healthMonitor *routing.HealthMonitor
 	var latencyTracker *routing.LatencyTracker
-	if registry.Router() != nil {
-		latencyTracker = registry.Router().GetLatencyTracker()
+	if router := registry.Router(); router != nil {
+		latencyTracker = router.GetLatencyTracker()
+		healthMonitor = router.GetHealthMonitor()
 	}
-	healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
+		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	} else {
+		healthMonitor.SetCircuitBreakerRegistry(cbReg)
+	}
 
 	// Create traffic mirror.
 	var mirror *routing.Mirror
@@ -239,6 +248,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -264,6 +274,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Set up async inference support.
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
+	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
+	handlers.resultIPACL = cfg.IPACL
 
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
@@ -855,7 +867,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -863,8 +875,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
@@ -1144,6 +1163,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
+		return
+	}
 	// Limit batch request body to 10MB to prevent OOM.
 	const maxBatchBodySize = 10 << 20
 	limited := io.LimitReader(r.Body, maxBatchBodySize+1)
@@ -1185,6 +1209,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1239,6 +1268,11 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")

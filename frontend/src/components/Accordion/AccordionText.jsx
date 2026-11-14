@@ -118,7 +118,7 @@ export default function AccordionText({
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}
@@ -160,7 +160,7 @@ export default function AccordionText({
               <Typography
                 color="text.primary"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: theme.typography.fontWeightRegular,
                 }}
               >

@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import { statusColors } from "src/utils/runStatus";
 import SvgColor from "src/components/svg-color";

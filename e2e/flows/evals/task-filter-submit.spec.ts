@@ -36,9 +36,9 @@ test('EVAL-E2E-005: browser task submit retains a custom attribute predicate and
     id: 'EVAL-E2E-005', area: 'evals',
     userGoal: 'Create an evaluation task from the browser for exactly the selected custom attribute value',
     steps: ['seed two differently attributed spans in an isolated project',
-      'select the project, custom property and value on the task create page',
+      'select the project, All sampling preset, custom property and value on the task create page',
       'verify the exact matching preview', 'select and configure an echo judge',
-      'click the final Create Task button', 'verify task and result inclusion and exclusion'],
+      'click the final Create task button', 'verify task and result inclusion and exclusion'],
     backendChecks: ['managed mock routing attested before model calls',
       'UI POST and stored task retain the custom predicate',
       'completed task has exactly the matching span in PG and CH, with mock verdict and usage'],
@@ -156,16 +156,17 @@ test('EVAL-E2E-005: browser task submit retains a custom attribute predicate and
         endDate: new Date(Date.now() + 600_000).toISOString() });
       await page.goto(`/dashboard/tasks/create?${window}`);
       await page.getByPlaceholder('Enter task name').fill(taskName);
-      await page.getByPlaceholder('Select Option', { exact: true }).click();
+      await page.getByRole('combobox', { name: /^Project/ }).click();
       const unfilteredResponse = page.waitForResponse(response => response.url().endsWith(LIST_PATH));
-      await page.getByRole('menuitem', { name: projectName, exact: true }).click();
+      await page.getByRole('option', { name: projectName, exact: true }).click();
       // Live Preview requests one row per cursor page. Visit both before filtering.
       const unfilteredPages = await exhaustPreview(await unfilteredResponse);
       expect(unfilteredPages.flatMap(p => p.body.result.table).map(row => row.span_id).sort())
         .toEqual([...seeded.spanIds].sort());
       expect(unfilteredPages.at(-1)!.body.result.metadata.total_rows_exact).toBe(2);
       await json('unfiltered-preview-pages.json', unfilteredPages);
-      await page.getByRole('button', { name: '100%', exact: true }).click();
+      // SamplingRateField exposes the 100% preset as "All"; the create page defaults to 50%.
+      await page.getByRole('button', { name: 'All', exact: true }).click();
       await page.getByRole('button', { name: 'Add filter', exact: true }).click();
       await snapshot('filter-open');
       await page.getByText('Property', { exact: true }).click();
@@ -220,7 +221,7 @@ test('EVAL-E2E-005: browser task submit retains a custom attribute predicate and
       await snapshot('before-final-create');
       const createdResponse = page.waitForResponse(response => response.url().endsWith(TASK_PATH)
         && response.request().method() === 'POST');
-      await page.getByRole('button', { name: 'Create Task', exact: true }).click();
+      await page.getByRole('button', { name: 'Create task', exact: true }).click();
       const response = await createdResponse;
       const payload = response.request().postDataJSON();
       const body = await response.json();

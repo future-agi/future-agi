@@ -58,6 +58,7 @@ from tfc.utils.storage_client import (
     get_storage_client,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -169,7 +170,11 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
                         UsageEvent(
                             org_id=str(org_id),
@@ -1034,7 +1039,9 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
                     organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    sdk_source=True
+                    if source == DatasetSourceChoices.SDK.value
+                    else False,
                     workspace=request.workspace,
                 )
                 refusal = dataset_add_refusal(

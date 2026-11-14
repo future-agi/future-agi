@@ -38,6 +38,7 @@ import {
   supportsConcurrency,
 } from "./constants";
 import { useAuthContext } from "src/auth/hooks";
+import { agentDefinitionEventFields } from "./agentDefinitionEventFields";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const CreateNewAgentDefinitionView = () => {
@@ -221,10 +222,8 @@ const CreateNewAgentDefinitionView = () => {
         delete payload.livekit_max_concurrency;
       }
 
-      // Strip secrets and internal fields before analytics/submit
-      const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.createAgentDefClicked, {
-        [PropertyName.formFields]: safePayload,
+        [PropertyName.formFields]: agentDefinitionEventFields(payload),
       });
 
       if (payload?.authentication_method !== "api_key") {

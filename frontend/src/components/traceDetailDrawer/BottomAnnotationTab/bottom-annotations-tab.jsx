@@ -1,5 +1,6 @@
 import { Box, Button, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useMemo, useRef } from "react";
 import Iconify from "src/components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";

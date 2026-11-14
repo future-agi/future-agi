@@ -57,7 +57,7 @@ const DataMergeSelection = ({
         }}
       >
         <Box sx={{ display: "flex", gap: 1, flexDirection: "column" }}>
-          <Typography fontWeight={600} fontSize="13px">
+          <Typography fontWeight={600} fontSize="12px">
             Enter environment and version name
           </Typography>
           <Box sx={{ display: "flex", gap: 1 }}>
@@ -112,7 +112,7 @@ const DataMergeSelection = ({
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 1, flexDirection: "column" }}>
-          <Typography fontWeight={600} fontSize="13px">
+          <Typography fontWeight={600} fontSize="12px">
             Choose from existing datasets
           </Typography>
           <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>

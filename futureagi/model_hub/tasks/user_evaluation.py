@@ -108,6 +108,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 source=SourceChoices.EXPERIMENT_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
             ),
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
@@ -121,6 +123,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -920,7 +924,7 @@ def trigger_error_localization_for_span(
         "eval_logger_id": str(eval_logger.id),
         "span_id": str(observation_span.id),
     }
-    span_context = {
+    span_context: dict[str, Any] = {
         "eval_template": eval_template,
         "eval_logger": eval_logger,
         "observation_span": observation_span,
@@ -998,8 +1002,11 @@ def _resolve_span_localization_workspace(
     project = observation_span.project
     config = eval_logger.custom_eval_config
     config_project = config.project
-    # Task targets need not belong to the config's author project. Legacy
-    # entries without a task still use the config project as their owner.
+    # The owning task's project is the target. Task create and update accept
+    # only configs from the task's own project, but an existing task may still
+    # reference a config from another project; that pairing is localized only
+    # within the same organization and workspace (checked below). Legacy
+    # entries without a task use the config project as their owner.
     target_project_id = config.project_id
     if eval_logger.eval_task_id:
         target_project_id = (
@@ -1044,13 +1051,20 @@ def _resolve_span_localization_workspace(
         and target_workspace.is_default
         and target_workspace.is_active
     )
-    if (
-        target_workspace.organization_id != project.organization_id
-        or not config_workspace_matches
-    ):
+    if target_workspace.organization_id != project.organization_id:
         logger.warning(
             "error_localizer_workspace_mismatch",
             eval_logger_id=str(eval_logger.id),
+            reason="target_workspace_organization",
+        )
+        return None
+    if not config_workspace_matches:
+        # A config whose project lies in another workspace is refused; one in
+        # another organization was refused by the span-context check above.
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="cross_workspace_config",
         )
         return None
     return target_workspace
@@ -1499,6 +1513,7 @@ def process_single_error_localization(task_id):
                 task_id=str(task.id),
                 source_id=str(task.source_id),
                 failure_code=failure_code,
+                error_type=type(e).__name__,
             )
             task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:
@@ -1635,7 +1650,9 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
             try:
-                eval_logger = EvalLogger.objects.get(id=task.source_id)
+                # Primary: the result may have been written or re-scored a
+                # moment ago, and this merge saves its metadata back whole.
+                eval_logger = EvalLogger.objects.using("default").get(id=task.source_id)
                 output_metadata = eval_logger.output_metadata or {}
                 output_metadata.update(
                     {
@@ -1647,7 +1664,12 @@ def process_single_error_localization(task_id):
                 )
 
                 eval_logger.output_metadata = output_metadata
-                eval_logger.save(update_fields=["output_metadata"])
+                # Primary: save() validates the result's config (full_clean),
+                # which a lagging replica may not have when the eval is new.
+                from tfc.routers import force_primary
+
+                with force_primary():
+                    eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
                 if metadata.get("log_id", None) and APICallLog is not None:

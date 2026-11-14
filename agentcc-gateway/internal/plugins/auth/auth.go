@@ -31,6 +31,10 @@ func New(keyStore *authpkg.KeyStore, enabled bool) *Plugin {
 func (p *Plugin) Name() string  { return "auth" }
 func (p *Plugin) Priority() int { return 20 } // After IP ACL (10), before RBAC/budget/guardrails.
 
+// IsAccessGate marks the key checks, allowed_ips among them, as an access
+// check (pipeline.AccessGate).
+func (p *Plugin) IsAccessGate() bool { return true }
+
 // ProcessRequest validates the API key from the Authorization header.
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.enabled {

@@ -292,10 +292,11 @@ class AgentLoop:
             )
 
         # 3. Context compaction — multi-tier: light strip or full LLM summarization
-        self.conversation, history_messages = (
-            await self.context_manager.compact_if_needed(
-                self.conversation, history_messages, self.llm_client
-            )
+        (
+            self.conversation,
+            history_messages,
+        ) = await self.context_manager.compact_if_needed(
+            self.conversation, history_messages, self.llm_client
         )
 
         # 4. Build messages with context management

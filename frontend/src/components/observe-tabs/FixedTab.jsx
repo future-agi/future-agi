@@ -56,7 +56,7 @@ const FixedTab = ({
       )}
       <Typography
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 500,
           fontFamily: "'IBM Plex Sans', sans-serif",
           color: "text.primary",

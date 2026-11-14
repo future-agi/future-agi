@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import Literal, cast
@@ -381,7 +382,7 @@ def current_evidence(
         return {}
     return import_evidence(
         evidence_import.project,
-        cast(SourceKind, evidence_import.source_kind),
+        _observe_kind(evidence_import),
         source_ids,
         shared_by=shared_by,
     )
@@ -1010,8 +1011,13 @@ def _labels(evidence: SourceEvidence) -> dict:
     return _part("present", labels=labels)
 
 
+def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
+    # The model stores the kind as text; its choices are exactly Observe's kinds.
+    return cast(SourceKind, evidence_import.source_kind)
+
+
 def _texts(
-    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
+    cases: list[EvidenceImportCase], evidence: Mapping[str, SourceEvidence | None]
 ) -> list[tuple[EvidenceImportCase, str, int, str, str]]:
     """Every text the bundle carries, as (case, part, index, field, text)."""
     values: list[tuple[EvidenceImportCase, str, int, str, str]] = []

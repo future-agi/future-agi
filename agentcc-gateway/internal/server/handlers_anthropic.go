@@ -72,7 +72,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = model
 	rc.IsStream = isStream
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
@@ -192,6 +192,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
+	canonicalReq.TranslatedFrom = "anthropic"
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
 
@@ -238,7 +239,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	}
 
 	rc.Model = model
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 
 	timeout := h.resolveTimeout(rc, r)
@@ -282,6 +283,12 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
+		return
+	}
+
+	// count_tokens skips the pipeline, but not its access checks.
+	if apiErr := h.engine.CheckAccess(ctx, rc); apiErr != nil {
+		writeAnthropicErrorFromError(w, apiErr)
 		return
 	}
 
@@ -615,7 +622,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -740,7 +747,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
 		for attempt := 0; attempt < 2; attempt++ {
-			rawChunkCh, errCh = translatedStreamChatCompletion(streamCtx, provider, canonicalReq)
+			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
 				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 			}
@@ -749,13 +756,19 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				firstChunk = chunk
 				return nil
 			}
+			// A stream that never started because the deadline passed is a
+			// timeout: answer 504 now rather than retry or report a bare
+			// context error as a 500.
+			if streamCtx.Err() != nil {
+				return deadlineAsTimeout(streamCtx, err)
+			}
 			var apiErr *models.APIError
 			if attempt == 1 || !errors.As(err, &apiErr) || (apiErr.Status != http.StatusBadGateway && apiErr.Status != http.StatusGatewayTimeout) {
 				return err
 			}
 			select {
 			case <-streamCtx.Done():
-				return streamCtx.Err()
+				return deadlineAsTimeout(streamCtx, streamCtx.Err())
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
@@ -944,22 +957,14 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	}
 }
 
-// translatedChatCompletion calls provider with a request translated from
-// another dialect: over the Responses API when the model refuses the request on
-// chat completions, as gpt-5.6 refuses function tools while it reasons.
-func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.ChatCompletionViaResponses(ctx, req)
+// deadlineAsTimeout is err, for a stream that could not start before ctx
+// ended, as the gateway timeout it is when ctx reached its deadline. When the
+// client left instead, nobody is reading, and err is returned as it is.
+func deadlineAsTimeout(ctx context.Context, err error) error {
+	if ctx.Err() == nil || errors.Is(ctx.Err(), context.Canceled) {
+		return err
 	}
-	return provider.ChatCompletion(ctx, req)
-}
-
-// translatedStreamChatCompletion is translatedChatCompletion for a stream.
-func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.StreamChatCompletionViaResponses(ctx, req)
-	}
-	return provider.StreamChatCompletion(ctx, req)
+	return models.ErrGatewayTimeout("request timed out before the stream started")
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.

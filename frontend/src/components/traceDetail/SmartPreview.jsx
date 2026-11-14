@@ -397,7 +397,7 @@ const ToolPreview = ({
           sx={{ color: "status.warning.fg" }}
         />
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: "status.warning.fg" }}
+          sx={{ fontSize: 12, fontWeight: 600, color: "status.warning.fg" }}
         >
           {name || "Tool"}
         </Typography>
@@ -468,7 +468,7 @@ const RetrieverPreview = ({
         <Box>
           <Typography
             data-search-skip="true"
-            sx={{ fontSize: 13, fontWeight: 500, mb: 0.75 }}
+            sx={{ fontSize: 12, fontWeight: 500, mb: 0.75 }}
           >
             Retrieved Documents ({docs.length})
           </Typography>

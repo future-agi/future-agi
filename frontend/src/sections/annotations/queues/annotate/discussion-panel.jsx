@@ -1022,7 +1022,7 @@ function CommentComposer({
                         : option.email
                     }
                     primaryTypographyProps={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: 500,
                       noWrap: true,
                     }}
@@ -1159,8 +1159,6 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
           width: 320,
           maxWidth: "calc(100vw - 24px)",
           borderRadius: 1,
-          border: 1,
-          borderColor: "divider",
           bgcolor: "background.paper",
           overflow: "hidden",
         },

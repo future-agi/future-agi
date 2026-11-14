@@ -35,36 +35,36 @@ class TestValidateAndConvertCellValue:
         "value,cell_type,expected_result,expected_error_substring",
         [
             # Empty / None passthrough
-            ("",   "text", None, None),
-            ("   ","text", None, None),
+            ("", "text", None, None),
+            ("   ", "text", None, None),
             (None, "text", None, None),
             # Text
             ("hello world", "text", "hello world", None),
             ("x" * MAX_CELL_VALUE_LENGTH, "text", "x" * MAX_CELL_VALUE_LENGTH, None),
             ("x" * (MAX_CELL_VALUE_LENGTH + 1), "text", None, "maximum length"),
             # Boolean
-            ("true",  "boolean", "true",  None),
+            ("true", "boolean", "true", None),
             ("false", "boolean", "false", None),
             ("maybe", "boolean", None, "Invalid boolean"),
             # Integer
-            ("42",           "integer", "42", None),
-            ("42.7",         "integer", "42", None),
+            ("42", "integer", "42", None),
+            ("42.7", "integer", "42", None),
             ("not_a_number", "integer", None, "Invalid integer"),
             # Float
             ("3.14", "float", "3.14", None),
-            ("abc",  "float", None, "Invalid float"),
+            ("abc", "float", None, "Invalid float"),
             # Datetime — invalid path only; valid variant kept separate below
             # because the return format is not a byte-for-byte string.
             ("not-a-date", "datetime", None, "Invalid datetime"),
             # Array
-            ("[1, 2, 3]",   "array", "[1, 2, 3]", None),
-            ("not an array","array", None, "not valid JSON array"),
+            ("[1, 2, 3]", "array", "[1, 2, 3]", None),
+            ("not an array", "array", None, "not valid JSON array"),
             # Repair variant kept separate below — asserts a repaired result.
             # JSON invalid path
             ("not json", "json", None, "not valid JSON"),
             # Media types are read-only from the dashboard
-            ("some_url", "image",    None, "Cannot update"),
-            ("some_url", "audio",    None, "Cannot update"),
+            ("some_url", "image", None, "Cannot update"),
+            ("some_url", "audio", None, "Cannot update"),
             ("some_url", "document", None, "Cannot update"),
             # Unknown type falls through
             ("some value", "unknown_type", "some value", None),

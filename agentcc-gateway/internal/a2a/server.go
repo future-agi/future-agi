@@ -30,7 +30,27 @@ type Server struct {
 	done             chan struct{}
 }
 
-type ChatCompletionExecutor func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+// ChatCompletionExecutor runs a chat completion on behalf of the A2A caller.
+type ChatCompletionExecutor func(ctx context.Context, caller Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+
+// Caller is what the chat-completion path needs from the incoming A2A
+// request: its credentials and the address it came from, so the address
+// rules judge the A2A caller rather than the in-process request.
+type Caller struct {
+	Authorization string
+	RemoteAddr    string   // the TCP peer, host:port
+	ForwardedFor  []string // the X-Forwarded-For header lines, as received
+}
+
+// callerOf copies the caller's details out of r, so a returnImmediately worker
+// can use them after the handler returns.
+func callerOf(r *http.Request) Caller {
+	return Caller{
+		Authorization: r.Header.Get("Authorization"),
+		RemoteAddr:    r.RemoteAddr,
+		ForwardedFor:  append([]string(nil), r.Header.Values("X-Forwarded-For")...),
+	}
+}
 
 // syncTaskStore is a thread-safe task store. It keeps its own copy of every
 // task and hands out copies, so a returnImmediately worker filling in its task
@@ -175,7 +195,7 @@ func (s *Server) ListAgents(w http.ResponseWriter, r *http.Request) {
 			Description: a.Description,
 			Skills:      a.Skills,
 			Healthy:     a.Healthy(),
-			Card:        a.Card,
+			Card:        a.Card(),
 		})
 	}
 
@@ -246,12 +266,12 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			s.taskCancels.Store(task.ID, cancel)
 			// The worker gets its own copy; task stays with this handler for the response.
-			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), task.clone(), inputText, params)
+			go s.runMessageSendWithPipeline(ctx, callerOf(r), task.clone(), inputText, params)
 			writeA2AResult(w, msg.ID, task)
 			return
 		}
 
-		s.handleMessageSendWithPipeline(w, msg, r.Header.Get("Authorization"), task, inputText, params)
+		s.handleMessageSendWithPipeline(w, msg, callerOf(r), task, inputText, params)
 		return
 	}
 
@@ -277,14 +297,14 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 // handleMessageSendWithPipeline converts the A2A message to a ChatCompletionRequest,
 // processes it through the full pipeline (pre-plugins → provider → post-plugins),
 // and converts the response back to an A2A task.
-func (s *Server) handleMessageSendWithPipeline(w http.ResponseWriter, msg *mcp.Message, authHeader string, task *Task, inputText string, params MessageSendParams) {
+func (s *Server) handleMessageSendWithPipeline(w http.ResponseWriter, msg *mcp.Message, caller Caller, task *Task, inputText string, params MessageSendParams) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	s.runMessageSendWithPipeline(ctx, authHeader, task, inputText, params)
+	s.runMessageSendWithPipeline(ctx, caller, task, inputText, params)
 	writeA2AResult(w, msg.ID, task)
 }
 
-func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader string, task *Task, inputText string, params MessageSendParams) {
+func (s *Server) runMessageSendWithPipeline(ctx context.Context, caller Caller, task *Task, inputText string, params MessageSendParams) {
 	defer s.taskCancels.Delete(task.ID)
 
 	model := s.resolveA2AModel(params)
@@ -306,7 +326,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 	}
 
 	if s.chatExecutor != nil {
-		resp, err := s.chatExecutor(ctx, authHeader, req)
+		resp, err := s.chatExecutor(ctx, caller, req)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 				task.Status.State = TaskStatusCanceled

@@ -40,6 +40,7 @@ from model_hub.utils.eval_input_validation import (
     PARTIAL_INPUT_MESSAGE,
     PARTIAL_INPUT_WARNING_TYPE,
 )
+from tfc.routers import primary_required
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -72,6 +73,9 @@ from tracer.serializers.eval_task import (
     EditEvalTaskSerializer,
     EvalTaskCreateResponseSerializer,
     EvalTaskDeleteRequestSerializer,
+    EvalTaskDetailsQuerySerializer,
+    EvalTaskDetailsResponseSerializer,
+    EvalTaskDetailsSamplingPolicySerializer,
     EvalTaskIdQuerySerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
@@ -88,6 +92,11 @@ from tracer.services.eval_tasks.entries import (
     soft_delete_eval_results,
     soft_delete_live,
 )
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    normalize_policy_update,
+    population_changed,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -99,6 +108,7 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
+from tracer.views.eval_sampling import SamplingPreviewMixin
 
 logger = structlog.get_logger(__name__)
 
@@ -224,6 +234,10 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     evals_applied = serializers.ListField(child=serializers.CharField(allow_null=True))
     sampling_rate = serializers.FloatField(allow_null=True)
+    # Cohort tasks keep sampling_rate at its default; the policy is the truth.
+    sampling_policy = EvalTaskDetailsSamplingPolicySerializer(
+        allow_null=True, required=False
+    )
     last_run = serializers.DateTimeField(allow_null=True)
 
 
@@ -313,6 +327,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "filters",
             "created_at",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
         )
     if hasattr(queryset, "annotate") and hasattr(queryset, "values_list"):
@@ -1445,6 +1460,7 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
                 eval_config.name for eval_config in eval_task._list_evals
             ],
             "sampling_rate": eval_task.sampling_rate,
+            "sampling_policy": eval_task.sampling_policy,
             "last_run": datetime_field.to_representation(eval_task.last_run)
             if eval_task.last_run is not None
             else None,
@@ -1491,7 +1507,7 @@ def _eval_task_progress_by_id(tasks):
     }
 
 
-class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
+class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = _EvalTaskPageNumberPagination
     _gm = GeneralMethods()
@@ -1735,10 +1751,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         requested_ids = {str(eval_id) for eval_id in (eval_ids or [])}
         if not requested_ids:
             return []
+        # Primary: the configs are usually created just before the task that
+        # uses them, and a lagging replica would report them missing.
         visible_ids = {
             str(eval_id)
             for eval_id in self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all(), project_id=project_id
+                CustomEvalConfig.objects.using("default"), project_id=project_id
             )
             .filter(id__in=requested_ids)
             .values_list("id", flat=True)
@@ -1757,8 +1775,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all()
+            # many=True validates through the child, not ManyRelatedField itself.
+            evals_field = fields["evals"].child_relation
+            evals_field.queryset = self._scope_custom_eval_config_queryset(
+                CustomEvalConfig.objects.using("default")
             )
         return serializer
 
@@ -1856,10 +1876,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
+    # Mutation contexts include contract validation, relation reads and response
+    # serialization. Keep primary_required outside validated_request; browsing
+    # deliberately retains replica-eligible prefetches.
+    @primary_required
     @validated_request(request_serializer=EvalTaskSerializer)
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         partial_request_validation=True,
@@ -1879,6 +1904,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         responses={
@@ -2079,7 +2105,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # materialized entry (the manager already excludes soft-deleted),
             # so while a task is pending Total shows the full set and success/
             # errors start at 0 and climb as the drain executes.
-            counts = EvalLogger.objects.filter(
+            # The status above is read from the primary, so the counts, error
+            # groups and warnings are too: a replica behind the drain would pair
+            # "completed" with unfinished tallies, and the UI stops polling then.
+            entries = EvalLogger.objects.using("default")
+            counts = entries.filter(
                 eval_task_id=eval_task_id,
                 deleted=False,
             ).aggregate(
@@ -2131,7 +2161,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # core-frontend/src/sections/common/EvalsTasks/classifyTaskError.js
             error_group_rows = list(
                 _bounded_eval_task_error_groups_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._ERROR_GROUPS_LIMIT + 1]
             )
             error_groups = [
@@ -2151,7 +2181,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             warning_rows = list(
                 _bounded_eval_task_warning_rows_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._WARNING_LOG_SCAN_LIMIT]
             )
             (
@@ -2980,6 +3010,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Evaluation tasks could not be loaded")
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
         responses={
@@ -3049,6 +3080,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 original_evals = set(eval_task.evals.values_list("id", flat=True))
                 original_run_type = eval_task.run_type
                 update_fields = self._extract_update_fields(validated_data)
+                try:
+                    normalize_policy_update(eval_task, update_fields)
+                except InvalidSamplingPolicy as exc:
+                    return self._gm.bad_request(str(exc))
 
                 # Validate the requested evals belong to the task's project.
                 requested_evals = validated_data.get("evals")
@@ -3073,17 +3108,33 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 rows_changed = any(
                     field in update_fields
                     and update_fields[field] != getattr(eval_task, field)
-                    for field in ("filters", "sampling_rate", "spans_limit")
+                    for field in (
+                        "filters",
+                        "sampling_rate",
+                        "spans_limit",
+                        "sampling_policy",
+                    )
                 )
                 new_run_type = update_fields.get("run_type")
 
-                # Enforce which rerun action is allowed for what changed.
-                action_error = validate_edit_action(
-                    edit_type,
-                    original_run_type=original_run_type,
-                    new_run_type=new_run_type,
-                    evals_changed=evals_changed,
-                    rows_changed=rows_changed,
+                # A new sampling population must not mix completed results from
+                # the old cohort with newly selected rows under different p.
+                sampling_changed = population_changed(eval_task, update_fields)
+                if sampling_changed and edit_type != "fresh_run":
+                    return self._gm.bad_request(
+                        "Sampling population changes require Delete & rerun; duplicate the task to preserve the prior results."
+                    )
+                # Preserve historical action rules for unchanged/legacy populations.
+                action_error = (
+                    None
+                    if sampling_changed
+                    else validate_edit_action(
+                        edit_type,
+                        original_run_type=original_run_type,
+                        new_run_type=new_run_type,
+                        evals_changed=evals_changed,
+                        rows_changed=rows_changed,
+                    )
                 )
                 if action_error:
                     return self._gm.bad_request(action_error)
@@ -3095,6 +3146,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     and original_run_type == RunType.CONTINUOUS
                     and not update_fields.get("spans_limit")
                     and not eval_task.spans_limit
+                    and not update_fields.get(
+                        "sampling_policy", eval_task.sampling_policy
+                    )
                 ):
                     return self._gm.bad_request(
                         "Switching to a historical task requires a row limit."
@@ -3179,6 +3233,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "spans_limit",
             "evals",
             "run_type",
@@ -3186,27 +3241,29 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         for field in allowed_fields:
             value = validated_data.get(field)
-            if value is not None:
+            if value is not None or (
+                field == "sampling_policy" and field in validated_data
+            ):
                 update_fields[field] = value
 
         return update_fields
 
     @validated_request(
+        query_serializer=EvalTaskDetailsQuerySerializer,
         responses={
+            200: EvalTaskDetailsResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
             422: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-        }
+        },
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
     @_bounded_eval_task_read
     def get_eval_details(self, request, *args, **kwargs):
         try:
-            eval_id = self.request.query_params.get("eval_id")
-            if not eval_id:
-                return self._gm.bad_request("eval_id is required")
+            eval_id = str(request.validated_query_data["eval_id"])
 
             queryset = (
                 self._scope_eval_task_queryset(EvalTask.objects)
@@ -3214,9 +3271,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 .get(id=eval_id)
             )
 
+            # Primary: the task page builds its edit form from this list right
+            # after a task is created or saved, and a Save from a stale form
+            # would write the old eval set back.
             eval_configs = list(
                 self._scope_custom_eval_config_queryset(
-                    CustomEvalConfig.objects.select_related("eval_template")
+                    CustomEvalConfig.objects.using("default").select_related(
+                        "eval_template"
+                    )
                 )
                 .filter(eval_tasks=queryset)
                 .order_by("-created_at", "id")[
@@ -3262,6 +3324,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "evals_applied": evals_rich,
                 "spans_limit": queryset.spans_limit,
                 "sampling_rate": queryset.sampling_rate,
+                "sampling_policy": queryset.sampling_policy,
                 "last_run": queryset.last_run,
                 "run_type": queryset.run_type,
                 "row_type": queryset.row_type,

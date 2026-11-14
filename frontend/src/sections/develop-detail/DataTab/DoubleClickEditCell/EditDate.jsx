@@ -207,7 +207,7 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
               <Typography
                 fontWeight={400}
                 color="var(--text-disabled)"
-                fontSize="13px"
+                fontSize="12px"
                 marginLeft="10px"
               >
                 {ampm}

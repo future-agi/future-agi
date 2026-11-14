@@ -182,7 +182,7 @@ export default function PreviewModal({ open, onClose, previewData }) {
                     mb: 1,
                     cursor: "pointer",
                   }}
-                  fontSize={13}
+                  fontSize={12}
                   fontWeight={600}
                 >
                   Annotations

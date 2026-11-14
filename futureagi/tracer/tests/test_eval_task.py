@@ -1012,6 +1012,23 @@ class TestEvalTaskGetDetailsAPI:
         )
         assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
+    def test_get_details_ignores_extra_query_parameters(
+        self, auth_client, eval_task, custom_eval_config
+    ):
+        """Cache-busting parameters must not turn a valid read into a 400."""
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/",
+            {"eval_id": str(eval_task.id), "_": "1731489000000", "v": "2"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["name"] == eval_task.name
+
+    def test_get_details_still_rejects_a_non_uuid_eval_id(self, auth_client):
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/", {"eval_id": "not-a-uuid"}
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_get_details_success(self, auth_client, eval_task, custom_eval_config):
         """Get details for an eval task."""
         # NOTE: API uses 'eval_id', not 'eval_task_id'
@@ -1022,6 +1039,13 @@ class TestEvalTaskGetDetailsAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["name"] == eval_task.name
+
+        from tracer.serializers.eval_task import EvalTaskDetailsResponseSerializer
+
+        contract = EvalTaskDetailsResponseSerializer(data=response.json())
+        assert contract.is_valid(), contract.errors
+        assert "sampling_policy" in data
+        assert "count" not in response.json() and "results" not in response.json()
 
     def test_get_details_internal_error_is_sanitized(
         self, auth_client, eval_task, monkeypatch

@@ -2,10 +2,12 @@ import React, { useCallback, useMemo, useRef } from "react";
 import { Helmet } from "react-helmet-async";
 import { Box, Divider, Paper, useTheme } from "@mui/material";
 import PageHeader from "src/components/page-header";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import UsersView from "src/sections/projects/UsersView/UsersView";
 import UsersPageTabBar from "src/sections/projects/UsersView/UsersPageTabBar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useGetWorkspaceSavedViews } from "src/api/project/saved-views";
+import useUsersStore from "src/sections/projects/UsersView/Store/usersStore";
 
 const USERS_TAB_TYPE = "users";
 
@@ -26,6 +28,11 @@ const UserList = () => {
   // useUrlState-restored display state via UsersPageTabBar's applyConfig(null)
   // path).
   const [activeTab, setActiveTab] = useUrlState("usersTab", "all");
+
+  // Long user lists: search by user ID. UsersGrid already sends the store's
+  // searchQuery to the API (debounced), so this only needs the input.
+  const searchQuery = useUsersStore((s) => s.searchQuery);
+  const setSearchQuery = useUsersStore((s) => s.setSearchQuery);
 
   // Derive the active saved view's config so UsersView can compute
   // canSaveView (Save view button visibility) against the right baseline.
@@ -127,6 +134,13 @@ const UserList = () => {
               onTabChange={setActiveTab}
               getConfig={getSavedViewConfig}
               applyConfig={applySavedViewConfig}
+            />
+            <FormSearchField
+              placeholder="Search user ID"
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              inputProps={{ "aria-label": "Search user ID" }}
+              sx={{ width: 220, flexShrink: 0 }}
             />
             <Box
               id="observe-toolbar-slot"

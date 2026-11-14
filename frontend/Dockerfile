@@ -46,7 +46,8 @@ ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home as
 
 # vite.config.js already sets build.sourcemap=false; deleting *.map is a guard
 # so a config change cannot ship source maps.
-RUN yarn build \
+RUN yarn install --frozen-lockfile --non-interactive \
+    && yarn build \
     && find dist -name '*.map' -delete \
     && for dir in $PRUNE_PUBLIC_ASSETS; do rm -rf "dist/$dir"; done \
     && if [ -n "$PRUNE_PUBLIC_ASSETS" ]; then \
@@ -63,6 +64,10 @@ RUN yarn build \
 # a host-side `yarn install`.
 FROM ${NODE_IMAGE} AS dev
 WORKDIR /app
+# Refresh the dependency snapshot for fresh dev node_modules volumes as well.
+# Keep this target native to its requested platform; only dist builds are portable.
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --non-interactive
 EXPOSE 3000
 CMD ["yarn", "dev", "--host", "--port", "3000"]
 

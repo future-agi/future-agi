@@ -13,6 +13,7 @@ import { RouterLink } from "src/routes/components";
 import {
   CASE_ROLE,
   EVIDENCE_COPY,
+  OBSERVE_KINDS,
   PART_LABELS,
   caseShowsDefault,
   cutAtWord,
@@ -75,22 +76,31 @@ function Turn({ turn }) {
 
 Turn.propTypes = { turn: PropTypes.object.isRequired };
 
-// Where a case came from, under its title: a dataset row's dataset, with a way
-// to open it; a transcript's name as the person gave it.
-function Origin({ item, kind, datasetHref }) {
-  if (!item.name) return null;
+// Where a case came from, under its title: the Observe session or call, a
+// dataset row's dataset or a transcript's name as the person gave it. An Observe
+// source or a dataset row has a way to open it while its source keeps it.
+function Origin({ item, kind, observeHref, datasetHref }) {
+  const observe = OBSERVE_KINDS.has(kind);
+  const label =
+    observe && item.source_id
+      ? EVIDENCE_COPY.observeSource(kind, item.source_id)
+      : item.name;
+  if (!label) return null;
+  const href = observe ? observeHref : kind === "dataset" ? datasetHref : null;
   return (
     <Typography
       noWrap
       component="div"
       sx={{ typography: "s3", color: "text.tertiary" }}
     >
-      {item.name}
-      {kind === "dataset" && datasetHref && item.source_available ? (
+      {label}
+      {href && item.source_available ? (
         <>
           {" · "}
-          <Link component={RouterLink} href={datasetHref} underline="hover">
-            {EVIDENCE_COPY.openInDataset}
+          <Link component={RouterLink} href={href} underline="hover">
+            {observe
+              ? EVIDENCE_COPY.openInObserve
+              : EVIDENCE_COPY.openInDataset}
           </Link>
         </>
       ) : null}
@@ -101,6 +111,7 @@ function Origin({ item, kind, datasetHref }) {
 Origin.propTypes = {
   item: PropTypes.object.isRequired,
   kind: PropTypes.string,
+  observeHref: PropTypes.string,
   datasetHref: PropTypes.string,
 };
 
@@ -135,6 +146,7 @@ export default function EvidenceCaseCard({
   kind,
   simulated,
   production,
+  observeHref,
   datasetHref,
   existingHref,
   shows,
@@ -172,7 +184,12 @@ export default function EvidenceCaseCard({
           >
             {caseTitle(item, kind)}
           </Typography>
-          <Origin item={item} kind={kind} datasetHref={datasetHref} />
+          <Origin
+            item={item}
+            kind={kind}
+            observeHref={observeHref}
+            datasetHref={datasetHref}
+          />
           {item.also_from ? (
             <Typography
               component="div"
@@ -312,6 +329,7 @@ EvidenceCaseCard.propTypes = {
   kind: PropTypes.oneOf(["session", "call", "transcript", "dataset"]),
   simulated: PropTypes.bool,
   production: PropTypes.bool,
+  observeHref: PropTypes.string,
   datasetHref: PropTypes.string,
   existingHref: PropTypes.string,
   shows: PropTypes.string,

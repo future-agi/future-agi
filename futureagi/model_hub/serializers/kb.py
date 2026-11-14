@@ -3,6 +3,10 @@ from rest_framework import serializers
 from model_hub.models.kb import KnowledgeBase
 
 
+class KnowledgeBaseDownloadQuerySerializer(serializers.Serializer):
+    file_id = serializers.UUIDField()
+
+
 class KnowledgeBaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = KnowledgeBase

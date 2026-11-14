@@ -29,6 +29,9 @@ from tracer.services.instant_eval_rows import message_text
 logger = structlog.get_logger(__name__)
 
 SourceKind = Literal["session", "call"]
+# What a label was given to: the whole session, one trace, or one span.
+# "row": a dataset row's label column.
+LabelTarget = Literal["session", "trace", "span", "row"]
 
 # A turn's text and a tool call's input and output are each cut to these
 # characters. A source keeps MAX_TURNS turns, its first and last half, and
@@ -77,8 +80,7 @@ class Label:
     kind: str
     value: object
     notes: str
-    # "row": a dataset row's label column.
-    target: Literal["session", "trace", "span", "row"]
+    target: LabelTarget
 
 
 @dataclass(frozen=True)
@@ -403,6 +405,8 @@ def _labels(
     labels: dict[str, list[Label]] = defaultdict(list)
     for score in scores:
         session = sessions.get(_canonical(score.trace_session_id))
+        source_id: str | None
+        target: LabelTarget
         if source_kind == "session" and session is not None:
             source_id, target = session, "session"
         else:

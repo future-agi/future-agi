@@ -143,7 +143,7 @@ const SearchableSelectContent = ({
             }}
             sx={{
               "& .MuiOutlinedInput-root": {
-                fontSize: 13,
+                fontSize: 12,
                 height: 26,
                 "& fieldset": { borderColor: "divider" },
                 "&:hover fieldset": { borderColor: "text.disabled" },
@@ -205,7 +205,7 @@ const SearchableSelectContent = ({
                   >
                     <Typography
                       sx={{
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: isSelected ? 500 : 400,
                         color: "text.primary",
                         overflow: "hidden",

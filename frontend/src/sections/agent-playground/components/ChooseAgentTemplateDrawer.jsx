@@ -76,7 +76,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
       </Box>
       <Stack>
         <Typography
-          fontSize={13}
+          fontSize={12}
           lineHeight="20px"
           fontWeight={"fontWeightSemiBold"}
           color={"text.primary"}
@@ -452,7 +452,7 @@ export const ChooseAgentTemplateDrawer = ({
                           key={cat?.name}
                         >
                           <Typography
-                            fontSize={13}
+                            fontSize={12}
                             lineHeight="20px"
                             fontWeight={cat?.name === category ? 500 : 400}
                             color={"text.primary"}

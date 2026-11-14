@@ -403,6 +403,8 @@ describe("EvidenceReviewDrawer", () => {
     evidence = bundle({
       source_kind: "dataset",
       dataset_id: "d1",
+      // A project on the import gives a row no Observe link: Observe never held it.
+      project_id: "33333333-3333-3333-3333-333333333333",
       production: false,
       cases: [
         item({
@@ -427,6 +429,7 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       within(card).getByRole("link", { name: "Open in dataset" }),
     ).toHaveAttribute("href", "/dashboard/develop/d1?tab=data");
+    expect(within(card).getAllByRole("link")).toHaveLength(1);
     expect(card).not.toHaveTextContent("row-1");
     expect(within(card).getByText("Dataset row")).toBeInTheDocument();
     expect(card).toHaveTextContent("Has: Transcript; Labels; Expected outcome");
@@ -612,6 +615,59 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       screen.getByText("No case is waiting to be drafted."),
     ).toBeInTheDocument();
+  });
+
+  it("names a session's source and opens its traces in Observe", async () => {
+    const PROJECT = "33333333-3333-3333-3333-333333333333";
+    evidence = bundle({
+      project_id: PROJECT,
+      cases: [
+        item({
+          source_id: "3f2a91c0-aaaa-bbbb-cccc-dddddddddddd",
+          started_at: "2026-11-10T09:00:00Z",
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).getByText(/Session 3f2a91c0/)).toBeInTheDocument();
+    const link = within(card).getByRole("link", { name: "Open in Observe" });
+    const href = link.getAttribute("href");
+    expect(href).toContain(`/dashboard/observe/${PROJECT}/llm-tracing`);
+    expect(decodeURIComponent(href)).toContain(
+      "3f2a91c0-aaaa-bbbb-cccc-dddddddddddd",
+    );
+  });
+
+  it("opens a call's trace in Observe", async () => {
+    const PROJECT = "33333333-3333-3333-3333-333333333333";
+    evidence = bundle({
+      project_id: PROJECT,
+      source_kind: "call",
+      cases: [item({ source_id: "9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e" })],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).getByText(/Call 9b8c7d6e/)).toBeInTheDocument();
+    expect(
+      within(card).getByRole("link", { name: "Open in Observe" }),
+    ).toHaveAttribute(
+      "href",
+      `/dashboard/observe/${PROJECT}/trace/9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e`,
+    );
+  });
+
+  it("names a source Observe no longer keeps, without a link", async () => {
+    evidence = bundle({
+      project_id: "33333333-3333-3333-3333-333333333333",
+      cases: [item({ source_available: false, status: "unavailable" })],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).getByText(/Session session-/)).toBeInTheDocument();
+    expect(
+      within(card).queryByRole("link", { name: "Open in Observe" }),
+    ).not.toBeInTheDocument();
   });
 
   it("says when Observe no longer keeps a source", async () => {
