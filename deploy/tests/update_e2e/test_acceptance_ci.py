@@ -416,6 +416,7 @@ class AcceptancePlanTests(unittest.TestCase):
             for name in ('bin/update','scripts/update_rehearsal_shipping.py',
                          'scripts/update_rehearsal_trace_reference.py','scripts/update_rehearsal_eval_task_reference.py',
                          'scripts/update_rehearsal_usage_reference.py',
+                         'scripts/update_rehearsal_webhook_event_reference.py',
                          'deploy/standalone/bin/bootstrap.py'):
                 self.assertEqual(inventory[name],hashlib.sha256((ROOT/name).read_bytes()).hexdigest())
             self.assertFalse(any(name.endswith('.pyc') for name in inventory))

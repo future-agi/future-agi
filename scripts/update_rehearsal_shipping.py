@@ -28,6 +28,10 @@ from types import SimpleNamespace
 import uuid
 
 from scripts.update_rehearsal_trace_reference import TRACE_REFERENCE_MODELS, seed_trace_reference_family
+from scripts.update_rehearsal_webhook_event_reference import (
+    WEBHOOK_EVENT_REFERENCE_MODELS,
+    seed_webhook_event_reference,
+)
 from scripts.update_rehearsal_eval_task_reference import (
     EVAL_TASK_REFERENCE_MODELS, seed_eval_task_reference, verify_eval_task_reference,
 )
@@ -233,6 +237,15 @@ query=m.objects
 if a.get('sample_request_id') is not None:
     assert m._meta.db_table=='agentcc_request_log'
     query=query.filter(request_id=a['sample_request_id'])
+if m._meta.db_table=='agentcc_webhook_event':
+    owned=a.get('sample_webhook_event')
+    assert isinstance(owned,dict) and set(owned)=={'event_id','webhook_id','organization_id'}, 'reference_seed_operation_unavailable'
+    # Only the reviewed, inert fixture is eligible, even on populated sources.
+    query=query.filter(pk=owned['event_id'],organization_id=owned['organization_id'],
+        webhook_id=owned['webhook_id'],webhook__organization_id=owned['organization_id'],
+        webhook__is_active=False,webhook__deleted=False,status='delivered',deleted=False)
+else:
+    assert a.get('sample_webhook_event') is None
 sample=query.order_by(m._meta.pk.name).first()
 assert sample is not None, 'reference_seed_operation_unavailable'
 count=m.objects.count()
@@ -1169,6 +1182,24 @@ class ShippingRehearsal:
                     and entry.get('table')==EVAL_TASK_REFERENCE_MODELS[key]):
                 return self.seed_eval_task_reference(rows)
             raise p.ManualRelease('high_volume_reference_unavailable')
+        if (
+            key in WEBHOOK_EVENT_REFERENCE_MODELS
+            or entry.get("table") in WEBHOOK_EVENT_REFERENCE_MODELS.values()
+        ):
+            if (
+                entry.get("database") == "postgres"
+                and key in WEBHOOK_EVENT_REFERENCE_MODELS
+                and entry.get("table") == WEBHOOK_EVENT_REFERENCE_MODELS[key]
+            ):
+                return seed_webhook_event_reference(
+                    self,
+                    entry,
+                    rows,
+                    prefix=DJANGO_PREFIX,
+                    expand=REFERENCE_SEED,
+                    producer=p,
+                )
+            raise p.ManualRelease("high_volume_reference_unavailable")
         if entry['database']!='postgres' or key not in APPEND_ONLY_MODELS:
             # A6 needs product-specific distributions for each registered table.
             # Never create a generic all-default row or silently skip a table.

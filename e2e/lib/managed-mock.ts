@@ -116,8 +116,13 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
     requireSafe(!PROXY_OR_PRELOAD.test(key), `${service} has a proxy/preload override`);
     // The E2E backend enables webhook authentication; the worker may leave it
     // unset. This dummy secret grants no provider route or credential override.
+    // Only the Distributed delivery worker accelerates GW-E2E-006's disable
+    // threshold. Keep these exact pins out of backend, gateway and Standalone.
+    const webhookThreshold = service === 'worker' && (
+      (key === 'AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES' && value === '3') ||
+      (key === 'AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES' && value === '0'));
     if (key.startsWith('AGENTCC_')) requireSafe(allowed[key] === value || wiring[key] === value ||
-      (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
+      webhookThreshold || (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
     `${service} has an unsupported gateway override (${key})`);
     if (/_API_KEY$/.test(key) || ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(key)) {
       requireSafe(value === MOCK_KEY || value === 'e2e-mock', `${service} has a non-mock provider key (${key})`);

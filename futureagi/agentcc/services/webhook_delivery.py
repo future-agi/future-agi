@@ -215,16 +215,16 @@ class _PostDeadline:
     down every socket the POST has opened or reused, so a blocked connect,
     TLS handshake or read returns at once, whichever library call it is in.
 
-    It holds its own duplicate of each socket's descriptor, so a socket that
-    was closed meanwhile is never confused with a newer one, and closes them
-    when the POST ends."""
+    It holds its own duplicate of each connection's socket descriptor, so a
+    closed socket is never confused with a newer one. Retiring a connection
+    also retires its duplicate; remaining duplicates close when the POST ends."""
 
     _local = threading.local()
 
     def __init__(self, seconds):
         self.ends = time.monotonic() + seconds
         self.expired = False
-        self._sockets: list[socket.socket] = []
+        self._sockets: dict[HTTPConnection, socket.socket] = {}
         self._lock = threading.Lock()
         self._timer = threading.Timer(seconds, self._expire)
         self._timer.daemon = True
@@ -242,27 +242,40 @@ class _PostDeadline:
         self._local.deadline = None
         self._timer.cancel()
         with self._lock:
-            for sock in self._sockets:
+            for sock in self._sockets.values():
                 sock.close()
             self._sockets.clear()
 
     def remaining(self):
         return self.ends - time.monotonic()
 
-    def watch(self, sock):
+    def watch(self, connection, sock):
         try:
             dup = socket.fromfd(sock.fileno(), sock.family, sock.type)
-        except (OSError, ValueError):
-            return
+        except (OSError, ValueError) as exc:
+            # Reads (including decompression) rely on this watchdog. Never
+            # start an unwatched request when descriptor duplication fails.
+            raise OSError(f"Cannot watch webhook connection: {exc}") from exc
         with self._lock:
-            self._sockets.append(dup)
+            previous = self._sockets.get(connection)
+            self._sockets[connection] = dup
+            if previous is not None:
+                previous.close()
             if self.expired:
                 _shutdown(dup)
+
+    def unwatch(self, connection):
+        # Serialize with shutdown: a retired duplicate must never be used
+        # after its fd has been recycled, or keep a redirect peer alive.
+        with self._lock:
+            dup = self._sockets.pop(connection, None)
+            if dup is not None:
+                dup.close()
 
     def _expire(self):
         with self._lock:
             self.expired = True
-            for sock in self._sockets:
+            for sock in self._sockets.values():
                 _shutdown(sock)
 
 
@@ -307,12 +320,13 @@ class _WatchedHTTPConnection(HTTPConnection):
                 sock.settimeout(remaining)
                 if self.source_address:
                     sock.bind(self.source_address)
-                deadline.watch(sock)
+                deadline.watch(self, sock)
                 sock.connect(address)
                 return sock
             except OSError as e:
                 error = e
                 sock.close()
+                deadline.unwatch(self)
         if isinstance(error, TimeoutError) or deadline.expired:
             raise ConnectTimeoutError(self, str(error)) from error
         raise NewConnectionError(
@@ -323,7 +337,12 @@ class _WatchedHTTPConnection(HTTPConnection):
         # A kept-alive connection an earlier POST opened.
         deadline = _PostDeadline.current()
         if deadline is not None and self.sock is not None:
-            deadline.watch(self.sock)
+            try:
+                deadline.watch(self, self.sock)
+            except OSError:
+                self.close()
+                deadline.unwatch(self)
+                raise
         return super().request(*args, **kwargs)
 
 
@@ -376,8 +395,16 @@ class _DeadlineAdapter(http_requests.adapters.HTTPAdapter):
         )
         if resp.is_redirect:
             # requests reads a redirect's body before the next hop; closed,
-            # it reads nothing.
-            resp.raw.close()
+            # it reads nothing. Retire the duplicate as well so a serial
+            # keep-alive receiver sees EOF before we connect for the next hop.
+            connection = resp.raw.connection
+            try:
+                resp.raw.close()
+            finally:
+                if deadline is not None:
+                    deadline.unwatch(connection)
+            # Do not unwatch in HTTPConnection.close(): http.client also calls
+            # that when detaching an HTTP/1.0 response whose body is still live.
         return resp
 
 

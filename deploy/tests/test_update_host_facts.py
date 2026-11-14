@@ -169,7 +169,8 @@ class SelectionTests(pub.PublisherCase):
             'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
             'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
             'scripts/update_rehearsal_trace_reference.py', 'scripts/update_rehearsal_eval_task_reference.py',
-            'scripts/update_rehearsal_usage_reference.py', 'bin/update',
+            'scripts/update_rehearsal_usage_reference.py',
+            'scripts/update_rehearsal_webhook_event_reference.py', 'bin/update',
             'deploy/standalone/bin/start',
             'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
             'api_contracts/host-update/public-status.v1.schema.json',
@@ -193,6 +194,12 @@ class SelectionTests(pub.PublisherCase):
         self.assertNotEqual(facts.executor_implementation_sha256(self.root), digest)
         self.assertEqual(facts.executor_implementation_sha256(self.root), inventory_hash(implementation_inventory(self.root)))
         usage_helper.write_text(usage_original)
+        webhook_helper = self.root / 'scripts/update_rehearsal_webhook_event_reference.py'
+        webhook_original = webhook_helper.read_text()
+        webhook_helper.write_text('changed webhook qualification fixture')
+        self.assertNotEqual(facts.executor_implementation_sha256(self.root), digest)
+        self.assertEqual(facts.executor_implementation_sha256(self.root), inventory_hash(implementation_inventory(self.root)))
+        webhook_helper.write_text(webhook_original)
         ignored = self.root / 'deploy/update/__pycache__/untrusted.py'
         ignored.parent.mkdir()
         ignored.write_text('not part of shipped closure')
