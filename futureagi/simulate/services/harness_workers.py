@@ -1095,6 +1095,10 @@ def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
     failure = (
         receipt.get("failure") if receipt else (getattr(job, "failure", None) or {})
     ) or {}
+    if failure.get("code") == "user_canceled":
+        # Stopped by the user (a receipt ingested before the call was marked cancelled for it): never infrastructure.
+        confirmed = job is not None and job.state == HostedHarnessJob.State.CANCELED
+        return "cancelled" if confirmed else "cancel_requested"
     # A scenario's own problem (simulator or environment side, or a scenario hold) is not an infrastructure fault.
     if (
         failure.get("code") in SCENARIO_FAILURE_CODES
@@ -1102,6 +1106,54 @@ def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
     ):
         return "ended"
     return "infrastructure" if failure.get("domain") not in (None, "agent") else "ended"
+
+
+CUT_SHORT_STATES = frozenset({"deadline_passed", "no_return", "cancel_requested", "cancelled", "infrastructure"})
+_TERMINAL_JOB_STATES = ("completed", "failed", "canceled")
+
+
+def _job_for_call(call: CallExecution) -> HostedHarnessJob | None:
+    """The job that ran this call: its execution's job, else the newest job of its test execution."""
+    from simulate.models import HostedHarnessExecution, HostedHarnessJob
+
+    execution = (
+        HostedHarnessExecution.objects.select_related("job").filter(call_execution=call).first()
+    )
+    if execution is not None:
+        return execution.job
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(test_execution=call.test_execution)
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def worker_cleanup(call: CallExecution, job: HostedHarnessJob | None, worker: Mapping[str, Any]) -> dict | None:
+    """What happened to a cut-short worker's process when the call ended, from the attempt that ran it.
+
+    Never "stopped" for a worker alone: the harness cannot stop one worker inside the app's process. Computed when
+    served, never stored: cleanup is recorded only after the sandbox is deleted."""
+    from simulate.models import HostedHarnessExecution
+
+    if worker.get("state") not in CUT_SHORT_STATES or job is None:
+        return None
+    execution = HostedHarnessExecution.objects.filter(call_execution=call).first()
+    receipt = getattr(execution, "receipt", None) if execution is not None else None
+    attempt = (
+        receipt.attempt
+        if receipt is not None
+        else job.attempts.filter(attempt_number=job.current_attempt_number).first()
+    )
+    if attempt is None:
+        return {"status": "unknown", "at": None}
+    if attempt.cleanup_verified_at is not None:
+        return {"status": "stopped_with_sandbox", "at": attempt.cleanup_verified_at.isoformat()}
+    if attempt.terminal_event_received and job.state in _TERMINAL_JOB_STATES:
+        # The guest ended on its own and nothing confirmed the sandbox went.
+        return {"status": "unknown", "at": None}
+    # The attempt is live, or the cancel window is open with cleanup pending.
+    ended = call.completed_at.isoformat() if getattr(call, "completed_at", None) else None
+    return {"status": "still_running", "at": ended}
 
 
 def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
@@ -1318,7 +1370,7 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
     from django.utils import timezone
 
-    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.models import CallExecution
     from simulate.services.run_traces_v3 import list_run_traces
     from simulate.services.scoring_status import locked_call_metadata_update
     from tracer.services.clickhouse.application_read_policy import (
@@ -1343,9 +1395,7 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         for one in sealed
         if one.get("worker_id") or one.get("worker_label") or one.get("delegated_to")
     ]
-    job = HostedHarnessJob.no_workspace_objects.filter(
-        test_execution=call.test_execution
-    ).first()
+    job = _job_for_call(call)
     declared = declared_workers(job) if job is not None else []
     # A multi-agent app whose call left no spans and no attributed rows is still recorded, with every declared
     # worker not observed, so it never reads like a single-agent call and the later read runs.
