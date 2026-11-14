@@ -11,7 +11,7 @@ vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: () => ({ 
 afterEach(() => { cleanup(); localStorage.clear(); });
 const packet = { subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'digest', candidateVersionId: 'candidate', evidence: [], target: null,
   transition: { label: 'production', expectedVersion: 1, version: 2 } };
-const ref = { source: 'skills_text', sourceId: 'run', subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'digest', visibility: 'workspace', status: 'completed', payloadExpiresAt: '2099-01-01', configuration: { text: {} }, annotationRevision: 7 };
+const ref = { source: 'skills_text', sourceId: 'run', subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'digest', visibility: 'workspace', status: 'completed', outcome: 'works_on_examples', payloadExpiresAt: '2099-01-01', configuration: { text: {} }, annotationRevision: 7 };
 
 it('hands the exact context to the canonical composer without a UUID field or mutation', () => {
   render(<MemoryRouter><ContextLabelRequestPanel contextId="context" version={{ id: 'candidate', number: 2, digest: 'digest' }} /></MemoryRouter>);
@@ -19,7 +19,8 @@ it('hands the exact context to the canonical composer without a UUID field or mu
   const url = new URL(navigated.mock.calls.at(-1)[0], 'https://example.invalid');
   expect(Object.fromEntries(url.searchParams)).toMatchObject({ compose: '1', subject: 'context', name: 'Support agent', candidate: 'candidate', number: '2', digest: 'digest', label: 'production' });
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
-  expect(screen.getByText(/An independent reviewer approves/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Request release review' }).closest('[aria-label]')).toHaveAttribute('aria-label', expect.stringContaining('An independent reviewer approves'));
+  expect(screen.queryByRole('heading')).not.toBeInTheDocument();
 });
 it('does not carry a stored reviewer across logins or auto-submit for a sole eligible reviewer', () => {
   localStorage.setItem('skills.releaseRequest.lastReviewer:other-login', 'someone-else');
@@ -53,7 +54,14 @@ it('only permits approval of pending requests while preserving release of an app
 });
 
 it('does not offer a release request for the production version', () => {
-  render(<MemoryRouter><ContextLabelRequestPanel contextId="context" version={{ id: 'v1', number: 1, digest: 'digest' }} /></MemoryRouter>);
-  expect(screen.getByText('v1 is in production.')).toBeVisible();
+  const { container } = render(<MemoryRouter><ContextLabelRequestPanel contextId="context" version={{ id: 'v1', number: 1, digest: 'digest' }} /></MemoryRouter>);
+  expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole('button', { name: 'Request release review' })).not.toBeInTheDocument();
+});
+
+it('never ranks a newer unrecorded result above a recorded pass', () => {
+  const passing = { ...ref, completedAt: '2026-11-01' };
+  const unrecorded = { ...ref, sourceId: 'unrecorded', outcome: undefined, completedAt: '2026-11-14' };
+  expect(suggestedEvidence([unrecorded, passing], packet)).toEqual([{ source: 'skills_text', sourceId: 'run', annotationRevision: 7 }]);
+  expect(suggestedEvidence([unrecorded], packet)).toEqual([]);
 });

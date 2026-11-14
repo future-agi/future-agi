@@ -303,9 +303,9 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         await page.goto(`${UI}/${parent.id}?version=2`);
         await page.getByRole('tab', { name: 'Versions', exact: true }).click();
         await page.getByRole('button', { name: 'Request release review', exact: true }).click();
-        await page.getByRole('button', { name: 'Prepare review', exact: true }).click();
         await page.getByLabel('Assigned reviewer').click();
         await page.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
+        await page.getByRole('button', { name: 'Prepare review', exact: true }).click();
         await page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
         const submitted = page.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
         await page.getByRole('button', { name: 'Send review request', exact: true }).click();

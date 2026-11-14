@@ -3,6 +3,9 @@ import PropTypes from "prop-types";
 import {
   Alert,
   Button,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Checkbox,
   FormControlLabel,
   Stack,
@@ -13,8 +16,9 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { ClosableDialog } from "src/components/custom-dialog";
 import { evidenceTitle } from '../utils/review-display';
+import EvidenceSummary from '../components/EvidenceSummary';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from "../components/TechnicalDetails";
 import StatusBadge from "src/components/status-badge";
@@ -47,14 +51,17 @@ const setting = (path) => {
 };
 // Why a precondition moved, in the reviewer's words. The raw field path stays in "Changed values".
 const cause = (path) => {
-  if (path.endsWith('expected_security_revision')) return 'The security policy was edited.';
+  if (path.endsWith('expected_security_revision')) return 'Any policy edit after approval requires a new approval.';
   if (path.endsWith('expected_release_revision')) return 'A label moved or label protection was edited.';
   if (path === 'transition.expected_impact_fingerprint') return 'The set of affected applications changed.';
   if (path.startsWith('target')) return 'The application configuration changed.';
   if (path.startsWith('evidence')) return 'Attached evidence changed.';
   return 'This setting changed since the review.';
 };
-const shown = (path, value, side) => show(value, side);
+const shown = (path, value, side) => path.endsWith('_revision') ? (side === 'before' ? 'At approval' : 'Edited since approval') : show(value, side);
+const restoredPolicy = (changes) => changes.some((row) => row.item.endsWith('expected_security_revision') && row.before !== row.after)
+  && changes.some((row) => /security|policy/.test(row.item) && !row.item.endsWith('_revision') && JSON.stringify(row.before) === JSON.stringify(row.after));
+const restoredPolicyReason = "The security policy changed and was restored after approval. The earlier approval can't be reused.";
 
 const REASONS = {
   evidence_expired: "Detailed evidence expired",
@@ -94,16 +101,7 @@ export default function ReleaseRenewalDialog({
     revision: value.revision,
     expectedFingerprint: value.fingerprint,
   };
-  return (
-    <ModalWrapper
-      open={open}
-      onClose={close}
-      title="Renew release review"
-      subTitle={value?.changes.some((row) => row.item.endsWith('expected_security_revision')) ? "The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again." : "This request changed after it was reviewed, so the approval no longer applies. Review the changes and approve again."}
-      actionBtnTitle="Approve renewed revision"
-      isValid={acknowledged && !busy && !uncertain && !done}
-      isLoading={operation.busy}
-      onSubmit={async () => {
+  const approve = async () => {
         // The approval key is fixed at click time so a retry of an unknown
         // outcome replays both writes instead of creating new ones.
         const result = await operation.run(
@@ -133,10 +131,13 @@ export default function ReleaseRenewalDialog({
           });
           close();
         }
-      }}
-      onCancelBtn={close}
-      modalWidth="720px"
-    >
+
+  };
+  return (
+    <ClosableDialog open={open} onClose={busy ? undefined : close} disableEscapeKeyDown={busy} fullWidth maxWidth="md" PaperProps={{ sx: { maxWidth: 720 } }}>
+      <DialogTitle component="div"><Typography variant="m3" component="h2">Renew release review</Typography></DialogTitle>
+      <DialogContent>
+      <Typography variant="s1" component="p" color="text.secondary" sx={{ mb: 2 }}>{value?.changes.some((row) => row.item.endsWith('expected_security_revision')) ? "The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again." : "This request changed after it was reviewed, so the approval no longer applies. Review the changes and approve again."}</Typography>
       <Stack spacing={1.5} sx={{ minWidth: 0 }}>
         {preview.isLoading && (
           <ContentSkeleton label="Loading changes" rows={3} />
@@ -170,7 +171,7 @@ export default function ReleaseRenewalDialog({
                     hover
                     sx={{ minHeight: ROW_HEIGHT.default }}
                   >
-                    <TableCell><Typography variant="s1" component="div">{setting(row.item)}</Typography><Typography variant="s3" display="block" color="text.secondary">{JSON.stringify(row.before) === JSON.stringify(row.after) ? 'Changed and restored' : cause(row.item)}</Typography></TableCell>
+                    <TableCell><Typography variant="s1" component="div">{setting(row.item)}</Typography><Typography variant="s3" display="block" color="text.secondary">{row.item.endsWith('expected_security_revision') && restoredPolicy(value.changes) ? restoredPolicyReason : JSON.stringify(row.before) === JSON.stringify(row.after) ? 'Changed and restored' : cause(row.item)}</Typography></TableCell>
                     <TableCell sx={{ overflowWrap: "break-word" }}>
                       {shown(row.item, row.before, 'before')}
                     </TableCell>
@@ -189,7 +190,7 @@ export default function ReleaseRenewalDialog({
                 <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed request.</Typography>
               </Stack>)}
               <Typography variant="s3">{value.packet.evidence.length ? `The renewed request keeps ${value.packet.evidence.length} ${value.packet.evidence.length === 1 ? 'result' : 'results'} for the same candidate and target.` : 'The renewed request keeps no evidence.'}</Typography>
-              {value.packet.evidence.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3">{evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status={ref.outcome || (ref.status !== 'completed' ? ref.status : 'not_tested')} label={ref.outcome ? undefined : ref.status === 'completed' ? 'Result not recorded' : undefined} /><IdentityChip inline kind="id" label="Kept" value={ref.sourceId} /></Stack>)}
+              <EvidenceSummary items={value.packet.evidence.map((ref) => ({ ...ref, id: ref.sourceId, title: evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion), expiresAt: ref.payloadExpiresAt }))} renderAction={(item) => <IdentityChip inline kind="id" label="Kept" value={item.id} />} emptyText="" />
             </Stack>
             <TechnicalDetails title="Changed values">
               {value.changes.map((row) => <Typography key={row.item} variant="s3" component="code" display="block" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.item}</Typography>)}
@@ -211,13 +212,18 @@ export default function ReleaseRenewalDialog({
           </>
         )}
         <OperationFeedback operation={operation} />
-        <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
+        <Typography variant="s3" color="text.secondary">Renewing without approving creates a pending revision if you need more time to decide.</Typography>
+      </Stack>
+      </DialogContent>
+      <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap' }}>
+        <Button disabled={busy} onClick={close} sx={{ mr: 'auto' }}>Cancel</Button>
+        <Button variant="outlined" disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
           const result = await operation.run(renew.mutateAsync, renewInput);
           if (result) close();
         }}>Renew without approving</Button>
-        <Typography variant="s3" color="text.secondary">Creates a pending revision without approval, if you need more time to decide.</Typography>
-      </Stack>
-    </ModalWrapper>
+        <Button variant="contained" color="primary" disabled={!acknowledged || busy || uncertain || done} onClick={approve}>Approve renewed revision</Button>
+      </DialogActions>
+    </ClosableDialog>
   );
 }
 ReleaseRenewalDialog.propTypes = {

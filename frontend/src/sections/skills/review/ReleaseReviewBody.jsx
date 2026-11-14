@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import EvidenceSummary from '../components/EvidenceSummary';
 import { evidenceTitle, relativeReviewTime, outcomeLabel } from '../utils/review-display';
-import { impactSentence, nativeCaseLines, nativeSummaryConclusion } from '../utils/conclusions';
+import { impactSentence, mountName, nativeCaseLines, nativeSummaryConclusion } from '../utils/conclusions';
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
@@ -28,7 +28,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import TextDiff from "../components/TextDiff";
 import ChecksList from "../components/ChecksList";
 import CapabilityChanges from "./CapabilityChanges";
-import { releaseTitle, counted, responsiveEvidenceSx } from "./reviewPresentation";
+import { counted, responsiveEvidenceSx } from "./reviewPresentation";
 
 const TERMINAL = new Set([
   "completed",
@@ -429,7 +429,7 @@ NativeOutcomes.propTypes = { summary: PropTypes.object };
 // in L7; this component never resolves a label or manufactures an evidence ref.
 export default function ReleaseReviewBody({
   packet,
-  changes = [],
+  changes,
   dependencyChanges,
   dependencyError = false,
   onRetryDependencies,
@@ -448,7 +448,7 @@ export default function ReleaseReviewBody({
   onLoadMore,
 }) {
   const [inspecting, setInspecting] = useState(null);
-  const ordered = [...changes].sort((a, b) =>
+  const ordered = [...(changes || [])].sort((a, b) =>
     a.path === "AGENTS.md" || a.path === "SKILL.md"
       ? -1
       : b.path === "AGENTS.md" || b.path === "SKILL.md"
@@ -462,14 +462,17 @@ export default function ReleaseReviewBody({
     <Section title="Static checks">
       {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
     </Section>
-    <Section title="Retained regression pipeline"><ExternalPipeline reference={packet.externalPipeline} /></Section>
+    <Section title="CI results">{packet.externalPipeline ? <ExternalPipeline reference={packet.externalPipeline} /> : <Typography variant="s3" color="text.secondary">None attached</Typography>}</Section>
   </>;
   return (
     <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
       <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
         <Stack spacing={1}>
-          <Typography variant="m1">{releaseTitle(packet.transition)}</Typography>
-          <Typography variant="s1" color="text.secondary">Production stays unchanged until this request is approved and released. Delivery is checked separately in Consumers.</Typography>
+          <Typography variant="s1" sx={{ fontWeight: 600 }}>{packet.transition.label.charAt(0).toUpperCase() + packet.transition.label.slice(1)} moves {packet.transition.expectedVersion == null ? 'from no release' : `v${packet.transition.expectedVersion}`} → v{packet.transition.version} · {changes ? counted(changes.filter((file) => file.status !== 'unchanged').length, 'file') : 'File changes not loaded'} · {dependencyChanges ? counted(dependencyChanges.length, 'linked skill') : 'Linked skills not loaded'} · {counted(evidence.length, 'test result')} attached</Typography>
+          <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Evidence:</Typography> {evidence.length ? `${counted(evidence.length, 'result')} attached; inspect coverage below.` : 'No test results attached. Not tested is not a pass.'}</Typography>
+          <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Who is affected:</Typography> {impact ? impactSentence(impact) : 'Application impact has not been measured.'}</Typography>
+          {capabilities ? <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Permissions:</Typography> {capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.'}</Typography> : <Alert severity="warning">Permission comparison unavailable. Review the file changes before deciding.</Alert>}
+          <Typography variant="s3" color="text.secondary">Production stays unchanged until approval and release. Check Consumers to confirm delivery.</Typography>
           {packet.target && <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography><IdentityChip inline label="Configuration" value={packet.target.configurationDigest} /></Stack>}
           <TechnicalDetails title="Release identities">
           <IdentityValue
@@ -511,7 +514,7 @@ export default function ReleaseReviewBody({
       <Section id="review-evidence" title="Evidence">
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
-          return { id: ref.sourceId, source: ref.source, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
+          return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
         })} renderAction={(item) => {
           // The reviewer decides on these exact results: each row names its identity and
           // grading completeness without an extra Inspect step.
@@ -565,10 +568,10 @@ export default function ReleaseReviewBody({
         {packet.subjectKind !== 'agent_context' ? <Typography variant="s3">Not available for skills</Typography>
           : dependencyError || !dependencyChanges ? <ErrorState title="Couldn't load the linked-skill comparison" onRetry={onRetryDependencies} />
             : !dependencyChanges.length ? <Typography variant="s3">No linked-skill changes</Typography>
-              : <TableContainer><Table size="small" aria-label="Linked-skill changes" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr)' }, '& td': { minWidth: 0, overflowWrap: 'anywhere' } }}>
-                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill</TableCell><TableCell>Policy</TableCell><TableCell>Production → This release</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
+              : <TableContainer><Table size="small" aria-label="Linked-skill changes" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr)' }, '& td, & th': { minWidth: 0, whiteSpace: { xs: 'normal', sm: 'nowrap' }, overflowWrap: 'normal', wordBreak: 'normal' } }}>
+                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill</TableCell><TableCell>Policy</TableCell><TableCell>Version change</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
                 <TableBody>{dependencyChanges.map((item) => <TableRow key={item.mount} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default } }}>
-                  <TableCell>{item.mount}</TableCell>
+                  <TableCell><Typography variant="s1">{mountName(item.mount)}</Typography><TechnicalDetails title="Technical details"><Typography variant="s3" component="code">{item.mount}</Typography></TechnicalDetails></TableCell>
                   <TableCell>{(item.after || item.before)?.requested?.label ? `Follows ${(item.after || item.before).requested.label}` : `Pinned to v${(item.after || item.before)?.requested?.version}`}</TableCell>
                   <TableCell>{item.before ? `v${item.before.version}` : 'Not linked'} → {item.after ? `v${item.after.version}` : 'Removed'}</TableCell>
                   <TableCell><IdentityChip label="Locked digest" value={(item.after || item.before)?.digest} /></TableCell>

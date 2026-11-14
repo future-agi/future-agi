@@ -63,7 +63,7 @@ it('does not offer renewal for a role refusal', async () => {
 });
 
 const ref = (id, visibility = 'private') => ({ source: 'skills_text', sourceId: id, subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'sha256:candidate',
-  visibility, status: 'completed', payloadExpiresAt: '2999-01-01T00:00:00Z', annotationRevision: 1, executionFingerprint: 'exec', configuration: { text: { model: 'm' }, digest: 'cfg' } });
+  visibility, status: 'completed', outcome: 'works_on_examples', payloadExpiresAt: '2999-01-01T00:00:00Z', annotationRevision: 1, executionFingerprint: 'exec', configuration: { text: { model: 'm' }, digest: 'cfg' } });
 
 it('carries the published candidate forward, preselects the only target and shares the named results in one decision', async () => {
   useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy', labels: [{ name: 'production', version: 1 }] }], total_pages: 1 } });
@@ -223,7 +223,10 @@ it('shows disabled decision reasons without requiring acknowledgment to request 
   const packet = { candidateVersionId: 'v2', evidence: [], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
   render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true }} request={{ id: 'request', revision: 3, status: 'pending' }} permissions={{ canDecide: true }} onDecide={decide} />);
   expect(screen.getByText('Tick the acknowledgment to approve')).toBeVisible();
-  expect(screen.getByText('Add a comment to request changes')).toBeVisible();
+  expect(screen.queryByLabelText('Review comment')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
+  expect(decide).not.toHaveBeenCalled();
+  expect(screen.getByText('A comment is required to request changes.')).toBeVisible();
   fireEvent.change(screen.getByLabelText('Review comment'), { target: { value: 'Please revise the instructions.' } });
   expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
@@ -256,4 +259,32 @@ it('uses recipient names only from metadata matching the inbox revision', () => 
   useSkillV11Query.mockReturnValue({ data: [{ id: 'request', revision: 1, recipients: [{ id: 'old-reviewer', name: 'Earlier reviewer' }] }] });
   rerender(<MemoryRouter><ReviewInboxController scopeKey="reviewer" View={View} /></MemoryRouter>);
   expect(View.mock.calls.at(-1)[0].data.results[0].recipients).toBeUndefined();
+});
+
+it('keeps carried evidence and reviewer when editing a prepared request, but clears its acknowledgment', async () => {
+  const evidence = ref('carried', 'workspace');
+  const packet = { subjectId: 'context', subjectKind: 'agent_context', candidateVersionId: 'v2', candidateDigest: 'sha256:candidate', evidence: [evidence], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
+  useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [evidence, { ...ref('newer', 'workspace'), completedAt: '2026-11-14' }], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] } });
+  const prepared = { preview: { packet, fingerprint: 'fp', current: true }, review: { complete: true } };
+  const prepare = vi.fn().mockResolvedValue(prepared);
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare });
+  const submit = vi.fn();
+  useSubmitReleaseReview.mockReturnValue({ mutateAsync: submit });
+  useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' }, evidence: ['skills_text:carried'] }} /></MemoryRouter>);
+  expect(await screen.findByText('1 result attached from your test')).toBeVisible();
+  expect(screen.getByText('From your test')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  expect(await screen.findByText('Reviewer: Sam Rivera')).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: 'Assigned reviewer' })).not.toBeInTheDocument();
+  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ evidence: [{ source: 'skills_text', sourceId: 'carried', annotationRevision: 1 }] }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit request' }));
+  expect(screen.getByRole('combobox', { name: 'Assigned reviewer' })).toHaveTextContent('Sam Rivera');
+  expect(screen.getByText('1 result attached from your test')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  expect(await screen.findByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
+  expect(submit).not.toHaveBeenCalled();
 });

@@ -259,6 +259,8 @@ export async function createDriver({ jobId, runId, registration }) {
           // exact-candidate result; the confirmation names each record. The
           // same decision continues to the exact packet (server-prepared, not
           // sent); the author still inspects and attests it below.
+          // Preselected only when exactly one authorized reviewer exists.
+          if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
           const attach = author.getByRole('checkbox', { name: /^Attach Text comparison/ });
           await expect(attach).toHaveCount(input.evidenceIds.length);
           await expect(author.getByText('No matching test evidence. Not tested is not a pass.', { exact: true })).toHaveCount(0);
@@ -276,8 +278,6 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(author.getByRole('dialog')).toHaveCount(0);
           requireValue(preview.packet.evidence.length === input.evidenceIds.length
             && preview.packet.evidence.every((ref) => input.evidenceIds.includes(ref.source_id)), 'Prepared packet differs from the shared selection');
-          // Preselected only when exactly one authorized reviewer exists.
-          if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
           await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(ack(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));
           await op.click(ack(author), 'acknowledge-author-packet');
           const sent = responseFor(author, '/release-requests/');

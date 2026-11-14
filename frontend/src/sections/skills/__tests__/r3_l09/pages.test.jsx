@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import SkillsReviewsPage from "src/pages/dashboard/skills/SkillsReviewsPage";
 import ContextReviewPage from "src/pages/dashboard/skills/contexts/ContextReviewPage";
-import { ID } from "./fixtures";
+import { ID, draftReview } from "./fixtures";
+import ContextReleaseReview from "../../contexts/ContextReleaseReview";
 
 const auth = vi.hoisted(() => ({
   enabled: true,
@@ -78,4 +79,25 @@ describe("route wrappers and unavailable integration boundary", () => {
       requestId: ID,
     });
   });
+});
+
+
+it('keeps publication actions in place while confirming the CAS-bound review', async () => {
+  const acknowledge = vi.fn().mockResolvedValue({ revision: 9 });
+  const publish = vi.fn();
+  const props = { scopeKey: 'scope', state: 'ready', canPublish: true, onAcknowledgeHead: acknowledge, onPublish: publish, onPublishAndRequest: vi.fn() };
+  const value = { ...draftReview, headAcknowledged: false };
+  const { rerender } = render(<MemoryRouter><ContextReleaseReview {...props} draftReview={value} /></MemoryRouter>);
+  expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Confirm the review first');
+  expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeVisible();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm review' }));
+  await waitFor(() => expect(acknowledge).toHaveBeenCalledWith(expect.objectContaining({ expectedDigest: value.candidateDigest, reviewFingerprint: value.reviewFingerprint })));
+  expect(publish).not.toHaveBeenCalled();
+  rerender(<MemoryRouter><ContextReleaseReview {...props} draftReview={{ ...value, headAcknowledged: true, revision: 9, reviewFingerprint: 'confirmed' }} /></MemoryRouter>);
+  expect(screen.getByText('Review confirmed')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Confirm review' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Publish version' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeVisible();
 });

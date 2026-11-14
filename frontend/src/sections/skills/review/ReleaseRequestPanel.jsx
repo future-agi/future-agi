@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  AlertTitle,
   Box,
   Button,
   Checkbox,
@@ -11,15 +12,13 @@ import {
   Typography,
 } from "@mui/material";
 import { isDefiniteRejection, operationStatus } from "src/api/skills/operation-errors";
-import Section from "src/components/section";
-import StatusBadge from "src/components/status-badge";
 import SharedOperationFeedback from '../components/OperationFeedback';
+import { useStickyFooterHeight } from '../components/SkillsWorkspaceLayout';
 import TechnicalDetails from '../components/TechnicalDetails';
 import { reviewPersonName, relativeReviewTime } from '../utils/review-display';
 import PeoplePicker from "../components/PeoplePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import ReleaseReceipt from './ReleaseReceipt';
-import { counted } from './reviewPresentation';
 import ReleaseReviewBody, {
   ReviewState,
   evidenceKey,
@@ -140,6 +139,9 @@ function PacketActions({
   onReviewedChange,
   initialRecipientId,
   renewalOpen,
+  renewalReason,
+  onEdit,
+  onCancel,
 }) {
   const operation = useReviewedOperation();
   const now = useReviewClock();
@@ -150,6 +152,9 @@ function PacketActions({
   );
   const [comment, setComment] = useState("");
   const [commentFocused, setCommentFocused] = useState(false);
+  const commentInput = useRef(null);
+  const decisionPanel = useRef(null);
+  useStickyFooterHeight(decisionPanel);
   const [confirm, setConfirm] = useState(false);
   const packet = preview.packet;
   const fingerprint = preview.fingerprint;
@@ -240,40 +245,34 @@ function PacketActions({
           <Typography variant="s3" color="text.secondary" aria-hidden="true" sx={{ display: { xs: 'none', sm: 'block' } }}>→</Typography>
           <Typography variant="s3" color={request.status === 'approved' ? 'text.primary' : 'text.secondary'}>{request.status === 'approved' || closed ? `Approved by ${reviewPersonName(request.decidedByName)}${request.decidedAt ? ` · ${relativeReviewTime(request.decidedAt)}` : ''}` : `Waiting for ${request.recipients?.length ? request.recipients.map((person) => reviewPersonName(person.name)).join(', ') : 'the assigned reviewer'}'s approval`}</Typography>
           <Typography variant="s3" color="text.secondary" aria-hidden="true" sx={{ display: { xs: 'none', sm: 'block' } }}>→</Typography>
-          <StatusBadge status={!current && !closed ? 'stale' : closed ? 'released' : 'not_started'} label={!current && !closed ? 'Release paused' : closed ? 'Released' : 'Not released'} />
-          {request.status === 'pending' && <StatusBadge status="in_review" />}
+          <Typography variant="s3" color="text.secondary">{closed ? 'Released' : 'Not released'}</Typography>
         </Stack>
       </Stack>}
-      {!finalReceipt && <>
-        <Typography variant="s1">Candidate v{packet.transition.version} · {review?.changes ? `${counted(review.changes.filter((file) => file.status !== 'unchanged').length, 'file')} changed` : 'File changes not loaded'} · {review?.dependencyChanges ? counted(review.dependencyChanges.length, 'linked-skill change') : 'Linked-skill comparison not loaded'} · {packet.transition.label} stays {packet.transition.expectedVersion == null ? 'without a release' : `v${packet.transition.expectedVersion}`} until released.</Typography>
-        <Typography variant="s3" color="text.secondary">{!current ? 'Release is paused. Refresh and inspect what changed.' : request?.status === 'approved' ? permissions.canExecute ? 'Approved. You can release this.' : 'Approved. Ask a workspace releaser to release this; your account does not have release access.' : request ? permissions.canDecide ? 'Review the evidence and changes, then make your decision.' : 'Waiting for the assigned reviewer’s decision.' : 'Review the evidence and changes before sending.'}</Typography>
+      {!request && onEdit && <Stack direction="row" spacing={1} alignItems="center"><Typography variant="s3">Reviewer: {reviewPersonName(recipients.find((person) => person.id === recipientId)?.name)}</Typography><Button size="small" disabled={locked} onClick={onEdit}>Change</Button></Stack>}
+      {!finalReceipt && <Box sx={{ pb: { xs: 2, sm: 'calc(var(--skills-sticky-footer-height, 0px) + 16px)' } }}>
         <ReleaseReviewBody {...review} packet={packet} onRetryDependencies={refresh} />
-      </>}
+      </Box>}
       {!closed && (
-        <Box data-sticky-footer sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', p: 1.5 }}>
-        <Section title={request?.status === "approved" ? "Release" : request ? "Review decision" : "Send for review"}>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} flexWrap="wrap">
-            {!request && (
-              <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
+        <>
+        <Button sx={{ display: { xs: 'block', sm: 'none' }, position: 'sticky', bottom: 0, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', zIndex: 2 }} onClick={() => decisionPanel.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>Review decision ↓</Button>
+        <Box ref={decisionPanel} data-sticky-footer sx={{ position: { xs: 'static', sm: 'sticky' }, bottom: 0, zIndex: 2, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', minHeight: 64, py: 1, px: 1.5 }}>
+          <Stack spacing={1.5}>
+            {!current && <Alert severity="warning">
+              <AlertTitle>{renewalReason || (staleCode === 'evidence_expired' ? 'Attached evidence expired after this request was made.' : 'This request changed after it was reviewed.')}</AlertTitle>
+              <Typography variant="s1" component="p">This changed since you opened it. Refresh and review again.</Typography>
+              <Typography variant="s3" component="p">Approval no longer applies until the request is renewed.</Typography>
+              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                {onRenew && request && permissions.canDecide && <Button variant="contained" color="primary" disabled={locked} onClick={() => { setConfirm(false); onRenew(); }}>Renew review</Button>}
+                {refresh && <Button disabled={locked} onClick={refresh}>Refresh</Button>}
+              </Stack>
+              {reasons.length > 0 && <TechnicalDetails title="Why this review is paused">{Array.from(new Set(reasons)).map((reason) => <Typography key={reason} variant="s3">{reason}</Typography>)}</TechnicalDetails>}
+            </Alert>}
+            {!request && !onEdit && <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
                 onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
-                helperText="An independent reviewer must approve before production can move." />
-            )}
-            {request && request.status !== "approved" && (
-              <TextField
-                multiline
-                minRows={commentFocused ? 3 : 1}
-                onFocus={() => setCommentFocused(true)}
-                onBlur={() => setCommentFocused(false)}
-                sx={{ flex: 1, minWidth: { md: 200 } }}
-                size="small"
-                label="Review comment"
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                inputProps={{ maxLength: 2000 }}
-                disabled={locked || !canRequestChanges}
-              />
-            )}
-            <FormControlLabel sx={{ flex: 1, minWidth: { md: 240 } }}
+                helperText="An independent reviewer must approve before production can move." />}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+            {!request && onEdit && <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}><Button variant="outlined" disabled={locked} onClick={onEdit}>Edit request</Button><Button disabled={locked} onClick={onCancel}>Cancel</Button></Stack>}
+            <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: 1, minWidth: { md: 240 } }}
               control={
                 <Checkbox
                   checked={reviewed}
@@ -283,20 +282,7 @@ function PacketActions({
               }
               label="I reviewed this exact candidate, target, evidence and release consequence."
             />
-            <OperationFeedback operation={operation} onRefresh={refresh} />
-            {!current && !operation.error && <SharedOperationFeedback error={{ statusCode: 409, code: staleCode || 'review_stale' }} onRefresh={refresh} />}
-            {!current && <Typography variant="s3" color="text.secondary">Approval and release are paused until you refresh and inspect the changes.</Typography>}
-            {reasons.length > 0 && <TechnicalDetails title="Why this review is paused">{Array.from(new Set(reasons)).map((reason) => <Typography key={reason} variant="s3">{reason}</Typography>)}</TechnicalDetails>}
-            {onRenew && request && permissions.canDecide && !current && <Button variant="outlined" disabled={locked} onClick={() => { setConfirm(false); onRenew(); }}>Renew review</Button>}
-            {operation.result && !finalReceipt && (
-              <Alert severity="info">
-                Request recorded. Refresh the server-backed review to see the
-                current decision and unread state. Nothing was released by this
-                acknowledgment.
-              </Alert>
-            )}
-            <Stack spacing={1} sx={{ minWidth: 0 }}>
-              {request && <StatusBadge status={!current ? 'stale' : request.status === 'pending' ? 'in_review' : request.status} />}
+            <Stack spacing={0} sx={{ minWidth: 0, flexShrink: 0 }}>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               {!request && (
                 <Button
@@ -323,7 +309,8 @@ function PacketActions({
               )}
               {request && (
                 <>
-                  {request.status === "pending" && <Button
+                  {request.status !== 'approved' && !commentFocused && !comment && <Button size="small" disabled={locked || !canRequestChanges} onClick={() => setCommentFocused(true)}>Add comment</Button>}
+                  {request.status === "pending" && <Button title={!reviewed ? 'Tick the acknowledgment to approve' : undefined}
                     variant="contained" color="primary" sx={{ '&.Mui-disabled': { bgcolor: 'primary.main', color: 'primary.contrastText', opacity: 0.5 } }}
                     disabled={!onDecide || !canDecide || !reviewed || locked}
                     onClick={() =>
@@ -341,20 +328,16 @@ function PacketActions({
                     disabled={
                       !onDecide ||
                       !canRequestChanges ||
-                      !comment.trim() ||
                       locked
                     }
-                    onClick={() =>
-                      operation.run(onDecide, {
-                        ...actionInput,
-                        decision: "request_changes",
-                        comment,
-                      })
-                    }
+                    onClick={() => {
+                      if (!comment.trim()) { setCommentFocused(true); return; }
+                      operation.run(onDecide, { ...actionInput, decision: "request_changes", comment });
+                    }}
                   >
                     Request changes
                   </Button>}
-                  {request.status === "approved" && <Button
+                  {(request.status === "approved" || !current) && <Button
                     variant="contained" color="primary" sx={{ '&.Mui-disabled': { bgcolor: 'primary.main', color: 'primary.contrastText', opacity: 0.5 } }}
                     disabled={!onExecute || !canExecute || !reviewed || locked}
                     onClick={() => setConfirm(true)}
@@ -364,20 +347,17 @@ function PacketActions({
                 </>
               )}
               </Stack>
-              {request?.status === 'pending' && !reviewed && current && <Typography variant="s3" color="text.secondary">Tick the acknowledgment to approve</Typography>}
-              {request && request.status !== 'approved' && !comment.trim() && canRequestChanges && <Typography variant="s3" color="text.secondary">Add a comment to request changes</Typography>}
+              {!current && <Typography variant="s3" color="text.secondary">Renew and approve this request before releasing.</Typography>}
+              {current && request?.status === 'pending' && !reviewed && <Typography variant="s3" color="text.secondary">Tick the acknowledgment to approve</Typography>}
             </Stack>
-            {!request && !reviewed && current && <Typography variant="s3" color="text.secondary">Confirm that you reviewed the candidate and release consequence to continue.</Typography>}
-            {request && request.status !== 'pending' && !canExecute && <Typography variant="s3" color="text.secondary">Only a pending request can be approved. Releasing requires a current approval and release access.</Typography>}
-            {request && !permissions.canExecute && (
-              <Typography variant="s3">
-                A currently authorized releaser must execute the approved
-                transition. Passing tests or approval do not grant that role.
-              </Typography>
-            )}
+            </Stack>
+            {request && request.status !== 'approved' && (commentFocused || comment) && <TextField inputRef={commentInput} autoFocus multiline minRows={3} size="small" label="Review comment" value={comment} onChange={(event) => setComment(event.target.value)} inputProps={{ maxLength: 2000 }} disabled={locked || !canRequestChanges} helperText="A comment is required to request changes." />}
+            {(!operation.stale || current) && <OperationFeedback operation={operation} onRefresh={refresh} />}
+            {operation.result && !finalReceipt && <Alert severity="info">Request recorded. Refresh the server-backed review to see the current decision and unread state. Nothing was released by this acknowledgment.</Alert>}
+            {request?.status === 'approved' && current && !permissions.canExecute && <Typography variant="s3" color="text.secondary">A currently authorized releaser must execute the approved transition. Passing tests or approval do not grant that role.</Typography>}
           </Stack>
-        </Section>
         </Box>
+        </>
       )}
       {!request && (!recipientId || !permissions.canSubmit || !current) && <Typography variant="s3" color="text.secondary">{!permissions.canSubmit ? 'You need permission to request a review.' : !recipientId ? 'Choose an assigned reviewer to continue.' : 'Refresh and inspect the complete review before sending.'}</Typography>}
       {finalReceipt && <ReleaseReceipt receipt={finalReceipt} request={request} />}
@@ -431,6 +411,9 @@ PacketActions.propTypes = {
   onReviewedChange: PropTypes.func,
   initialRecipientId: PropTypes.string,
   renewalOpen: PropTypes.bool,
+  renewalReason: PropTypes.string,
+  onEdit: PropTypes.func,
+  onCancel: PropTypes.func,
 };
 
 export default function ReleaseRequestPanel({

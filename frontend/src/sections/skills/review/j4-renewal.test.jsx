@@ -31,8 +31,11 @@ it('shows every changed precondition and removed evidence before creating the ne
   expect(row).toBeVisible();
   expect(row).toHaveTextContent('Release revision');
   expect(row).toHaveTextContent('A label moved or label protection was edited.');
-  expect(row.children[1]).toHaveTextContent('1');
-  expect(row.children[2]).toHaveTextContent('3');
+  expect(row.children[1]).toHaveTextContent('At approval');
+  expect(row.children[2]).toHaveTextContent('Edited since approval');
+  fireEvent.click(screen.getByRole('button', { name: 'Changed values' }));
+  expect(screen.getByText(/"before": 1/)).toHaveTextContent('"after": 3');
+  fireEvent.click(screen.getByRole('button', { name: 'Changed values' }));
   expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
   expect(screen.getByText(/is removed from the renewed request/)).toBeVisible();
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
@@ -162,4 +165,20 @@ it('renews without approval only after acknowledgment and retains the fingerprin
   fireEvent.click(renewOnly);
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ revision: 2, expectedFingerprint: 'renewed' })));
   expect(decideAsync).not.toHaveBeenCalled();
+});
+
+it('explains a restored policy only when its values and moved revision are reported', () => {
+  useRenewalPreview.mockReturnValue({ data: { ...preview, changes: [
+    { item: 'transition.expected_security_revision', before: 0, after: 4 },
+    { item: 'security_policy', before: { protected: true }, after: { protected: true } },
+  ] } });
+  const { rerender } = render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  expect(screen.getByText("The security policy changed and was restored after approval. The earlier approval can't be reused.")).toBeVisible();
+  useRenewalPreview.mockReturnValue({ data: { ...preview, changes: [{ item: 'transition.expected_security_revision', before: 0, after: 4 }] } });
+  rerender(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  expect(screen.getByText('Any policy edit after approval requires a new approval.')).toBeVisible();
+  expect(screen.queryByText(/earlier approval can't be reused/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Renew without approving' }).closest('.MuiDialogActions-root')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Close', exact: true })).toBeVisible();
 });

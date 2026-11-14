@@ -4,8 +4,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
-import { Alert, Button, Stack } from '@mui/material';
-import { isStaleReview, reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
+import { Button, Stack } from '@mui/material';
+import { isStaleReview, reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useRenewalPreview, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
 import axios from 'src/utils/axios';
@@ -14,7 +14,6 @@ import { operationStatus } from 'src/api/skills/operation-errors';
 import CapabilityNotice from '../components/CapabilityNotice';
 import { releaseTitle } from './reviewPresentation';
 import StatusBadge from 'src/components/status-badge';
-import ReleaseReviewBody from './ReleaseReviewBody';
 import { reviewComposerUrl } from '../utils/review-links';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -29,6 +28,11 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const access = useSkillV11Scope();
   const navigate = useNavigate();
   const query = useReleaseRequest(requestId, contextId);
+  const [refusedRevision, setRefusedRevision] = useState(null);
+  const revisionKey = query.data ? `${scopeKey}:${requestId}:${query.data.request.revision}` : null;
+  const paused = Boolean(query.data?.renewalRequired || query.data?.staleCode || (revisionKey && refusedRevision === revisionKey));
+  const renewalPreview = useRenewalPreview(requestId, paused);
+  const renewalReason = renewalPreview.data?.changes?.some((row) => row.item.endsWith('expected_security_revision')) ? 'The security policy changed after this request was made.' : undefined;
   const decide = useDecideReleaseRequest();
   const execute = useExecuteReleaseRequest();
   const [renewing, setRenewing] = useState(false);
@@ -47,31 +51,23 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const revise = () => navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`);
   const transition = query.data?.preview?.packet.transition;
   const resourceName = request?.name || query.data?.receipt?.name || 'Release review';
-  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} badge={query.data?.renewalRequired ? <StatusBadge status="stale" label="Paused" /> : undefined} title={transition ? releaseTitle(transition) : resourceName} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} badge={paused ? <StatusBadge status="stale" label="Paused" /> : request?.status ? <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status} /> : undefined} title={transition ? releaseTitle(transition) : resourceName} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
 
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps
   // the dialog mounted while the page switches between stale and renewed.
   const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }} />;
-  // Detailed evidence became unavailable: only the assigned reviewer's
-  // explicit renewal remains. Expired evidence is removed, never substituted.
-  if (state === 'ready' && query.data?.renewalRequired) return <>
-    <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
-      {header}
-      <Alert severity="warning">Release paused — {query.data.renewalRequired === 'evidence_expired' ? 'detailed evidence expired.' : 'the reviewed evidence is no longer available.'} Inspect the changes before approving a new revision.</Alert>
-      <Stack direction="row"><Button variant="contained" color="primary" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
-      {query.data.preview && <ReleaseReviewBody packet={query.data.preview.packet} {...query.data.review} />}
-    </Stack>
-    {renewal}
-  </>;
   return <Stack spacing={1.5} sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}>
     {header}
-    <View scopeKey={scopeKey} state={state} {...query.data} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
+    <View scopeKey={scopeKey} state={state} {...query.data} renewalReason={renewalReason} staleCode={query.data?.staleCode || query.data?.renewalRequired || (paused ? 'review_stale' : undefined)} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={async () => { const result = await query.refetch(); if (!result?.isError && result?.data?.preview?.current) setRefusedRevision(null); return result; }} onRenew={() => setRenewing(true)}
       renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
-      onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })}
+      onDecide={async (input, options) => {
+        try { return await decide.mutateAsync({ ...input, ...options }); }
+        catch (error) { if (isStaleReview(error)) setRefusedRevision(revisionKey); throw error; }
+      }}
       onExecute={async (input, options) => {
         try { const receipt = await execute.mutateAsync({ ...input, ...options }); setExecutedReceipt({ requestId, scopeKey, value: receipt }); return receipt; }
-        catch (error) { if (isStaleReview(error)) setRenewing(true); throw error; }
+        catch (error) { if (isStaleReview(error)) { setRefusedRevision(revisionKey); setRenewing(true); } throw error; }
       }} />
     {renewal}
   </Stack>;

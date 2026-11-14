@@ -1,5 +1,19 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import ReleaseRequestComposer, { ShareAllEvidence } from './ReleaseRequestComposer';
+import ReleaseReviewBody from './ReleaseReviewBody';
+import ReleaseRenewalDialog from './ReleaseRenewalDialog';
+import { useReviewOptions } from 'src/api/skills/review-authoring';
+import { useRenewalPreview } from 'src/api/skills/review-production';
+
+vi.mock('src/api/skills/testing', async (load) => ({ ...(await load()), useSkillV11Scope: () => ({ scope: { userId: 'author' } }) }));
+vi.mock('src/api/skills/review-authoring', () => ({
+  useReviewSubjects: () => ({ data: { results: [], total_pages: 1 } }),
+  useReviewCandidates: () => ({ data: { results: [], total_pages: 1 } }),
+  useReviewOptions: vi.fn(), usePrepareReleaseReview: () => ({}), useSubmitReleaseReview: () => ({}), useShareReleaseEvidence: () => ({}),
+}));
+vi.mock('src/api/skills/review-production', async (load) => ({ ...(await load()), useRenewalPreview: vi.fn(), useRenewReleaseRequest: () => ({}), useDecideReleaseRequest: () => ({}) }));
 import { mapRequest, mapReleaseReceipt } from 'src/api/skills/review-production';
 import ReleaseRequestPanel from './ReleaseRequestPanel';
 import ReleaseReceipt from './ReleaseReceipt';
@@ -23,7 +37,8 @@ it('maps recorded execution time, approver, executor and both versions into the 
   const receipt = mapReleaseReceipt({ request_id: 'request', executed_by: 'executor-id', executed_by_name: 'Erin Releaser', approved_by_name: 'Robin Reviewer', executed_at: '2026-11-10T12:00:00Z', previous_version: 1, name: 'Support agent', currentness_at_action: {}, post_move_state: { label: 'production', version: 2 } });
   render(<ReleaseReceipt receipt={receipt} />);
   expect(screen.getByText('Production moved from v1 to v2')).toBeVisible();
-  expect(screen.getByText(/Released by Erin Releaser/)).toHaveTextContent('Approved by Robin Reviewer');
+  expect(screen.getByText(/Released by Erin Releaser/)).toBeVisible();
+  expect(screen.getByText('Approved by Robin Reviewer')).toBeVisible();
   expect(receipt.recordedAt).toBe('2026-11-10T12:00:00Z');
 });
 it('keeps approval and release paused after a stale refusal until explicit refresh', async () => {
@@ -57,4 +72,41 @@ it('closes the move confirmation before a stale response can open renewal', asyn
   reject({ statusCode: 409, code: 'release_conflict' });
   expect(await screen.findByText('This changed since you opened it. Refresh and review again.')).toBeVisible();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('keeps one evidence ID consistent across selection, consent, review, paused review and renewal', () => {
+  const ref = { source: 'skills_text', sourceId: '5cae58ed', subjectId: 'skill', subjectKind: 'skill', candidateDigest: 'digest', configuration: { digest: 'config', text: {} }, annotationRevision: 2,
+    status: 'completed', visibility: 'workspace', payloadExpiresAt: '2999-01-01', outcome: 'works_on_examples', counts: { cases: 1, graded: 2, planned: 2, regressed: 0 } };
+  const evidencePacket = { ...packet, evidence: [ref] };
+  useReviewOptions.mockReturnValue({ data: { targets: [], recipients: [], evidence: [ref] } });
+  const composer = render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ kind: 'skill', subjectId: 'skill', candidate: { id: 'version', digest: 'digest', number: 2 }, evidence: ['skills_text:5cae58ed'] }} /></MemoryRouter>);
+  expect(screen.getByText('Passed on examples')).toBeVisible();
+  expect(screen.getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
+  expect(screen.getByText('From your test')).toBeVisible();
+  composer.unmount();
+
+  const consent = render(<ShareAllEvidence packet={packet} evidence={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 result' }));
+  expect(within(screen.getByRole('dialog')).getByText('Passed on examples')).toBeVisible();
+  expect(within(screen.getByRole('dialog')).getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
+  expect(screen.getByTitle('5cae58ed')).toBeVisible();
+  consent.unmount();
+
+  const review = render(<ReleaseReviewBody packet={evidencePacket} evidence={[ref]} />);
+  expect(screen.getByText('Passed on examples')).toBeVisible();
+  expect(screen.getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
+  const unloaded = { ...ref, resultState: 'not_loaded' };
+  review.rerender(<ReleaseReviewBody packet={evidencePacket} evidence={[unloaded]} />);
+  expect(screen.getByText('Not loaded')).toBeVisible();
+  expect(screen.getByText('Renew the review to recheck this result.')).toBeVisible();
+  expect(screen.queryByText('Passed on examples')).not.toBeInTheDocument();
+  expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
+  review.unmount();
+
+  useRenewalPreview.mockReturnValue({ data: { revision: 2, fingerprint: 'renewed', packet: { ...evidencePacket, evidence: [unloaded] }, changes: [], removedEvidence: [] } });
+  render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  expect(screen.getByText('Not loaded')).toBeVisible();
+  expect(screen.getByText('Renew the review to recheck this result.')).toBeVisible();
+  expect(screen.getByTitle('5cae58ed')).toBeVisible();
+  expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
 });

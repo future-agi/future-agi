@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 import ObjectHeader from "../components/ObjectHeader";
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
 import { mountName, publishSentence } from "../utils/conclusions";
@@ -252,25 +253,11 @@ function DraftPublication({
               moved.
             </Alert>
           )}
-          {!draftReview.headAcknowledged && <Typography variant="s3" color="text.secondary">Confirm review, then publish without requesting a release review.</Typography>}
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            {draftReview.headAcknowledged ? (
-              <Button
-                variant="outlined"
-                color="primary"
-                disabled={!ready || !onPublish}
-                onClick={() =>
-                  operation.run(onPublish, {
-                    ...fields,
-                    baseVersion: draftReview.baseVersion,
-                    note,
-                    acknowledgeWarnings: warnings,
-                  })
-                }
-              >
-                Publish version
-              </Button>
-            ) : (
+          <Typography variant="s3" color="text.secondary">Publish version saves v{(draftReview.expectedHeadVersion ?? 0) + 1} without requesting release. Confirm the review first.</Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: 'center' }}>
+            {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ mr: { sm: 'auto' } }}>Reload draft</Button>}
+            <Box sx={{ minWidth: { sm: 120 }, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {draftReview.headAcknowledged ? <Typography variant="s3" role="status">Review confirmed</Typography> : (
               <Button
                 variant="outlined"
                 color="primary"
@@ -302,6 +289,14 @@ function DraftPublication({
                 Confirm review
               </Button>
             )}
+            </Box>
+            <Stack spacing={0.5}>
+              <Button variant="outlined" {...reasonProps('publish-review-reason', !draftReview.headAcknowledged && 'Confirm the review first')} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
+                onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
+                Publish version
+              </Button>
+              <ActionReason id="publish-review-reason" reason={!draftReview.headAcknowledged && 'Confirm the review first'} />
+            </Stack>
             {/* J4 one-step path: the same reviewed identity acknowledges the
                 head when needed, publishes the immutable candidate and opens
                 the release-review request with it carried forward. Production
@@ -327,14 +322,6 @@ function DraftPublication({
                 }
               >
                 Publish and request review
-              </Button>
-            )}
-            {onRefresh && (
-              <Button
-                disabled={operation.busy || operation.uncertain}
-                onClick={onRefresh}
-              >
-                Reload draft
               </Button>
             )}
           </Stack>

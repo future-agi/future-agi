@@ -228,6 +228,7 @@ describe("exact decisions and retry safety", () => {
   it("does not decide from merely opening/reading and sends only the exact reviewed packet preconditions", async () => {
     const decide = vi.fn().mockResolvedValue({ id: ID, status: "approved" });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    click('Add comment');
     expect(decide).not.toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
@@ -252,6 +253,7 @@ describe("exact decisions and retry safety", () => {
       .mockRejectedValueOnce(new Error("lost response"))
       .mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    click('Add comment');
     acknowledge();
     click("Approve release");
     await screen.findByText(/couldn't confirm whether this went through/);
@@ -269,6 +271,7 @@ describe("exact decisions and retry safety", () => {
       .mockRejectedValueOnce({ response: { status: 403 } })
       .mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    click('Add comment');
     acknowledge();
     click("Approve release");
     await screen.findByText(/couldn't confirm whether this went through/);
@@ -287,6 +290,7 @@ describe("exact decisions and retry safety", () => {
   it("blocks duplicate submissions after a confirmed decision until server state refreshes", async () => {
     const decide = vi.fn().mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    click('Add comment');
     acknowledge();
     click("Approve release");
     await screen.findByText(/Request recorded/);
@@ -325,6 +329,7 @@ describe("exact decisions and retry safety", () => {
   it("preserves comment after a rejected CAS without refreshing the precondition", async () => {
     const decide = vi.fn().mockRejectedValue({ response: { status: 409 } });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    click('Add comment');
     fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
       target: { value: "Inspect the new target." },
     });
@@ -378,7 +383,8 @@ describe("exact decisions and retry safety", () => {
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Release to production" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Release to production" })).toBeDisabled();
+    click('Add comment');
     fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
       target: { value: "Production moved while this was pending." },
     });
@@ -425,9 +431,8 @@ describe("exact decisions and retry safety", () => {
       />,
     );
     acknowledge();
-    fireEvent.change(screen.getByLabelText("Review comment"), {
-      target: { value: "Closing" },
-    });
+    expect(screen.getByRole('button', { name: 'Add comment' })).toBeDisabled();
+    expect(screen.queryByLabelText('Review comment')).not.toBeInTheDocument();
     for (const name of [
       "Approve release",
       "Request changes",
@@ -483,7 +488,7 @@ describe("reviewer arrival and annotation", () => {
     render(<Arrival />);
     expect(screen.getByText("1 request waiting for your decision")).toBeVisible();
     click("refund-context");
-    expect(screen.getByText(/Move production from/)).toBeVisible();
+    expect(screen.getByText(/Production moves/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
@@ -734,4 +739,19 @@ describe("publication and explicit spending", () => {
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
     ).toHaveValue("5.25");
   });
+});
+
+it('puts pending reviews first and reserves the unread marker and Review action for them', () => {
+  const onOpen = vi.fn();
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', unread: true };
+  const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: true };
+  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, results: [released, pending] }} onOpen={onOpen} onStatusChange={vi.fn()} onPageChange={vi.fn()} />);
+  const rows = within(screen.getByRole('table', { name: 'Assigned release reviews' })).getAllByRole('row').slice(1);
+  expect(rows[0]).toHaveTextContent('Pending review');
+  expect(within(rows[0]).getByText('Unread')).toBeInTheDocument();
+  expect(within(rows[1]).queryByText('Unread')).not.toBeInTheDocument();
+  expect(screen.queryByText('New', { exact: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review', exact: true }));
+  expect(onOpen).toHaveBeenCalledWith(pending);
+  expect(screen.getByRole('combobox', { name: 'Request status' })).toHaveTextContent('All');
 });
