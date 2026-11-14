@@ -442,12 +442,13 @@ def _run_protect(call_type, content, *, protect_runtime=False, reverse=False):
         llm.return_value._try_gateway_completion.return_value = _protect_response(
             content
         )
-        return evaluator.run(
-            eval_name="Toxicity",
-            input="hello",
-            call_type=call_type,
-            protect_runtime=protect_runtime,
-        ).eval_results[0]
+        inputs = {"eval_name": "Toxicity", "input": "hello", "call_type": call_type}
+        result = (
+            evaluator.run_protect_runtime(inputs)
+            if protect_runtime
+            else evaluator.run(**inputs)
+        )
+        return result.eval_results[0]
 
 
 @pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
@@ -520,11 +521,18 @@ def protect_engine(monkeypatch):
             "required_keys": ["input"],
         },
         choice_scores={},
+        choices=[],
+        pass_threshold=0.5,
+        organization=None,
+        workspace=None,
     )
 
-    def create_instance(*, model, **kwargs):
+    def create_instance(*, model, config, **kwargs):
         evaluator = AgentEvaluator(
-            rule_prompt="Toxicity", model=model, output_type="Pass/Fail"
+            rule_prompt="Toxicity",
+            model=model,
+            output_type="Pass/Fail",
+            **config,
         )
         return evaluator, None
 
@@ -537,44 +545,236 @@ def protect_engine(monkeypatch):
 
 @pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
 @pytest.mark.parametrize("skip_params_preparation", [False, True])
-def test_protect_engine_defaults_to_grading_even_with_runtime_named_input(
-    protect_engine, call_type, skip_params_preparation
+@pytest.mark.parametrize("mapped_value", [True, "mapped-runtime-value", False])
+@pytest.mark.parametrize("protect_runtime", [False, True])
+def test_protect_engine_context_is_independent_of_runtime_named_input(
+    protect_engine, call_type, skip_params_preparation, mapped_value, protect_runtime
 ):
     from ee.evals.llm.agent_evaluator.evaluator import GradingError
     from evaluations.engine import EvalRequest, run_eval
 
-    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+    required_keys = ["input", "protect_runtime"]
+    protect_engine.config["required_keys"] = required_keys
+    inputs = {
+        "input": "hello",
+        "call_type": call_type,
+        "protect_runtime": mapped_value,
+        "required_keys": required_keys,
+    }
+    request = EvalRequest(
+        eval_template=protect_engine,
+        inputs=inputs,
+        # Neither generic constructor config nor mapped data identifies
+        # an SDK runtime caller. Only the separate request field does.
+        config_overrides={"protect_runtime": not protect_runtime},
+        skip_params_preparation=skip_params_preparation,
+        protect_runtime=protect_runtime,
+    )
+    with (
+        patch("agentic_eval.core.llm.llm.LLM") as llm,
+        patch.object(
+            AgentEvaluator,
+            "_render_prompt",
+            autospec=True,
+            side_effect=AgentEvaluator._render_prompt,
+        ) as render,
+    ):
         llm.return_value._try_gateway_completion.return_value = _protect_response(
             "garbage"
         )
-        with pytest.raises(GradingError) as exc:
-            run_eval(
-                EvalRequest(
-                    eval_template=protect_engine,
-                    inputs={
-                        "input": "hello",
-                        "call_type": call_type,
-                        "protect_runtime": True,
-                    },
-                    skip_params_preparation=skip_params_preparation,
-                )
+        if protect_runtime:
+            result = run_eval(request)
+            assert result.value == (
+                "Passed" if call_type == "protect_flash" else "Failed"
             )
-    assert exc.value.code == "invalid_output"
+        else:
+            with pytest.raises(GradingError) as exc:
+                run_eval(request)
+            assert exc.value.code == "invalid_output"
+        llm.return_value._try_gateway_completion.assert_called_once()
+
+    render.assert_called_once()
+    assert render.call_args.args[2]["protect_runtime"] == mapped_value
+    assert inputs["protect_runtime"] == mapped_value
 
 
 @pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
-def test_protect_runtime_context_does_not_leak_to_next_run(call_type):
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_protect_runtime_context_does_not_leak_to_next_run(call_type, unavailable):
     from ee.evals.llm.agent_evaluator.evaluator import GradingError
 
     evaluator = AgentEvaluator(rule_prompt="Toxicity", model=call_type)
+    inputs = {"input": "hello", "call_type": call_type, "protect_runtime": True}
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        completion = llm.return_value._try_gateway_completion
+        if unavailable:
+            completion.return_value = None
+            with pytest.raises(ValueError, match="gateway unavailable"):
+                evaluator.run_protect_runtime(inputs)
+        else:
+            completion.return_value = _protect_response("garbage")
+            evaluator.run_protect_runtime(inputs)
+        completion.return_value = _protect_response("garbage")
+        with pytest.raises(GradingError) as exc:
+            evaluator.run(**inputs)
+    assert exc.value.code == "invalid_output"
+    assert inputs == {"input": "hello", "call_type": call_type, "protect_runtime": True}
+
+
+@pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
+def test_protect_runtime_context_is_not_shared_with_nested_evaluation(call_type):
+    """A second request stays strict even while a runtime call is in flight."""
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+
+    evaluator = AgentEvaluator(rule_prompt="Toxicity", model=call_type)
+    inputs = {"input": "hello", "call_type": call_type, "protect_runtime": True}
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        completion = llm.return_value._try_gateway_completion
+
+        def reply(payload):
+            if completion.call_count == 1:
+                with pytest.raises(GradingError) as exc:
+                    evaluator.run(**inputs)
+                assert exc.value.code == "invalid_output"
+            return _protect_response("garbage")
+
+        completion.side_effect = reply
+        result = evaluator.run_protect_runtime(inputs)
+        assert completion.call_count == 2
+    assert result.eval_results[0]["output"] == (
+        "Passed" if call_type == "protect_flash" else "Failed"
+    )
+
+
+@pytest.mark.parametrize("mapped_value", [True, False, "synthetic-template-value"])
+@pytest.mark.parametrize("protect_runtime", [False, True])
+def test_run_preserves_protect_runtime_template_variable(mapped_value, protect_runtime):
+    evaluator = AgentEvaluator(
+        rule_prompt="Check {{protect_runtime}}", model="protect"
+    )
+    inputs = {
+        "eval_name": "Toxicity",
+        "input": "hello",
+        "protect_runtime": mapped_value,
+        "required_keys": ["protect_runtime"],
+    }
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        llm.return_value._try_gateway_completion.return_value = _protect_response(
+            "<label>Passed</label>"
+        )
+        result = (
+            evaluator.run_protect_runtime(inputs)
+            if protect_runtime
+            else evaluator.run(**inputs)
+        )
+    assert result.eval_results[0]["output"] == "Passed"
+    assert f"Check {mapped_value}" in evaluator._eval_prompt
+    assert f"<protect_runtime>{mapped_value}</protect_runtime>" in evaluator._eval_prompt
+    assert inputs["protect_runtime"] == mapped_value
+
+
+@pytest.mark.parametrize("mapped_value", [True, "synthetic-template-value"])
+def test_agent_run_receives_runtime_named_template_input(mapped_value):
+    evaluator = AgentEvaluator(
+        rule_prompt="Check {{protect_runtime}}", model="turing_large"
+    )
+    with (
+        patch.object(evaluator, "_build_llm_override", return_value={}),
+        patch.object(
+            evaluator, "_run_agent", return_value={"content": VALID, "tool_calls": []}
+        ) as run_agent,
+    ):
+        result = evaluator.run(
+            protect_runtime=mapped_value, required_keys=["protect_runtime"]
+        )
+    assert result.eval_results[0]["data"]["result"] == "Pass"
+    run_agent.assert_called_once()
+    assert f"Check {mapped_value}" in run_agent.call_args.args[0]
+
+
+@pytest.mark.parametrize("entrypoint", ["dataset", "playground"])
+@pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
+@pytest.mark.parametrize("mapped_value", [True, "mapped-runtime-value"])
+@pytest.mark.parametrize("declared", [False, True])
+def test_direct_eval_entrypoints_keep_truthy_runtime_named_inputs_strict(
+    monkeypatch, protect_engine, entrypoint, call_type, mapped_value, declared
+):
+    """Exercise both direct run(**mapped_data) paths, not the unified engine."""
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+    from model_hub.views.eval_runner import EvaluationRunner
+    from model_hub.views.utils import evals as playground
+
+    template = protect_engine
+    if declared:
+        template.config["required_keys"] = ["input", "protect_runtime"]
+    evaluator = AgentEvaluator(
+        rule_prompt="Check {{protect_runtime}}" if declared else "Toxicity",
+        model=call_type,
+    )
+    monkeypatch.setattr(
+        EvaluationRunner, "_create_eval_instance", Mock(return_value=evaluator)
+    )
+    monkeypatch.setattr(
+        EvaluationRunner, "get_few_shot_examples", Mock(return_value=[])
+    )
+    monkeypatch.setattr(playground.GroundTruthService, "inject_context", Mock())
+    monkeypatch.setattr(playground, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(playground, "_get_api_call_type", Mock(return_value="synthetic"))
+    monkeypatch.setattr(
+        "ee.usage.services.metering.check_usage",
+        Mock(return_value=SimpleNamespace(allowed=True)),
+    )
+    inputs = {
+        "input": "hello",
+        "call_type": call_type,
+        "eval_name": "Toxicity",
+        "protect_runtime": mapped_value,
+    }
+
+    if entrypoint == "dataset":
+        runner = EvaluationRunner("synthetic-metric", format_output=True)
+        runner.eval_template = template
+        mappings = {key: f"synthetic-column-{key}" for key in inputs}
+        runner.user_eval_metric = SimpleNamespace(
+            template=template, model=call_type, kb_id=None, config={"mapping": mappings}
+        )
+        monkeypatch.setattr(
+            runner,
+            "_prepare_mapping_data",
+            Mock(return_value=(list(inputs), list(inputs.values()))),
+        )
+
+        def invoke():
+            return runner._run_evaluation(
+                row=SimpleNamespace(dataset_id="synthetic-dataset"),
+                mappings=mappings,
+                config={},
+            )
+    else:
+
+        def invoke():
+            return playground.run_eval_func(
+                config={},
+                mappings=inputs,
+                template=template,
+                org=SimpleNamespace(id="synthetic-org"),
+                model=call_type,
+                resolved_version=SimpleNamespace(
+                    id="synthetic-version", version_number=1
+                ),
+            )
+
     with patch("agentic_eval.core.llm.llm.LLM") as llm:
         llm.return_value._try_gateway_completion.return_value = _protect_response(
             "garbage"
         )
-        evaluator.run(input="hello", call_type=call_type, protect_runtime=True)
         with pytest.raises(GradingError) as exc:
-            evaluator.run(input="hello", call_type=call_type)
+            invoke()
+        llm.return_value._try_gateway_completion.assert_called_once()
     assert exc.value.code == "invalid_output"
+    assert inputs["protect_runtime"] == mapped_value
+    if declared:
+        assert f"Check {mapped_value}" in evaluator._eval_prompt
 
 
 @pytest.fixture

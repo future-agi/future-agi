@@ -884,25 +884,29 @@ class AgentEvaluator:
         "choice_scores": "_choice_scores",
     }
 
-    def run(self, *, protect_runtime: bool = False, **kwargs):
+    def run(self, **kwargs):
+        """Run a strict evaluation with mapped inputs, never caller context.
+
+        Dataset, playground, tracing, simulation, voice, optimizer and SDK
+        new-eval callers all use this entry point. A template variable named
+        protect_runtime is ordinary input data, even when its value is truthy.
         """
-        Run the agent evaluation. Returns a BatchRunResult-compatible dict.
+        return self._run(kwargs)
 
-        This is the entry point called by eval_runner via:
-            eval_instance.run(**updated_mapping)
+    def run_protect_runtime(self, inputs: dict):
+        """SDK v1 / gateway guardrails only: retain Protect's parse defaults.
 
-        Evaluation callers (dataset, playground, tracing, simulation, voice,
-        optimizer and SDK new-eval) keep the default validation. The SDK v1
-        Protect endpoint, also used by gateway guardrails, explicitly passes
-        protect_runtime=True through EvalRequest to retain its parse defaults.
-        Model and call_type select Protect; neither identifies the caller.
-
-        Any key in kwargs that matches a field in _RUNTIME_OVERRIDABLE will
-        override the instance default for this single run. All other kwargs
-        are forwarded to `_evaluate()` as template variables.
+        The engine selects this entry point from trusted EvalRequest context,
+        not from input data, model or template configuration. Context stays
+        on the call stack so even a reused evaluator cannot retain it.
         """
+        return self._run(inputs, protect_runtime=True)
+
+    def _run(self, inputs: dict, *, protect_runtime: bool = False):
+        """Apply per-run overrides without mixing caller context into inputs."""
         from agentic_eval.core_evals.fi_evals.base_evaluator import BatchRunResult
 
+        kwargs = dict(inputs)
         # Split kwargs: override values vs. template variables.
         # If a key is also a required template variable, keep it in kwargs
         # so _render_prompt can still access it (e.g. user template variable
@@ -929,7 +933,7 @@ class AgentEvaluator:
                 setattr(self, attr, kwargs.pop(k))
 
         try:
-            eval_result = self._evaluate(protect_runtime=protect_runtime, **kwargs)
+            eval_result = self._evaluate(protect_runtime, **kwargs)
         finally:
             # Restore instance defaults so the evaluator can be reused.
             for attr, value in saved.items():
@@ -940,8 +944,12 @@ class AgentEvaluator:
             eval_results=[eval_result],
         )
 
-    def _evaluate(self, *, protect_runtime: bool = False, **kwargs) -> EvalResult:
-        """Run the agent evaluation loop."""
+    def _evaluate(self, protect_runtime: bool = False, /, **kwargs) -> EvalResult:
+        """Run the agent evaluation loop.
+
+        Caller context is positional-only so a same-named template variable
+        remains in kwargs and cannot change response validation.
+        """
         start_time = time.time()
 
         # Capture target identification ONCE up front so every later

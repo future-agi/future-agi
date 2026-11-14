@@ -170,14 +170,13 @@ def run_eval(request: EvalRequest) -> EvalResult:
 
     run_params = preprocess_inputs(eval_template.name, run_params)
 
-    # Set caller context after input preparation so a mapped input cannot
-    # accidentally opt an evaluation out of Protect response validation.
-    if eval_type_id == "AgentEvaluator":
-        run_params["protect_runtime"] = request.protect_runtime
-
-    # 4. Execute
+    # 4. Execute. Caller context chooses an explicit entry point; it never
+    # becomes a mapped input or an override on a reusable evaluator instance.
     start_time = time.time()
-    raw_result = eval_instance.run(**run_params)
+    if eval_type_id == "AgentEvaluator" and request.protect_runtime:
+        raw_result = eval_instance.run_protect_runtime(run_params)
+    else:
+        raw_result = eval_instance.run(**run_params)
     end_time = time.time()
 
     # 5. Extract and format
