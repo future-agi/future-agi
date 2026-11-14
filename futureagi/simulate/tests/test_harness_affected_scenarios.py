@@ -282,7 +282,7 @@ class TestBuckets:
         chosen = _select(environment)["selection"]
 
         assert (views[LOOKUP_KEYS[0]]["state"], views[LOOKUP_KEYS[0]]["warning"]) == (
-            "active",
+            "kept_as_written",
             "solution_assumed",
         )
         assert (views[LOOKUP_KEYS[1]]["state"], views[LOOKUP_KEYS[1]]["reason"]) == (

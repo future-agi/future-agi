@@ -1,8 +1,10 @@
-"""Each scenario's lifecycle on a pair of versions: Draft, Validated, Active or Archived.
+"""Each scenario's lifecycle on a pair of versions: Draft, Validated, Active, Kept as written or Archived.
 
 Derived, never stored. Suite versions are immutable and proofs are per pair, so a stored state
 would duplicate both and drift on every Save, rebuild and candidate promotion. The one stored fact
-is archiving. A case runs only when it is Validated or Active on the run's own pair.
+is archiving. A case runs when it is Active (or Kept as written) on the default pair, and also when
+it is Validated on a candidate pair, which is how a candidate is tried before it is saved.
+Kept as written runs but never reads Validated or Active: no proof showed its checks hold.
 """
 
 from __future__ import annotations
@@ -21,8 +23,10 @@ from simulate.models import (
 )
 from simulate.services.canonical_json import canonical_digest
 
-LifecycleState = Literal["draft", "validated", "active", "archived"]
-LANE_CODES = frozenset({"proof_deferred", "solution_assumed", "control_not_run"})
+LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
+LANE_CODES = frozenset(
+    {"proof_deferred", "solution_assumed", "control_not_run", "judged_only"}
+)
 DRAFT_CHANGES = frozenset({"added", "changed"})
 
 REASON_TEXTS = {
@@ -41,6 +45,7 @@ REASON_TEXTS = {
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
+    "policy_conflict": "Its expected outcome contradicts a cited rule: {why}",
     "archived": "Archived on {date}: {archive_reason}",
     "validation_unavailable": "Validation is not available on this installation; this case runs unvalidated.",
 }
@@ -51,7 +56,17 @@ WARNING_TEXTS = {
     ),
     "control_not_run": "Kept as written: negative control {name} could not run, because {tools} have no endpoint here.",
     "legacy_no_negative_control": "Validated before negative controls existed; add one to confirm.",
+    "judged_only": (
+        "Kept as written: only a judge grades this case, and nothing has shown the judge fails a wrong behaviour."
+    ),
+    "evidence_not_captured": (
+        "{check} reads {evidence}, which this agent does not give the harness; it will read Not measured."
+    ),
 }
+EVIDENCE_LABELS = {"tool_calls": "the tool calls", "world_state": "the world's records"}
+# The readiness row that says whether the agent gives the harness each kind of evidence.
+EVIDENCE_ROWS = {"tool_calls": "tool_routing", "world_state": "state"}
+UNCAPTURED_STATUSES = frozenset({"blocked", "unavailable"})
 LEGACY_TEXT = "Validated before checks were recorded. Validate again to confirm."
 
 
@@ -122,7 +137,7 @@ def reason_text(
 
 
 def warning_text(
-    code: str | None, entry: Mapping[str, Any] | None = None
+    code: str | None, entry: Mapping[str, Any] | None = None, **extra: Any
 ) -> str | None:
     if code is None:
         return None
@@ -134,6 +149,7 @@ def warning_text(
         n=entry.get("solution_steps") or len(assumed),
         tools=", ".join(assumed),
         name=", ".join(str(one.get("name")) for one in controls),
+        **extra,
     )
     if code == "control_not_run":
         values["tools"] = ", ".join(
@@ -197,41 +213,44 @@ def _view(
     )
 
 
-def runnable(view: LifecycleView | None) -> bool:
-    """Whether a case with this lifecycle may be picked for a run of its pair."""
+def runnable(view: LifecycleView | None, *, default_pair: bool = True) -> bool:
+    """Whether a case with this lifecycle may be picked for a run of its pair.
+
+    On the environment's saved (default) pair only Active and Kept as written cases run. On a
+    candidate pair a Validated case runs too: that is how a candidate is tried before it is saved,
+    and saving it is what makes those cases Active."""
     if view is None:
         return True
-    return (
-        view["state"] in ("validated", "active")
-        or view["reason"] == "validation_unavailable"
+    allowed = (
+        ("active", "kept_as_written")
+        if default_pair
+        else ("validated", "active", "kept_as_written")
     )
+    return view["state"] in allowed or view["reason"] == "validation_unavailable"
 
 
 def lifecycle_counts(views: Iterable[LifecycleView]) -> dict[str, int]:
+    """Cases per state, and proved / kept as written / not proved over every case not archived.
+    `kept_as_written` is both a state and the proof bucket, counted once."""
     counts = dict.fromkeys(
         (
             "draft",
             "validated",
             "active",
+            "kept_as_written",
             "archived",
             "proved",
-            "kept_as_written",
             "not_proved",
         ),
         0,
     )
     for view in views:
         counts[view["state"]] += 1
-        if view["state"] == "archived":
-            continue
-        runnable = view["state"] in ("validated", "active")
         # Only a proof that ran counts as proved (TH-8752): a lane code or a legacy proof
         # runs, kept as written.
-        if runnable and (view["warning"] or view["legacy"]):
-            counts["kept_as_written"] += 1
-        elif runnable:
+        if view["state"] in ("validated", "active"):
             counts["proved"] += 1
-        else:
+        elif view["state"] == "draft":
             counts["not_proved"] += 1
     return counts
 
@@ -385,10 +404,13 @@ def scenario_lifecycle(
             if entry.get("proved") is True:
                 view = _view(good, entry=entry)
             elif entry.get("kept_as_written") is True and blocked in LANE_CODES:
-                view = _view(good, entry=entry, warning=blocked)
+                view = _view("kept_as_written", entry=entry, warning=blocked)
             elif blocked == "no_negative_control" and key in legacy:
                 view = _view(
-                    good, entry=entry, warning="legacy_no_negative_control", legacy=True
+                    "kept_as_written",
+                    entry=entry,
+                    warning="legacy_no_negative_control",
+                    legacy=True,
                 )
             else:
                 view = _view(
@@ -401,12 +423,12 @@ def scenario_lifecycle(
         ):
             # An older ALK image's proof: `holds` is read, marked legacy.
             view = (
-                _view(good, entry=entry, legacy=True)
+                _view("kept_as_written", entry=entry, legacy=True)
                 if entry.get("holds") is True
                 else _view("draft", reason=_legacy_reason(entry), entry=entry)
             )
         elif key in legacy:
-            view = _view(good, entry=legacy[key], legacy=True)
+            view = _view("kept_as_written", entry=legacy[key], legacy=True)
         elif (
             entry is not None and entry.get("blocked_reason") == "validation_incomplete"
         ):
@@ -421,7 +443,11 @@ def scenario_lifecycle(
             view["source_changed_version"] = environment_version.version_number
             view["source_changed_version_id"] = str(environment_version.id)
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
-        if bad is not None and view["state"] in ("validated", "active"):
+        if bad is not None and view["state"] in (
+            "validated",
+            "active",
+            "kept_as_written",
+        ):
             view.update(
                 state="draft",
                 reason="source_unresolved",
@@ -434,8 +460,77 @@ def scenario_lifecycle(
                 warning=None,
                 warning_text=None,
             )
+        if (
+            view["state"] in ("validated", "active", "kept_as_written")
+            and not view["warning"]
+        ):
+            missing = _uncaptured_check(
+                entry,
+                uncaptured(environment, suite_version, environment_version, proofs),
+            )
+            if missing is not None:
+                view["warning"] = "evidence_not_captured"
+                view["warning_text"] = warning_text(
+                    "evidence_not_captured",
+                    entry,
+                    check=missing[0],
+                    evidence=EVIDENCE_LABELS[missing[1]],
+                )
         views[key] = view
     return views
+
+
+def _uncaptured_check(
+    entry: Mapping[str, Any] | None, missing: set[str]
+) -> tuple[str, str] | None:
+    """The first check of this proof that reads evidence the agent does not give, with that kind."""
+    if (
+        not missing
+        or not isinstance(entry, Mapping)
+        or not isinstance(entry.get("evidence"), Mapping)
+    ):
+        return None
+    for check, kinds in entry["evidence"].items():
+        for kind in kinds or []:
+            if kind in missing and kind in EVIDENCE_LABELS:
+                return str(check), str(kind)
+    return None
+
+
+def uncaptured(
+    environment: HostedHarnessJob,
+    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion,
+    proofs: Any,
+) -> set[str]:
+    """Evidence kinds this pair's readiness reads Blocked or Unavailable for: the agent does not give
+    them to the harness. Read only when a proof records what its checks read (the report is cached);
+    empty when readiness cannot be read."""
+    if not isinstance(proofs, Mapping) or not any(
+        isinstance(one, Mapping) and one.get("evidence") for one in proofs.values()
+    ):
+        return set()
+    from simulate.services.harness_readiness.report import (
+        readiness_report,
+        resolve_pairing,
+    )
+
+    try:
+        pairing = resolve_pairing(
+            environment,
+            environment_version_id=environment_version.id,
+            suite_version_id=suite_version.id,
+        )
+        statuses = {
+            row["id"]: row["status"] for row in readiness_report(pairing)["rows"]
+        }
+    except Exception:  # noqa: BLE001 - unreadable readiness warns about nothing
+        return set()
+    return {
+        kind
+        for kind, row in EVIDENCE_ROWS.items()
+        if statuses.get(row) in UNCAPTURED_STATUSES
+    }
 
 
 def in_draft_view() -> LifecycleView:

@@ -145,3 +145,31 @@ def test_check_unavailable_reads_validation_unavailable(user, workspace, storage
         run = _run(environment, KEYS, key="unavailable")
 
     assert run.payload["metadata"]["readiness_selection"]["running"] == len(KEYS)
+
+
+def _lifecycle(state, reason=None):
+    return {"state": state, "reason": reason, "reason_text": None}
+
+
+def test_default_pair_runs_only_active():
+    from simulate.services.harness_scenario_lifecycle import runnable
+
+    assert runnable(_lifecycle("active"), default_pair=True) is True
+    assert runnable(_lifecycle("validated"), default_pair=True) is False
+    assert runnable(_lifecycle("draft", "not_validated"), default_pair=True) is False
+    assert runnable(_lifecycle("draft", "validation_unavailable"), default_pair=True) is True
+
+
+def test_candidate_pair_runs_validated():
+    from simulate.services.harness_scenario_lifecycle import runnable
+
+    assert runnable(_lifecycle("validated"), default_pair=False) is True
+    assert runnable(_lifecycle("draft", "in_draft"), default_pair=False) is False
+
+
+def test_kept_as_written_still_runs():
+    from simulate.services.harness_scenario_lifecycle import runnable
+
+    assert runnable(_lifecycle("kept_as_written"), default_pair=True) is True
+    assert runnable(_lifecycle("kept_as_written"), default_pair=False) is True
+    assert runnable(_lifecycle("archived"), default_pair=False) is False

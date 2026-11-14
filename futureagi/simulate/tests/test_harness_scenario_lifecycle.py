@@ -148,11 +148,11 @@ def test_legacy_version_validates_holds_and_certified_without_proof(
     views = _views(environment)
 
     assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["legacy"]) == (
-        "active",
+        "kept_as_written",
         True,
     )
     assert (views[LOOKUP_KEYS[0]]["state"], views[LOOKUP_KEYS[0]]["legacy"]) == (
-        "active",
+        "kept_as_written",
         True,
     )
 
@@ -174,7 +174,7 @@ def test_unchanged_content_inherits_legacy_on_same_environment(
 
     assert (
         same[REFUND_KEYS[1]]["legacy"] is True
-        and same[REFUND_KEYS[1]]["state"] == "validated"
+        and same[REFUND_KEYS[1]]["state"] == "kept_as_written"
     )
     assert same[REFUND_KEYS[0]]["state"] == "draft"
     assert moved[REFUND_KEYS[1]]["state"] == "draft"
@@ -211,7 +211,7 @@ def test_format_two_beats_legacy(user, workspace, storage):
 
     assert views[REFUND_KEYS[0]]["state"] == "draft"
     assert (views[REFUND_KEYS[1]]["state"], views[REFUND_KEYS[1]]["legacy"]) == (
-        "active",
+        "kept_as_written",
         True,
     )
 
@@ -250,7 +250,7 @@ def test_legacy_survives_missing_control(user, workspace, storage):
 
     views = _views(environment)
 
-    assert views[REFUND_KEYS[0]]["state"] == "active"
+    assert views[REFUND_KEYS[0]]["state"] == "kept_as_written"
     assert views[REFUND_KEYS[0]]["legacy"] is True
     assert views[REFUND_KEYS[0]]["warning"] == "legacy_no_negative_control"
     assert views[REFUND_KEYS[1]]["state"] == "draft"
@@ -329,19 +329,21 @@ def test_counts_call_only_a_run_proof_proved():
     counts = lifecycle_counts(
         [
             view("active"),
-            view("active", warning="solution_assumed"),
-            view("active", warning="legacy_no_negative_control", legacy=True),
-            view("validated", legacy=True),
+            view("active", warning="evidence_not_captured"),
+            view("kept_as_written", warning="solution_assumed"),
+            view("kept_as_written", warning="legacy_no_negative_control", legacy=True),
+            view("kept_as_written", legacy=True),
             view("draft"),
             view("archived"),
         ]
     )
 
     assert (counts["proved"], counts["kept_as_written"], counts["not_proved"]) == (
-        1,
+        2,
         3,
         1,
     )
+    assert (counts["active"], counts["archived"]) == (2, 1)
 
 
 def test_draft_rows_show_their_own_sources(user, workspace, storage):
@@ -367,3 +369,131 @@ def test_draft_rows_show_their_own_sources(user, workspace, storage):
 
     assert added["lifecycle"]["reason"] == "in_draft"
     assert added["lifecycle"]["sources"][0]["quote"] == quote
+
+
+ASSUMED = {
+    "format": 2,
+    "holds": True,
+    "proved": False,
+    "assumed": ["refund_order"],
+    "solution_steps": 2,
+    "kept_as_written": True,
+    "blocked_reason": "solution_assumed",
+}
+
+
+def test_assumed_solution_reads_kept_as_written_not_active(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-kept")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = ASSUMED
+    _proofs(environment, proofs)
+
+    views = _views(environment)
+
+    assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["warning"]) == (
+        "kept_as_written",
+        "solution_assumed",
+    )
+    assert "never ran" in views[REFUND_KEYS[0]]["warning_text"]
+    assert views[REFUND_KEYS[1]]["state"] == "active"
+
+
+def test_legacy_proof_reads_kept_as_written(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-kept-legacy")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = {"holds": True}
+    _proofs(environment, proofs)
+
+    view = _views(environment)[REFUND_KEYS[0]]
+
+    assert (view["state"], view["legacy"]) == ("kept_as_written", True)
+
+
+def test_judged_only_reads_kept_as_written_with_its_text(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-judged")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = {
+        **ASSUMED,
+        "assumed": [],
+        "judged_only": True,
+        "blocked_reason": "judged_only",
+    }
+    _proofs(environment, proofs)
+
+    view = _views(environment)[REFUND_KEYS[0]]
+
+    assert (view["state"], view["warning"]) == ("kept_as_written", "judged_only")
+    assert view["warning_text"].startswith("Kept as written: only a judge grades this case")
+
+
+def test_policy_conflict_reads_draft_with_the_why(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-conflict")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = {
+        "format": 2,
+        "holds": True,
+        "proved": False,
+        "blocked_reason": "policy_conflict",
+        "why": "its expected outcome contradicts a cited rule:\n  - rule:0: the rule allows 14 days",
+    }
+    _proofs(environment, proofs)
+
+    view = _views(environment)[REFUND_KEYS[0]]
+
+    assert (view["state"], view["reason"]) == ("draft", "policy_conflict")
+    assert view["reason_text"].startswith("Its expected outcome contradicts a cited rule")
+
+
+def test_uncaptured_evidence_warns(user, workspace, storage, monkeypatch):
+    from simulate.services import harness_scenario_lifecycle as lifecycle
+
+    environment = _environment(user, workspace, storage, "lc-evidence")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = {**PROVED, "evidence": {"refunded": ["tool_calls"]}}
+    proofs[REFUND_KEYS[1]] = {**PROVED, "evidence": {"stock_left": ["world_state"]}}
+    _proofs(environment, proofs)
+    monkeypatch.setattr(
+        "simulate.services.harness_readiness.report.resolve_pairing", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_readiness.report.readiness_report",
+        lambda pairing, **kwargs: {
+            "rows": [{"id": "tool_routing", "status": "blocked"}, {"id": "state", "status": "supported"}]
+        },
+    )
+
+    views = _views(environment)
+
+    assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["warning"]) == (
+        "active",
+        "evidence_not_captured",
+    )
+    assert views[REFUND_KEYS[0]]["warning_text"] == (
+        "refunded reads the tool calls, which this agent does not give the harness; it will read Not measured."
+    )
+    assert views[REFUND_KEYS[1]]["warning"] is None
+    assert lifecycle.runnable(views[REFUND_KEYS[0]]) is True
+
+
+def test_list_shows_validated_on_a_named_candidate_pair(user, workspace, storage):
+    from simulate.services.harness_provider import _lifecycle_for_list
+
+    environment = _environment(user, workspace, storage, "lc-candidate-list")
+    _suite(environment, _ten())
+    other = _copy(environment.environment_version, HarnessEnvironmentVersion)
+    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=other)
+    _proofs(environment, dict.fromkeys(KEYS, PROVED))
+
+    default = _lifecycle_for_list(environment, {})
+    candidate = _lifecycle_for_list(
+        environment,
+        {"suite_version_id": str(environment.suite_version_id), "environment_version_id": str(other.id)},
+    )
+
+    assert default["views"][REFUND_KEYS[0]]["state"] == "active"
+    assert candidate["views"][REFUND_KEYS[0]]["state"] == "validated"

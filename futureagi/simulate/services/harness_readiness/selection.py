@@ -515,6 +515,10 @@ def _place_all(
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
     many = len(kept) > 1 or trials > 1
+    default_pair = (
+        pairing.suite_version.id == pairing.environment.suite_version_id
+        and pairing.environment_version.id == pairing.environment.environment_version_id
+    )
     placed = [
         _place(
             case,
@@ -524,6 +528,7 @@ def _place_all(
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
+            default_pair=default_pair,
         )
         for case in kept
     ]
@@ -607,6 +612,7 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
+    default_pair: bool = True,
 ) -> Placed:
     from simulate.services.harness_scenario_lifecycle import runnable
 
@@ -640,7 +646,7 @@ def _place(
     if view is not None and view["state"] == "archived":
         blocked.append(ARCHIVED_ROW)
         lifecycle_reason = view["reason_text"]
-    elif not runnable(view):
+    elif not runnable(view, default_pair=default_pair):
         blocked.append(NOT_VALIDATED_ROW)
         lifecycle_reason = view["reason_text"]
     stale = [one for one, status in statuses.items() if status == "stale"]

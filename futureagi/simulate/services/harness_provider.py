@@ -3292,10 +3292,6 @@ def _lifecycle_for_list(
 def _matches(view: Any, wanted: str) -> bool:
     if wanted == "source_changed":
         return bool(view["source_changed"])
-    if wanted == "kept_as_written":
-        from simulate.services.harness_scenario_lifecycle import LANE_CODES
-
-        return view["warning"] in LANE_CODES
     return view["state"] == wanted
 
 
