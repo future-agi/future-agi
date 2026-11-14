@@ -20252,6 +20252,8 @@ export interface HarnessComparePairApi {
   /** @minLength 1 */
   reason: string | null;
   removed_in: RunVersionLabelApi | null;
+  /** The case changed between the two runs (its content, or a source it cites). */
+  changed_test?: boolean;
 }
 
 export interface HarnessCompareSummaryApi {
@@ -21357,6 +21359,11 @@ export interface HarnessScenarioValidateApi {
   suite_version_id?: string;
   /** Answer ready without a new job when the newest proving finished after the pair's last change. */
   if_fresh?: boolean;
+  /**
+   * Prove only these scenario keys; the other cases keep their proofs.
+   * @maxItems 50
+   */
+  keys?: string[];
 }
 
 export type HarnessScenarioValidateResponseApiState =
@@ -21393,6 +21400,19 @@ export interface HarnessScenarioLifecycleResponseApi {
   /** @minLength 1 */
   scenario_key: string;
   lifecycle: HarnessScenarioLifecycleResponseApiLifecycle;
+  live?: boolean;
+}
+
+export type HarnessScenarioRecordsResponseApiRowsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessScenarioRecordsResponseApi {
+  /** @minLength 1 */
+  table: string;
+  rows: HarnessScenarioRecordsResponseApiRowsItem[];
+  /** False when the world's records live only in the agent's own service. */
+  available: boolean;
 }
 
 export interface HarnessScenarioRestoreApi {
@@ -27438,6 +27458,7 @@ export interface RunExecutionApi {
   resume: RunResumeApi;
   summary: RunSummaryApi;
   fix_run?: RunFixRunApi;
+  must_pass_failed?: string[];
 }
 
 export interface SimulateRunV3ScoringCountsApi {
@@ -41957,6 +41978,14 @@ export type SimulateApiHarnessEnvironmentsRunPlanParams = {
 
 export type SimulateApiHarnessEnvironmentsValidationStatusParams = {
   job_id: string;
+};
+
+export type SimulateApiHarnessEnvironmentsScenarioRecordsParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  table: string;
 };
 
 export type SimulateApiHarnessEnvironmentsVersionsVersionDiffParams = {

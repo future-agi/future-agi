@@ -53314,10 +53314,59 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/{key}/records/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_scenario_records",
+                "description": "Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.",
+                "parameters": [
+                    {
+                        "name": "table",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioRecordsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_restore_scenario",
-                "description": "Put an archived scenario back as a draft under its own key.",
+                "description": "Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.",
                 "parameters": [
                     {
                         "name": "data",
@@ -144158,6 +144207,11 @@
                 },
                 "removed_in": {
                     "$ref": "#/definitions/RunVersionLabel"
+                },
+                "changed_test": {
+                    "title": "Changed test",
+                    "description": "The case changed between the two runs (its content, or a source it cites).",
+                    "type": "boolean"
                 }
             }
         },
@@ -146620,6 +146674,16 @@
                     "description": "Answer ready without a new job when the newest proving finished after the pair's last change.",
                     "type": "boolean",
                     "default": false
+                },
+                "keys": {
+                    "description": "Prove only these scenario keys; the other cases keep their proofs.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 50
                 }
             }
         },
@@ -146695,6 +146759,40 @@
                         "x-nullable": true
                     },
                     "x-nullable": true
+                },
+                "live": {
+                    "title": "Live",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessScenarioRecordsResponse": {
+            "required": [
+                "table",
+                "rows",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "table": {
+                    "title": "Table",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "available": {
+                    "title": "Available",
+                    "description": "False when the world's records live only in the agent's own service.",
+                    "type": "boolean"
                 }
             }
         },
@@ -161376,6 +161474,13 @@
                 },
                 "fix_run": {
                     "$ref": "#/definitions/RunFixRun"
+                },
+                "must_pass_failed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },
