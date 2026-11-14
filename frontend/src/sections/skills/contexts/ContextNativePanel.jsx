@@ -331,7 +331,8 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
         <TableCell>{cell.status === 'completed' && FAMILIES.every(([key]) => cell[key] === 'pass') && <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' }, mb: 0.5 }}>All 4 checks passed</Typography>}<Button size="small" variant="outlined" disabled={!cell.attemptId} aria-label={`Inspect ${titles[cell.caseId] || cell.caseId} ${ARM[cell.variant]} repeat ${cell.repeatIndex + 1}`} onClick={(event) => { event.stopPropagation(); inspect(cell, event); }}>Inspect</Button></TableCell>
       </TableRow>)}</TableBody></Table>
     </TableContainer>}
-    {ready && <CiAttachment contextId={contextId} run={run} target={target} canWrite={canWrite} earlier={earlier} />}
+    {/* Attaching CI prepares a release packet, so it is offered only while a release review is: never for the version production already serves. */}
+    {offerReview && <CiAttachment contextId={contextId} run={run} target={target} canWrite={canWrite} earlier={earlier} />}
     {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { restoreFocus.current = true; setOpen(null); }} />}
   </Stack>;
 }

@@ -135,7 +135,8 @@ it('chooses the newest result across both run types and keeps a combined history
 });
 it('explains disabled packet prerequisites and marks the earlier-run scope', () => {
   h.detail.decision = { state: 'release_ready', reasons: [] };
-  renderPanel();
+  // The earlier run tested v6 while production is v4, so its release packet can still be prepared.
+  renderPanel({ productionVersion: 4 });
   expect(screen.getByRole('button', { name: 'Attach your CI run (optional)' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Fill in the three CI fields to attach your CI run.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Share run and attach CI result' })).toBeDisabled();
@@ -448,6 +449,8 @@ it('confirms a passing result for the version production already serves, with no
   expect(document.querySelector('a[href*="/review"]')).toBeNull();
   // v7 is newer than the tested v6, so the next step is testing it.
   expect(screen.getByRole('link', { name: 'Test a newer draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/context/edit');
+  // No release packet is prepared for a version production already serves.
+  expect(screen.queryByRole('button', { name: 'Attach your CI run (optional)' })).not.toBeInTheDocument();
 });
 it('keeps the configuration identity in "How it was decided", and the pinned state visible', async () => {
   h.detail.decision = { state: 'release_ready', reasons: ['All selected cases passed.'] };
