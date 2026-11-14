@@ -234,9 +234,7 @@ def test_bound_occurrence_still_reads_25h_later_through_the_scheduled_jobs(
     assert not AttachmentOutbox.objects.filter(scope=scope, event="erase").exists()
 
 
-def test_unbound_occurrence_still_expires_after_the_24h_deadline(
-    setup, monkeypatch
-):
+def test_unbound_occurrence_still_expires_after_the_24h_deadline(setup, monkeypatch):
     """Control: with no span the binder never binds, and the deadline holds."""
     scope, _ = setup
     row = occurrence(setup, monkeypatch)
