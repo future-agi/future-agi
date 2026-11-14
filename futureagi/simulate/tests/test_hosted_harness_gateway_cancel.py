@@ -172,3 +172,21 @@ def test_a_retried_cancel_skips_the_seal_wait(monkeypatch, clock):
     monkeypatch.setattr(HostedHarnessExecution, "objects", flights)
     _gateway()._await_guest_seal(attempt)
     assert clock["t"] == 0.0
+
+
+def test_the_seal_still_gets_its_wait_when_the_cache_is_down(monkeypatch, clock):
+    class Down:
+        def get(self, *_args, **_kwargs):
+            raise ConnectionError("cache down")
+
+        set = get
+
+    import django.core.cache
+
+    monkeypatch.setattr(django.core.cache, "cache", Down())
+    monkeypatch.setattr(
+        HostedHarnessExecution, "objects", _InFlight([True, True, False])
+    )
+    _gateway()._await_guest_seal(_attempt())
+    # The receipt landed one poll into the wait: the wait ran instead of being skipped for the cache.
+    assert clock["t"] == 2
