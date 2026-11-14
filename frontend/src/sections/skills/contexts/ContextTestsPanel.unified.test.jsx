@@ -52,7 +52,10 @@ it('names the answer check "Check answers" on screen while its accessible name s
   // The visible words are the start of the accessible name (WCAG 2.5.3); the rest is for screen readers only.
   expect(radio.closest('label').querySelector('.MuiTypography-s1').firstChild.textContent).toBe('Check answers');
   fireEvent.click(radio);
-  expect(screen.getByText('Check answers', { exact: true })).toBeVisible();
+  // The section the radio opens carries the same short name.
+  const titles = screen.getAllByText('Check answers', { exact: true }).filter((element) => !element.closest('label'));
+  expect(titles).toHaveLength(1);
+  expect(titles[0]).toBeVisible();
 });
 it('keeps application verification when whole-context testing is unavailable', () => {
   h.optionsError = true;
