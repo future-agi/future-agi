@@ -49,18 +49,22 @@ dependencies = [
     # path traversal and SSRF in nltk.download. The corpora the backend loads
     # (stopwords, punkt_tab, averaged_perceptron_tagger_eng, wordnet) are
     # unchanged, so bin/install_nltk_data.py keeps its revision and checksums.
-    "nltk>=3.10.3",
+    # The dependency refresh raised the floor to 3.10.4; the same holds for it.
+    "nltk>=3.10.4",
     "retrying",
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
     # Host-header bypass open. 1.84.10 is the last patch of that series.
-    "litellm==1.84.10",
+    # The dependency refresh moved the pin to 1.100.4, which also needs
+    # boto3>=1.43.1 and pydantic-settings>=2.14.1 (pinned in both base-image
+    # Dockerfiles to the versions locked here).
+    "litellm==1.100.4",
     "django-filter",
     # >=2.13.0 fixes CVE-2026-48526 (forged-JWT authentication bypass).
     "pyjwt>=2.13.0",
     # urllib3>=2.1 (PoolKey.key_ca_cert_data) is also what the Daytona SDK in
     # the `sandbox` extra needs; keep it constrained in the base resolution.
-    "urllib3>=2.1,<3",
+    "urllib3>=2.8.0,<3",
     # OpenTelemetry core
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -121,7 +125,7 @@ dependencies = [
     "channels-redis>=4.3.0",
     "filetype",
     "google-genai",
-    "json-repair",
+    "json-repair>=0.60.1",
     # Unpinned on purpose: pdfplumber pins pdfminer.six to an exact release,
     # so the pdfplumber floor further down is what moves it. 0.11.10 is the
     # first pdfplumber that stopped importing PDFStackT (dropped in
@@ -146,7 +150,8 @@ dependencies = [
     "jinja2",
     # >=6.14.2 clears the high-severity pypdf findings of TH-8370 (crafted
     # PDFs reaching kb_indexer.py and the dataset/document upload paths).
-    "pypdf>=6.14.2",
+    # The dependency refresh raised the floor to 6.21.4.
+    "pypdf>=6.21.4",
     # Imported by integrations/services/cloud_storage_service.py; it used to
     # arrive only via google-cloud-aiplatform (now the `gcp` extra).
     "google-cloud-storage",
@@ -157,7 +162,7 @@ dependencies = [
     "google-auth",  # imported directly to verify the Marketplace sign-up JWT
     "anthropic[vertex]",
     # claude-agent-sdk is the `localizer` extra below.
-    "aiohttp>=3.13.3",  # Per-run AgentCC multimodal transport for the SDK
+    "aiohttp>=3.14.4",  # Per-run AgentCC multimodal transport for the SDK
     "rouge-score",
     "python-levenshtein",
     "scipy",
@@ -169,14 +174,15 @@ dependencies = [
     # >=12.3.0 clears the high-severity Pillow findings of TH-8370; every
     # user-supplied image (tfc/utils/storage.py, the image evals) is decoded
     # by it.
-    "pillow>=12.3.0",
+    # The dependency refresh raised the floor to 13.0.0 (Python >=3.11).
+    "pillow>=13.0.0",
     "pandas",
     # RecursiveCharacterTextSplitter for knowledge-base chunking
     # (model_hub/utils/kb_indexer.py); langchain itself is the `langchain` extra.
     "langchain_text_splitters",
     "langfuse==3.1.3",
     "whitenoise",
-    "temporalio[opentelemetry]",  # opentelemetry extra enables TracingInterceptor
+    "temporalio[opentelemetry]>=1.35.0",  # opentelemetry extra enables TracingInterceptor
     "redis>=5.0.0",  # For distributed locking and state management
     "django-redis>=5.4.0",  # Redis cache backend
     # 2FA & Passkeys
@@ -399,4 +405,27 @@ dev = [
     "pytest-mock>=3.14.1",
     "pytest-split>=0.11.0",
     "pytest-xdist>=3.8.0",
+]
+
+[tool.uv]
+# Floors for packages the app does not depend on directly. Nothing else
+# constrains them, so without these a re-resolution could keep an older
+# release. Raise one when a newer release is needed; remove it once a direct
+# dependency requires that version itself.
+constraint-dependencies = [
+    "anyio>=4.14.2",
+    "certifi>=2026.10.18",
+    "langchain-core>=0.3.85,<0.4",
+    "langchain>=0.3.30,<0.4",
+    "langchain-text-splitters<0.4",
+    "cbor2>=5.9.0,<6",
+    "pypdf<7",
+    "langsmith>=0.8.18,<0.9",
+    "msgpack>=1.2.3",
+    "orjson>=3.11.6",
+    "pyasn1>=0.6.5",
+    "soupsieve>=2.8.4,<3",
+    "sqlparse>=0.6.0",
+    "starlette>=1.3.1",
+    "tornado>=6.5.9",
 ]

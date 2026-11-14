@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# temporalio==1.21.1 currently selects SDK Java 1.40.0. Pin the upstream asset
-# rather than letting each test hit temporal.download's rate-limited proxy.
+# temporalio==1.36.1 currently selects SDK Java 1.40.0, as 1.21.1 did. Pin the
+# upstream asset rather than letting each test hit temporal.download's
+# rate-limited proxy.
 # SHA256 is the release asset digest from temporalio/sdk-java v1.40.0.
 set -euo pipefail
 mode=${1:?usage: temporal-test-server.sh fetch|install ARCHIVE_DIRECTORY [BIN_DIRECTORY]}

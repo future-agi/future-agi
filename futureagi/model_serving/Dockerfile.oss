@@ -29,8 +29,8 @@
 # TESTING.md › Image conventions.
 # ============================================================================
 
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.33@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
 # cpu (default) | cu124 | cu126 | ... — see `uv pip install --help`.
 ARG TORCH_BACKEND=cpu
 
@@ -52,9 +52,10 @@ WORKDIR /app/embedding
 COPY pyproject.toml ./
 # --torch-backend routes torch/torchaudio/torchvision/triton to
 # download.pytorch.org/whl/<backend> and everything else to PyPI. Resolution
-# checked with uv 0.11.16 for linux x86_64 and aarch64: cpu gives
-# torch==2.6.0+cpu and torchaudio==2.6.0 with no nvidia-*/triton packages;
-# cu124 gives torch==2.6.0+cu124 with the nvidia-* wheels.
+# checked with uv 0.11.33 for linux x86_64 and aarch64 (the same as with
+# 0.11.16): cpu gives torch==2.6.0+cpu and torchaudio 2.6.0 with no
+# nvidia-*/triton packages; cu124 gives torch==2.6.0+cu124 with the nvidia-*
+# wheels.
 RUN uv pip install --system --torch-backend="${TORCH_BACKEND}" .
 # The build arg is in RUN's environment; fail the build when the installed
 # torch does not match TORCH_BACKEND. A layer of its own: the install above

@@ -4,9 +4,11 @@ import hashlib
 import io
 import os
 import pathlib
+import re
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 import unittest
 
 SCRIPT = pathlib.Path(__file__).with_name("temporal-test-server.sh")
@@ -111,6 +113,24 @@ class TemporalAssetsTest(unittest.TestCase):
         self.assertNotEqual(self.run_script("install").returncode, 0)
         self.assertFalse(self.bin.exists())
         self.assertFalse((self.root / "calls").exists())
+
+
+class TemporalAssetPairingTest(unittest.TestCase):
+    def test_the_header_names_the_locked_sdk_and_the_pinned_asset(self):
+        # The asset is the test server the locked temporalio would download;
+        # re-check that pairing (temporal.download) when temporalio moves.
+        lock = tomllib.loads(
+            SCRIPT.parents[1].joinpath("uv.lock").read_text(encoding="utf-8")
+        )
+        (locked,) = [p["version"] for p in lock["package"] if p["name"] == "temporalio"]
+        header = re.search(
+            r"^# temporalio==(\S+) currently selects SDK Java (\d+(?:\.\d+)*)",
+            SCRIPT.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(header)
+        self.assertEqual(header.group(1), locked)
+        self.assertEqual(NAME, f"temporal-test-server_{header.group(2)}_linux_amd64")
 
 
 if __name__ == "__main__":

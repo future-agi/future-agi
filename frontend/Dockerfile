@@ -6,14 +6,14 @@
 #   frontend-base -> build and dev stages only, never shipped: node with
 #     `yarn install` already baked in (see Dockerfile.base). Republish it
 #     (base-image-publish.yml) when package.json/yarn.lock change.
-#   nginx:1.31.6-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
-#     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
+#   nginx:1.31.8-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
+#     nginx:alpine (amd64, Docker Hub, 2026-11-14). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
 #     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
 #     nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
-ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
+ARG NGINX_IMAGE=nginx:1.31.8-alpine-slim@sha256:4c734d33ee731135dc9f2349914a34551c920f4451fca8bb05bf5880eb9079e8
 
 # Stage 1: Build the React app.
 # dist/ is architecture-independent, so build it once on the build host

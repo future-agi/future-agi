@@ -15,6 +15,7 @@ import json
 import os
 import re
 import runpy
+import shlex
 import shutil
 import socket
 import subprocess
@@ -557,18 +558,76 @@ def project_pins() -> dict[str, set[str]]:
     return pins
 
 
+FUTURE_AGI_BASE_IMAGE = "futureagi/future-agi-base:v1.0.6"
+
+# What FUTURE_AGI_BASE_IMAGE ships of the packages the pinned upgrades need
+# newer releases of (`pip list` in the image). pip moves such a package to its
+# newest release on the day the layer is built unless the layer pins it, so
+# each one that futureagi/uv.lock has at another version is pinned too. Find
+# them with a dry run of the layer on the base:
+#   pip install --dry-run --report report.json "<each requirement>"
+# and refresh this map when the base image or the pins change.
+FUTURE_AGI_BASE_VERSIONS = {
+    "aiohttp": "3.14.3",
+    "boto3": "1.42.28",
+    "botocore": "1.42.28",
+    "pydantic-settings": "2.12.0",
+    "python-dotenv": "1.2.1",
+    "s3transfer": "0.16.0",
+    "urllib3": "2.7.0",
+    "yarl": "1.22.0",
+}
+
+
+def locked_versions() -> dict[str, str]:
+    lock = tomllib.loads((ROOT / "futureagi" / "uv.lock").read_text("utf-8"))
+    return {_normalized(p["name"]): p["version"] for p in lock["package"]}
+
+
+def pip_requirements(command: str) -> list[str]:
+    """The requirements of a `pip install` command, however each is quoted."""
+    words = shlex.split(command)
+    if words[:2] != ["pip", "install"]:
+        raise ValueError(f"not a pip install: {command!r}")
+    options = [w for w in words[2:] if w.startswith("-")]
+    if set(options) - {"--no-cache-dir"}:
+        # An option may take a value (-r FILE, --index-url URL) that would
+        # otherwise be read as a requirement.
+        raise ValueError(f"unexpected pip options: {options}")
+    return [w for w in words[2:] if not w.startswith("-")]
+
+
 class FutureAgiBaseDockerfiles(unittest.TestCase):
-    """The packages these Dockerfiles install over future-agi-base v1.0.4
+    """The packages these Dockerfiles install over future-agi-base
     until a base rebuilt from requirements.txt replaces it."""
 
     def pip_install(self, name: str) -> tuple[int, str]:
         steps = instructions(ROOT / name)
-        ((index, rest),) = [
+        # Every step that installs Python packages, in any form, must be the
+        # one RUN these tests read, or a floor in another one goes unchecked.
+        installs = [
             (index, rest)
             for index, (keyword, rest) in enumerate(steps)
-            if keyword == "RUN" and rest.startswith("pip install")
+            if keyword == "RUN"
+            and re.search(r"\b(?:pip3?|uv\s+pip|uv)\s+(?:install|add|sync)\b", rest)
         ]
+        self.assertEqual(len(installs), 1, installs)
+        ((index, rest),) = installs
+        self.assertTrue(rest.startswith("pip install"), rest)
         return index, rest
+
+    def test_the_comments_name_the_pinned_litellm_and_base(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                (litellm,) = re.findall(r'"litellm==(\d+\.\d+)\.\d+"', text)
+                noted = re.findall(r"^#.*\blitellm (\d+\.\d+)\.x\b", text, re.MULTILINE)
+                self.assertTrue(noted)
+                self.assertEqual(set(noted), {litellm})
+                (base,) = re.findall(r"^FROM futureagi/future-agi-base:(\S+)", text, re.MULTILINE)
+                replaced = re.findall(r"^#.*\breplaces (v\d+\.\d+\.\d+)", text, re.MULTILINE)
+                self.assertTrue(replaced)
+                self.assertEqual(set(replaced), {base})
 
     def test_the_pins_are_installed_before_the_source_copy(self):
         for name in FUTURE_AGI_BASE_DOCKERFILES:
@@ -583,12 +642,205 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
     def test_the_pins_match_the_project(self):
         pins = project_pins()
         for name in FUTURE_AGI_BASE_DOCKERFILES:
-            _, rest = self.pip_install(name)
-            mirrored = re.findall(r'"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==([^"]+)"', rest)
+            mirrored = [
+                match.groups()
+                for requirement in self.requirements(name)
+                if (
+                    match := re.fullmatch(
+                        r"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)", requirement
+                    )
+                )
+            ]
             self.assertTrue(mirrored)
             for package, version in mirrored:
                 with self.subTest(dockerfile=name, package=package):
                     self.assertEqual(pins.get(_normalized(package)), {version})
+
+    def requirements(self, name: str) -> list[str]:
+        _, rest = self.pip_install(name)
+        return pip_requirements(rest)
+
+    def test_every_argument_of_the_install_is_read_whatever_its_quoting(self):
+        self.assertEqual(
+            pip_requirements("""pip install --no-cache-dir "a==1" 'b>=2' c[x]==3"""),
+            ["a==1", "b>=2", "c[x]==3"],
+        )
+        for unknown in ("-r requirements.txt", "--index-url https://example.org"):
+            with self.subTest(option=unknown), self.assertRaises(ValueError):
+                pip_requirements(f'pip install {unknown} "a==1"')
+
+    def test_every_requirement_is_pinned_exactly(self):
+        # A floor lets pip pick whatever is newest at build time, so two
+        # builds of one commit can differ; pins keep the layer reproducible.
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            requirements = self.requirements(name)
+            self.assertTrue(requirements)
+            for requirement in requirements:
+                with self.subTest(dockerfile=name, requirement=requirement):
+                    self.assertRegex(
+                        requirement, r"^[A-Za-z0-9_.-]+(\[[^\]]*\])?==[^=<>!~,]+$"
+                    )
+
+    def test_the_base_image_is_the_one_its_versions_describe(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                ((base,),) = [
+                    rest.split()[:1]
+                    for keyword, rest in instructions(ROOT / name)
+                    if keyword == "FROM"
+                ]
+                self.assertEqual(base, FUTURE_AGI_BASE_IMAGE)
+
+    def test_dependencies_the_base_has_older_releases_of_are_pinned(self):
+        locked = locked_versions()
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            pinned = {
+                _normalized(package): version
+                for package, version in re.findall(
+                    r"^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)$",
+                    "\n".join(self.requirements(name)),
+                    re.MULTILINE,
+                )
+            }
+            for package, base_version in FUTURE_AGI_BASE_VERSIONS.items():
+                if locked[package] == base_version:
+                    continue
+                with self.subTest(dockerfile=name, package=package):
+                    self.assertEqual(pinned.get(package), locked[package])
+
+
+# ---------------------------------------------------------------------------
+# Notes that name the version a pin was checked with follow the pin
+# ---------------------------------------------------------------------------
+
+
+def arg_default(path: Path, name: str) -> str:
+    ((value,),) = [
+        [rest.partition("=")[2]]
+        for keyword, rest in instructions(path)
+        if keyword == "ARG" and rest.partition("=")[0] == name
+    ]
+    return value
+
+
+def setup_uv_versions(workflow: Path) -> list[str | None]:
+    """The `version` input of every astral-sh/setup-uv step (None: not set)."""
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    versions = []
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*(?:- )?uses: astral-sh/setup-uv@", line):
+            continue
+        step_indent = len(line) - len(line.lstrip(" -"))
+        version = None
+        for following in lines[i + 1 :]:
+            stripped = following.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(following) - len(following.lstrip(" "))
+            if indent < step_indent or stripped.startswith("- "):
+                break
+            if match := re.match(r"""version:\s*["']?([^"'\s]+)""", stripped):
+                version = match.group(1)
+        versions.append(version)
+    return versions
+
+
+class PinnedVersionNotes(unittest.TestCase):
+    def test_setup_uv_versions_are_read_whatever_the_key_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow = Path(tmp) / "w.yml"
+            workflow.write_text(
+                "steps:\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                "      enable-cache: true\n"
+                '      version: "1.2.3"\n'
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "  - name: other\n"
+                "    with:\n"
+                "      version: 9\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                '      version: "4.5.6"\n'
+                "      enable-cache: true\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(setup_uv_versions(workflow), ["1.2.3", None, "4.5.6"])
+
+    def test_the_images_and_backend_ci_share_one_uv(self):
+        oss = ROOT / "futureagi" / "Dockerfile.oss"
+        serving = ROOT / "futureagi" / "model_serving" / "Dockerfile.oss"
+        pinned = {
+            re.fullmatch(
+                r"ghcr\.io/astral-sh/uv:([^@]+)@sha256:[0-9a-f]{64}",
+                arg_default(path, "UV_IMAGE"),
+            ).group(1)
+            for path in (oss, serving)
+        }
+        self.assertEqual(len(pinned), 1)
+        ci = setup_uv_versions(WORKFLOWS / "backend-ci.yml")
+        # Steps that name no version run whatever uv is current (see the PR
+        # notes); every version that is named must be the images' uv.
+        named = {version for version in ci if version is not None}
+        self.assertTrue(named)
+        self.assertEqual(named, pinned)
+        notes = re.findall(
+            r'^# Same uv as backend-ci\.yml \(astral-sh/setup-uv version "([^"]+)"\)',
+            oss.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ) + re.findall(
+            r"^# checked with uv (\S+) ",
+            serving.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(set(notes), pinned)
+
+    def test_the_code_executor_notes_name_the_pinned_base(self):
+        text = (ROOT / "futureagi" / "code-executor" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        (pinned,) = re.findall(
+            r"^ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:(v[^@\s]+)",
+            text,
+            re.MULTILINE,
+        )
+        noted = re.findall(
+            r"^#.*futureagi/code-executor-base:(v[^@\s]+)", text, re.MULTILINE
+        )
+        self.assertTrue(noted)
+        self.assertEqual(set(noted), {pinned})
+
+    def test_the_nginx_note_names_the_pinned_image(self):
+        path = ROOT / "frontend" / "Dockerfile"
+        pinned = arg_default(path, "NGINX_IMAGE").partition("@")[0]
+        noted = re.findall(
+            r"^#\s+(nginx:\S+-alpine-slim) ->",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(noted, [pinned])
+
+    def test_the_base_setuptools_goes_before_the_builder_packages_arrive(self):
+        # COPY merges directories, so the python image's own setuptools has to
+        # be deleted first or its dist-info stays next to the builder's.
+        steps = final_stage(ROOT / "futureagi" / "Dockerfile.oss")
+        site = "/usr/local/lib/python3.11/site-packages"
+        (copy,) = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "COPY" and rest.startswith(f"--from=builder {site} ")
+        ]
+        removals = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "RUN"
+            and rest.split()[:2] == ["rm", "-rf"]
+            and {f"{site}/setuptools", f"{site}/setuptools-*.dist-info"}
+            <= set(rest.split())
+        ]
+        self.assertEqual(len(removals), 1)
+        self.assertLess(removals[0], copy)
 
 
 # ---------------------------------------------------------------------------
