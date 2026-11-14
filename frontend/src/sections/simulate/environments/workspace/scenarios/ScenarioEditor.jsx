@@ -2,13 +2,20 @@ import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Autocomplete, Box, MenuItem, Stack, Typography, Button, TextField, Slider,
-  ToggleButton, ToggleButtonGroup,
+  ToggleButton, ToggleButtonGroup, FormControlLabel, Switch,
 } from "@mui/material";
 
 import SideDrawer from "../../components/SideDrawer";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { SCENARIOS_COPY } from "./scenarios.constants";
-import { EDITOR_COPY, noiseKey, noiseValue, subTasksToText } from "./scenarioEditor.constants";
+import {
+  EDITOR_COPY,
+  controlsFromDraft,
+  controlsToDraft,
+  noiseKey,
+  noiseValue,
+  subTasksToText,
+} from "./scenarioEditor.constants";
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
@@ -66,6 +73,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
         quote: one.quote ?? "",
         supports: one.supports ?? "",
       })),
+      mustPass: (row._raw?.lifecycle ?? row.lifecycle)?.must_pass === true,
+      controls: controlsToDraft((row._raw?.lifecycle ?? row.lifecycle)?.negative_controls ?? []),
       persona: {
         name: p.name ?? "",
         ageGroup: p.age_group ?? "",
@@ -99,6 +108,13 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     if (canEdit("tests") && draft.tests !== base.tests) setField("tests", draft.tests);
     if (canEdit("sources") && JSON.stringify(draft.sources ?? []) !== JSON.stringify(base.sources ?? [])) {
       setField("sources", draft.sources ?? []);
+    }
+    if (canEdit("must_pass") && Boolean(draft.mustPass) !== Boolean(base.mustPass)) {
+      setField("must_pass", Boolean(draft.mustPass));
+    }
+    if (canEdit("negative_controls") && JSON.stringify(draft.controls ?? []) !== JSON.stringify(base.controls ?? [])) {
+      const parsed = controlsFromDraft(draft.controls ?? []);
+      if (parsed) setField("negative_controls", parsed);
     }
     if (canEdit("max_turns") && String(draft.maxTurns) !== String(base.maxTurns)) {
       setField("max_turns", Number(draft.maxTurns) || 0);
@@ -204,7 +220,28 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
             disabled={!canEdit("sources")}
             onChange={(sources) => setDraft((d) => ({ ...d, sources }))}
           />
-          <NegativeControlsList controls={(row._raw?.lifecycle ?? row.lifecycle)?.proof?.controls ?? []} />
+          {canEdit("must_pass") && (
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={Boolean(draft.mustPass)}
+                  onChange={(e) => setDraft((d) => ({ ...d, mustPass: e.target.checked }))}
+                  inputProps={{ "data-testid": "must-pass-toggle" }}
+                />
+              }
+              label={EDITOR_COPY.mustPass}
+            />
+          )}
+          {canEdit("negative_controls") ? (
+            <ControlsEditor
+              controls={draft.controls ?? []}
+              subGoals={(row.subTasks ?? []).map((one) => (typeof one === "string" ? one : one?.name ?? one?.id)).filter(Boolean)}
+              onChange={(controls) => setDraft((d) => ({ ...d, controls }))}
+            />
+          ) : (
+            <NegativeControlsList controls={(row._raw?.lifecycle ?? row.lifecycle)?.proof?.controls ?? []} />
+          )}
 
           <SectionHeader title={EDITOR_COPY.personaSection} hint="Who is on the other end of the run." />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
@@ -411,6 +448,74 @@ function SourcesEditor({ sources, disabled, onChange }) {
 SourcesEditor.propTypes = {
   sources: PropTypes.arrayOf(PropTypes.object).isRequired,
   disabled: PropTypes.bool,
+  onChange: PropTypes.func.isRequired,
+};
+
+const EMPTY_CONTROL = { name: "", why: "", stepsText: "[]", mustFail: [] };
+
+// A wrong behaviour this case's checks must fail: its name, why it is wrong, the steps it takes as
+// JSON ([{tool, arguments}]) and the sub-goals that must fail it. Saving asks for a re-validation.
+function ControlsEditor({ controls, subGoals, onChange }) {
+  const [badSteps, setBadSteps] = useState({});
+  const update = (index, patch) =>
+    onChange(controls.map((one, at) => (at === index ? { ...one, ...patch } : one)));
+  const checkSteps = (index, text) => {
+    let ok = true;
+    try {
+      ok = Array.isArray(JSON.parse(text));
+    } catch {
+      ok = false;
+    }
+    setBadSteps((was) => ({ ...was, [index]: !ok }));
+  };
+  return (
+    <Stack spacing={1.5} data-testid="controls-editor">
+      <SectionHeader title={SCENARIOS_COPY.controlsTitle} hint={EDITOR_COPY.controlsHint} />
+      {controls.map((control, index) => (
+        <Stack key={index} spacing={1}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <TextField
+              size="small" label="Name" value={control.name}
+              onChange={(e) => update(index, { name: e.target.value })}
+            />
+            <TextField
+              size="small" label="Why it is wrong" value={control.why} fullWidth
+              onChange={(e) => update(index, { why: e.target.value })}
+            />
+          </Stack>
+          <TextField
+            size="small" label="Steps (JSON)" multiline minRows={2} value={control.stepsText}
+            error={Boolean(badSteps[index])}
+            helperText={badSteps[index] ? EDITOR_COPY.stepsInvalid : ""}
+            onChange={(e) => update(index, { stepsText: e.target.value })}
+            onBlur={(e) => checkSteps(index, e.target.value)}
+          />
+          <Autocomplete
+            multiple size="small" options={subGoals} value={control.mustFail}
+            onChange={(_, value) => update(index, { mustFail: value })}
+            renderInput={(params) => <TextField {...params} label="Must fail" />}
+          />
+          <Button
+            size="small" color="inherit" sx={{ alignSelf: "flex-start" }}
+            onClick={() => onChange(controls.filter((_, at) => at !== index))}
+          >
+            Remove
+          </Button>
+        </Stack>
+      ))}
+      <Button
+        size="small" color="inherit" sx={{ alignSelf: "flex-start" }}
+        onClick={() => onChange([...controls, EMPTY_CONTROL])}
+      >
+        Add a negative control
+      </Button>
+    </Stack>
+  );
+}
+
+ControlsEditor.propTypes = {
+  controls: PropTypes.arrayOf(PropTypes.object).isRequired,
+  subGoals: PropTypes.arrayOf(PropTypes.string).isRequired,
   onChange: PropTypes.func.isRequired,
 };
 

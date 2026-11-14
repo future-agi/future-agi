@@ -92,7 +92,7 @@ export const SCENARIOS_COPY = {
   restoredLive: "Restored. It runs again.",
   draftChanged: "The environment was edited elsewhere; reload and try again.",
   savedAsDraft: (n) => `${n} cases saved as Draft; validate them to run them`,
-  noSources: "No source: assumed by the builder.",
+  noSources: "No source recorded (written before sources were required).",
   assumption: "Assumption",
   sourcesTitle: "Sources",
   statusTitle: "Status",

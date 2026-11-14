@@ -94,6 +94,9 @@ class LifecycleView(TypedDict):
     source_changed_version: int | None
     # Its id, for comparing the cited sources with the parent version's.
     source_changed_version_id: str | None
+    # From the case's content on this pair: a must-pass case, and its negative controls as written.
+    must_pass: bool
+    negative_controls: list[dict[str, Any]]
 
 
 class _Safe(dict):
@@ -210,6 +213,8 @@ def _view(
         source_changed=[],
         source_changed_version=None,
         source_changed_version_id=None,
+        must_pass=False,
+        negative_controls=[],
     )
 
 
@@ -437,6 +442,13 @@ def scenario_lifecycle(
             view = _view("draft", reason="validation_unavailable")
         else:
             view = _view("draft", reason="not_validated")
+        content = contents.get(key) or {}
+        view["must_pass"] = content.get("must_pass") is True
+        view["negative_controls"] = [
+            dict(one)
+            for one in content.get("negative_controls") or []
+            if isinstance(one, Mapping)
+        ]
         view["sources"] = [dict(one) for one in resolved.get(key) or []]
         view["source_changed"] = changed.get(key, [])
         if view["source_changed"]:
