@@ -8,7 +8,8 @@ rows that scan outgrew the cap and the endpoint reported ``unhealthy`` with lag
 a fixed row budget, plus a bounded prefix of the newest part when it alone is
 larger than the budget. It selects parts by partition and block range, so a
 merge that commits between the part inventory and the sample still selects the
-merged part.
+merged part. Only source sync timestamps establish freshness: a stale
+partial sample is unknown (degraded), not evidence of lag or a healthy merge.
 
 These tests use the ClickHouse test sidecar, the production CDC DDL (engine made
 non-replicated; partition and sorting keys unchanged) and synthetic rows only.
@@ -40,6 +41,7 @@ from structlog.testing import capture_logs
 from tracer.tests import test_clickhouse_consistency as health_tests
 
 configure = health_tests.configure
+real_clients = health_tests.real_clients
 
 CDC_TABLES = ("tracer_trace", "trace_session", "tracer_eval_logger")
 _DDL = {
@@ -461,7 +463,7 @@ def test_sampled_lag_still_reports_a_stalled_mirror(configure, statements):
     assert set(health.details["checks"].values()) == {"lagging"}
     assert all(lag >= 590 for lag in health.cdc_lag.values()), health.cdc_lag
     reads = _trace_lag_reads(statements)
-    assert reads and all("_partition_id" in s["sql"] for s in reads), statements
+    assert reads and all("WHERE 1 LIMIT" in s["sql"] for s in reads), statements
 
 
 # One CDC batch three times the sample budget, and one merged month of history
@@ -643,10 +645,22 @@ def _insert_project_rows(admin, rows, *, project, synced_age_seconds=0):
     admin.execute(
         "INSERT INTO tracer_trace (id, project_id, created_at, updated_at, "
         "_peerdb_synced_at, _peerdb_is_deleted, _peerdb_version) "
-        f"SELECT generateUUIDv4(number), toUUID('{project}'), now64(3), now64(3), "
-        f"toDateTime64(now64(6) - toIntervalSecond({int(synced_age_seconds)}), 6), "
-        f"0, toInt64(number) + 1 FROM numbers({int(rows)})"
+        "SELECT generateUUIDv4(number), toUUID(%(project)s), now64(3), now64(3), "
+        "toDateTime64(now64(6) - toIntervalSecond(%(age)s), 6), "
+        "0, toInt64(number) + 1 FROM numbers(%(rows)s)",
+        {"project": project, "age": synced_age_seconds, "rows": rows},
     )
+
+
+def _merge_partition(admin, partition):
+    admin.execute("SYSTEM START MERGES tracer_trace")
+    try:
+        admin.execute(
+            "OPTIMIZE TABLE tracer_trace PARTITION ID %(partition)s FINAL",
+            {"partition": partition},
+        )
+    finally:
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
 
 
 def _probe_health(configure, admin, database):
@@ -658,14 +672,14 @@ def _probe_health(configure, admin, database):
 
 
 @pytest.mark.integration
-def test_current_mirror_after_a_large_merge_reads_healthy(
+def test_current_mirror_after_a_large_merge_has_unknown_lag(
     configure, statements, small_budget
 ):
     """A merge rewrites old rows into a part newer than any sync it holds.
 
     The fresh batch sorts after the old rows, so the bounded prefix of the
-    merged part sees only old syncs. That is no evidence of lag: the check
-    must not read degraded after every large merge of a current mirror.
+    merged part sees only old syncs. Without reading the fresh rows the check
+    can prove neither freshness nor lag, so it must return unknown/degraded.
     """
     from conftest import _ch_test_native_client, _ch_test_owned_database
 
@@ -688,19 +702,19 @@ def test_current_mirror_after_a_large_merge_reads_healthy(
         assert _newest_sync_age(admin) < 60
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == "healthy", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "recent_merge", detail
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     reads = _trace_lag_reads(statements)
     assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
 
 
 @pytest.mark.integration
-def test_stale_oversized_insert_still_reads_lagging(
+def test_stale_oversized_insert_has_unknown_lag(
     configure, statements, small_budget
 ):
-    """One inserted part (a CDC batch) holds rows synced when it was written,
-    so its prefix stands for it: old syncs in a fresh insert are real lag."""
+    """One inserted batch may contain mixed historical timestamps; its prefix
+    cannot stand for every row, even when this fixture happens to be stale."""
     from conftest import _ch_test_native_client, _ch_test_owned_database
 
     with (
@@ -720,5 +734,243 @@ def test_stale_oversized_insert_still_reads_lagging(
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
     assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "lagging", detail
-    assert health.cdc_lag["tracer_trace"] >= 590, detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("fresh_first", [False, True])
+def test_historical_repair_merge_uses_source_timestamps(
+    configure, statements, small_budget, fresh_first
+):
+    """Recent physical inserts/merges are healthy only if a fresh sync is read.
+
+    Snapshot/reconcile preserve old PG change times rather than the wall time
+    of this INSERT. Its recent inactive source must not make stale data healthy.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_repair_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+        _insert_project_rows(
+            admin, 3 * small_budget, project=LATE_PROJECT, synced_age_seconds=600
+        )
+        _insert_project_rows(
+            admin,
+            10,
+            project=EARLY_PROJECT,
+            synced_age_seconds=0 if fresh_first else 600,
+        )
+        partition = _active_parts(admin)[0][1]
+        _merge_partition(admin, partition)
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        parts = _active_parts(admin)
+        assert len(parts) == 1 and parts[0][2] > small_budget, parts
+        # Real part metadata is fresh in both cases, while source syncs differ.
+        youngest = admin.execute(
+            "SELECT min(dateDiff('second', modification_time, now())) "
+            "FROM system.parts WHERE database = currentDatabase() "
+            "AND table = 'tracer_trace' AND NOT active"
+        )[0][0]
+        assert youngest < 60
+        source_age = _newest_sync_age(admin)
+        if fresh_first:
+            assert source_age < 60
+        else:
+            assert source_age >= 590
+        health = _probe_health(configure, admin, database)
+    detail = (health, statements)
+    assert health.status == ("healthy" if fresh_first else "degraded"), detail
+    assert health.details["checks"]["legacy.tracer_trace"] == (
+        "ready" if fresh_first else "unsampled"
+    ), detail
+    if fresh_first:
+        assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
+    else:
+        assert health.cdc_lag["tracer_trace"] == -1, detail
+    reads = _trace_lag_reads(statements)
+    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert not any("NOT active" in entry["sql"] for entry in statements), detail
+
+
+@pytest.mark.integration
+def test_newer_stale_partition_does_not_report_false_lag(
+    configure, statements, small_budget
+):
+    """A small repair in an old month is newer than a large current month's merge.
+
+    The newest physical part has only stale syncs; the unselected larger part
+    has a fresh sync at its tail. The partial sample cannot establish lag.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_partitions_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+        _insert_project_rows(
+            admin, 3 * small_budget, project=EARLY_PROJECT, synced_age_seconds=600
+        )
+        _insert_project_rows(admin, 10, project=LATE_PROJECT)
+        fresh_partition = _active_parts(admin)[0][1]
+        _merge_partition(admin, fresh_partition)
+        time.sleep(1.1)  # system.parts modification_time has one-second resolution.
+        for _ in range(2):
+            _insert_part(
+                admin, "tracer_trace", 50, months_back=1, synced_age_seconds=600
+            )
+        old_partition = next(
+            partition
+            for _, partition, _ in _active_parts(admin)
+            if partition != fresh_partition
+        )
+        _merge_partition(admin, old_partition)
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        inventory = admin.execute(
+            "SELECT partition_id, rows, modification_time FROM system.parts "
+            "WHERE database = currentDatabase() AND table = 'tracer_trace' "
+            "AND active ORDER BY modification_time DESC"
+        )
+        assert len(inventory) == 2, inventory
+        assert inventory[0][0] == old_partition and inventory[0][1] == 100, inventory
+        assert inventory[0][2] > inventory[1][2], inventory
+        assert inventory[1][1] > small_budget, inventory
+        assert _newest_sync_age(admin) < 60
+        health = _probe_health(configure, admin, database)
+    detail = (health, statements)
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    reads = _trace_lag_reads(statements)
+    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+
+
+@pytest.mark.integration
+def test_native_eval_repair_merge_does_not_invent_a_fresh_sync(
+    configure, real_clients, statements, small_budget
+):
+    """The default outbox native eval mirror retains historical sync timestamps."""
+    _, native, clients = real_clients
+    health_tests.create_native(native)
+    native.execute(_production_ddl("tracer_eval_logger"))
+    native.execute("SYSTEM STOP MERGES tracer_eval_logger")
+    for rows, trace in ((3 * small_budget, EARLY_PROJECT), (10, LATE_PROJECT)):
+        native.execute(
+            "INSERT INTO tracer_eval_logger "
+            "(id, trace_id, created_at, updated_at, _peerdb_synced_at, _peerdb_version) "
+            "SELECT generateUUIDv4(number), toUUID(%(trace)s), now64(6), now64(6), "
+            "now64(6) - toIntervalSecond(%(age)s), toInt64(number) + 1 "
+            "FROM numbers(%(rows)s)",
+            {"trace": trace, "age": 600, "rows": rows},
+        )
+    native.execute("SYSTEM START MERGES tracer_eval_logger")
+    native.execute("OPTIMIZE TABLE tracer_eval_logger FINAL")
+    parts = _active_parts(native, "tracer_eval_logger")
+    assert len(parts) == 1 and parts[0][2] > small_budget, parts
+    assert _newest_sync_age(native, "tracer_eval_logger") >= 590
+    health = configure(*clients, retired=True).get_health_status()
+    detail = (health, statements)
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["native.tracer_eval_logger"] == "unsampled", detail
+    assert health.cdc_lag == {"tracer_eval_logger": -1}, detail
+    reads = [entry for entry in statements if "max(_peerdb_synced_at)" in entry["sql"]]
+    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+
+
+@pytest.mark.integration
+def test_single_insert_with_mixed_source_timestamps_has_unknown_lag(
+    configure, statements, small_budget
+):
+    """One historical batch is not homogeneous: its fresh tail is outside the prefix."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_mixed_batch_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        admin.execute(
+            "INSERT INTO tracer_trace "
+            "(id, project_id, created_at, updated_at, _peerdb_synced_at, _peerdb_version) "
+            "SELECT generateUUIDv4(number), "
+            "toUUID(if(number < %(stale_rows)s, %(early)s, %(late)s)), "
+            "now64(3), now64(3), "
+            "now64(6) - toIntervalSecond(if(number < %(stale_rows)s, 600, 0)), "
+            "toInt64(number) + 1 FROM numbers(%(rows)s)",
+            {
+                "stale_rows": 3 * small_budget,
+                "rows": 3 * small_budget + 10,
+                "early": EARLY_PROJECT,
+                "late": LATE_PROJECT,
+            },
+        )
+        parts = _active_parts(admin)
+        assert len(parts) == 1, parts
+        _, low, high, *_ = parts[0][0].split("_")
+        assert low == high, parts
+        assert _newest_sync_age(admin) < 60
+        health = _probe_health(configure, admin, database)
+    detail = (health, statements)
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    reads = _trace_lag_reads(statements)
+    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+
+
+@pytest.mark.integration
+def test_growth_and_merge_after_inventory_do_not_prove_stale_coverage(
+    configure, statements, small_budget, monkeypatch
+):
+    """A table sized as small grows and merges before the bounded data statement.
+
+    The snapshot must be fully read before stale rows can establish lag; old
+    inventory counts cannot establish coverage of the new merged part.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+    from tracer.services.clickhouse import consistency
+
+    with (
+        _ch_test_owned_database("test_health_growth_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+        _insert_project_rows(admin, 10, project=LATE_PROJECT)
+        original_read = consistency.ConsistencyChecker._read
+        changed = []
+
+        def grow_after_inventory(self, *args, **kwargs):
+            rows = original_read(self, *args, **kwargs)
+            if "FROM system.parts" in args[1] and not changed:
+                _insert_project_rows(
+                    admin,
+                    3 * small_budget,
+                    project=EARLY_PROJECT,
+                    synced_age_seconds=600,
+                )
+                _merge_partition(admin, _active_parts(admin)[0][1])
+                changed.extend(_active_parts(admin))
+            return rows
+
+        monkeypatch.setattr(
+            consistency.ConsistencyChecker, "_read", grow_after_inventory
+        )
+        health = _probe_health(configure, admin, database)
+        assert len(changed) == 1 and changed[0][2] > small_budget, changed
+        assert _newest_sync_age(admin) < 60
+    detail = (health, statements)
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    reads = _trace_lag_reads(statements)
+    assert reads and all("WHERE 1 LIMIT" in entry["sql"] for entry in reads), detail
+    assert all(entry["rows"] <= small_budget for entry in reads), detail

@@ -539,11 +539,12 @@ def test_lag_sample_is_one_statement_selecting_parts_by_block_range(
         ("202611", 9, 9),
         ("202611", 8, 8),
         ("202610", 5, 6),
-        ("all", 3, 3),
     }
-    assert "_part_offset < 100" in statement
-    # No active part: the whole-table aggregate, free on an empty table.
-    assert statement.endswith("FROM tracer_eval_logger")
+    assert "_part_offset < %(rows0_0)s" in statement
+    assert params["rows0_0"] == 100
+    # Small/empty inventories use bounded whole-table reads, not earlier names.
+    assert "FROM trace_session WHERE 1 LIMIT %(rows1_0)s" in statement
+    assert "FROM tracer_eval_logger WHERE 1 LIMIT %(rows2_0)s" in statement
 
 
 @pytest.mark.unit
@@ -578,7 +579,7 @@ def test_lag_sample_with_no_visible_row_uses_the_exact_aggregate(
         SAMPLED_INVENTORY,
         parts=[
             ("tracer_trace", "202611_2_2_0", 1_000),
-            ("trace_session", "202611_4_4_0", 5),
+            ("trace_session", "202611_4_4_0", 500),
             ("tracer_eval_logger", "202611_6_6_0", 1),
         ],
     )
@@ -602,7 +603,8 @@ def test_lag_sample_with_no_visible_row_uses_the_exact_aggregate(
     first, second = _lag_statements(client)
     assert health_tests.sampled_tables(first[1]) == list(health_tests.CDC_TABLES)
     # The oversized newest part is a bounded prefix, never the whole table.
-    assert "_part_offset < 10" in first[0]
+    assert "_part_offset < %(rows0_0)s" in first[0]
+    assert first[1]["rows0_0"] == 10
     # Only the masked sample falls back, and only to the exact aggregate.
     assert health_tests.sampled_tables(second[1]) == ["trace_session"]
     assert "_part" not in second[0]
@@ -763,7 +765,8 @@ def test_masked_sample_of_a_large_table_is_unknown_not_a_full_scan(
     ), health
     ((statement, params),) = _lag_statements(client)
     assert health_tests.sampled_tables(params) == list(health_tests.CDC_TABLES)
-    assert "_part_offset < 10" in statement
+    assert "_part_offset < %(rows0_0)s" in statement
+    assert params["rows0_0"] == 10
 
 
 @pytest.mark.unit
@@ -1153,116 +1156,214 @@ def test_lag_sample_prefix_fits_what_the_current_parts_leave(
     assert _planned_cost(checker, reads) <= budget
 
 
-def _merge_inventory(part, age):
-    return [(table, part, 5_000, PART_NOW, age) for table in health_tests.CDC_TABLES]
-
-
-def _sources(*rows):
-    return [
-        (table, name, age) for table in health_tests.CDC_TABLES for name, age in rows
-    ]
-
-
-def _health_after(configure, monkeypatch, part, age, inactive):
-    from tracer.services.clickhouse import consistency
-
-    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
-    client = health_tests.fake_client(
-        SAMPLED_INVENTORY,
-        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
-        parts=_merge_inventory(part, age),
-        inactive=inactive,
-    )
-    return client, configure(client).get_health_status()
-
-
-def _source_reads(client):
-    return [
-        call.args[0]
-        for call in client.execute_read.call_args_list
-        if "NOT active" in call.args[0]
-    ]
-
-
 @pytest.mark.unit
-def test_current_mirror_after_a_large_merge_is_not_reported_lagging(
-    configure, monkeypatch
+@pytest.mark.parametrize("native", [False, True])
+def test_stale_after_historical_repair_is_unknown_not_healthy(
+    configure, monkeypatch, native
 ):
-    """A merge rewrites old rows into a part newer than any sync it holds, and
-    its first rows in sort-key order need not hold the newest sync. When an
-    insert it absorbed was written within the threshold, the stale prefix is
-    no evidence of lag."""
-    client, health = _health_after(
-        configure,
-        monkeypatch,
-        "202611_1_9_2",
-        5,
-        _sources(("202611_9_9_1", 4), ("202611_1_8_1", 3_000)),
-    )
-    assert health.status == "healthy", health
-    assert set(health.details["checks"].values()) == {"recent_merge"}, health
-    assert set(health.cdc_lag.values()) == {-1.0}, health
-    assert all("_part_offset" in sql for sql, _ in _lag_statements(client))
-    assert len(_source_reads(client)) == 1
+    """Snapshot/reconcile writes retain PG timestamps, even in new source parts.
 
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "inactive",
-    [
-        # A stalled mirror keeps merging old parts: every insert is old.
-        _sources(("202611_9_9_1", 600), ("202611_1_8_1", 900)),
-        # A recent intermediate merge of old rows proves nothing.
-        _sources(("202611_1_8_2", 3), ("202611_9_9_1", 600)),
-        # The recent insert belongs to another merge's range.
-        _sources(("202611_12_12_1", 4)),
-        # The sources were already cleaned up.
-        [],
-    ],
-)
-def test_merge_of_only_old_inserts_still_lags(configure, monkeypatch, inactive):
-    _, health = _health_after(configure, monkeypatch, "202611_1_9_2", 5, inactive)
-    assert health.status == "degraded", health
-    assert set(health.details["checks"].values()) == {"lagging"}, health
-    assert all(lag >= 590 for lag in health.cdc_lag.values()), health
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("part", "age"),
-    [
-        ("202611_9_9_1", 5),  # one inserted batch: its prefix stands for it
-        ("202611_9_9_0", 5),
-        ("202611_1_9_2", 600),  # merged, but nothing written for ten minutes
-    ],
-)
-def test_stale_sample_lags_without_checking_sources(configure, monkeypatch, part, age):
-    client, health = _health_after(
-        configure, monkeypatch, part, age, _sources(("202611_9_9_1", 4))
-    )
-    assert health.status == "degraded", health
-    assert set(health.details["checks"].values()) == {"lagging"}, health
-    assert not _source_reads(client)
-
-
-@pytest.mark.unit
-def test_unreadable_merge_sources_keep_the_lagging_verdict(configure, monkeypatch):
+    A repair absorbed by a large stale merge is not a fresh sync. The default
+    outbox eval mirror on the native destination follows the same contract.
+    """
     from tracer.services.clickhouse import consistency
 
     monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    inventory = (
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+            "system.parts": PART_COLUMNS,
+        }
+        if native
+        else SAMPLED_INVENTORY
+    )
+    tables = ("tracer_eval_logger",) if native else health_tests.CDC_TABLES
+    client = health_tests.fake_client(
+        inventory,
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+        parts=[(table, "202611_1_9_2", 5_000, PART_NOW, 1) for table in tables],
+        inactive=[(table, "202611_9_9_0", 2) for table in tables],
+    )
+    checker = (
+        configure(health_tests.fake_client({}), client, retired=True)
+        if native
+        else configure(client)
+    )
+    health = checker.get_health_status()
+    assert health.status == "degraded", health
+    assert set(health.cdc_lag.values()) == {-1.0}, health
+    role = "native" if native else "legacy"
+    assert all(health.details["checks"][f"{role}.{t}"] == "unsampled" for t in tables)
+    # No attempt to infer freshness from inactive parts, even when readable.
+    assert not any("NOT active" in c.args[0] for c in client.execute_read.call_args_list)
+    assert len(client.execute_read.call_args_list) == 3
+    assert checker.get_cdc_lag() == dict.fromkeys(tables, -1.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("same_second", [False, True])
+def test_stale_newest_partition_does_not_prove_other_partition_lags(
+    configure, same_second
+):
+    """A newer repair/merge can hide an older, larger part containing a fresh sync.
+
+    Cover both a different newest second and a same-second budget selection.
+    The bounded sample deliberately contains no evidence either way.
+    """
+    parts = [
+        ("tracer_trace", "202610_1_2_1", 9_000_000 if same_second else 100, PART_NOW, 1),
+        (
+            "tracer_trace",
+            "202611_3_4_1",
+            12_000_000,
+            PART_NOW if same_second else PART_NOW - timedelta(seconds=4),
+            5,
+        ),
+    ]
     client = health_tests.fake_client(
         SAMPLED_INVENTORY,
         sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
-        parts=_merge_inventory("202611_1_9_2", 5),
+        parts=parts,
     )
-    read = client.execute_read.side_effect
-
-    def denied_sources(sql, params=None, **kwargs):
-        if "NOT active" in sql:
-            raise TimeoutError("synthetic socket timeout")
-        return read(sql, params, **kwargs)
-
-    client.execute_read.side_effect = denied_sources
     health = configure(client).get_health_status()
     assert health.status == "degraded", health
-    assert set(health.details["checks"].values()) == {"lagging"}, health
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", health
+    assert health.cdc_lag["tracer_trace"] == -1, health
+    ((sql, params),) = _lag_statements(client)
+    assert ("202610", 1, 2) in _sampled_ranges(params)
+    if not same_second:
+        assert ("202611", 3, 4) not in _sampled_ranges(params)
+    assert "LIMIT %(rows0_" in sql
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("part", ["202610_9_9_0", "202610_9_9_0_10", "202610_1_9_2"])
+@pytest.mark.parametrize("age", [1, 600])
+@pytest.mark.parametrize("fresh", [False, True])
+def test_partial_sample_uses_only_source_timestamps(configure, part, age, fresh):
+    """Neither inserts, single-block mutations nor old partition repairs prove lag."""
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        parts=[
+            ("tracer_trace", part, 12_000_000, PART_NOW - timedelta(seconds=age), age)
+        ],
+        sample=(100, datetime.now(UTC) - timedelta(seconds=5 if fresh else 600)),
+    )
+    health = configure(client).get_health_status()
+    assert health.details["checks"]["legacy.tracer_trace"] == (
+        "ready" if fresh else "unsampled"
+    ), health
+    assert health.status == ("healthy" if fresh else "degraded"), health
+    if fresh:
+        assert 0 <= health.cdc_lag["tracer_trace"] < 60
+    else:
+        assert health.cdc_lag["tracer_trace"] == -1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("part", ["202610_9_9_0", "202610_9_9_0_10", "202610_1_9_2"])
+def test_fully_sampled_stale_rows_prove_lag_despite_recent_part(configure, part):
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        parts=[("tracer_trace", part, 100, PART_NOW, 1)],
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+    )
+    health = configure(client).get_health_status()
+    assert health.details["checks"]["legacy.tracer_trace"] == "lagging", health
+    assert health.cdc_lag["tracer_trace"] >= 590
+    ((sql, params),) = _lag_statements(client)
+    assert "FROM tracer_trace WHERE 1 LIMIT %(rows0_0)s" in sql
+    assert params["rows0_0"] <= 10_000_000
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fresh", [False, True])
+def test_truncated_part_inventory_cannot_prove_lag(configure, monkeypatch, fresh):
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_PARTS", 2)
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        parts=[
+            ("tracer_trace", "202610_1_1_0", 10),
+            ("tracer_trace", "202610_2_2_0", 10),
+        ],
+        sample=(20, datetime.now(UTC) - timedelta(seconds=5 if fresh else 600)),
+    )
+    health = configure(client).get_health_status()
+    assert health.details["checks"]["legacy.tracer_trace"] == (
+        "ready" if fresh else "unsampled"
+    ), health
+    if not fresh:
+        assert health.cdc_lag["tracer_trace"] == -1
+    ((sql, _),) = _lag_statements(client)
+    assert "_partition_id" in sql
+    assert "FROM tracer_trace WHERE 1" not in sql
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("inventory", ["empty", "small", "columns_hidden", "read_denied"])
+@pytest.mark.parametrize("count", [0, 99, 100])
+def test_whole_table_coverage_is_proved_at_read_not_inventory(
+    configure, monkeypatch, inventory, count
+):
+    """Concurrent growth after sizing must not turn a bounded read into false lag."""
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 100)
+    columns = (
+        dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+        if inventory == "columns_hidden"
+        else SAMPLED_INVENTORY
+    )
+    client = health_tests.fake_client(
+        columns,
+        parts=[] if inventory == "empty" else [("tracer_trace", "all_1_1_0", 1)],
+        sample=(count, datetime.now(UTC) - timedelta(minutes=10)),
+    )
+    if inventory == "read_denied":
+        _deny(client, "FROM system.parts")
+    health = configure(client).get_health_status()
+    expected = {0: "empty", 99: "lagging", 100: "unsampled"}[count]
+    assert set(health.details["checks"].values()) == {expected}, health
+    assert health.status == ("healthy" if count == 0 else "degraded"), health
+    if count != 99:
+        assert set(health.cdc_lag.values()) == {-1}
+    ((sql, params),) = _lag_statements(client)
+    assert "_partition_id" not in sql
+    assert sql.count("WHERE 1 LIMIT") == 3
+    assert all(params[f"rows{i}_0"] == 100 for i in range(3))
+
+
+@pytest.mark.unit
+def test_unparseable_oversized_inventory_never_falls_back_to_full_scan(configure):
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY, parts=[("tracer_trace", "unknown-format", 12_000_000)]
+    )
+    health = configure(client).get_health_status()
+    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", health
+    assert health.cdc_lag["tracer_trace"] == -1
+    assert all("FROM tracer_trace" not in sql for sql, _ in _lag_statements(client))
+
+
+@pytest.mark.unit
+def test_unknown_native_sample_wins_over_fresh_legacy_sample(configure, settings):
+    settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
+    legacy = health_tests.fake_client(SAMPLED_INVENTORY)
+    native = health_tests.fake_client(
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+            "system.parts": PART_COLUMNS,
+        },
+        parts=[("tracer_eval_logger", "202610_1_9_2", 12_000_000)],
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+    )
+    health = configure(legacy, native).get_health_status()
+    assert health.status == "degraded", health
+    assert health.details["checks"]["legacy.tracer_eval_logger"] == "ready"
+    assert health.details["checks"]["native.tracer_eval_logger"] == "unsampled"
+    assert health.cdc_lag["tracer_eval_logger"] == -1
+    assert health.cdc_lag["tracer_trace"] >= 0
+    assert health.cdc_lag["trace_session"] >= 0
