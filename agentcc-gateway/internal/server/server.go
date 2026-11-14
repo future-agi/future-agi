@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/futureagi/agentcc-gateway/internal/audit"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -70,6 +72,12 @@ type Server struct {
 	shadowFlusher    *routing.ShadowFlusher
 	router           *Router
 	ready            atomic.Bool
+
+	// httpsServer serves the same handler over TLS when server.tls is on;
+	// certs feeds it the certificate and reloads it when its files change.
+	httpsServer    *http.Server
+	certs          *certReloader
+	stopCertReload context.CancelFunc
 }
 
 // PriceTableName is the name the price table keys a provider's models under,
@@ -666,7 +674,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("GET", "/-/admin/video/unsettled", s.adminVideoUnsettled)
 	// Cluster admin endpoint.
 	if cfg.Cluster.Enabled {
-		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
+		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.ServingAddr(), "0.1.0")
 		s.clusterMgr = clusterMgr
 		clusterHandlers := NewClusterHandlers(clusterMgr, cfg.Admin.Token)
 		router.Handle("GET", "/-/cluster/nodes", clusterHandlers.ListNodes)
@@ -973,8 +981,86 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		// 0 leaves net/http's default (1MB).
 		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
+	if cfg.Server.TLS.Enabled {
+		s.certs = newCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile, cfg.Server.TLS.ReloadInterval)
+		minVersion, _ := config.ParseTLSMinVersion(cfg.Server.TLS.MinVersion) // Validate refused anything else
+		s.httpsServer = &http.Server{
+			Addr:              cfg.TLSAddr(),
+			Handler:           handler,
+			ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+			ReadTimeout:       cfg.Server.ReadTimeout,
+			WriteTimeout:      cfg.Server.WriteTimeout,
+			IdleTimeout:       cfg.Server.IdleTimeout,
+			MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+			TLSConfig:         serverTLSConfig(minVersion, s.certs.GetCertificate),
+		}
+	}
 
 	return s
+}
+
+// tls12CipherSuites are the TLS 1.2 suites the gateway offers: ECDHE key
+// exchange with an AEAD cipher only. TLS 1.3 suites are Go's own and not
+// configurable.
+var tls12CipherSuites = []uint16{
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+}
+
+func serverTLSConfig(minVersion uint16, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config {
+	return &tls.Config{
+		MinVersion:     minVersion,
+		CipherSuites:   tls12CipherSuites,
+		GetCertificate: getCertificate,
+	}
+}
+
+// gatewayListener is one open listener and how to serve it.
+type gatewayListener struct {
+	name  string
+	ln    net.Listener
+	serve func(net.Listener) error
+}
+
+// listen loads the TLS certificate and opens every enabled listener, so a
+// bad certificate or a taken port fails startup before anything is served.
+func (s *Server) listen() ([]gatewayListener, error) {
+	if s.certs != nil {
+		if err := s.certs.Load(); err != nil {
+			return nil, err
+		}
+	}
+	var lns []gatewayListener
+	closeAll := func() {
+		for _, l := range lns {
+			l.ln.Close()
+		}
+	}
+	if s.cfg.Server.HTTPOn() {
+		ln, err := net.Listen("tcp", s.httpServer.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("server: listening on %s: %w", s.httpServer.Addr, err)
+		}
+		lns = append(lns, gatewayListener{"http", ln, s.httpServer.Serve})
+	}
+	if s.httpsServer != nil {
+		ln, err := net.Listen("tcp", s.httpsServer.Addr)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("server.tls: listening on %s: %w", s.httpsServer.Addr, err)
+		}
+		lns = append(lns, gatewayListener{"https", ln, func(ln net.Listener) error {
+			return s.httpsServer.ServeTLS(ln, "", "")
+		}})
+	}
+	if len(lns) == 0 {
+		return nil, fmt.Errorf("server: no listener is on")
+	}
+	return lns, nil
 }
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
@@ -982,8 +1068,17 @@ func (s *Server) Start() error {
 	if s.videoInitErr != nil {
 		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
 	}
+	lns, err := s.listen()
+	if err != nil {
+		return err
+	}
 	if s.videoWorker != nil {
 		s.videoWorker.Start()
+	}
+	if s.certs != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.stopCertReload = cancel
+		go s.certs.Run(ctx)
 	}
 	s.ready.Store(true)
 
@@ -992,13 +1087,22 @@ func (s *Server) Start() error {
 		s.clusterMgr.Start()
 	}
 
-	slog.Info("agentcc gateway starting",
-		"addr", s.httpServer.Addr,
+	attrs := []any{
 		"providers", s.registry.ProviderCount(),
 		"plugins", s.engine.PluginCount(),
-	)
+	}
+	for _, l := range lns {
+		attrs = append(attrs, l.name+"_addr", l.ln.Addr().String())
+	}
+	slog.Info("agentcc gateway starting", attrs...)
 
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// Each server returns ErrServerClosed once Shutdown begins; Start returns
+	// then, as it always has, or on the first listener that fails.
+	errs := make(chan error, len(lns))
+	for _, l := range lns {
+		go func() { errs <- l.serve(l.ln) }()
+	}
+	if err := <-errs; err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
@@ -1026,7 +1130,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.asyncWorker.Stop()
 	}
 
-	err := s.httpServer.Shutdown(ctx)
+	if s.stopCertReload != nil {
+		s.stopCertReload()
+	}
+	err := s.shutdownListeners(ctx)
 	// Send the shadow results captured so far with what is left of ctx; if
 	// the requests used it all, this logs how many were not sent.
 	if s.shadowFlusher != nil {
@@ -1055,6 +1162,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	slog.Info("gateway shut down cleanly")
 	return nil
+}
+
+// shutdownListeners shuts down both servers at once, within ctx.
+func (s *Server) shutdownListeners(ctx context.Context) error {
+	servers := []*http.Server{s.httpServer}
+	if s.httpsServer != nil {
+		servers = append(servers, s.httpsServer)
+	}
+	errs := make(chan error, len(servers))
+	for _, srv := range servers {
+		go func() { errs <- srv.Shutdown(ctx) }()
+	}
+	var first error
+	for range servers {
+		if err := <-errs; err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // Health/ready handlers.
@@ -1139,8 +1265,11 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"server": map[string]interface{}{
-			"port": s.cfg.Server.Port,
-			"host": s.cfg.Server.Host,
+			"port":         s.cfg.Server.Port,
+			"host":         s.cfg.Server.Host,
+			"http_enabled": s.cfg.Server.HTTPOn(),
+			"tls_enabled":  s.cfg.Server.TLS.Enabled,
+			"tls_port":     s.cfg.Server.TLS.Port,
 		},
 		"providers_count": s.registry.ProviderCount(),
 		"models_count":    len(s.cfg.ModelMap),
