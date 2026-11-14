@@ -1004,7 +1004,7 @@ def ingest_conversation_events(
                 state=HostedHarnessConversationMessage.State.QUEUED,
             ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
         for event in events:
-            _ingest_event(conversation, event)
+            _ingest_event(conversation, event, chat_only=lease.attempt_id is None)
         lease.command_watermark = max(
             lease.command_watermark, conversation.command_acked_through
         )
@@ -1039,7 +1039,10 @@ def ingest_conversation_events(
 
 
 def _ingest_event(
-    conversation: HostedHarnessConversation, event: dict[str, Any]
+    conversation: HostedHarnessConversation,
+    event: dict[str, Any],
+    *,
+    chat_only: bool = False,
 ) -> None:
     canonical = {key: value for key, value in event.items() if key != "digest"}
     if canonical_digest(canonical) != event["digest"]:
@@ -1099,6 +1102,13 @@ def _ingest_event(
                 event["sequence"],
                 event["emitted_at"],
             )
+        )
+    if chat_only and event["kind"] == "turn_completed":
+        from simulate.services.harness_usage import bill_builder_turn
+
+        # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
+        transaction.on_commit(
+            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
         )
     _project_event(conversation, event)
 

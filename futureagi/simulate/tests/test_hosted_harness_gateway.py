@@ -61,6 +61,7 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
+    _read_harness_spend,
     _resolved_egress_domains,
     _scenarios_cli_command,
     _validate_resolved_egress_domains,
@@ -77,6 +78,7 @@ from simulate.services.hosted_harness_gateway import (
 )
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxNotFoundError,
     SandboxProviderError,
 )
@@ -3296,6 +3298,12 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    # A build runs as a chat turn: its spend is in the chat's ledger, which the attempt's
+    # cleanup reads.
+    assert (
+        client.sandbox.process.session_request.env["ALK_SPEND_JOURNAL"]
+        == "/work/builder-cost.json"
+    )
     assert client.deleted is False
 
 
@@ -5064,7 +5072,7 @@ def test_a_stale_progress_save_keeps_the_observability_refusal(
         observability_refusal=newer,
         harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
     )
-    _record_harness_spend(stale, {"total_usd": 0.1, "stages": []}, 1)
+    _record_harness_spend(stale, 1, cli={"total_usd": 0.1, "stages": []})
 
     metadata = _stored_metadata(job.id)
     assert metadata["observability_refusal"] == newer
@@ -5103,6 +5111,95 @@ def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
     ] == [
         ("adj-1", "applied"),
         ("adj-2", "pending"),
+    ]
+
+
+def _ledger(stage: str, usd: float) -> bytes:
+    """A spend ledger as ALK writes it, with one stage."""
+    return json.dumps(
+        {
+            "schema": "futureagi.harness-spend.v1",
+            "total_usd": usd,
+            "unpriced_turns": 0,
+            "stages": [
+                {
+                    "stage": stage,
+                    "usd": usd,
+                    "turns": 1,
+                    "models": ["gemini-3.7-flash"],
+                    "tokens_in": 1000,
+                    "tokens_out": 100,
+                    "tokens_cached": 0,
+                }
+            ],
+        }
+    ).encode()
+
+
+def _sandbox_holding(files: dict[str, bytes]) -> SimpleNamespace:
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+
+
+@pytest.mark.django_db
+def test_two_builds_of_one_environment_each_record_only_their_own_spend(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-two-builds"
+    )
+    # Each build runs as a chat turn in its own attempt's sandbox, whose chat process
+    # starts a ledger of its own: never the session's running total.
+    for number, usd in ((1, 1.0), (2, 2.0)):
+        attempt = register_attempt(
+            job.id,
+            endpoint_base_url="https://platform.example",
+            provider_ref=f"sandbox-{number}",
+        ).attempt
+        _read_harness_spend(
+            attempt,
+            _sandbox_holding({"/work/builder-cost.json": _ledger("builder", usd)}),
+        )
+
+    spend = _stored_metadata(job.id)["harness_spend"]
+    assert {key: one["total_usd"] for key, one in spend["attempts"].items()} == {
+        "1": 1.0,
+        "2": 2.0,
+    }
+    assert spend["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_build_beside_a_chat_records_both_ledgers_under_distinct_stage_names(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-both-ledgers"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+
+    _read_harness_spend(
+        attempt,
+        _sandbox_holding(
+            {
+                "/work/authoring/cost.json": _ledger("build-environment", 0.5),
+                "/work/builder-cost.json": _ledger("build-environment", 0.25),
+            }
+        ),
+    )
+
+    recorded = _stored_metadata(job.id)["harness_spend"]["attempts"]["1"]
+    assert recorded["total_usd"] == 0.75
+    # Billing prices each stage once by name, so the chat's keeps a prefix.
+    assert [stage["stage"] for stage in recorded["stages"]] == [
+        "build-environment",
+        "chat:build-environment",
     ]
 
 

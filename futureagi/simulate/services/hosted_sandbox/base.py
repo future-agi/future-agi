@@ -67,6 +67,10 @@ class SandboxNotFoundError(SandboxProviderError):
     pass
 
 
+class SandboxFileNotFoundError(SandboxProviderError):
+    """A file the sandbox does not hold. Not a SandboxNotFoundError: the sandbox is still there."""
+
+
 class SandboxConflictError(SandboxProviderError):
     pass
 

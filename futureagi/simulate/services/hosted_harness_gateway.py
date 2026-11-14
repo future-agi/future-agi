@@ -77,6 +77,7 @@ from simulate.services.hosted_harness_diagnostics import (
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxProviderConfigurationError,
@@ -141,6 +142,12 @@ _CHAT_RUNTIME_PATH = (
     "/usr/sbin:/usr/bin:/sbin:/bin"
 )
 _CHAT_POLICY_PATH = "/run/futureagi/chat-capabilities.yaml"
+# Where the builder chat keeps its spend ledger (ALK reads ALK_SPEND_JOURNAL); a build runs
+# as a chat turn, so its spend is here. Outside /work/authoring: a chat beside a CLI build
+# would otherwise overwrite that build's cost.json, and checkpoints of that directory would
+# carry one sandbox's ledger into the next.
+_BUILDER_SPEND_PATH = "/work/builder-cost.json"
+_AUTHORING_SPEND_PATH = "/work/authoring/cost.json"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
@@ -3037,6 +3044,7 @@ class HostedHarnessGateway:
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+        chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
         if overlay is not None:
             chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
         command = sandbox.process.execute_session_command(
@@ -3429,6 +3437,7 @@ class HostedHarnessGateway:
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+            chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
             if overlay is not None:
                 chat_exports["PYTHONPATH"] = "/work/alk-src"
             command = sandbox.process.execute_session_command(
@@ -3862,7 +3871,8 @@ class HostedHarnessGateway:
         # documents above and only once a store has actually been built.
         build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
-        spend = _json("/work/authoring/cost.json")
+        cli_spend = _json(_AUTHORING_SPEND_PATH)
+        builder_spend = _json(_BUILDER_SPEND_PATH)
         coverage = _json("/work/authoring/coverage.json")
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
@@ -3870,7 +3880,9 @@ class HostedHarnessGateway:
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         metadata = (job.payload or {}).get("metadata") or {}
         if not metadata.get("simulation_only"):
-            _record_harness_spend(job, spend, attempt.attempt_number)
+            _record_harness_spend(
+                job, attempt.attempt_number, cli=cli_spend, builder=builder_spend
+            )
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         # Certifying prunes the suite index; a run reads the suite it was assembled with.
@@ -5333,31 +5345,123 @@ def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
 
 
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
-    """Record the guest's ledger from a sandbox that is about to go away.
+    """Record the guest's ledgers from a sandbox that is about to go away.
 
-    Silent on failure: a leaked sandbox costs more than the figure it was holding.
+    Never raises: a leaked sandbox costs more than the figure it was holding.
+    """
+    cli = _read_ledger(attempt, sandbox, _AUTHORING_SPEND_PATH)
+    builder = _read_ledger(attempt, sandbox, _BUILDER_SPEND_PATH)
+    if cli is None and builder is None:
+        logger.debug("no harness ledger to read attempt=%s", attempt.id)
+        return
+    try:
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        _record_harness_spend(job, attempt.attempt_number, cli=cli, builder=builder)
+    except Exception:  # noqa: BLE001 - see above
+        logger.exception("harness ledger could not be recorded attempt=%s", attempt.id)
+
+
+def _read_ledger(
+    attempt: HostedHarnessAttempt, sandbox, path: str
+) -> dict[str, Any] | None:
+    """One spend ledger from the sandbox, or None.
+
+    No ledger is the ordinary case (an early failure, or an attempt with no builder chat), so
+    it stays quiet. Any other failure is logged: the sandbox is deleted next, and its ledger
+    with it.
     """
     try:
-        body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
-        logger.debug("no harness ledger to read attempt=%s", attempt.id)
+        body = sandbox.fs.download_file(path)
+    except (SandboxFileNotFoundError, SandboxNotFoundError):
+        return None
+    except Exception:  # noqa: BLE001 - never raises; see _read_harness_spend
+        logger.exception(
+            "harness ledger could not be read attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    try:
+        ledger = json.loads(body.decode("utf-8"))
+    except ValueError:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
+        logger.exception(
+            "harness ledger is not JSON attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    if not isinstance(ledger, dict):
+        logger.error(
+            "harness ledger is not an object attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    return ledger
+
+
+def _combined_spend(cli: Any, builder: Any) -> dict[str, Any] | None:
+    """One attempt's spend from the build CLI's ledger and the builder chat's.
+
+    A stage both ledgers name keeps the chat's under a ``chat:`` prefix: billing prices each
+    stage once by name and refuses an attempt whose stages share one.
+    """
+    if not isinstance(builder, dict):
+        return cli if isinstance(cli, dict) else None
+    if not isinstance(cli, dict):
+        return builder
+    try:
+        taken = {stage.get("stage") for stage in cli.get("stages") or []}
+        return {
+            "total_usd": float(cli.get("total_usd") or 0.0)
+            + float(builder.get("total_usd") or 0.0),
+            "unpriced_turns": int(cli.get("unpriced_turns") or 0)
+            + int(builder.get("unpriced_turns") or 0),
+            "stages": [
+                *(cli.get("stages") or []),
+                *(
+                    {**stage, "stage": f"chat:{stage.get('stage')}"}
+                    if stage.get("stage") in taken
+                    else stage
+                    for stage in builder.get("stages") or []
+                ),
+            ],
+        }
+    except (AttributeError, TypeError, ValueError):
+        logger.exception("harness ledgers could not be combined")
+        return cli
+
+
+def _ledger_snapshot(ledger: Any) -> dict[str, Any] | None:
+    """The part of a spend ledger the job keeps, or None when it is not a usable ledger."""
+    if not isinstance(ledger, dict):
+        return None
+    try:
+        total = float(ledger.get("total_usd") or 0.0)
+        unpriced = int(ledger.get("unpriced_turns") or 0)
+    except (TypeError, ValueError):
+        return None
+    stages = ledger.get("stages") or []
+    if not isinstance(stages, list):
+        return None
+    return {"total_usd": total, "unpriced_turns": unpriced, "stages": stages}
 
 
 def _record_harness_spend(
-    job: HostedHarnessJob, spend: Any, attempt_number: int = 1
+    job: HostedHarnessJob,
+    attempt_number: int = 1,
+    *,
+    cli: Any = None,
+    builder: Any = None,
 ) -> None:
     """Keep the harness's own cost on the job, per attempt, and total across attempts.
 
     Per attempt because a retry's ledger starts at zero, so attempts are summed rather than
-    maxed. Within an attempt the figure only grows, so a reset ledger cannot erase an earlier read.
+    maxed. The build CLI's ledger and the builder chat's are kept apart (``sources``): a read
+    that fails or finds no ledger leaves that ledger's last good snapshot, and within an
+    attempt each ledger only grows, so a reset ledger cannot erase an earlier read. The
+    attempt's figure combines the two snapshots.
     """
-    if not isinstance(spend, dict):
-        return
-    try:
-        total = float(spend.get("total_usd") or 0.0)
-    except (TypeError, ValueError):
+    fresh = {
+        name: snapshot
+        for name, ledger in (("cli", cli), ("builder", builder))
+        if (snapshot := _ledger_snapshot(ledger)) is not None
+    }
+    if not fresh:
         return
     key = str(int(attempt_number or 1))
     # Re-read under the lock so a refusal or another attempt's entry written meanwhile is kept.
@@ -5374,7 +5478,19 @@ def _record_harness_spend(
             else {}
         )
         mine = attempts.get(key)
-        if isinstance(mine, dict):
+        mine = mine if isinstance(mine, dict) else {}
+        held = mine.get("sources")
+        sources = dict(held) if isinstance(held, dict) else {}
+        for name, snapshot in fresh.items():
+            kept = _ledger_snapshot(sources.get(name))
+            if kept is None or snapshot["total_usd"] >= kept["total_usd"]:
+                sources[name] = snapshot
+        spend = _combined_spend(sources.get("cli"), sources.get("builder"))
+        if spend is None:
+            return
+        total = float(spend.get("total_usd") or 0.0)
+        if not isinstance(held, dict):
+            # Recorded before the ledgers were kept apart: only a combined figure to beat.
             try:
                 if float(mine.get("total_usd") or 0.0) > total:
                     return
@@ -5384,6 +5500,7 @@ def _record_harness_spend(
             "total_usd": round(total, 6),
             "unpriced_turns": int(spend.get("unpriced_turns") or 0),
             "stages": spend.get("stages") or [],
+            "sources": sources,
         }
         metadata["harness_spend"] = {
             "total_usd": round(

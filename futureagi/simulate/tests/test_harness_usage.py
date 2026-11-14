@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4, uuid5
 
 import pytest
@@ -15,6 +17,8 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
 )
+from simulate.services.hosted_harness_gateway import _read_harness_spend
+from simulate.services.hosted_sandbox import SandboxFileNotFoundError
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
 from tfc.ee_loader import has_ee
 
@@ -297,6 +301,50 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
     consumption = harness_usage.harness_consumption(job)
     assert consumption["ai_credits"] is None
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_build_run_as_a_chat_turn_bills_the_chats_ledger_at_cleanup(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    ledger = {
+        "schema": "futureagi.harness-spend.v1",
+        "total_usd": 0.42,
+        "unpriced_turns": 0,
+        "stages": [
+            {
+                "stage": "builder",
+                "usd": 0.42,
+                "turns": 3,
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 800_000,
+            }
+        ],
+    }
+    files = {"/work/builder-cost.json": json.dumps(ledger).encode()}
+
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    # A build runs as a chat turn: its sandbox holds the chat's ledger and no cost.json.
+    _read_harness_spend(
+        attempt, SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, event.properties["model"]) for event in events] == [
+        ("harness_authoring", "gemini-3.7-flash")
+    ]
+    assert events[0].amount == pytest.approx(70.2)
 
 
 @pytest.mark.django_db

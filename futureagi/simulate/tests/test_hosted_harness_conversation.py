@@ -12,18 +12,26 @@ from types import SimpleNamespace
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.models import (
+    HarnessNudge,
+    HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
+from simulate.services import harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     create_hosted_job,
     create_selected_harness_run,
+    register_attempt,
 )
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
     serialize_conversation,
 )
+from tfc.ee_loader import has_ee
 
 BASE = "/simulate/api/harness/conversations"
 
@@ -350,6 +358,240 @@ def test_an_answered_question_stops_blocking_at_once(organization):
     assert conversation.blocking_input is None
 
 
+def _deliver(conversation, capability, sequence: int, kind: str, payload: dict) -> None:
+    """One conversation event, sent as the chat process sends it."""
+    event = {
+        "schema_version": "futureagi.harness-conversation-event.v1",
+        "event_id": f"ce-metered-{uuid.uuid4()}",
+        "conversation_id": str(conversation.id),
+        "sequence": sequence,
+        "kind": kind,
+        "message_id": None,
+        "stage": "builder",
+        "invocation_id": "turn-1",
+        "function_call_id": None,
+        "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "payload": payload,
+    }
+    event["digest"] = canonical_digest(event)
+    response = APIClient().post(
+        f"{BASE}/{conversation.id}/events/",
+        {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "acknowledged_through": 1,
+            "events": [event],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert response.status_code == 200, response.content
+
+
+_TURN_USAGE = {
+    "tokens_in": 1200,
+    "tokens_out": 300,
+    "tokens_cached": 100,
+    "usd": 0.0123,
+    "unpriced_turns": 0,
+    "models": ["gemini-3.7-flash"],
+}
+
+requires_cloud_billing = pytest.mark.skipif(
+    not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml (OSS lane)"
+)
+
+
+def _post_build_turn(organization, key):
+    """A command and a capability for a chat sandbox of its own: no attempt covers it."""
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    conversation, command, _ = enqueue_message(
+        job, content="Check it against the agent", client_request_id=f"{key}-1"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-chat",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    return job, conversation, command, capability
+
+
+def _turn_rows(command):
+    return list(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            command_message_id=command.id
+        )
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("outcome", ["success", "interrupted", "failed"])
+def test_a_post_build_turn_is_billed_once_priced_as_a_build_stage(
+    organization, monkeypatch, django_capture_on_commit_callbacks, outcome
+):
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    job, conversation, command, capability = _post_build_turn(
+        organization, f"billed-turn-{outcome}"
+    )
+    ending = {
+        "command_message_id": str(command.id),
+        "outcome": outcome,
+        "usage": {**_TURN_USAGE, "stages": "not kept"},
+    }
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(conversation, capability, 2, "turn_completed", ending)
+    # A restart replays the same ending, with a later reading of the ledger.
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.bill_builder_turn(
+            str(conversation.id),
+            {**ending, "replayed": True, "usage": {**_TURN_USAGE, "usd": 9.0}},
+        )
+
+    expected = harness_usage._authoring_stage_record(
+        {
+            "stage": "builder-turn",
+            "tokens_in": 1200,
+            "tokens_out": 300,
+            "tokens_cached": 100,
+            "models": ["gemini-3.7-flash"],
+        }
+    )
+    [turn] = _turn_rows(command)
+    assert turn.job_id == job.id
+    assert turn.outcome == outcome
+    assert turn.usage == _TURN_USAGE
+    assert turn.report["records"] == [expected]
+    # The replay re-sends the one event under the same id, which the consumer drops as
+    # counted: the turn is billed once.
+    assert len(billed) == 2
+    assert {event.event_id for event in billed} == {
+        str(uuid.uuid5(uuid.UUID(str(command.id)), "authoring:builder-turn"))
+    }
+    event = billed[0]
+    assert event.event_type == "harness_authoring"
+    assert event.amount == expected["credits"] > 0
+    assert event.properties["command_message_id"] == str(command.id)
+    assert event.properties["turn_outcome"] == outcome
+    assert event.properties["authoring_stage"] == "builder-turn"
+    assert "attempt_id" not in event.properties
+    job.refresh_from_db()
+    assert "builder_turn_usage" not in job.payload["metadata"]
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
+        expected["credits"]
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_post_build_turn_that_cannot_be_priced_keeps_its_usage_and_bills_nothing(
+    organization, monkeypatch, django_capture_on_commit_callbacks, caplog
+):
+    """As a build stage: a stage must name exactly one priced model."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "unpriceable-turn"
+    )
+    usage = {**_TURN_USAGE, "models": ["gemini-3.7-flash", "gemini-3.1-flash-lite"]}
+    with caplog.at_level("ERROR", logger="simulate.services.harness_usage"):
+        with django_capture_on_commit_callbacks(execute=True):
+            _deliver(conversation, capability, 1, "turn_started", {})
+            _deliver(
+                conversation,
+                capability,
+                2,
+                "turn_completed",
+                {"command_message_id": str(command.id), "usage": usage},
+            )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == usage
+    assert turn.report is None
+    assert billed == []
+    assert any(str(command.id) in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.django_db
+def test_an_oss_post_build_turn_keeps_its_usage_unpriced(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+    job, conversation, command, capability = _post_build_turn(organization, "oss-turn")
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == _TURN_USAGE
+    assert turn.report is None
+    job.refresh_from_db()
+    assert "builder_turn_usage" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", ["no usage", "attempt sandbox", "rebuild turn"])
+def test_a_turn_is_not_billed_without_usage_inside_an_attempt_or_for_a_rebuild(
+    organization, django_capture_on_commit_callbacks, case
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"unbilled-{case}"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rider", client_request_id="ask"
+    )
+    attempt = None
+    if case == "attempt sandbox":
+        # Its spend is in that attempt's ledger, which bills the build.
+        attempt = register_attempt(
+            job.id, endpoint_base_url="https://platform.example", provider_ref="sb-1"
+        ).attempt
+    if case == "rebuild turn":
+        # A rebuild's turn is metered on its nudge.
+        nudge = HarnessNudge.no_workspace_objects.create(
+            job=job,
+            organization=job.organization,
+            workspace=job.workspace,
+            target="suite",
+            state="pending",
+            command_message=command,
+        )
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id
+        ).update(payload={**command.payload, "nudge_id": str(nudge.id)})
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sb-1",
+        attempt=attempt,
+        ttl_seconds=600,
+    )
+    completed = {"command_message_id": str(command.id)}
+    if case != "no usage":
+        completed["usage"] = _TURN_USAGE
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(conversation, capability, 2, "turn_completed", completed)
+
+    assert _turn_rows(command) == []
+
+
 @pytest.mark.django_db
 def test_conversation_agent_can_request_active_run_adjustment(
     organization, monkeypatch
@@ -483,6 +725,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     conversation = job.conversation
     uploads = {}
     commands = []
+    exports = []
     preparation_commands = []
     process_checks = []
 
@@ -506,6 +749,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
         def execute_session_command(self, name, request):
             assert name == "alk-chat"
             commands.append(request.command)
+            exports.append(request.env)
             return SimpleNamespace(cmd_id="chat-command")
 
         def get_session_command(self, name, command_id, request_timeout):
@@ -589,6 +833,8 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     assert lease.control_only is True
     assert gateway.client.created == 1
     assert "fi.alk.harness.hosted_chat_entrypoint" in commands[0]
+    # The chat keeps its spend ledger outside the workspace its checkpoints carry.
+    assert exports[0]["ALK_SPEND_JOURNAL"] == "/work/builder-cost.json"
     assert "tar -xzf /work/source.tar.gz -C /work" in preparation_commands[0]
     assert (
         "tar -xzf /work/conversation.tar.gz -C /work/authoring"
