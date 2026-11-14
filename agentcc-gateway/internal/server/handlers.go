@@ -1612,8 +1612,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
-		// Chosen per attempt: failover and model fallbacks change the model.
-		candidateChunks, candidateErrCh := translatedStreamChatCompletion(attemptCtx, callProvider, rc.Request)
+		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
 			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")

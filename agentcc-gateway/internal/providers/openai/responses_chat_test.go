@@ -513,3 +513,49 @@ func TestStreamViaResponsesReportsATruncatedAnswer(t *testing.T) {
 		t.Errorf("finish_reason = %q, want length", finish)
 	}
 }
+
+// The provider's own ChatCompletion and StreamChatCompletion take the Responses
+// route for a request chat completions would refuse, so every caller gets it:
+// the chat handlers, scheduled completions, batches and the traffic mirror call
+// these and nothing else.
+func TestChatCompletionTakesTheResponsesRouteItself(t *testing.T) {
+	for _, official := range []bool{true, false} {
+		t.Run(fmt.Sprintf("official=%v", official), func(t *testing.T) {
+			hits := map[string]int{}
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits[r.URL.Path]++
+				var req struct {
+					Stream bool `json:"stream"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				switch {
+				case r.URL.Path == "/v1/responses" && req.Stream:
+					sse(w, toolStreamEvents...)
+				case r.URL.Path == "/v1/responses":
+					io.WriteString(w, completedResponse)
+				case req.Stream:
+					sse(w, `{"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-5.6-terra","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`, `[DONE]`)
+				default:
+					io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-5.6-terra","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+				}
+			}))
+			defer ts.Close()
+			p := newTestProvider(t, ts.URL)
+			p.openAIAPI = official
+
+			if _, err := p.ChatCompletion(context.Background(), toolTurnRequest("gpt-5.6-terra")); err != nil {
+				t.Fatalf("ChatCompletion: %v", err)
+			}
+			if _, err := collect(p.StreamChatCompletion(context.Background(), toolTurnRequest("gpt-5.6-terra"))); err != nil {
+				t.Fatalf("StreamChatCompletion: %v", err)
+			}
+			wantResponses, wantChat := 2, 0
+			if !official {
+				wantResponses, wantChat = 0, 2
+			}
+			if hits["/v1/responses"] != wantResponses || hits["/v1/chat/completions"] != wantChat {
+				t.Errorf("hits = %v, want %d /v1/responses and %d /v1/chat/completions", hits, wantResponses, wantChat)
+			}
+		})
+	}
+}

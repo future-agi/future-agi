@@ -621,7 +621,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -746,7 +746,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
 		for attempt := 0; attempt < 2; attempt++ {
-			rawChunkCh, errCh = translatedStreamChatCompletion(streamCtx, provider, canonicalReq)
+			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
 				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 			}
@@ -948,30 +948,6 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			return
 		}
 	}
-}
-
-// translatedChatCompletion calls provider with a chat request: over the
-// Responses API when the model refuses the request on chat completions, as
-// gpt-5.6 refuses function tools while it reasons. Every chat call path uses
-// it — /v1/chat/completions (non-stream, failover, model fallbacks and async
-// jobs), and the /v1/messages and GenAI routes that translate their own
-// dialect into a chat request. Call it once per attempt, after pre-plugins,
-// so the decision sees the model and tools that attempt sends.
-func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.ChatCompletionViaResponses(ctx, req)
-	}
-	return provider.ChatCompletion(ctx, req)
-}
-
-// translatedStreamChatCompletion is translatedChatCompletion for a stream. The
-// Responses stream ends as a chat stream does: a chunk with the finish reason,
-// then a usage chunk with no choices.
-func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.StreamChatCompletionViaResponses(ctx, req)
-	}
-	return provider.StreamChatCompletion(ctx, req)
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.

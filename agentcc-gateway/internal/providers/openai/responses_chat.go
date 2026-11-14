@@ -19,10 +19,13 @@ import (
 // Some OpenAI models take function tools on chat completions only with
 // reasoning off: gpt-5.6 answers 400 "Function tools with reasoning_effort are
 // not supported ... use /v1/responses or set reasoning_effort to 'none'".
-// Every gateway route that sends a chat request upstream — /v1/chat/completions
-// itself, and the routes that translate their own dialect into a chat request,
-// such as /v1/messages — sends such a request to /v1/responses instead and
-// translates the answer back, so the model keeps its tools and its reasoning.
+// The provider's own ChatCompletion and StreamChatCompletion send such a request
+// to /v1/responses instead and translate the answer back, so the model keeps
+// its tools and its reasoning. Deciding there, rather than in each caller,
+// covers every path that sends a chat request upstream: /v1/chat/completions
+// (with failover, model fallbacks and async jobs), /v1/messages and the GenAI
+// routes that translate into a chat request, scheduled completions, batches and
+// the traffic mirror.
 
 // responsesToolModels are the model families that take function tools on chat
 // completions only with reasoning off.

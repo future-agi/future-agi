@@ -2,9 +2,11 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,21 +14,10 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
-	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	openaiprov "github.com/futureagi/agentcc-gateway/internal/providers/openai"
 )
-
-// officialOpenAI is a real OpenAI provider pointed at a fake upstream. Only the
-// official API host turns the Responses route on, and a test server cannot
-// have that host, so this answers ChatNeedsResponses as the official API does:
-// with the provider's own host-independent rule.
-type officialOpenAI struct{ *openaiprov.Provider }
-
-func (p officialOpenAI) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
-	return openaiprov.NeedsResponses(req)
-}
 
 // bridgeUsage is the usage both fake routes report, so a call carried over the
 // Responses API can be compared with the same call on chat completions.
@@ -146,6 +137,29 @@ type bridgeServerOptions struct {
 	plugins   []pipeline.Plugin
 }
 
+// bridgeProviderConfig points an OpenAI provider at the fake upstream. Only the
+// official API host turns the Responses route on, so unless plain is set the
+// provider is configured for https://api.openai.com, as in production, and its
+// connections are dialled to the fake instead: the gateway runs its own code
+// for the official host, and nothing leaves the test.
+func bridgeProviderConfig(ts *httptest.Server, plain bool) config.ProviderConfig {
+	if plain {
+		return config.ProviderConfig{BaseURL: ts.URL, APIKey: "test-key"}
+	}
+	return config.ProviderConfig{
+		BaseURL: "http://" + officialOpenAIHost,
+		APIKey:  "test-key",
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, ts.Listener.Addr().String())
+		},
+	}
+}
+
+// officialOpenAIHost is the official API host the bridge provider is
+// configured for.
+const officialOpenAIHost = "api.openai.com"
+
 func newResponsesBridgeServer(t *testing.T) (*Server, *openAIUpstream) {
 	t.Helper()
 	return newResponsesBridgeServerWith(t, bridgeServerOptions{})
@@ -165,13 +179,9 @@ func newResponsesBridgeServerWith(t *testing.T, opts bridgeServerOptions) (*Serv
 	if err != nil {
 		t.Fatalf("creating registry: %v", err)
 	}
-	p, err := openaiprov.New("openai", config.ProviderConfig{BaseURL: ts.URL, APIKey: "test-key"})
+	provider, err := openaiprov.New("openai", bridgeProviderConfig(ts, opts.plain))
 	if err != nil {
 		t.Fatalf("creating provider: %v", err)
-	}
-	var provider providers.Provider = officialOpenAI{p}
-	if opts.plain {
-		provider = p
 	}
 	registry.RegisterProvider("openai", provider, bridgeModels)
 
