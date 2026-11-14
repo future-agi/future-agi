@@ -369,6 +369,43 @@ const WebhookManagementSection = () => {
                                 ` · ${relativeTime(wh.disabled_at)}`}
                             </Typography>
                           )}
+                          {wh.is_active && wh.consecutive_failures > 0 && (
+                            <Typography
+                              variant="s3"
+                              sx={{
+                                display: "block",
+                                maxWidth: 240,
+                                color: "status.warning.fg",
+                              }}
+                              noWrap
+                            >
+                              {wh.consecutive_failures.toLocaleString()} failed{" "}
+                              {wh.consecutive_failures === 1
+                                ? "delivery"
+                                : "deliveries"}{" "}
+                              in a row
+                            </Typography>
+                          )}
+                          {wh.dropped_events_total > 0 && (
+                            <Typography
+                              variant="s3"
+                              sx={{
+                                display: "block",
+                                maxWidth: 240,
+                                color: "status.warning.fg",
+                              }}
+                              noWrap
+                              title="Events dropped because this webhook reached its pending-event limit or they waited longer than the maximum age"
+                            >
+                              {wh.dropped_events_total.toLocaleString()}{" "}
+                              {wh.dropped_events_total === 1
+                                ? "event"
+                                : "events"}{" "}
+                              dropped
+                              {wh.last_dropped_at &&
+                                ` · ${relativeTime(wh.last_dropped_at)}`}
+                            </Typography>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2" color="text.secondary">

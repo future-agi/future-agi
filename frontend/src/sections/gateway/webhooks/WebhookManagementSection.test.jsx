@@ -100,4 +100,80 @@ describe("WebhookManagementSection", () => {
     expect(within(row()).getByText("Inactive")).toBeInTheDocument();
     expect(within(row()).queryByText("Disabled")).not.toBeInTheDocument();
   });
+
+  it("shows a formatted dropped-event count and relative time under an active status", () => {
+    mockWebhooks.mockReturnValue([
+      {
+        ...webhook,
+        is_active: true,
+        dropped_events_total: 1234,
+        last_dropped_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      },
+    ]);
+    render(<WebhookManagementSection />);
+    const statusCell = within(row()).getByText("Active").closest("td");
+    const caption = within(statusCell).getByText(
+      `${(1234).toLocaleString()} events dropped · 5 minutes ago`,
+    );
+    expect(caption).toHaveAttribute(
+      "title",
+      "Events dropped because this webhook reached its pending-event limit or they waited longer than the maximum age",
+    );
+  });
+
+  it("does not show a dropped-event caption for a count of zero", () => {
+    mockWebhooks.mockReturnValue([{ ...webhook, dropped_events_total: 0 }]);
+    render(<WebhookManagementSection />);
+    expect(
+      within(row()).queryByText(/events? dropped/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the singular dropped-event label and omits time when unavailable", () => {
+    mockWebhooks.mockReturnValue([
+      { ...webhook, dropped_events_total: 1, last_dropped_at: null },
+    ]);
+    render(<WebhookManagementSection />);
+    expect(within(row()).getByText("1 event dropped")).toBeInTheDocument();
+  });
+
+  it("shows consecutive failed deliveries only for an active webhook", () => {
+    mockWebhooks.mockReturnValue([
+      { ...webhook, is_active: true, consecutive_failures: 3 },
+    ]);
+    render(<WebhookManagementSection />);
+    const statusCell = within(row()).getByText("Active").closest("td");
+    expect(
+      within(statusCell).getByText("3 failed deliveries in a row"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show consecutive failures for zero or for a disabled webhook", () => {
+    mockWebhooks.mockReturnValue([
+      { ...webhook, is_active: true, consecutive_failures: 0 },
+      {
+        ...webhook,
+        id: "webhook-2",
+        name: "Disabled endpoint",
+        consecutive_failures: 3,
+      },
+    ]);
+    render(<WebhookManagementSection />);
+    expect(
+      screen.queryByText(/failed deliver(?:y|ies) in a row/),
+    ).not.toBeInTheDocument();
+    const disabledRow = screen.getByText("Disabled endpoint").closest("tr");
+    expect(within(disabledRow).getByText("Disabled")).toBeInTheDocument();
+    expect(disabledRow).toHaveTextContent(webhook.disabled_reason);
+  });
+
+  it("uses the singular consecutive-failure label", () => {
+    mockWebhooks.mockReturnValue([
+      { ...webhook, is_active: true, consecutive_failures: 1 },
+    ]);
+    render(<WebhookManagementSection />);
+    expect(
+      within(row()).getByText("1 failed delivery in a row"),
+    ).toBeInTheDocument();
+  });
 });
