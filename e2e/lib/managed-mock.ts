@@ -254,6 +254,8 @@ export interface MockStack {
   project?: string;
   /** Compose SERVICE keys, never machine-specific/generated container names. */
   services: string[];
+  /** Named, internal fixture networks only; all other additions are refused. */
+  extraNetworks?: Record<string, string[]>;
   /** Exact extra_hosts per service; every other service has none. */
   extraHosts?: Record<string, string[]>;
   /** [service, container port, the harness endpoint it must publish]. */
@@ -280,6 +282,22 @@ export function inspectManagedMock({ evalBackground = false }: { evalBackground?
   // Standalone: one `app` container instead of backend/worker/gateway/frontend.
   return inspectMockStack(process.env.E2E_STACK === 'standalone'
     ? standaloneMockStack(evalBackground) : distributedMockStack(evalBackground), evalBackground);
+}
+
+/** Exact network membership, never an arbitrary additional-network allowance. */
+export function validateMockNetworks(service: string, c: Container, expected: string[]): void {
+  requireSafe(expected.every(Boolean) &&
+    same(Object.keys(c.NetworkSettings.Networks).sort(), [...expected].sort()) &&
+    expected.every(name => c.NetworkSettings.Networks[name].Aliases.includes(service)) &&
+    !c.HostConfig.Dns?.length && !c.HostConfig.DnsSearch?.length,
+  `service ${service} network or DNS override`);
+}
+
+export function validateFixtureNetwork(net: { Driver: string; Internal: boolean; Labels: Record<string, string> },
+  project: string, name: string): void {
+  requireSafe(name === 'link-public' && net.Driver === 'bridge' && net.Internal === true &&
+    net.Labels['com.docker.compose.project'] === project && net.Labels['com.docker.compose.network'] === name,
+  'unmanaged fixture network');
 }
 
 function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
@@ -315,10 +333,13 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
     const c = selected[service] = matches[0];
     requireSafe(c.State.Running && c.Config.Labels['com.docker.compose.project'] === config.name,
       `service ${service} is not running in the managed project`);
-    requireSafe(same(Object.keys(c.NetworkSettings.Networks), [network]) &&
-      c.NetworkSettings.Networks[network].Aliases.includes(service) &&
-      !c.HostConfig.Dns?.length && !c.HostConfig.DnsSearch?.length,
-    `service ${service} network or DNS override`);
+    const extraNetworks = stack.extraNetworks?.[service] ?? [];
+    validateMockNetworks(service, c, [network, ...extraNetworks.map(name => config.networks[name]?.name)]);
+    for (const name of extraNetworks) {
+      const attached = c.NetworkSettings.Networks[config.networks[name].name];
+      const [fixtureNet] = JSON.parse(docker('network', 'inspect', attached.NetworkID));
+      validateFixtureNetwork(fixtureNet, config.name, name);
+    }
     requireSafe(same([...(c.HostConfig.ExtraHosts ?? [])].sort(), stack.extraHosts?.[service] ?? []),
       `service ${service} extra_hosts override`);
   }
@@ -349,6 +370,7 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
 
 function distributedMockStack(evalBackground: boolean): MockStack {
   return {
+    extraNetworks: { backend: ['link-public'], worker: ['link-public'] },
     services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
       ...(evalBackground ? ['temporal'] : [])],
     endpoints: [
