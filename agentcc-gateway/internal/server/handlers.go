@@ -1442,6 +1442,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		noteChatResponsesRouteDrops(w, rc, provider, rc.Request)
 		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
 			rc.Response = resp
@@ -1462,6 +1463,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
+			noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
@@ -1512,6 +1514,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
+			noteChatResponsesRouteDrops(w, rc, p, rc.Request)
 			resp, err := h.callChatProvider(ctx, p, rc.Request)
 			if err != nil {
 				return err
@@ -1546,6 +1549,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
+				noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
@@ -1629,6 +1633,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
+		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()

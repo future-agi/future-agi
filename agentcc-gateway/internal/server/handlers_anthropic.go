@@ -1138,6 +1138,27 @@ func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, p
 	w.Header().Set("x-agentcc-translation-drops", joined)
 }
 
+// noteChatResponsesRouteDrops records what provider's Responses route drops
+// from a chat request the gateway moved there (see the OpenAI provider's
+// ResponsesDrops): each as <name>_unsupported in the log's translation_drops
+// and the x-agentcc-translation-drops header, the gateway's notes channel. It
+// runs per provider attempt, so a failover attempt never keeps another's.
+func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	drops := responsesRouteDrops(provider, req)
+	if len(drops) == 0 {
+		delete(rc.Metadata, "translation_drops")
+		w.Header().Del("x-agentcc-translation-drops")
+		return
+	}
+	names := make([]string, len(drops))
+	for i, drop := range drops {
+		names[i] = drop + "_unsupported"
+	}
+	joined := strings.Join(names, ",")
+	rc.Metadata["translation_drops"] = joined
+	w.Header().Set("x-agentcc-translation-drops", joined)
+}
+
 // responsesRouteDrops names what provider's Responses route will drop from a
 // translated request instead of refusing it (see the OpenAI provider's
 // ResponsesDrops); nil for any other provider or route.

@@ -395,6 +395,12 @@ func callerChoseResponses(req *models.ChatCompletionRequest) bool {
 	if req.CallerModel == "" || req.CallerModel == req.Model {
 		return true
 	}
+	// "<provider>/<model>" is how a caller names an org provider's model; the
+	// gateway strips the prefix (case-insensitively) to call it. That is the
+	// caller's own choice of model, not a retarget.
+	if _, model, ok := strings.Cut(req.CallerModel, "/"); ok && strings.EqualFold(model, req.Model) {
+		return true
+	}
 	asked := *req
 	asked.Model = req.CallerModel
 	return NeedsResponses(&asked)
