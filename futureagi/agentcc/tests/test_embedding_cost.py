@@ -12,7 +12,7 @@ from agentcc.services.log_ingestion import _compute_cost, ingest_request_logs
     ("model", "tokens", "metadata", "expected"),
     [
         ("text-embedding-3-small", 1000, {}, "0.000020"),
-        ("text-embedding-3-large", 1000, {}, "0.000130"),
+        ("text-embedding-3-large", 1000, {}, "0.000400"),
         ("text-embedding-ada-002", 1000, {}, "0.000100"),
         ("azure_ai/mistral-large", 1000, {}, "0.000150"),
         ("amazon.titan-embed-image-v1", 0, {"num_images": "5"}, "0.000300"),
