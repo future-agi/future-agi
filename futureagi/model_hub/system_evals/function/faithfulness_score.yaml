@@ -1,9 +1,9 @@
-eval_id: 202
+eval_id: 223
 name: faithfulness_score
-description: 'RAG Faithfulness: Quantifies the ratio of atomic claims in the generated answer that are directly supported by the retrieved context, penalizing hallucinations.'
+description: 'Lexical sentence-overlap diagnostic at 70% token coverage. Contradictory statements can score highly; this does not establish semantic support or detect hallucinations. Use the existing groundedness evaluator for model-judged support.'
 eval_tags:
 - RAG
-- Hallucination
+- NLP Metrics
 - Output Validation
 visible_ui: true
 permissions:
@@ -24,48 +24,66 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
+
         import re
+
         from collections import Counter
-        def _parse(val):
-            if val is None:
-                return ''
-            if isinstance(val, list):
-                return '\n'.join(str(x).strip() for x in val if str(x).strip())
-            if isinstance(val, str):
-                val = val.strip()
+
+        def lexical_contexts(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
                 try:
-                    p = json.loads(val)
-                    if isinstance(p, list):
-                        return '\n'.join(str(x).strip() for x in p if str(x).strip())
-                except Exception:
-                    pass
-                return val
-            return str(val).strip()
-        out_text = _parse(kwargs.get('output', output))
-        ctx_text = _parse(kwargs.get('context', context))
-        if not out_text and not ctx_text:
-            return {'score': 1.0, 'reason': 'Both output and context are empty'}
-        if not out_text:
-            return {'score': 1.0, 'reason': 'Empty output is vacuously faithful'}
-        if not ctx_text:
-            return {'score': 0.0, 'reason': 'Context is empty, output cannot be grounded'}
-        def _tokenize(text):
-            return re.findall(r'\b\w+\b', str(text).lower())
-        raw_claims = re.split(r'(?<=[.!?])\s+|\n+', out_text)
-        claims = [s.strip() for s in raw_claims if len(s.strip()) > 3]
-        if not claims:
-            claims = [out_text]
-        ctx_toks = Counter(_tokenize(ctx_text))
-        supported = 0
-        for claim in claims:
-            c_toks = _tokenize(claim)
-            if not c_toks:
-                supported += 1
-                continue
-            c_counts = Counter(c_toks)
-            overlap = sum((c_counts & ctx_toks).values())
-            ratio = overlap / len(c_toks)
-            if ratio >= 0.70 or claim.lower() in ctx_text.lower():
-                supported += 1
-        score = supported / len(claims)
-        return {'score': float(score), 'reason': f'Faithfulness: {score:.4f} ({supported}/{len(claims)} statements grounded in context)'}
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return lexical_contexts(parsed)
+                return [line.strip() for line in value.splitlines() if line.strip()]
+            return [str(value).strip()]
+
+        def lexical_tokens(text):
+            return Counter(re.findall(r"\b\w+\b", text.lower()))
+
+        def calculate_faithfulness_score(output=None, context=None, **kwargs):
+            """Sentence token-overlap diagnostic, not entailment or hallucination detection.
+
+            Contradictions can score 1.0. Use the existing groundedness model judge when
+            the question is whether an answer is semantically supported by its context.
+            """
+            out_text = "\n".join(lexical_contexts(output))
+            ctx_text = "\n".join(lexical_contexts(context))
+            if not out_text or not ctx_text:
+                return {
+                    "result": float(not out_text),
+                    "reason": "Empty lexical overlap input; not semantic support",
+                }
+            sentences = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?])\s+|\n+", out_text)
+                if len(part.strip()) > 3
+            ] or [out_text]
+            context_tokens = lexical_tokens(ctx_text)
+            hits = 0
+            for sentence in sentences:
+                tokens = lexical_tokens(sentence)
+                if (
+                    not tokens
+                    or sum((tokens & context_tokens).values()) / sum(tokens.values()) >= 0.7
+                    or sentence.lower() in ctx_text.lower()
+                ):
+                    hits += 1
+            score = hits / len(sentences)
+            return {
+                "result": score,
+                "reason": f"Lexical sentence overlap: {score:.4f} ({hits}/{len(sentences)} matching sentences); not semantic support",
+            }
+
+        result = calculate_faithfulness_score(output=output, context=context)
+
+        return {"score": result["result"], "reason": result["reason"]}

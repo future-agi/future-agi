@@ -994,7 +994,7 @@ class ContextPrecisionScore(FunctionEvaluator):
 
 
 class ContextRecallScore(FunctionEvaluator):
-    def __init__(self, min_token_overlap: float = 0.6, display_name: str | None = None):
+    def __init__(self, min_token_overlap: float = 0.7, display_name: str | None = None):
         super().__init__(
             function_name=FunctionEvalTypeId.CONTEXT_RECALL_SCORE.value,
             function_arguments={"min_token_overlap": min_token_overlap},

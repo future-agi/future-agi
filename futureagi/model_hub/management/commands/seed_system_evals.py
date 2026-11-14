@@ -33,7 +33,8 @@ logger = structlog.get_logger(__name__)
 # 29: contains_any / contains_none ignore blank keywords and regex_pii_detection
 # rejects unsupported detect_types instead of silently narrowing the scan.
 # 30: spearman_correlation uses Pearson over midranks and scores constant input as undefined.
-SYSTEM_EVALS_VERSION = 30
+# 31: lexical retrieval diagnostics with distinct IDs and shared Python/catalog scores.
+SYSTEM_EVALS_VERSION = 31
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

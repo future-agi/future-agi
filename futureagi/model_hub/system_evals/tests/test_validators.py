@@ -409,8 +409,8 @@ def test_noise_sensitivity_detection():
     ctx = "Paris is the capital of France. Bananas are yellow fruits rich in potassium."
     # Clean answer derived only from expected ground truth
     r_clean = ev(None, "Paris is the capital of France.", expected, ctx)
-    assert r_clean["score"] == 0.0
-    # Distracted answer incorporating extraneous noise
+    assert r_clean["score"] == 1.0
+    # Extra context tokens lower the normalized score (higher is better).
     r_noisy = ev(None, "Paris is France capital and bananas are yellow potassium fruits.", expected, ctx)
-    assert r_noisy["score"] > 0.0
+    assert r_noisy["score"] < r_clean["score"]
 
