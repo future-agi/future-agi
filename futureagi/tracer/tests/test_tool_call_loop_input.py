@@ -3,6 +3,7 @@
 import json
 import uuid
 from datetime import timedelta
+from unittest.mock import Mock
 
 import pytest
 from django.utils import timezone
@@ -220,6 +221,51 @@ def test_preview_does_not_use_caller_data_when_trace_is_unavailable(
     )
     assert response.status_code == 400
     assert "could not be loaded" in json.dumps(response.data)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("error_type", "log_method", "event"),
+    [
+        (RuntimeError, "exception", "tool_call_loop_preview_failed"),
+        (
+            EvalTelemetryReadError,
+            "warning",
+            "tool_call_loop_preview_telemetry_unavailable",
+        ),
+        (Trace.DoesNotExist, "warning", "tool_call_loop_preview_telemetry_unavailable"),
+    ],
+)
+def test_preview_logs_read_failure_without_exposing_details(
+    auth_client, loop_template, monkeypatch, error_type, log_method, event
+):
+    logger = Mock()
+    monkeypatch.setattr("model_hub.views.separate_evals.logger", logger)
+
+    def unavailable(*args, **kwargs):
+        raise error_type("synthetic internal failure details")
+
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.eval_loader.get_trace", unavailable
+    )
+    response = auth_client.post(
+        "/model-hub/eval-playground/",
+        {
+            "template_id": str(loop_template.id),
+            "trace_id": str(uuid.uuid4()),
+            "model": "",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.data["message"] == (
+        "Tool-call telemetry could not be loaded. Please retry."
+    )
+    assert "synthetic internal failure details" not in json.dumps(response.data)
+    getattr(logger, log_method).assert_called_once_with(event)
+    if log_method == "warning":
+        logger.exception.assert_not_called()
 
 
 @pytest.mark.django_db

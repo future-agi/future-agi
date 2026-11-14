@@ -7502,7 +7502,9 @@ class EvalPlayGroundAPIView(APIView):
 
             if is_tool_call_loop_eval(eval_template) and _trace_id:
                 from tracer.models.project import Project
+                from tracer.models.trace import Trace
                 from tracer.services.clickhouse.v2.eval_loader import (
+                    EvalTelemetryReadError,
                     eval_read_source,
                     get_trace,
                 )
@@ -7523,7 +7525,13 @@ class EvalPlayGroundAPIView(APIView):
                         )
                 except ValueError as exc:
                     return self._gm.bad_request(str(exc))
+                except (EvalTelemetryReadError, Trace.DoesNotExist):
+                    logger.warning("tool_call_loop_preview_telemetry_unavailable")
+                    return self._gm.bad_request(
+                        "Tool-call telemetry could not be loaded. Please retry."
+                    )
                 except Exception:
+                    logger.exception("tool_call_loop_preview_failed")
                     return self._gm.bad_request(
                         "Tool-call telemetry could not be loaded. Please retry."
                     )
