@@ -1,5 +1,10 @@
 """Live-store retirement and physical purge. Completed snapshots are untouched.
 
+Every retention and erasure checkpoint rewrites the whole retained head, so
+its bulk copies use checkpoint-sized pages (MAX_COMPACTION_ROWS, 4 MiB), as
+compaction does: 500-row pages re-ran the head's collapse once per page
+(364 us a row at 20k rows a table, 528 at 100k; 71-76 with checkpoint pages).
+
 Retention is based on unit_start, not the list window. Anonymous PRE-FOLD
 statistics survive expiry, but user-level metrics have no such history. Erasure
 is different: without unit lineage in retired parts we conservatively discard
@@ -41,6 +46,7 @@ from tracer.services.derived_metrics.deletion_protocol import (
     serialized_project,
 )
 from tracer.services.derived_metrics.publication import (
+    MAX_COMPACTION_ROWS,
     committed_rows_select,
     pinned_read,
 )
@@ -887,7 +893,14 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             versions=draft.metric_versions,
             ledger=ledger,
         )
-    writer.freeze(attempt, FIELD_VALUES, retained, params, collect_payloads=False)
+    writer.freeze(
+        attempt,
+        FIELD_VALUES,
+        retained,
+        params,
+        collect_payloads=False,
+        row_limit=MAX_COMPACTION_ROWS,
+    )
     retired, rp = committed_rows_select(
         RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
     )
@@ -936,7 +949,14 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     if supplied:
         untouched += " WHERE (metric_id, metric_version) NOT IN %(retire_handled)s"
         params["retire_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
-    writer.freeze(attempt, RETIRED_PARTS, untouched, params)
+    writer.freeze(
+        attempt,
+        RETIRED_PARTS,
+        untouched,
+        params,
+        collect_payloads=False,
+        row_limit=MAX_COMPACTION_ROWS,
+    )
     for table in (UNIT_STATE, SOURCE_DEPENDENCIES):
         sql, bound = captures.proposal(table)
         # Retained conversation rows are exactly the captured owner set: a
@@ -949,7 +969,14 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
         selected = f"SELECT * FROM ({sql}) WHERE {predicate}"
         if table == SOURCE_DEPENDENCIES and any(d.level == "span" for d in definitions):
             selected = _span_dependencies(sql, predicate, "retire_cutoff")
-        writer.freeze(attempt, table, selected, {**params, **bound})
+        writer.freeze(
+            attempt,
+            table,
+            selected,
+            {**params, **bound},
+            collect_payloads=False,
+            row_limit=MAX_COMPACTION_ROWS,
+        )
     # Pruning a PREPARED auxiliary proposal does not revoke unrelated retained
     # captures: only previously published private evidence sets logical_expiry.
     for table in _current_tables(writer, head, draft):
@@ -961,6 +988,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             f"{_current_retained(fields, 'retire_cutoff', owners)}",
             {**params, **bound},
             collect_payloads=False,
+            row_limit=MAX_COMPACTION_ROWS,
         )
     # Carry anonymous history plus this pass's direct span replacements.
     buckets, bp = captures.proposal(BUCKET_TOTALS)
@@ -985,7 +1013,14 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             "AND bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(retire_dirty)s), 'UTC')))"
         )
         bp.update(retire_recomputed=recomputed, retire_dirty=list(dirty))
-    writer.freeze(attempt, BUCKET_TOTALS, buckets, bp)
+    writer.freeze(
+        attempt,
+        BUCKET_TOTALS,
+        buckets,
+        bp,
+        collect_payloads=False,
+        row_limit=MAX_COMPACTION_ROWS,
+    )
     # Exactly the successor's frozen live fields and anonymous parts, captured
     # once (one batch per INSERT) rather than inlined into every bucket page.
     live, lp = captures.overlay(FIELD_VALUES, attempt=attempt)
@@ -1538,6 +1573,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             ),
             params,
             collect_payloads=False,
+            row_limit=MAX_COMPACTION_ROWS,
         )
     else:
         writer.freeze_current(
@@ -1546,6 +1582,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             head,
             where=f"(level, unit_id) NOT IN ({expired_units})",
             params=params,
+            large_pages=True,
         )
     for definition in definitions:
         if definition.level == "user":
@@ -1629,7 +1666,14 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     if supplied:
         untouched += " WHERE (metric_id, metric_version) NOT IN %(expiry_handled)s"
         params["expiry_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
-    writer.freeze(attempt, RETIRED_PARTS, untouched, params)
+    writer.freeze(
+        attempt,
+        RETIRED_PARTS,
+        untouched,
+        params,
+        collect_payloads=False,
+        row_limit=MAX_COMPACTION_ROWS,
+    )
     writer.append(
         attempt,
         "dirty_before",
@@ -1666,9 +1710,13 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                 table,
                 _span_dependencies(sql, where, "expiry_cutoff"),
                 {**params, **bound},
+                collect_payloads=False,
+                row_limit=MAX_COMPACTION_ROWS,
             )
         else:
-            writer.freeze_current(attempt, table, head, where=where, params=params)
+            writer.freeze_current(
+                attempt, table, head, where=where, params=params, large_pages=True
+            )
     for table in _current_tables(writer, head):
         writer.freeze_current(
             attempt,
@@ -1676,6 +1724,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             head,
             where=_current_retained(fields, "expiry_cutoff"),
             params=params,
+            large_pages=True,
         )
     if span_definitions:
         # The checkpoint's complete live fields and anonymous parts, captured
@@ -1817,6 +1866,8 @@ def purge_by_scope(store, request, *, writer=None):
             FIELD_VALUES,
             f"SELECT * FROM ({fields}) WHERE NOT ({field_predicate}) AND unit_id NOT IN %(erase_units)s",
             params,
+            collect_payloads=False,
+            row_limit=MAX_COMPACTION_ROWS,
         )
         for table in (SOURCE_DEPENDENCIES, UNIT_STATE):
             sql, p = committed_rows_select(
@@ -1835,6 +1886,8 @@ def purge_by_scope(store, request, *, writer=None):
                 table,
                 f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
                 {**p, **params},
+                collect_payloads=False,
+                row_limit=MAX_COMPACTION_ROWS,
             )
         for table in LIST_CURRENT_TABLES:
             writer.freeze_current(
@@ -1843,6 +1896,7 @@ def purge_by_scope(store, request, *, writer=None):
                 head,
                 where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
                 params=params,
+                large_pages=True,
             )
         writer.seal(attempt)
         manifest = writer.stage_and_publish(attempt)
