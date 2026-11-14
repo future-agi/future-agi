@@ -327,6 +327,41 @@ def test_update_cell_value_api_accepts_canonical_payload(
     assert cell.value == "Gamma"
 
 
+@pytest.mark.parametrize("empty_field", ("row_ids", "column_ids"))
+def test_get_cell_data_api_returns_bad_request_for_empty_ids(
+    auth_client, dataset_filter_seed, empty_field
+):
+    _dataset, rows, text_col, _bool_col = dataset_filter_seed
+    payload = {
+        "row_ids": [str(rows[0].id)],
+        "column_ids": [str(text_col.id)],
+    }
+    payload[empty_field] = []
+
+    response = auth_client.post(
+        "/model-hub/develops/get-cell-data/", payload, format="json"
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.data["message"] == "Both row_ids and column_ids are required"
+
+
+def test_get_cell_data_api_returns_requested_cell(auth_client, dataset_filter_seed):
+    _dataset, rows, text_col, _bool_col = dataset_filter_seed
+
+    response = auth_client.post(
+        "/model-hub/develops/get-cell-data/",
+        {"row_ids": [str(rows[0].id)], "column_ids": [str(text_col.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert (
+        response.data["result"][str(rows[0].id)][str(text_col.id)]["cell_value"]
+        == "Alpha"
+    )
+
+
 def test_dataset_row_data_api_rejects_legacy_filter_shape(
     auth_client, dataset_filter_seed
 ):
