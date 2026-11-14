@@ -261,7 +261,10 @@ def test_build_result_choices_mismatch_raises_user_message(evaluator, log_captur
     assert exc.value.code == "invalid_output"
 
 
-@pytest.mark.parametrize("content", ["", "I think it failed.", '{"result": "Pass", "explanation": "unfinished'])
+@pytest.mark.parametrize(
+    "content",
+    ["", "I think it failed.", '{"result": "Pass", "explanation": "unfinished'],
+)
 def test_build_result_invalid_content_is_grading_error(evaluator, log_capture, content):
     """Invalid output never synthesizes a grade; the caller logs the failure."""
     with pytest.raises(GradingError) as exc:

@@ -34,9 +34,7 @@ from ee.licensing.activation_client import (
 # One initial request and one shared transport/structured recovery, including
 # the longest accepted Retry-After. HTTP timeouts bound inactivity, so the
 # worker also owns a cancellable wall-clock deadline for the whole agent run.
-AGENT_RUN_TIMEOUT_SECONDS = (
-    2 * MANAGED_STREAM_TIMEOUT_SECONDS + MAX_RETRY_AFTER_SECONDS
-)
+AGENT_RUN_TIMEOUT_SECONDS = 2 * MANAGED_STREAM_TIMEOUT_SECONDS + MAX_RETRY_AFTER_SECONDS
 
 
 def _extract_gateway_diagnostics(exc: BaseException | None) -> dict:
@@ -1375,9 +1373,11 @@ class AgentEvaluator:
                 error_code=e.code,
                 eval_id=self._current_eval_id,
                 model=self._model,
-                **{k: v for k, v in diagnostics.items() if k in {
-                    "upstream_status_code", "gateway_request_id"
-                }},
+                **{
+                    k: v
+                    for k, v in diagnostics.items()
+                    if k in {"upstream_status_code", "gateway_request_id"}
+                },
                 **e.diagnostics,
             )
             raise
@@ -2303,9 +2303,14 @@ class AgentEvaluator:
             # A single tools-disabled structured recovery shares the transport
             # retry budget. Never replay the agent or its tool side effects.
             tool_log = agent_result.get("tool_calls") or []
-            if self._extract_eval_json(content_str) is None and agent.llm_client.take_retry():
+            if (
+                self._extract_eval_json(content_str) is None
+                and agent.llm_client.take_retry()
+            ):
                 agent_result["_initial_content_length"] = len(content_str)
-                agent_result["_initial_finish_reason"] = agent_result.get("finish_reason")
+                agent_result["_initial_finish_reason"] = agent_result.get(
+                    "finish_reason"
+                )
                 # Build investigation summary from the tool-call log.
                 #
                 # Per-call preview: head+tail to preserve information at
@@ -2350,7 +2355,9 @@ class AgentEvaluator:
                 # Preserve the original judge evidence as data, not as a
                 # verdict. The final call retains the original input/media.
                 if content_str:
-                    summary_lines.append("Incomplete judge response:\n" + content_str[:2000])
+                    summary_lines.append(
+                        "Incomplete judge response:\n" + content_str[:2000]
+                    )
                 investigation_summary = "\n".join(summary_lines)
 
                 # Build the user-anchor content. Critical: when the
