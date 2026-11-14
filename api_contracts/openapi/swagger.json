@@ -156324,8 +156324,7 @@
                     "minLength": 1,
                     "x-nullable": true
                 }
-            },
-            "x-nullable": true
+            }
         },
         "CallWorker": {
             "required": [

@@ -37,12 +37,14 @@ class _Attempt(SimpleNamespace):
 
 def _attempt(**fields):
     return _Attempt(
-        id=uuid.uuid4(),
-        job_id=uuid.uuid4(),
-        terminal_event_received=False,
-        terminal_stage="canceled",
-        flip_terminal_after=None,
-        **fields,
+        **{
+            "id": uuid.uuid4(),
+            "job_id": uuid.uuid4(),
+            "terminal_event_received": False,
+            "terminal_stage": "canceled",
+            "flip_terminal_after": None,
+            **fields,
+        }
     )
 
 
@@ -87,6 +89,9 @@ def test_cancel_seal_runs_after_the_signal_and_before_the_sandbox_is_deleted(
     from simulate.services.hosted_harness import create_hosted_job
     from simulate.tests.test_hosted_harness_gateway import _Daytona, _payload
 
+    # Hosted runs reach every model through AgentCC: configured here as the gateway tests configure it.
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     payload = _payload()
     payload["source"] = {
         "kind": "remote",

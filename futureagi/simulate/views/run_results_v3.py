@@ -847,7 +847,7 @@ class CallWorkerSerializer(serializers.Serializer):
         required=False,
     )
     # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
-    cleanup = CleanupSerializer(required=False, allow_null=True)
+    cleanup = CleanupSerializer(required=False)
 
 
 class CallWorkerEventSerializer(serializers.Serializer):
@@ -1456,7 +1456,9 @@ def _csv_rows(
             verdict = (
                 "passed"
                 if goal["passed"] is True
-                else "failed" if goal["passed"] is False else "inconclusive"
+                else "failed"
+                if goal["passed"] is False
+                else "inconclusive"
             )
             sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(

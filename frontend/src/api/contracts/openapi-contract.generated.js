@@ -119854,7 +119854,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-      "x-nullable": true,
     },
     CallWorkerTurn: {
       required: ["text", "at"],
