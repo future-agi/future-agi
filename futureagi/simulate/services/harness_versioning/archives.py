@@ -34,7 +34,10 @@ MAX_ARCHIVE_ENTRIES = 1_000_000
 MAX_ARCHIVE_INFLATED_BYTES = 512 * 1024 * 1024
 
 SUITE_ROOTS = ("scenarios/", "scenario/")
-SUITE_FILES = frozenset({"scenarios.json", "coverage.json", "proofs.json"})
+# dropped.json: scenarios a rebuild dropped for a removed capability, kept to restore them.
+SUITE_FILES = frozenset(
+    {"scenarios.json", "coverage.json", "proofs.json", "dropped.json"}
+)
 
 SEALED_ROOTS = ("environment-bundle/", "generic-harness/certified-bundle/")
 SEALED_FILES = frozenset(
