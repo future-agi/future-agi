@@ -306,8 +306,9 @@ func newDecisionModel(db *modeldb.ModelDB, orgCfg *tenant.OrgConfig, providerID,
 		Format:   format,
 	}
 	if orgCfg != nil && orgCfg.CostTracking != nil && orgCfg.CostTracking.Enabled {
-		// tryOrgPricing's order: the name the caller sends (the listed id),
-		// then the name sent upstream.
+		// The cost plugin's order (decisionOrgPriceNames) for a call of this
+		// entry by its listed id: that id, then the name sent upstream. Only
+		// a dated resolved name, which a listing cannot know, comes first.
 		for _, name := range []string{entry.ID, bare} {
 			if custom := orgCfg.CostTracking.CustomPricing[name]; custom != nil {
 				entry.Pricing = &decisionModelPricing{InputPerMTok: custom.InputPerMTok, OutputPerMTok: custom.OutputPerMTok}
