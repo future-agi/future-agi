@@ -14,7 +14,8 @@ set -euo pipefail
 #   --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
 #   ./bin/install --distributed --from-source builds standard.
 #   OSS_FFMPEG_FLAVOR: the FFMPEG_FLAVOR OSS_IMAGE was built with (minimal,
-#   the default of both variants; debian; none).
+#   the default of both variants; debian; none). Standard tags up to v1.56
+#   shipped Debian's ffmpeg: check them with OSS_FFMPEG_FLAVOR=debian.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"

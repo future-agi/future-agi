@@ -230,7 +230,10 @@ in `images-ci.yml`, with `test_image_size_budget.py`. Its workflow tests need
 PyYAML and are skipped without it. To check a built backend image's contents,
 `scripts/verify-image-contents.sh` takes `OSS_VARIANT=standard|slim` (a tag
 ending in `-slim` means slim). Standalone builds by `./bin/install --from-source`
-and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them.
+and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It expects the
+minimal ffmpeg build; pass `OSS_FFMPEG_FLAVOR=debian` (or `none`) for an image
+built with that `FFMPEG_FLAVOR`, including standard tags up to v1.56, which
+shipped Debian's ffmpeg.
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built
