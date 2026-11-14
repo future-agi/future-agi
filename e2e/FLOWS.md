@@ -2510,28 +2510,29 @@
 
 ### OBS-E2E-066 — a recorded voice call and a traced image play and render on the trace for a signed-in user
 
-**Goal:** A developer whose SDK uploaded a call recording and a model's image, audio and PDF inputs opens the call and the trace, plays the audio and sees the image where the model saw it
+**Goal:** A developer whose LiveKit and Pipecat agents uploaded call recordings, and whose model saw an image, audio and a PDF, opens each trace, plays the recordings and sees the image where the model saw it
 
-**Spec:** `flows/observe/trace-attachments.spec.ts:198`
+**Spec:** `flows/observe/trace-attachments.spec.ts:216`
 
 **Tags:** —
 
 **User steps:**
 
-1. create a voice project and an observe project and opt both into attachments (operator step, test-image endpoint)
-2. with the org API key, bootstrap an F01 capture session per project and upload an Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
-3. send the parent spans through the collector carrying fi.attachment refs
-4. on the https app origin, open the voice call and play its recording to the end
-5. open the trace, select the model span, switch to Chat and see the PNG inside user message 2
-6. load the WAV, and download the PDF, which has no inline preview
+1. create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)
+2. with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
+3. send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace
+4. on the https app origin, open the LiveKit trace, select agent_session, load its recording and play it to the end
+5. open the Pipecat trace and play the root's recording to the end
+6. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
+7. load the WAV, and download the PDF, which has no inline preview
 
 **Backend state verified:**
 
 - PG: each seeded occurrence is bound to its exact trace/span, not deleted, with its placement, its attachment ready and its blob sha256 equal to the uploaded bytes
-- CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs
-- API: the trace detail and voice detail project exactly the seeded attachments as ready, and the voice manifest is a 200 ms mixed Ogg/Opus recording
-- API: a gateway Range request with the viewer's media session answers 206 with the validated type and the first bytes of the upload
-- API: the same gateway URL without the media session is denied, and resolve without credentials answers 401
+- CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs, and both voice roots (the untyped LiveKit job_entrypoint and the Pipecat root) are stored as parentless conversation roots
+- API: voice detail projects each call's recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready
+- API: with the viewer's media session the gateway serves the whole recording byte-identical (sha256), answers Range with 206 and HEAD with the full length, and a renewed grant continues the same bytes; without the session it is denied and resolve without credentials answers 401
+- API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)
 
 ## prompts
 

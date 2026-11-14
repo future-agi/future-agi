@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
-import { request, type APIRequestContext, type Page, type Response } from '@playwright/test';
+import { request, type APIRequestContext, type Locator, type Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import type { TestActor } from '../../lib/provisioning';
 import { sendOtlpExport, type OtlpKeyValue, type OtlpSpan } from '../../lib/otlp';
@@ -34,8 +34,20 @@ const TRACE_DETAIL = (trace: string) => `/tracer/trace/${trace}/`;
 const VOICE_DETAIL = '/tracer/trace/voice_call_detail/';
 // A fresh scope starts at deletion generation 0 (tracer/models/attachment.py AttachmentScope).
 const DELETION_GENERATION = 0;
-// VoiceCallListQueryBuilder roots and view_enrichment.RECORDING_PURPOSE.
-const VOICE_SPAN_KIND = 'conversation';
+// tracer/urls.py "v1/attachment-media/<occurrence_id>/<grant_id>" (the gateway every
+// player must use; legacy recording URLs never go through it).
+const GATEWAY_PREFIX = '/tracer/v1/attachment-media/';
+// LiveKit roots as fi-collector clickhouse25exporter/converter.go liveKitJobRoot (and
+// tracer/utils/otel.py resolve_observation_type) map them: an untyped, parentless
+// job_entrypoint carrying lk.job_id is the conversation root; traceai_livekit binds
+// the session recording on its agent_session child (view_enrichment.enrich_voice_detail).
+const LIVEKIT_ROOT = 'job_entrypoint', LIVEKIT_SESSION = 'agent_session', LIVEKIT_JOB_ID = 'lk.job_id';
+// Pipecat: TurnTraceObserver's root span is named "conversation"; traceai_pipecat
+// attachments.mark_conversation_root sets both kinds to CONVERSATION and the
+// recording binds to that root (python/voice-tests/test_pipecat_attachments.py).
+const PIPECAT_ROOT = 'conversation', PIPECAT_KIND = 'CONVERSATION';
+// The collector's lowercased observation_type for both roots (VoiceCallListQueryBuilder).
+const CONVERSATION = 'conversation';
 // Validated by the sandbox probe in tracer/tests/test_attachment_media_types.py
 // (48 kHz mono Opus, 0.2 s); the only committed Ogg/Opus the probe is known to accept.
 const RECORDING_OGG = readFileSync(new URL('../../../futureagi/tracer/tests/fixtures/attachments/tone.ogg', import.meta.url));
@@ -94,9 +106,10 @@ function pdf(marker: string): Buffer {
   return Buffer.from(body, 'latin1');
 }
 
-async function createProject(actor: TestActor, name: string, source?: 'simulator') {
+/** An SDK-style observe project (default source, never 'simulator'). */
+async function createProject(actor: TestActor, name: string) {
   const body = await actor.api.post<{ result: { project_id: string; name: string } }>(PROJECT, {
-    name, model_type: 'GenerativeLLM', trace_type: 'observe', ...(source ? { source } : {}),
+    name, model_type: 'GenerativeLLM', trace_type: 'observe',
   });
   expect(body.result.name).toBe(name);
   const optIn = await actor.api.post<{ project_id: string; deletion_generation: number }>(SCOPE_OPT_IN,
@@ -194,49 +207,61 @@ function expectedOccurrences(items: Seeded[], traceId: string) {
 
 const isResolve = (projectId: string) => (response: Response) =>
   new URL(response.url()).pathname === F01.resolve(projectId) && response.request().method() === 'POST';
+const dashed = (hex32: string) =>
+  `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-${hex32.slice(16, 20)}-${hex32.slice(20)}`;
+type Grant = { occurrence_id: string; status: string; gateway_path?: string; expires_at?: string };
+type VoiceDetail = { result: { recording_attachment?: { occurrence_id: string; state: string;
+  parent: { trace_id: string; span_id: string }; manifest?: { duration_ms: number; layout: string; codec: string; container: string } } } };
 
 test('OBS-E2E-066: a recorded voice call and a traced image play and render on the trace for a signed-in user', {
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-066', area: 'observe',
-    userGoal: 'A developer whose SDK uploaded a call recording and a model\'s image, audio and PDF inputs opens the call and the trace, plays the audio and sees the image where the model saw it',
+    userGoal: 'A developer whose LiveKit and Pipecat agents uploaded call recordings, and whose model saw an image, audio and a PDF, opens each trace, plays the recordings and sees the image where the model saw it',
     steps: [
-      'create a voice project and an observe project and opt both into attachments (operator step, test-image endpoint)',
-      'with the org API key, bootstrap an F01 capture session per project and upload an Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)',
-      'send the parent spans through the collector carrying fi.attachment refs',
-      'on the https app origin, open the voice call and play its recording to the end',
-      'open the trace, select the model span, switch to Chat and see the PNG inside user message 2',
+      'create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)',
+      'with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)',
+      'send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace',
+      'on the https app origin, open the LiveKit trace, select agent_session, load its recording and play it to the end',
+      'open the Pipecat trace and play the root\'s recording to the end',
+      'open the model trace, select the model span, switch to Chat and see the PNG inside user message 2',
       'load the WAV, and download the PDF, which has no inline preview',
     ],
     backendChecks: [
       'PG: each seeded occurrence is bound to its exact trace/span, not deleted, with its placement, its attachment ready and its blob sha256 equal to the uploaded bytes',
-      'CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs',
-      'API: the trace detail and voice detail project exactly the seeded attachments as ready, and the voice manifest is a 200 ms mixed Ogg/Opus recording',
-      'API: a gateway Range request with the viewer\'s media session answers 206 with the validated type and the first bytes of the upload',
-      'API: the same gateway URL without the media session is denied, and resolve without credentials answers 401',
+      'CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs, and both voice roots (the untyped LiveKit job_entrypoint and the Pipecat root) are stored as parentless conversation roots',
+      'API: voice detail projects each call\'s recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready',
+      'API: with the viewer\'s media session the gateway serves the whole recording byte-identical (sha256), answers Range with 206 and HEAD with the full length, and a renewed grant continues the same bytes; without the session it is denied and resolve without credentials answers 401',
+      'API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // Seeding ~30 s; binding (15 s schedule) + validate drain (15 s schedule)
-  // inside one ASYNC_JOB (60 s) per project; SPAN_VISIBLE 15 s; six UI_READY
-  // steps; 60 s headroom.
-  test.setTimeout(30_000 + 2 * POLL.ASYNC_JOB.timeout + POLL.SPAN_VISIBLE.timeout + 6 * UI_READY + 60_000);
+  // Approved plan budget (CONTRACT-STATUS "OBS-E2E-061 revised plan"): seeding, two
+  // ASYNC_JOB binds, SPAN_VISIBLE and the UI_READY steps fit with headroom.
+  test.setTimeout(600_000);
   const api = await request.newContext({ baseURL: E2E.apiUrl });
   const anonymous = await request.newContext({ baseURL: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
+  // Every media fetch the page makes; the last step asserts they all used the gateway.
+  const media: string[] = [];
+  page.on('request', r => { if (r.resourceType() === 'media') media.push(new URL(r.url()).pathname); });
   try {
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const voiceName = `e2e-att-voice-${suffix}`, traceName = `e2e-att-trace-${suffix}`;
-    const callId = `e2e-att-call-${suffix}`, userText = `e2e-att-user-${suffix}`;
-    const voiceProject = await createProject(actor, voiceName, 'simulator');
+    const jobId = `e2e-att-job-${suffix}`, userText = `e2e-att-user-${suffix}`;
+    const voiceProject = await createProject(actor, voiceName);
     const traceProject = await createProject(actor, traceName);
-    const voiceTrace = hex(16), trace = hex(16);
-    const voiceRoot = hex(8), traceRoot = hex(8), llmSpan = hex(8);
+    const livekitTrace = hex(16), pipecatTrace = hex(16), trace = hex(16);
+    const livekitRoot = hex(8), livekitSession = hex(8), pipecatRoot = hex(8), traceRoot = hex(8), llmSpan = hex(8);
     const tone = 300 + (Date.now() % 500);
     const colour: [number, number, number] = [Date.now() % 256, 40, 200];
+    const recordingMedia = { bytes: RECORDING_OGG, mime: 'audio/ogg', modality: 'audio', direction: 'mixed' as const,
+      purpose: 'conversation_recording' };
 
-    const voice = await upload(api, actor, voiceName, voiceProject, voiceTrace, [
-      { name: 'recording', bytes: RECORDING_OGG, mime: 'audio/ogg', modality: 'audio', direction: 'mixed',
-        purpose: 'conversation_recording', parentSpanId: voiceRoot },
+    const livekit = await upload(api, actor, voiceName, voiceProject, livekitTrace, [
+      { name: 'livekit-recording', ...recordingMedia, parentSpanId: livekitSession },
+    ]);
+    const pipecat = await upload(api, actor, voiceName, voiceProject, pipecatTrace, [
+      { name: 'pipecat-recording', ...recordingMedia, parentSpanId: pipecatRoot },
     ]);
     const traced = await upload(api, actor, traceName, traceProject, trace, [
       { name: 'image', bytes: png(colour), mime: 'image/png', modality: 'image', direction: 'input',
@@ -246,7 +271,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       { name: 'pdf', bytes: pdf(`e2e-att-${suffix}`), mime: 'application/pdf', modality: 'document', direction: 'input',
         purpose: 'document', placement: { message_index: 1, part_index: 2, role: 'user' }, parentSpanId: llmSpan },
     ]);
-    const [recording] = voice.seeded;
+    const [livekitRecording] = livekit.seeded;
+    const [pipecatRecording] = pipecat.seeded;
     const [image, audio, document] = traced.seeded;
 
     const start = BigInt(Date.now() - 5_000) * 1_000_000n, end = start + 3_000_000_000n;
@@ -263,11 +289,15 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     ]);
     const cfg = { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey };
     await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(voiceName), scopeSpans: [{
-      scope: { name: 'e2e-attachments' }, spans: [span(voiceTrace, voiceRoot, `e2e.att-call-${suffix}`, [
-        str('fi.span.kind', VOICE_SPAN_KIND), str('call.status', 'ended'),
-        { key: 'metadata', value: { kvlistValue: { values: [str('call_execution_id', callId)] } } },
-        ...carriers(voice.session, [recording]),
-      ])] }] }] });
+      scope: { name: 'livekit-agents' }, spans: [
+        // No fi.span.kind: the LiveKit SDK marks no root; the collector maps it.
+        span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId)]),
+        span(livekitTrace, livekitSession, LIVEKIT_SESSION, [...carriers(livekit.session, [livekitRecording])], livekitRoot),
+      ] }, {
+      scope: { name: 'pipecat' }, spans: [
+        span(pipecatTrace, pipecatRoot, PIPECAT_ROOT, [str('fi.span.kind', PIPECAT_KIND), str('gen_ai.span.kind', PIPECAT_KIND),
+          ...carriers(pipecat.session, [pipecatRecording])]),
+      ] }] }] });
     await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(traceName), scopeSpans: [{
       scope: { name: 'e2e-attachments' }, spans: [
         span(trace, traceRoot, `e2e.att-agent-${suffix}`, [str('fi.span.kind', 'agent')]),
@@ -275,85 +305,151 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
           str('input.mime_type', 'application/json'), str('output.value', `e2e-att-answer-${suffix}`),
           ...carriers(traced.session, [image, audio, document])], traceRoot),
       ] }] }] });
-    const voiceTraceId = `${voiceTrace.slice(0, 8)}-${voiceTrace.slice(8, 12)}-${voiceTrace.slice(12, 16)}-${voiceTrace.slice(16, 20)}-${voiceTrace.slice(20)}`;
-    const traceId = `${trace.slice(0, 8)}-${trace.slice(8, 12)}-${trace.slice(12, 16)}-${trace.slice(16, 20)}-${trace.slice(20)}`;
+    const livekitTraceId = dashed(livekitTrace), pipecatTraceId = dashed(pipecatTrace), traceId = dashed(trace);
+    const voiceSeeded = [livekitRecording, pipecatRecording];
     await testInfo.attach('seeded', { contentType: 'application/json', body: JSON.stringify({
-      voiceProject, traceProject, voiceTraceId, traceId, voiceRoot, traceRoot, llmSpan, callId,
-      occurrences: [...voice.seeded, ...traced.seeded].map(({ bytes, ...rest }) => ({ ...rest, sha256: sha256(bytes), size: bytes.length })),
+      voiceProject, traceProject, livekitTraceId, pipecatTraceId, traceId, livekitRoot, livekitSession, pipecatRoot,
+      traceRoot, llmSpan, jobId,
+      occurrences: [...voiceSeeded, ...traced.seeded].map(({ bytes, ...rest }) => ({ ...rest, sha256: sha256(bytes), size: bytes.length })),
     }) });
 
     await test.step('storage: PG occurrences bound and ready with placement', async () => {
-      await expect.poll(() => readyOccurrences(probe, voiceProject, voice.seeded), POLL.ASYNC_JOB)
-        .toStrictEqual(expectedOccurrences(voice.seeded, voiceTraceId));
+      await expect.poll(async () => [
+        ...await readyOccurrences(probe, voiceProject, [livekitRecording]),
+        ...await readyOccurrences(probe, voiceProject, [pipecatRecording]),
+      ], POLL.ASYNC_JOB).toStrictEqual([
+        ...expectedOccurrences([livekitRecording], livekitTraceId), ...expectedOccurrences([pipecatRecording], pipecatTraceId)]);
       await expect.poll(() => readyOccurrences(probe, traceProject, traced.seeded), POLL.ASYNC_JOB)
         .toStrictEqual(expectedOccurrences(traced.seeded, traceId));
     });
 
-    await test.step('storage: CH spans FINAL carry the refs', async () => {
+    await test.step('storage: CH spans FINAL carry the refs; both voice roots are conversation roots', async () => {
       const refs = async (traceKey: string) => (await probe.ch<{ id: string; refs: string }>(
         `SELECT id, attrs_string['fi.attachment.refs'] AS refs FROM spans FINAL
           WHERE trace_id={t:String} AND is_deleted=0 AND refs != '' ORDER BY id`, { t: traceKey }))
         .map(row => ({ id: row.id, occurrences: (JSON.parse(row.refs) as { occurrence_id: string }[]).map(r => r.occurrence_id).sort() }));
-      await expect.poll(() => refs(voiceTraceId), POLL.SPAN_VISIBLE)
-        .toStrictEqual([{ id: voiceRoot, occurrences: [recording.occurrenceId] }]);
+      const roots = (traceKey: string) => probe.ch<{ id: string; name: string; observation_type: string }>(
+        `SELECT id, name, observation_type FROM spans FINAL
+          WHERE trace_id={t:String} AND is_deleted=0 AND (parent_span_id IS NULL OR parent_span_id = '') ORDER BY id`, { t: traceKey });
+      await expect.poll(() => refs(livekitTraceId), POLL.SPAN_VISIBLE)
+        .toStrictEqual([{ id: livekitSession, occurrences: [livekitRecording.occurrenceId] }]);
+      await expect.poll(() => refs(pipecatTraceId), POLL.SPAN_VISIBLE)
+        .toStrictEqual([{ id: pipecatRoot, occurrences: [pipecatRecording.occurrenceId] }]);
       await expect.poll(() => refs(traceId), POLL.SPAN_VISIBLE)
         .toStrictEqual([{ id: llmSpan, occurrences: traced.seeded.map(item => item.occurrenceId).sort() }]);
+      await expect.poll(async () => [...await roots(livekitTraceId), ...await roots(pipecatTraceId)], POLL.SPAN_VISIBLE)
+        .toStrictEqual([{ id: livekitRoot, name: LIVEKIT_ROOT, observation_type: CONVERSATION },
+          { id: pipecatRoot, name: PIPECAT_ROOT, observation_type: CONVERSATION }]);
     });
 
-    let recordingGateway = '';
-    await test.step('UI: the voice call recording plays to its end', async () => {
-      const detail = page.waitForResponse(r => new URL(r.url()).pathname === VOICE_DETAIL
-        && new URL(r.url()).searchParams.get('trace_id') === voiceTraceId, { timeout: UI_READY });
-      const resolved = page.waitForResponse(isResolve(voiceProject), { timeout: UI_READY });
-      await page.goto(`${E2E.attachmentsAppUrl}/dashboard/observe/${voiceProject}/llm-tracing`);
-      await page.getByRole('row').filter({ hasText: /ended|completed/i }).click({ timeout: UI_READY });
-      const body = await (await detail).json() as { result: { recording_attachment: {
-        occurrence_id: string; state: string; parent: { trace_id: string; span_id: string };
-        manifest: { duration_ms: number; layout: string; codec: string; container: string } } } };
-      expect(body.result.recording_attachment).toMatchObject({
-        occurrence_id: recording.occurrenceId, state: 'ready', parent: { trace_id: voiceTraceId, span_id: voiceRoot },
-        manifest: { duration_ms: 200, layout: 'mixed', codec: 'opus', container: 'ogg' },
+    await test.step('API: voice detail projects each call\'s recording on its own parent span', async () => {
+      const projection = async (voiceTraceId: string) => (await actor.api.get<VoiceDetail>(VOICE_DETAIL,
+        { trace_id: voiceTraceId, project_id: voiceProject })).result.recording_attachment ?? null;
+      const ready = (item: Seeded, voiceTraceId: string) => ({
+        occurrence_id: item.occurrenceId, state: 'ready', parent: { trace_id: voiceTraceId, span_id: item.parentSpanId },
+        manifest: expect.objectContaining({ duration_ms: 200, layout: 'mixed', codec: 'opus', container: 'ogg' }),
       });
-      const grants = await (await resolved).json() as { items: { occurrence_id: string; status: string; gateway_path: string }[] };
-      expect(grants.items.map(item => [item.occurrence_id, item.status])).toStrictEqual([[recording.occurrenceId, 'ready']]);
-      recordingGateway = grants.items[0].gateway_path;
-      const player = page.getByLabel('Attachment recording');
-      await player.getByRole('button', { name: 'Play recording' }).click({ timeout: UI_READY });
-      const element = player.locator('audio');
-      await expect(element).toHaveCount(1);
-      await expect.poll(() => element.evaluate((node: HTMLAudioElement) =>
-        node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) : 0), { timeout: UI_READY })
-        .toBeGreaterThanOrEqual(150);
-      await testInfo.attach('voice-player', { body: await page.screenshot(), contentType: 'image/png' });
+      await expect.poll(() => projection(livekitTraceId), { timeout: UI_READY }).toEqual(ready(livekitRecording, livekitTraceId));
+      await expect.poll(() => projection(pipecatTraceId), { timeout: UI_READY }).toEqual(ready(pipecatRecording, pipecatTraceId));
     });
 
-    await test.step('API: gateway Range answers 206 with the validated type; no session is denied', async () => {
-      const ranged = await page.context().request.get(`${E2E.attachmentsAppUrl}${recordingGateway}`, {
-        headers: { Range: 'bytes=0-3' } });
+    const tracesTab = (projectId: string) => `${E2E.attachmentsAppUrl}/dashboard/observe/${projectId}/llm-tracing?tab=traces`;
+    const openTrace = async (projectId: string, id: string) => {
+      const detail = page.waitForResponse(r => new URL(r.url()).pathname === TRACE_DETAIL(id)
+        && r.request().method() === 'GET', { timeout: UI_READY });
+      await page.goto(tracesTab(projectId));
+      await page.locator(`.clean-data-table:visible .ag-row[row-id="${id}"] [col-id="trace_name"]`).click({ timeout: UI_READY });
+      const body = await (await detail).json() as { result: { observation_spans: DetailEntry[] } };
+      return { spans: flatten(body.result.observation_spans),
+        drawer: page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(id, { exact: true }) }) };
+    };
+    /** Load the span's recording and play it to the end; returns the browser's grant and resolve headers. */
+    const playRecording = async (drawer: Locator, item: Seeded, name: string) => {
+      const listed = drawer.getByLabel('Span attachments');
+      const resolved = page.waitForResponse(isResolve(voiceProject), { timeout: UI_READY });
+      await listed.getByRole('button', { name: 'Load audio: Mixed recording' }).click({ timeout: UI_READY });
+      const response = await resolved;
+      const grants = await response.json() as { items: Grant[] };
+      expect(grants.items.map(g => [g.occurrence_id, g.status])).toStrictEqual([[item.occurrenceId, 'ready']]);
+      const player = listed.getByLabel('Mixed recording').and(listed.locator('audio'));
+      await expect(player).toHaveCount(1);
+      await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1), { timeout: UI_READY }).toBe(true);
+      await player.evaluate((node: HTMLAudioElement) => node.play());
+      await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
+        [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
+      { timeout: UI_READY }).toStrictEqual([true, true]);
+      await testInfo.attach(name, { body: await page.screenshot(), contentType: 'image/png' });
+      const sent = await response.request().allHeaders();
+      const headers: Record<string, string> = { Origin: E2E.attachmentsAppUrl, 'Content-Type': 'application/json' };
+      for (const key of ['authorization', 'x-organization-id', 'x-workspace-id']) if (sent[key]) headers[key] = sent[key];
+      return { grant: grants.items[0], headers };
+    };
+
+    let livekitGrant: Grant = { occurrence_id: '', status: '' };
+    let viewerHeaders: Record<string, string> = {};
+    await test.step('UI: the LiveKit call recording on agent_session plays to its end', async () => {
+      const { spans, drawer } = await openTrace(voiceProject, livekitTraceId);
+      expect(spans.filter(s => s.attachments?.length).map(s => ({ id: s.id, name: s.name,
+        attachments: s.attachments!.map(a => [a.reference.occurrence_id, a.status]) })))
+        .toStrictEqual([{ id: livekitSession, name: LIVEKIT_SESSION, attachments: [[livekitRecording.occurrenceId, 'ready']] }]);
+      await drawer.getByText(LIVEKIT_SESSION, { exact: true }).first().click({ timeout: UI_READY });
+      ({ grant: livekitGrant, headers: viewerHeaders } = await playRecording(drawer, livekitRecording, 'livekit-player'));
+    });
+
+    const viewer = page.context().request;
+    const gateway = (path: string) => `${E2E.attachmentsAppUrl}${path}`;
+    const resolveAs = (headers: Record<string, string>, item: Seeded, traceKey: string) =>
+      viewer.post(gateway(F01.resolve(voiceProject)), { headers, data: { items: [{ occurrence_id: item.occurrenceId,
+        parent: { trace_id: traceKey, span_id: item.parentSpanId }, representation: 'original' }] } });
+    await test.step('API: the gateway serves the whole recording, Range, HEAD and a renewed grant; no session is denied', async () => {
+      const path = livekitGrant.gateway_path!;
+      expect(path.startsWith(`${GATEWAY_PREFIX}${livekitRecording.occurrenceId}/`)).toBe(true);
+      const whole = await viewer.get(gateway(path));
+      expect(whole.status()).toBe(200);
+      expect(whole.headers()['content-type']).toBe('audio/ogg');
+      expect(sha256(Buffer.from(await whole.body()))).toBe(sha256(RECORDING_OGG));
+      const ranged = await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } });
       expect(ranged.status()).toBe(206);
-      expect(ranged.headers()['content-type']).toBe('audio/ogg');
       expect(ranged.headers()['content-range']).toBe(`bytes 0-3/${RECORDING_OGG.length}`);
       expect(Buffer.from(await ranged.body()).equals(RECORDING_OGG.subarray(0, 4))).toBe(true);
-      const denied = await anonymous.get(recordingGateway, { headers: { Range: 'bytes=0-3' } });
+      // Renewal: a fresh resolve mints a new grant for the same occurrence, and the
+      // player's next Range continues the same byte timeline from where it left off.
+      const renewal = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
+      expect(renewal.status(), await renewal.text()).toBe(200);
+      const [renewed] = (await renewal.json() as { items: Grant[] }).items;
+      expect([renewed.occurrence_id, renewed.status]).toStrictEqual([livekitRecording.occurrenceId, 'ready']);
+      expect(renewed.gateway_path).not.toBe(path);
+      const renewedPath = renewed.gateway_path!;
+      const middle = Math.floor(RECORDING_OGG.length / 2);
+      const resumed = await viewer.get(gateway(renewedPath), { headers: { Range: `bytes=${middle}-` } });
+      expect(resumed.status()).toBe(206);
+      expect(resumed.headers()['content-range']).toBe(`bytes ${middle}-${RECORDING_OGG.length - 1}/${RECORDING_OGG.length}`);
+      expect(Buffer.from(await resumed.body()).equals(RECORDING_OGG.subarray(middle))).toBe(true);
+      const head = await viewer.head(gateway(renewedPath));
+      expect([head.status(), head.headers()['content-type'], head.headers()['content-length']])
+        .toStrictEqual([200, 'audio/ogg', String(RECORDING_OGG.length)]);
+      const denied = await anonymous.get(path, { headers: { Range: 'bytes=0-3' } });
       expect(denied.status()).toBe(404);
       const unauthenticated = await anonymous.post(F01.resolve(voiceProject), {
         headers: { Origin: E2E.attachmentsAppUrl, 'Content-Type': 'application/json' },
-        data: { items: [{ occurrence_id: recording.occurrenceId,
-          parent: { trace_id: voiceTraceId, span_id: voiceRoot }, representation: 'original' }] } });
+        data: { items: [{ occurrence_id: livekitRecording.occurrenceId,
+          parent: { trace_id: livekitTraceId, span_id: livekitSession }, representation: 'original' }] } });
       expect(unauthenticated.status()).toBe(401);
     });
 
+    await test.step('UI: the Pipecat call recording on its root plays to its end', async () => {
+      const { spans, drawer } = await openTrace(voiceProject, pipecatTraceId);
+      expect(spans.filter(s => s.attachments?.length).map(s => ({ id: s.id, name: s.name,
+        attachments: s.attachments!.map(a => [a.reference.occurrence_id, a.status]) })))
+        .toStrictEqual([{ id: pipecatRoot, name: PIPECAT_ROOT, attachments: [[pipecatRecording.occurrenceId, 'ready']] }]);
+      await playRecording(drawer, pipecatRecording, 'pipecat-player');
+    });
+
     await test.step('UI: the model span shows the image in user message 2', async () => {
-      const detail = page.waitForResponse(r => new URL(r.url()).pathname === TRACE_DETAIL(traceId)
-        && r.request().method() === 'GET', { timeout: UI_READY });
-      await page.goto(`${E2E.attachmentsAppUrl}/dashboard/observe/${traceProject}/llm-tracing?tab=traces`);
-      await page.locator(`.clean-data-table:visible .ag-row[row-id="${traceId}"] [col-id="trace_name"]`).click({ timeout: UI_READY });
-      const body = await (await detail).json() as { result: { observation_spans: DetailEntry[] } };
-      const spans = flatten(body.result.observation_spans);
+      const { spans, drawer } = await openTrace(traceProject, traceId);
       expect(spans.filter(s => s.attachments?.length).map(s => ({ id: s.id,
         attachments: s.attachments!.map(a => [a.reference.occurrence_id, a.status]).sort() })))
         .toStrictEqual([{ id: llmSpan, attachments: traced.seeded.map(item => [item.occurrenceId, 'ready']).sort() }]);
-      const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
       await drawer.getByText(`e2e.att-llm-${suffix}`, { exact: true }).first().click({ timeout: UI_READY });
       await drawer.getByRole('tab', { name: 'Chat', exact: true }).click({ timeout: UI_READY });
       const message = drawer.locator('div').filter({ hasText: userText }).filter({ has: page.getByLabel('Message images') }).last();
@@ -389,6 +485,15 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       expect(sha256(readFileSync(saved!))).toBe(sha256(document.bytes));
       await testInfo.attach('span-attachments', { body: await page.screenshot(), contentType: 'image/png' });
     });
+
+    await test.step('API: every media request the page made went through the gateway (zero legacy requests)', async () => {
+      expect(media.every(path => path.startsWith(GATEWAY_PREFIX)), JSON.stringify(media)).toBe(true);
+      expect([...new Set(media.map(path => path.slice(GATEWAY_PREFIX.length).split('/')[0]))].sort())
+        .toStrictEqual([livekitRecording.occurrenceId, pipecatRecording.occurrenceId, audio.occurrenceId].sort());
+    });
+    // NOT COVERED (CONTRACT-STATUS 2026-11-14 e2e-obs-061 fix): the approved plan's deletion
+    // check. Collector-ingested traces have no PG tracer_trace row, so DELETE /tracer/trace/{id}/
+    // answers 404 and nothing tombstones the call's media; the product fix is owed in #3945.
   } finally {
     await api.dispose();
     await anonymous.dispose();
