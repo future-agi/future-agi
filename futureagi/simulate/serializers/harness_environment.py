@@ -1934,6 +1934,18 @@ class HarnessScenarioRestoreSerializer(serializers.Serializer):
     pass
 
 
+class HarnessScenarioRecordsQuerySerializer(serializers.Serializer):
+    table = serializers.CharField(max_length=255)
+
+
+class HarnessScenarioRecordsResponseSerializer(serializers.Serializer):
+    table = serializers.CharField()
+    rows = serializers.ListField(child=serializers.DictField())
+    available = serializers.BooleanField(
+        help_text="False when the world's records live only in the agent's own service."
+    )
+
+
 class HarnessScenarioLifecycleResponseSerializer(serializers.Serializer):
     scenario_key = serializers.CharField()
     lifecycle = serializers.DictField(allow_null=True)

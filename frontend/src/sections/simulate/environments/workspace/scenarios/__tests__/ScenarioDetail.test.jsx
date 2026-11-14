@@ -2,7 +2,19 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
+const amendMutate = vi.hoisted(() => vi.fn());
+const sendMessage = vi.hoisted(() => vi.fn());
+vi.mock("src/api/harness/harness", async () => ({
+  ...(await vi.importActual("src/api/harness/harness")),
+  sendHarnessConversationMessage: (...args) => sendMessage(...args),
+  harnessIdempotencyKey: () => "req-1",
+}));
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ user: { name: "Reviewer One" } }) }));
 vi.mock("src/api/harness/scenarios", () => ({
+  useAmendScenarios: () => ({ mutate: amendMutate, isPending: false }),
+  useScenarioRecords: (jobId, key, table) => ({
+    data: table ? { table, rows: [{ id: "RX-1001" }, { id: "RX-1002" }], available: true } : undefined,
+  }),
   useValidateScenarios: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScenarioValidation: () => ({ data: undefined }),
   useScenarioRevisions: () => ({
@@ -21,6 +33,7 @@ vi.mock("src/api/simulate-environments/versions", () => ({
     data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 } },
   }),
   useSaveDrafts: () => ({ mutate: saveDrafts, isPending: false }),
+  useActors: () => ({ data: { knowledge_sources: { records: [{ store: "db", collection: "refills" }] } } }),
 }));
 
 import ScenarioDetail, { ScenarioDetailBody } from "../ScenarioDetail";
@@ -158,5 +171,56 @@ describe("ScenarioDetail Activate", () => {
       rerender(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state } }} />);
       expect(screen.queryByTestId("lifecycle-activate")).toBeNull();
     }
+  });
+});
+
+describe("ScenarioDetail missing record", () => {
+  const lifecycle = { state: "draft", reason: "not_ready", reason_text: "RX-99999 is not in the world", sources: [], proof: null };
+  const open = () =>
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "refill", scenarioKey: "refill", lifecycle }} />);
+
+  it("uses a real record through the builder chat", async () => {
+    const user = userEvent.setup();
+    open();
+    expect(screen.getByTestId("record-choice")).toHaveTextContent("This case presumes a record the world does not hold.");
+    await user.click(screen.getByLabelText("Table"));
+    await user.click(await screen.findByRole("option", { name: "refills" }));
+    await user.click(screen.getByLabelText("Record"));
+    await user.click(await screen.findByRole("option", { name: "RX-1002" }));
+    await user.click(screen.getByRole("button", { name: "Use a real record" }));
+    expect(sendMessage).toHaveBeenCalledWith("env-1", {
+      content:
+        "Change scenario refill to use refills record RX-1002 instead of the record it presumes that the world does not hold.",
+      client_request_id: "req-1",
+      kind: "user_message",
+      payload: {},
+    });
+  });
+
+  it("approves a synthetic record as an assumption source", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(screen.getByLabelText("Table"));
+    await user.click(await screen.findByRole("option", { name: "refills" }));
+    await user.type(screen.getByLabelText("Synthetic record id"), "RX-99999");
+    await user.click(screen.getByRole("button", { name: "Approve as a synthetic record" }));
+    expect(amendMutate).toHaveBeenCalledWith({
+      rework: false,
+      changes: [
+        {
+          op: "set_field",
+          scenario: "refill",
+          field: "sources",
+          value: [
+            {
+              kind: "assumption",
+              ref: "synthetic:refills/RX-99999",
+              quote: "Synthetic record approved by Reviewer One",
+              supports: "refills record RX-99999",
+            },
+          ],
+        },
+      ],
+    });
   });
 });

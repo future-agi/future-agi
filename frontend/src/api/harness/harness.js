@@ -141,6 +141,14 @@ const archivePath = (id, key) =>
     id,
     key,
   });
+const recordsPath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/records/", {
+    id,
+    key,
+  });
+// Seeded rows of one table, to pick a real record for a case whose record is missing.
+export const getHarnessScenarioRecords = async (id, key, table) =>
+  (await axios.get(recordsPath(id, key), { params: { table } })).data;
 const restorePath = (id, key) =>
   apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/restore/", {
     id,

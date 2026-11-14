@@ -165,3 +165,45 @@ def test_requested_line_without_a_citing_case_is_uncovered(user, workspace, stor
     member.save(update_fields=["content"])
 
     assert requested_uncovered(environment) == ["A second refund on the same order"]
+
+
+def test_records_endpoint_reads_seed_rows_only(user, workspace, storage, auth_client):
+    import json
+
+    from simulate.services import harness_scenario_sources
+    from simulate.tests.test_harness_affected_scenarios import REFUND_KEYS, _suite, _ten
+
+    environment = _environment(user, workspace, storage, "src-records")
+    _suite(environment, _ten())
+    seeded = {
+        "refills": {"RX-1001": {"drug": "statin"}, "RX-1002": {"drug": "insulin"}}
+    }
+    read: list[set[str]] = []
+
+    def bodies(version, paths):
+        read.append(set(paths))
+        return {"state.json": json.dumps(seeded).encode()}
+
+    with (
+        patch.object(harness_scenario_sources, "file_bodies", bodies),
+        patch("simulate.views.harness_environment.version_reads.require_versioning"),
+    ):
+        response = auth_client.get(
+            f"/simulate/api/harness-environments/{environment.id}/scenarios/{REFUND_KEYS[0]}/records/",
+            {"table": "refills"},
+        )
+
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["available"] is True
+    assert [row["id"] for row in body["rows"]] == ["RX-1001", "RX-1002"]
+    # The stored archive's seed is all it reads.
+    assert read == [{"state.json"}]
+    with patch.object(
+        harness_scenario_sources, "file_bodies", lambda version, paths: {}
+    ):
+        assert harness_scenario_sources.seed_records(environment, "refills") == {
+            "table": "refills",
+            "rows": [],
+            "available": False,
+        }

@@ -67,6 +67,8 @@ from simulate.serializers.harness_environment import (
     HarnessRunPlanSerializer,
     HarnessScenarioArchiveSerializer,
     HarnessScenarioLifecycleResponseSerializer,
+    HarnessScenarioRecordsQuerySerializer,
+    HarnessScenarioRecordsResponseSerializer,
     HarnessScenarioRestoreSerializer,
     HarnessScenarioRevisionsSerializer,
     HarnessScenarioValidateResponseSerializer,
@@ -812,6 +814,27 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 user=request.user,
             )
         )
+
+    @validated_request(
+        query_serializer=HarnessScenarioRecordsQuerySerializer,
+        responses={200: HarnessScenarioRecordsResponseSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_scenario_records",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"scenarios/(?P<key>[^/]{1,255})/records",
+    )
+    def scenario_records(self, request, pk=None, key=None):
+        """Seeded rows of one table, to pick a real record for a case whose record is missing. No writes."""
+        from simulate.services.harness_scenario_sources import seed_records
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(seed_records(job, request.validated_query_data["table"]))
 
     @validated_request(
         request_serializer=HarnessScenarioRestoreSerializer,

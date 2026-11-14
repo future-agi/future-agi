@@ -1,13 +1,23 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Typography, Collapse } from "@mui/material";
+import { Box, Button, Stack, Typography, Collapse, MenuItem, TextField } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { genderLabel } from "./personaLabels";
 import { SCENARIOS_COPY } from "./scenarios.constants";
-import { useScenarioRevisions } from "src/api/harness/scenarios";
+import {
+  useAmendScenarios,
+  useScenarioRecords,
+  useScenarioRevisions,
+} from "src/api/harness/scenarios";
+import { useActors } from "src/api/simulate-environments/versions";
+import {
+  harnessIdempotencyKey,
+  sendHarnessConversationMessage,
+} from "src/api/harness/harness";
+import { useAuthContext } from "src/auth/hooks";
 import { useDrafts, useSaveDrafts } from "src/api/simulate-environments/versions";
 import { draftSaveRequests } from "../drafts/draftSave";
 import SourceCompareDialog from "./SourceCompareDialog";
@@ -316,6 +326,17 @@ export function LifecycleSections({ row, jobId }) {
           {lifecycle.state === "validated" && jobId && (
             <ActivateButton jobId={jobId} />
           )}
+          {lifecycle.state === "draft" &&
+            lifecycle.reason === "not_ready" &&
+            jobId &&
+            row?.scenarioKey && (
+              <RecordChoice
+                jobId={jobId}
+                scenarioKey={row.scenarioKey}
+                scenarioName={row.name ?? row.scenarioKey}
+                sources={sources}
+              />
+            )}
           {jobId && row?.scenarioKey && lifecycle.state !== "archived" && (
             <ValidateScenariosButton
               jobId={jobId}
@@ -394,6 +415,89 @@ export function LifecycleSections({ row, jobId }) {
 LifecycleSections.propTypes = {
   row: PropTypes.object,
   jobId: PropTypes.string,
+};
+
+// A case that presumes a record the world lacks: point it at a real seeded record (through the
+// builder chat), or approve the record as synthetic (an assumption source the builder seeds).
+function RecordChoice({ jobId, scenarioKey, scenarioName, sources }) {
+  const cast = useActors(jobId);
+  const tables = (cast.data?.knowledge_sources?.records ?? [])
+    .map((one) => one.collection)
+    .filter(Boolean);
+  const [table, setTable] = useState("");
+  const [record, setRecord] = useState("");
+  const [syntheticId, setSyntheticId] = useState("");
+  const records = useScenarioRecords(jobId, scenarioKey, table);
+  const amend = useAmendScenarios(jobId);
+  const { user } = useAuthContext() ?? {};
+  const rows = records.data?.rows ?? [];
+  const sendRealRecord = () =>
+    sendHarnessConversationMessage(jobId, {
+      content: SCENARIOS_COPY.realRecordMessage(scenarioKey, table, record),
+      client_request_id: harnessIdempotencyKey(),
+      kind: "user_message",
+      payload: {},
+    });
+  const approve = () =>
+    amend.mutate({
+      rework: false,
+      changes: [
+        {
+          op: "set_field",
+          scenario: scenarioName,
+          field: "sources",
+          value: [
+            ...sources.map(({ kind, ref, quote, supports }) => ({ kind, ref, quote, supports })),
+            {
+              kind: "assumption",
+              ref: `synthetic:${table}/${syntheticId}`,
+              quote: SCENARIOS_COPY.syntheticQuote(user?.displayName || user?.name || user?.email || "the reviewer"),
+              supports: `${table} record ${syntheticId}`,
+            },
+          ],
+        },
+      ],
+    });
+  return (
+    <Stack spacing={1} data-testid="record-choice">
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{SCENARIOS_COPY.recordHint}</Typography>
+      <TextField select size="small" label={SCENARIOS_COPY.recordTable} value={table} onChange={(e) => setTable(e.target.value)}>
+        {tables.map((one) => (
+          <MenuItem key={one} value={one}>{one}</MenuItem>
+        ))}
+      </TextField>
+      {table && (
+        <Stack direction="row" spacing={1} alignItems="center">
+          <TextField select size="small" label={SCENARIOS_COPY.recordPick} value={record} onChange={(e) => setRecord(e.target.value)} sx={{ minWidth: 180 }}>
+            {rows.map((one, at) => {
+              const id = String(one.id ?? at);
+              return (
+                <MenuItem key={id} value={id}>{id}</MenuItem>
+              );
+            })}
+          </TextField>
+          <Button size="small" variant="outlined" disabled={!record} onClick={sendRealRecord}>
+            {SCENARIOS_COPY.useRealRecord}
+          </Button>
+        </Stack>
+      )}
+      {table && (
+        <Stack direction="row" spacing={1} alignItems="center">
+          <TextField size="small" label={SCENARIOS_COPY.syntheticId} value={syntheticId} onChange={(e) => setSyntheticId(e.target.value)} />
+          <Button size="small" variant="outlined" disabled={!syntheticId.trim() || amend.isPending} onClick={approve}>
+            {SCENARIOS_COPY.approveSynthetic}
+          </Button>
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+RecordChoice.propTypes = {
+  jobId: PropTypes.string.isRequired,
+  scenarioKey: PropTypes.string.isRequired,
+  scenarioName: PropTypes.string.isRequired,
+  sources: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
 
 // Activate is the Save of the unsaved versions this Validated case was proved on: saving them makes
