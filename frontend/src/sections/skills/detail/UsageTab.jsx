@@ -17,6 +17,7 @@ import {
   useTheme,
 } from "@mui/material";
 
+import MetricStrip from "src/components/metric-strip";
 import AdoptionPanel from '../governance/AdoptionPanel';
 import { useSkillUsage } from "src/api/skills";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -136,11 +137,11 @@ export default function UsageTab({ skill }) {
       ) : (
         usage && (
           <>
-            <AdoptionPanel skill={skill} days={days} summary={<Stack direction={{ xs: "column", sm: "row" }} spacing={3}>
-              <Stack><Typography variant="m3">{usage.total.toLocaleString()}</Typography><Typography variant="s3" color="text.secondary">Fetches</Typography></Stack>
-              <Stack><Typography variant="m3"><When value={usage.lastFetchedAt} /></Typography><Typography variant="s3" color="text.secondary">Last fetch</Typography></Stack>
-              <Stack><Typography variant="m3">{usage.byVersion.filter((item) => item.count > 0).length}</Typography><Typography variant="s3" color="text.secondary">Versions in use</Typography></Stack>
-            </Stack>} />
+            <AdoptionPanel skill={skill} days={days} summary={<MetricStrip items={[
+              { label: "Fetches", value: usage.total.toLocaleString() },
+              { label: "Last fetch", value: <When value={usage.lastFetchedAt} /> },
+              { label: "Versions fetched", value: usage.byVersion.filter((item) => item.count > 0).length },
+            ]} sx={{ "& > .MuiBox-root > .MuiTypography-root": { typography: "s3" }, "& > .MuiBox-root > .MuiBox-root > .MuiTypography-root": { typography: "m1" } }} />} />
             <TechnicalDetails title="Fetch counts and details">
             <Section
               title="Fetches by version"

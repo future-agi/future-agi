@@ -329,7 +329,7 @@ export default function SkillDetailView() {
               <Button
                 component={RouterLink}
                 to={paths.dashboard.skills.root}
-                variant="contained" color="primary"
+                variant="outlined"
               >
                 Back to Skills
               </Button>
@@ -351,7 +351,8 @@ export default function SkillDetailView() {
       ) : (
         <EmptyState
           title="Skill not found"
-          description="Return to the library to choose a skill."
+          description="It may have been archived, or it may belong to another workspace."
+          action={<Button component={RouterLink} to={paths.dashboard.skills.root} variant="outlined">Back to Skills</Button>}
         />
       )}
     </Stack>

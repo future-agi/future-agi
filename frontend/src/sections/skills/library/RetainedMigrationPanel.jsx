@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Link, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { paths } from 'src/routes/paths';
 import { useMigrationDecision, useMigrationPreview, useMigrationPublish, useMigrationPlanReload } from 'src/api/skills/migration';
@@ -93,12 +93,13 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
     {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Source" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
-      <MenuItem value="langfuse">Langfuse export (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
+      <MenuItem value="langfuse">Langfuse exchange file (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
     </TextField>}
     </Stack>
     <Box hidden={plans.length > 0 && !sourceSetupOpen}><Stack spacing={1.5}>
     <Typography variant="s1">Bring skills from Langfuse or a local folder. Nothing is published until you review each one.</Typography>
     <TechnicalDetails title="Supported formats and source identity"><Typography variant="s3">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Typography></TechnicalDetails>
+    {kind === 'langfuse' && <Typography variant="s3" color="text.secondary">Use a compatible Langfuse exchange file (langfuse-skills-v1). Native Langfuse exports need converting first.{' '}<Link href="https://docs.futureagi.com/docs/skills/migration#before-migration" target="_blank" rel="noopener noreferrer">How to prepare the file</Link></Typography>}
     <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
       <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose export file</Button>
       <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose folder</Button>

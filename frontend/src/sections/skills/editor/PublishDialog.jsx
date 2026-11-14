@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Checkbox, DialogActions, FormControlLabel, List, ListItemButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
@@ -27,6 +27,15 @@ function ReviewSection({ title, ...props }) {
 ReviewSection.propTypes = { title: PropTypes.string.isRequired };
 
 function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
+  const footerRef = useRef(null);
+  const [footerHeight, setFooterHeight] = useState(0);
+  useEffect(() => {
+    const footer = footerRef.current;
+    if (!footer || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => setFooterHeight(footer.getBoundingClientRect().height));
+    observer.observe(footer);
+    return () => observer.disconnect();
+  }, []);
   const [draft, setDraft] = useState(initialDraft);
   const [digest, setDigest] = useState(null);
   const [evidenceRunId, setEvidenceRunId] = useState(null);
@@ -65,6 +74,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const [selectedPath, setSelectedPath] = useState(null);
   const live = useDraftChecks(draft.files, skill.name, 0);
   const checks = serverChecks ?? live.checks;
+  const credentialWarning = checks?.items?.some((item) => item.code === "secret_suspected");
   const liveComparison = useSkillCompare(skill.id, draft.baseVersion, "draft");
   const { refetch: refetchComparison } = liveComparison;
   const [comparison, setComparison] = useState({ isPending: true });
@@ -107,7 +117,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const comparisonMismatch = draft.baseVersion !== null && comparisonVerified && compared.digest !== digest;
   const comparisonReady = draft.baseVersion === null || Boolean(comparisonVerified && compared.digest === digest && !comparison.isError && !comparison.isPending && !liveComparison.isFetching);
   const noFileChanges = comparisonReady && draft.baseVersion !== null && files.length > 0 && files.every((file) => file.status === 'unchanged');
-  const canPublish = Boolean(digest && !releaseConflict && labels.every(canMove) && checks && live.current && !live.pending && !live.error && comparisonReady
+  const canPublish = Boolean(digest && !releaseConflict && !(credentialWarning && labels.includes("production")) && labels.every(canMove) && checks && live.current && !live.pending && !live.error && comparisonReady
     && checks.summary.errors === 0 && (checks.summary.warnings === 0 || acknowledged) && note.length <= 2000);
 
   const nextVersion = release.latestVersion === null ? 1 : release.latestVersion != null ? release.latestVersion + 1 : null;
@@ -118,7 +128,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const consequence = labels.length
     ? `${publishEffect} ${versionText} and moves ${labels.join(' and ')} to ${versionText}.`
     : `${publishEffect} ${versionText}. Production ${productionVersion ? `stays on v${productionVersion}` : 'stays unassigned'}.`;
-  const disabledReason = publish.isPending ? 'Publishing…' : !digest ? 'Identifying reviewed files…' : releaseConflict ? 'Reload and review release state' : !labels.every(canMove) ? 'An admin must move the selected protected label' : live.error ? 'Retry checks to publish' : !live.current || live.pending || !checks ? 'Wait for current checks' : !comparisonReady ? 'Review current file changes' : checks.summary.errors > 0 ? 'Fix the check errors' : checks.summary.warnings > 0 && !acknowledged ? 'Tick the warning acknowledgment' : note.length > 2000 ? 'Shorten the version note' : '';
+  const disabledReason = publish.isPending ? 'Publishing…' : !digest ? 'Identifying reviewed files…' : releaseConflict ? 'Reload and review release state' : credentialWarning && labels.includes("production") ? "Clear the production selection while a possible credential warning is open" : !labels.every(canMove) ? 'An admin must move the selected protected label' : live.error ? 'Retry checks to publish' : !live.current || live.pending || !checks ? 'Wait for current checks' : !comparisonReady ? 'Review current file changes' : checks.summary.errors > 0 ? 'Fix the check errors' : checks.summary.warnings > 0 && !acknowledged ? 'Tick the warning acknowledgment' : note.length > 2000 ? 'Shorten the version note' : '';
   const publishTitle = labels.length > 1 ? 'Publish and move labels' : labels.length ? `Publish and move ${labels[0]}` : 'Publish';
 
   const submit = async () => {
@@ -192,7 +202,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       modalWidth="960px"
       paperSx={{ maxWidth: "100%" }}
     >
-      <Stack spacing={2} sx={{ overflowY: "auto", minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
+      <Stack spacing={2} sx={{ overflowY: "auto", minHeight: 0, paddingBottom: footerHeight ? `${footerHeight}px` : 2, minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
         <ReviewSection title={noFileChanges ? `No file changes since v${draft.baseVersion}` : draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
@@ -232,16 +242,17 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           <Stack>
             {["staging", "production"].map((label) => (
               <FormControlLabel key={label} label={label} control={(
-                <Checkbox disabled={!canMove(label) && !labels.includes(label)} checked={labels.includes(label)} onChange={(_, checked) => setLabels((current) => checked ? [...current, label] : current.filter((value) => value !== label))} />
+                <Checkbox disabled={(label === "production" && credentialWarning && !labels.includes(label)) || (!canMove(label) && !labels.includes(label))} checked={labels.includes(label)} onChange={(_, checked) => setLabels((current) => checked ? [...current, label] : current.filter((value) => value !== label))} />
               )} />
             ))}
           </Stack>
+          {credentialWarning && <Typography variant="s3" color="text.secondary">Production can&apos;t be set while a possible credential warning is open.</Typography>}
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
 
         </ReviewSection>
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
       </Stack>
-      <DialogActions data-sticky-footer sx={{ flexDirection: "column", alignItems: "stretch", flexShrink: 0, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", p: 1.5, position: "sticky", bottom: 0 }}>
+      <DialogActions ref={footerRef} data-sticky-footer sx={{ flexDirection: "column", alignItems: "stretch", flexShrink: 0, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", p: 1.5, position: "sticky", bottom: 0 }}>
         <Typography variant="s1" role="status">{consequence}</Typography>
           {checks?.summary.warnings > 0 && <FormControlLabel label="I reviewed the warnings and want to publish this version." control={<Checkbox checked={acknowledged} onChange={(_, value) => setAcknowledged(value)} />} />}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="flex-end" alignItems={{ sm: "center" }}>

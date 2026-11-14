@@ -171,7 +171,7 @@ it('keeps import consequence copy synchronized with the actual publication choic
   const onConsequenceChange = vi.fn();
   render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={vi.fn()} onPublish={vi.fn()} onConsequenceChange={onConsequenceChange} />);
   expect(onConsequenceChange).toHaveBeenLastCalledWith("Imports 2 items as new published versions. Production labels don't change.");
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Publish each imported draft as a new version without labels' }));
+  fireEvent.click(screen.getByRole('radio', { name: 'Drafts to review first' }));
   expect(onConsequenceChange).toHaveBeenLastCalledWith('Imports 2 items as unpublished drafts.');
   expect(screen.queryByText('Imports 2 items as unpublished drafts.')).not.toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Confirm your rights to continue');
@@ -182,7 +182,7 @@ it('filters held items without removing required decisions or changing the submi
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Item status' }));
   fireEvent.click(screen.getByRole('option', { name: 'Held (1)', exact: true }));
   expect(screen.getByRole('table')).toHaveTextContent('mine');
-  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(screen.queryByRole('radiogroup', { name: 'Decision for both' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
   expect(screen.getByRole('button', { name: 'Import and publish 2 items' })).toBeDisabled();
 });
@@ -205,4 +205,20 @@ it('shows a single next step rather than zero-item acknowledgments when everythi
   expect(screen.queryByRole('button', { name: 'Import and publish 0 items' })).not.toBeInTheDocument();
   expect(screen.getByText('Resolve the held items, then preview again')).toBeVisible();
   expect(screen.queryByRole('columnheader', { name: 'Result' })).not.toBeInTheDocument();
+});
+
+it('separates the default publication choice from explicit acknowledgments and can import drafts', async () => {
+  const accept = vi.fn(async () => ({ resourceId: 'resource-one', revision: 1, digest: digest('b') }));
+  const publish = vi.fn();
+  render(<MigrationBatchReview plans={[plan([item('one')])]} onAccept={accept} onPublish={publish} />);
+  expect(screen.getByRole('radiogroup', { name: 'Import as' })).toBeVisible();
+  expect(screen.getByRole('radio', { name: 'Published v1, no labels' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /I confirm my rights/ })).not.toBeChecked();
+  fireEvent.click(screen.getByRole('radio', { name: 'Drafts to review first' }));
+  expect(screen.getByRole('button', { name: 'Import 1 item' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: /I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import 1 item' }));
+  await screen.findByText('Your skills are saved as drafts. Production labels did not change.');
+  expect(accept).toHaveBeenCalledTimes(1);
+  expect(publish).not.toHaveBeenCalled();
 });

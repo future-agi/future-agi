@@ -225,8 +225,8 @@ describe("Skills library", () => {
   it("recovers from an empty last page after archiving", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 25, totalPages: 1 }));
     renderLibrary("?page=2");
-    expect(screen.getByText("Page 2 doesn't exist.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Go to page 1" }));
+    expect(screen.getByText("This page is no longer available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go to first page" }));
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 }));
   });
 
@@ -488,8 +488,29 @@ describe('library access presentation', () => {
   it('distinguishes an invalid page response from a network error', () => {
     api.list.mockReturnValue({ isError: true, error: { response: { status: 404 } }, refetch: api.refetch });
     renderLibrary('?page=99');
-    expect(screen.getByText("Page 99 doesn't exist.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Go to page 1' }));
+    expect(screen.getByText("This page is no longer available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to first page' }));
     expect(new URLSearchParams(window.location.search).get('page')).toBe('1');
   });
+});
+
+it.each([
+  { statusCode: 404, detail: 'Invalid page.' },
+  { response: { status: 400, data: { page: ['Invalid page.'] } } },
+  { status: 422, detail: { page: ['Out of range.'] } },
+  { statusCode: 400, errors: { page: ['Invalid page.'] } },
+  { statusCode: 422, details: { page: ['Invalid page.'] } },
+])('recovers from page errors without losing filters: %j', (error) => {
+  api.list.mockReturnValue({ isError: true, error });
+  renderLibrary('?page=9&search=policy&tag=support&label=production&sort=name&order=asc');
+  expect(screen.getByText('This page is no longer available')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Go to first page' }));
+  expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, search: 'policy', tag: 'support', label: 'production', sort: 'name', order: 'asc' }));
+});
+it.each([{ statusCode: 500 }, { status: 422, detail: { label: ['Invalid label'] } }, new Error('Network error')])('keeps Retry for non-page failures: %j', (error) => {
+  api.list.mockReturnValue({ isError: true, error, refetch: api.refetch });
+  renderLibrary('?page=9');
+  expect(screen.queryByText('This page is no longer available')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Retry/i })).toBeVisible();
 });

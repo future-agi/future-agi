@@ -32,13 +32,14 @@ import {
   buildMcpSnippet,
 } from "../utils/install";
 
+// Retain confirmed-copy feedback until the shared SH8 CodeBlock API lands.
 function CopyableCode({ code }) {
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const copy = async () => {
-    try { await navigator.clipboard.writeText(code); setError(''); enqueueSnackbar('Copied'); }
+    try { await navigator.clipboard.writeText(code); setError(""); enqueueSnackbar("Copied"); }
     catch { setError("Couldn't copy. Select the command and copy it manually."); }
   };
-  return <Stack spacing={0.5}><CodeBlock code={code} wrap action={<Button variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" />} onClick={copy}>Copy</Button>} />{error && <Typography variant="s3" role="status">{error}</Typography>}</Stack>;
+  return <Stack spacing={0.5}><CodeBlock code={code} wrap copyLabel="Copy command" action={<Button variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" />} onClick={copy}>Copy</Button>} />{error && <Typography variant="s3" role="status">{error}</Typography>}</Stack>;
 }
 CopyableCode.propTypes = { code: PropTypes.string.isRequired };
 
@@ -65,6 +66,13 @@ export default function UseSkillPanel({ skill }) {
     label &&
     label !== "latest" &&
     !skill.labels.some((item) => item.name === label);
+  const selectedNumber = selector === "version" ? pinnedVersion : label === "latest" ? skill.latestVersion : skill.labels.find((item) => item.name === label)?.version;
+  const selectorName = label ? label.charAt(0).toUpperCase() + label.slice(1) : `v${pinnedVersion}`;
+  const selectorHelp = installClient
+    ? label ? `${selectorName} resolves${selectedNumber ? ` to v${selectedNumber}` : ""} when you run this command; installed files don't follow later releases.` : `Downloads v${pinnedVersion}; installed files don't follow later releases.`
+    : `${label ? selectorName : "A label"} resolves when requested; a numbered version stays fixed.`;
+  const installDir = location === "personal" ? client.personalDir : client.projectDir;
+  const overwriteWarning = `This can overwrite files in ${installDir}. Use an empty folder or back up local changes first. It doesn't remove files deleted from the published skill.`;
   const selectorReady = selector !== "version" || Number.isInteger(version);
   const args = {
     hostApi: HOST_API,
@@ -101,13 +109,13 @@ export default function UseSkillPanel({ skill }) {
       <Typography variant="s1">{installClient ? `Install ${skill.name} into ${client.label}.` : `Fetch ${skill.name} with ${client.label}.`} {skill.labels.some((item) => item.name === 'production') ? `Production is v${skill.labels.find((item) => item.name === 'production').version}.` : 'Production is not assigned.'}</Typography>
       <Section
         title="Choose what agents receive"
-        description="A label follows promotions. A pinned version stays unchanged."
+        description={selectorHelp}
       >
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
           <TextField
             select
             size="small"
-            label="Version to install"
+            label={installClient ? "Version to download" : "Version to fetch"}
             value={selector}
             onChange={(event) => setSelector(event.target.value)}
             sx={{ minWidth: 200 }}
@@ -121,7 +129,7 @@ export default function UseSkillPanel({ skill }) {
               ]),
             ].map((name) => (
               <MenuItem key={name} value={`label:${name}`}>
-                {name}
+                {name === "production" && skill.labels.some((item) => item.name === name) ? `Production (currently v${skill.labels.find((item) => item.name === name).version})` : name}
               </MenuItem>
             ))}
             <MenuItem value="version">Pinned version</MenuItem>
@@ -162,7 +170,7 @@ export default function UseSkillPanel({ skill }) {
           {group !== 'mcp' && <TextField select size="small" label={group === 'coding' ? 'Coding client' : 'Fetch with'} value={clientId} onChange={(event) => setClientId(event.target.value)}>
             {CLIENTS.filter((item) => group === 'coding' ? Boolean(item.projectDir) : ['curl', 'python', 'typescript'].includes(item.id)).map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
           </TextField>}
-          {installClient && <><Typography variant="s1" color="text.secondary">This copies the files. It won&apos;t update them later or remove files you delete.</Typography><TechnicalDetails title="Installation details"><Typography variant="s3">Extraction can overwrite local changes. Use an empty reviewed destination; keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Typography></TechnicalDetails></>}
+          {installClient && <TechnicalDetails title="Installation details"><Typography variant="s3">Keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Typography></TechnicalDetails>}
           {installClient && (
             <SegmentedTabs
               value={location}
@@ -187,7 +195,7 @@ export default function UseSkillPanel({ skill }) {
           {group === "mcp" && <Typography variant="s1">Ask your connected MCP server for the selected skill, then read its files using the returned version.</Typography>}
           {group === "mcp" && <TechnicalDetails title="MCP file-reading protocol"><Typography variant="s3" sx={{ whiteSpace: "pre-wrap" }}>{buildMcpSnippet(args)}</Typography></TechnicalDetails>}
           {selectorReady ? (
-            <CopyableCode code={snippet()} />
+            <Stack spacing={1}>{installClient && <Typography variant="s3" color="text.secondary">{overwriteWarning}</Typography>}<CopyableCode code={snippet()} /></Stack>
           ) : (
             <Alert severity="info">
               Choose a published version to see the command.
@@ -218,7 +226,7 @@ export default function UseSkillPanel({ skill }) {
             >
               {skill.tags.map((name) => (
                 <MenuItem key={name} value={name}>
-                  {name}
+                  {name === "production" && skill.labels.some((item) => item.name === name) ? `Production (currently v${skill.labels.find((item) => item.name === name).version})` : name}
                 </MenuItem>
               ))}
             </TextField>
@@ -228,9 +236,7 @@ export default function UseSkillPanel({ skill }) {
                 specific to one skill.
               </Alert>
             ) : (
-              <CopyableCode
-                code={buildInstallCommand({ ...args, names: [], tag })}
-              />
+              <Stack spacing={1}><Typography variant="s3" color="text.secondary">{overwriteWarning}</Typography><CopyableCode code={buildInstallCommand({ ...args, names: [], tag })} /></Stack>
             )}
           </Stack>
         </Section>

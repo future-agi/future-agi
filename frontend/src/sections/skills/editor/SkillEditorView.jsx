@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Box, Button } from "@mui/material";
 
 import { useSkill, useSkillDraft } from "src/api/skills";
@@ -10,6 +10,9 @@ import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
+import { useSkillsAccess } from "../utils/access";
+import ObjectHeader from "../components/ObjectHeader";
+import CapabilityNotice from "../components/CapabilityNotice";
 import SkillEditorSession from "./SkillEditorSession";
 import VersionDraftLoader from "./VersionDraftLoader";
 
@@ -43,7 +46,8 @@ DraftInitializer.propTypes = {
 };
 
 export default function SkillEditorView() {
-  useEffect(() => { import("@monaco-editor/react").then(({ loader }) => loader.init()).catch(() => {}); }, []);
+  const { ready, canWrite } = useSkillsAccess();
+  useEffect(() => { if (canWrite) import("@monaco-editor/react").then(({ loader }) => loader.init()).catch(() => {}); }, [canWrite]);
   const { skillId } = useParams();
   const { identity } = useSkillV11Scope();
   const navigate = useNavigate();
@@ -55,9 +59,16 @@ export default function SkillEditorView() {
     else query.refetch();
   };
   let content;
-  if (preview === "loading" || (!preview && query.isPending)) content = <ContentSkeleton variant="page" label="Loading skill editor" />;
+  if (!ready || preview === "loading" || (!preview && query.isPending)) content = <ContentSkeleton variant="page" label="Loading skill editor" />;
   else if (preview === "error" || (!preview && query.isError && !query.data)) content = <ErrorState title="Couldn't load this skill" onRetry={retry} />;
   else if (preview === "empty" || !query.data) content = <EmptyState title="No skill to edit" description="Open a skill from your library or create one to start a draft." action={<Button variant="contained" color="primary" onClick={() => navigate(paths.dashboard.skills.root)}>Back to Skills</Button>} />;
+  else if (!canWrite) content = <>
+    <ObjectHeader title={query.data.name} crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: query.data.name }]} />
+    <CapabilityNotice title="You can view this skill but not edit it" description="Ask a workspace admin for edit access." actions={<>
+      <Button component={RouterLink} to={paths.dashboard.skills.detail(skillId)} variant="outlined">Back to {query.data.name}</Button>
+      <Button component={RouterLink} to={`${paths.dashboard.skills.detail(skillId)}?tab=use`} variant="outlined">Use skill</Button>
+    </>} />
+  </>;
   else content = <DraftInitializer key={`${identity}:${skillId}`} skill={query.data} />;
   return <Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column", overflowY: { xs: "auto", md: "hidden" } }}>{content}</Box>;
 }

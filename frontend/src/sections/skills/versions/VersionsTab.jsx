@@ -172,7 +172,7 @@ export default function VersionsTab({ skill }) {
         title="Labels"
         description="Agents fetching a label receive the version it points to."
         actions={
-          <Stack direction="row" spacing={1}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
             <Button
               variant="outlined"
               size="small"
@@ -225,8 +225,28 @@ export default function VersionsTab({ skill }) {
         title="Versions"
         description="Select two versions on this page to compare their files."
       >
+        <TableContainer><Table size="small" aria-label="Skill versions" sx={[stackedTableSx, { "& tbody td": { overflowWrap: "normal", wordBreak: "normal" }, "& tbody td:not(.MuiTableCell-paddingCheckbox)": { display: { xs: "block", sm: "table-cell" } }, "& tbody td[data-label]:not(.MuiTableCell-paddingCheckbox)::before": { content: { xs: 'attr(data-label) ": "', sm: "none" }, typography: "s3", color: "text.secondary" } }]}>
+          <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
+          <TableBody>{rows.map((row) => <TableRow hover key={row.id} sx={{ height: ROW_HEIGHT.twoLine }} onClick={() => router.push(`${detailPath}?tab=files&version=${row.number}`)}>
+            {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-label={column.header} data-cell={column.id === "actions" ? "actions" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
+          </TableRow>)}</TableBody>
+        </Table></TableContainer>
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={versions.data?.count || 0}
+          onPageChange={changePage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            changePage(0);
+          }}
+          loading={versions.isFetching}
+          disabled={versions.isFetching}
+        />
+      </Section>
         <SelectionBar
           count={selected.length}
+          sx={{ position: "sticky", bottom: 0, zIndex: 1, height: "auto", minHeight: 40, flexWrap: "wrap", py: 0.5 }}
           noun="version"
           onCancel={() => setSelectedIds([])}
           actions={[
@@ -244,25 +264,6 @@ export default function VersionsTab({ skill }) {
             },
           ]}
         />
-        <TableContainer><Table size="small" aria-label="Skill versions" sx={stackedTableSx}>
-          <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
-          <TableBody>{rows.map((row) => <TableRow hover key={row.id} sx={{ height: ROW_HEIGHT.twoLine }} onClick={() => router.push(`${detailPath}?tab=files&version=${row.number}`)}>
-            {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-cell={column.id === "actions" ? "actions" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
-          </TableRow>)}</TableBody>
-        </Table></TableContainer>
-        <DataTablePagination
-          page={page}
-          pageSize={pageSize}
-          total={versions.data?.count || 0}
-          onPageChange={changePage}
-          onPageSizeChange={(size) => {
-            setPageSize(size);
-            changePage(0);
-          }}
-          loading={versions.isFetching}
-          disabled={versions.isFetching}
-        />
-      </Section>
       <Menu
         anchorEl={menu?.anchor}
         open={Boolean(menu)}

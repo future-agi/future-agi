@@ -78,3 +78,11 @@ it('rejects a file that is not an inventory packet without previewing anything',
   await screen.findByText('Choose a migration packet written by the local inventory.');
   expect(api.preview).not.toHaveBeenCalled();
 });
+
+it('explains exchange-file preparation beside the picker before any upload', () => {
+  view();
+  expect(screen.getByRole('combobox', { name: 'Source' })).toHaveTextContent('Langfuse exchange file (JSON)');
+  expect(screen.getByText(/Native Langfuse exports need converting first/)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'How to prepare the file' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/migration#before-migration');
+  expect(screen.getByRole('button', { name: 'Choose export file' })).toBeVisible();
+});

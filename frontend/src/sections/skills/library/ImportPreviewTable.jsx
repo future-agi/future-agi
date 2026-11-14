@@ -36,10 +36,10 @@ export default function ImportPreviewTable({ bundles, selected, onToggle, disabl
       </Typography>
     ) },
   ].map((column) => ({ ...column, enableSorting: false }));
-  return <TableContainer><Table size="small" aria-label="Import preview" sx={stackedTableSx}>
+  return <TableContainer><Table size="small" aria-label="Import preview" sx={[stackedTableSx, { "& tbody td": { overflowWrap: "normal", wordBreak: "normal" }, "& tbody td:not(.MuiTableCell-paddingCheckbox)": { display: { xs: "block", sm: "table-cell" } }, "& tbody td[data-label]:not(.MuiTableCell-paddingCheckbox)::before": { content: { xs: 'attr(data-label) ": "', sm: "none" }, typography: "s3", color: "text.secondary" } }]}>
     <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
     <TableBody>{bundles.map((bundle) => <TableRow hover key={bundle.key} sx={{ height: ROW_HEIGHT.twoLine }}>
-      {columns.map((column) => <TableCell padding={column.id === "selection" ? "checkbox" : "normal"} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: bundle }, getValue: () => bundle[column.accessorKey] }) : bundle[column.accessorKey]}</TableCell>)}
+      {columns.map((column) => <TableCell padding={column.id === "selection" ? "checkbox" : "normal"} data-label={column.header} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: bundle }, getValue: () => bundle[column.accessorKey] }) : bundle[column.accessorKey]}</TableCell>)}
     </TableRow>)}</TableBody>
   </Table></TableContainer>;
 }
