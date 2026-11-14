@@ -56,6 +56,31 @@ class AgentccWebhookSerializer(serializers.ModelSerializer):
                 )
         return value
 
+    def validate_headers(self, value):
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "headers must be a JSON object of header names to values"
+            )
+        for name, header_value in value.items():
+            if not isinstance(header_value, str | int | float) or isinstance(
+                header_value, bool
+            ):
+                raise serializers.ValidationError(
+                    f"Header '{name}' must have a text or number value"
+                )
+        return {name: str(header_value) for name, header_value in value.items()}
+
+    def update(self, instance, validated_data):
+        # Write only what the request set. ModelSerializer.update saves every
+        # column of the copy read at the start of the request, which would
+        # put back health counters a delivery run changed meanwhile.
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save(update_fields=[*validated_data, "updated_at"])
+        return instance
+
     def validate_name(self, value):
         try:
             return validate_safe_agentcc_name(value)

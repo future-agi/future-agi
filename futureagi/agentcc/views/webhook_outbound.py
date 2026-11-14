@@ -4,7 +4,6 @@ import json
 
 import requests as http_requests
 import structlog
-from django.db import transaction
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -88,20 +87,21 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             was_active = instance.is_active
+            # Saves only the fields the request set: the health counters
+            # change concurrently in delivery runs and must not be written
+            # back from the copy read at the start of this request.
             webhook = serializer.save()
             if webhook.is_active and not was_active:
-                # Turned back on: the failure streak and its reason are history.
-                webhook.consecutive_failures = 0
-                webhook.disabled_reason = ""
-                webhook.disabled_at = None
-                webhook.save(
-                    update_fields=[
-                        "consecutive_failures",
-                        "disabled_reason",
-                        "disabled_at",
-                        "updated_at",
-                    ]
+                # Turned back on: the failure streak, its reason and any pause
+                # are history. Its pending events go out on the next tick.
+                AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+                    consecutive_failures=0,
+                    failing_since=None,
+                    disabled_reason="",
+                    disabled_at=None,
+                    next_delivery_at=None,
                 )
+                webhook.refresh_from_db()
             return self._gm.success_response(AgentccWebhookSerializer(webhook).data)
         except Exception as e:
             logger.exception("webhook_update_error", error=str(e))
@@ -114,13 +114,16 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            with transaction.atomic():
-                instance.deleted = True
-                instance.deleted_at = timezone.now()
-                instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
-                # A soft delete cascades nothing: without this its events
-                # would wait in the delivery queue for ever.
-                cancel_events_for_webhook(instance.id)
+            instance.deleted = True
+            instance.deleted_at = timezone.now()
+            instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+            # A soft delete cascades nothing: without this its pending events
+            # would wait in the delivery queue for ever. Only the pending ones,
+            # which the pending cap bounds, in short batches of their own; the
+            # maintenance run cancels its failed and dead-lettered history.
+            cancel_events_for_webhook(
+                instance.id, statuses=(AgentccWebhookEvent.PENDING,)
+            )
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("webhook_delete_error", error=str(e))

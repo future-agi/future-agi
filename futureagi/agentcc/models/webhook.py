@@ -37,6 +37,13 @@ class AgentccWebhook(BaseModel):
     disabled_at = models.DateTimeField(null=True, blank=True)
     dropped_events_total = models.PositiveBigIntegerField(default=0, db_default=0)
     last_dropped_at = models.DateTimeField(null=True, blank=True)
+    # When the current failure streak began; cleared by a success.
+    failing_since = models.DateTimeField(null=True, blank=True)
+    # A dispatched delivery run holds this ahead of now: the dispatcher starts
+    # no second run, and counts it toward AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES.
+    delivery_lease_until = models.DateTimeField(null=True, blank=True)
+    # A run that stopped on failures pauses the webhook's next run until then.
+    next_delivery_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook"

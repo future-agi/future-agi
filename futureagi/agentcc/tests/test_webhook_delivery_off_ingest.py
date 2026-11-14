@@ -185,10 +185,11 @@ class TestDeliveryRun:
 
         result = deliver_webhook_events()
 
-        assert result == {"delivered": 6, "failed": 1, "retired": 0}
+        # Three failed attempts in a row stop the failing webhook's run.
+        assert result == {"delivered": 6, "failed": 3, "retired": 0}
         good_posts = [c for c in http.post.call_args_list if c.args[0] == good_url]
         bad_posts = [c for c in http.post.call_args_list if c.args[0] == bad_url]
-        assert len(bad_posts) == 1
+        assert len(bad_posts) == 3
         assert len(good_posts) == 6
         # Oldest first.
         assert [c.kwargs["data"] for c in good_posts] == [
@@ -200,15 +201,21 @@ class TestDeliveryRun:
             )
         ) == {"delivered"}
 
-        first = AgentccWebhookEvent.all_objects.get(pk=bad_events[0].pk)
-        assert first.status == "pending"
-        assert first.attempts == 1
-        assert first.next_retry_at > timezone.now()
-        rest = AgentccWebhookEvent.all_objects.filter(
-            pk__in=[e.pk for e in bad_events[1:]]
+        tried = AgentccWebhookEvent.all_objects.filter(
+            pk__in=[e.pk for e in bad_events[:3]]
         )
-        assert list(rest.values_list("attempts", flat=True)) == [0, 0, 0]
-        assert set(rest.values_list("status", flat=True)) == {"pending"}
+        assert set(tried.values_list("status", flat=True)) == {"pending"}
+        assert set(tried.values_list("attempts", flat=True)) == {1}
+        assert all(
+            t > timezone.now() for t in tried.values_list("next_retry_at", flat=True)
+        )
+        last = AgentccWebhookEvent.all_objects.get(pk=bad_events[3].pk)
+        assert (last.status, last.attempts) == ("pending", 0)
+        # Its next run waits; the healthy webhook is not paused.
+        bad.refresh_from_db()
+        good.refresh_from_db()
+        assert bad.next_delivery_at > timezone.now() + timedelta(seconds=30)
+        assert good.next_delivery_at is None
         assert {e.pk for e in good_events}  # created
 
     @patch(URL_CHECK)
@@ -406,7 +413,7 @@ class TestDispatcher:
         ) as start:
             result = dispatch_webhook_deliveries_activity._original_func()
 
-        assert result == {"webhooks": 2, "started": 2}
+        assert result == {"webhooks": 2, "started": 2, "running": 0, "waiting": 0}
         calls = {c.kwargs["args"][0]: c.kwargs for c in start.call_args_list}
         assert set(calls) == {str(due_a.pk), str(due_b.pk)}
         for webhook_id, kwargs in calls.items():
@@ -426,7 +433,12 @@ class TestDispatcher:
         ):
             result = dispatch_webhook_deliveries_activity._original_func()
 
-        assert result == {"webhooks": 2, "started": 1}
+        assert result["started"] == 1
+        # The one that failed to start does not keep a lease.
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert first.delivery_lease_until is None
+        assert second.delivery_lease_until > timezone.now()
 
 
 def test_delivery_schedules_are_registered():
@@ -504,7 +516,7 @@ class TestLateResults:
         url = "https://hooks.example.com/ok"
         webhook = _webhook(user.organization, f"late-{meanwhile}", url)
         (event,) = _events(webhook, 1)
-        _events(webhook, 1, start_minutes_ago=1)  # a newer one for the cap to keep
+        (newer,) = _events(webhook, 1, start_minutes_ago=1)
 
         def post(*args, **kwargs):
             # While this POST is in flight:
@@ -525,7 +537,14 @@ class TestLateResults:
         deliver_webhook(webhook.pk, event_ids=[event.pk])
 
         event.refresh_from_db()
-        assert event.status == ("cancelled" if meanwhile == "delete" else "dropped")
+        if meanwhile == "delete":
+            assert event.status == "cancelled"
+        else:
+            # The cap does not drop an event being sent: it drops the oldest
+            # one not in flight, and the one sent is recorded delivered.
+            assert event.status == "delivered"
+            newer.refresh_from_db()
+            assert newer.status == "dropped"
 
     @patch(URL_CHECK)
     @patch(SESSION)
@@ -545,3 +564,279 @@ class TestLateResults:
         assert http.post.call_args.kwargs["headers"]["X-Agentcc-Event-Id"] == str(
             event.pk
         )
+
+
+def _flaky_session(url, fail_every):
+    """Every ``fail_every``-th POST answers 502; the rest 200."""
+    http = MagicMock()
+    calls = {"n": 0}
+
+    def post(posted_url, data=None, headers=None, timeout=None):
+        calls["n"] += 1
+        return _response(502 if calls["n"] % fail_every == 0 else 200)
+
+    http.post.side_effect = post
+    return http
+
+
+@pytest.mark.integration
+class TestARunGoesOnPastAFailure:
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_a_receiver_failing_now_and_then_gets_its_events_at_full_speed(
+        self, mock_session, _mock_url_check, organization
+    ):
+        url = "https://hooks.example.com/flaky"
+        http = _flaky_session(url, fail_every=10)
+        mock_session.return_value = http
+        webhook = _webhook(organization, "flaky", url)
+        _events(webhook, 200)
+
+        result = deliver_webhook(webhook.pk)
+
+        # One run, not one event per tick: every event got its attempt, and
+        # only the 1-in-10 that failed wait for their backoff.
+        assert result == {"delivered": 180, "failed": 20, "retired": 0}
+        statuses = AgentccWebhookEvent.all_objects.filter(webhook=webhook)
+        assert statuses.filter(status="delivered").count() == 180
+        failed = statuses.filter(status="pending", attempts=1)
+        assert failed.count() == 20
+        webhook.refresh_from_db()
+        assert webhook.next_delivery_at is None  # not paused
+        assert webhook.is_active is True
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_three_failures_in_a_row_stop_the_run_and_pause_the_webhook(
+        self, mock_session, _mock_url_check, organization
+    ):
+        url = "https://hooks.example.com/500"
+        http = _session({url: 500})
+        mock_session.return_value = http
+        webhook = _webhook(organization, "down", url)
+        _events(webhook, 10)
+
+        before = timezone.now()
+        result = deliver_webhook(webhook.pk)
+
+        assert result["failed"] == 3
+        assert http.post.call_count == 3
+        webhook.refresh_from_db()
+        # 10 s for the first failure of the streak, doubling: 40 s after 3.
+        pause = webhook.next_delivery_at - before
+        assert timedelta(seconds=39) < pause < timedelta(seconds=42)
+        assert webhook.delivery_lease_until is None
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_no_answer_from_the_receiver_stops_the_run_at_once(
+        self, mock_session, _mock_url_check, organization
+    ):
+        import requests
+
+        url = "https://hooks.example.com/hangs"
+        http = MagicMock()
+        http.post.side_effect = requests.Timeout("read timed out")
+        mock_session.return_value = http
+        webhook = _webhook(organization, "hangs", url)
+        _events(webhook, 10)
+
+        before = timezone.now()
+        result = deliver_webhook(webhook.pk)
+
+        # A hanging receiver holds a worker slot for one read timeout per
+        # run, and its next run waits.
+        assert result["failed"] == 1
+        assert http.post.call_count == 1
+        webhook.refresh_from_db()
+        pause = webhook.next_delivery_at - before
+        assert timedelta(seconds=9) < pause < timedelta(seconds=12)
+
+    def test_the_pause_doubles_to_at_most_five_minutes(self):
+        from agentcc.services.webhook_delivery import _pause
+
+        assert [_pause(n).total_seconds() for n in (0, 1, 2, 3, 4, 5, 6, 50)] == [
+            10,
+            10,
+            20,
+            40,
+            80,
+            160,
+            300,
+            300,
+        ]
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_a_webhook_turned_off_mid_run_gets_no_more_posts(
+        self, mock_session, _mock_url_check, organization
+    ):
+        url = "https://hooks.example.com/ok"
+        webhook = _webhook(organization, "turned-off", url)
+        _events(webhook, 5)
+
+        def post(*args, **kwargs):
+            AgentccWebhook.all_objects.filter(pk=webhook.pk).update(is_active=False)
+            return _response(200)
+
+        http = MagicMock()
+        http.post.side_effect = post
+        mock_session.return_value = http
+
+        deliver_webhook(webhook.pk, page_size=1)
+
+        assert http.post.call_count == 1
+        assert (
+            AgentccWebhookEvent.all_objects.filter(
+                webhook=webhook, status="pending"
+            ).count()
+            == 4
+        )
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_a_url_edited_mid_run_is_used_from_the_next_page(
+        self, mock_session, _mock_url_check, organization
+    ):
+        old_url, new_url = "https://old.example.com/x", "https://new.example.com/x"
+        webhook = _webhook(organization, "moved", old_url)
+        _events(webhook, 3)
+
+        def post(*args, **kwargs):
+            AgentccWebhook.all_objects.filter(pk=webhook.pk).update(url=new_url)
+            return _response(200)
+
+        http = MagicMock()
+        http.post.side_effect = post
+        mock_session.return_value = http
+
+        deliver_webhook(webhook.pk, page_size=1)
+
+        assert [c.args[0] for c in http.post.call_args_list] == [
+            old_url,
+            new_url,
+            new_url,
+        ]
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_an_event_past_the_maximum_age_is_not_sent(
+        self, mock_session, _mock_url_check, organization
+    ):
+        from django.test import override_settings
+
+        url = "https://hooks.example.com/ok"
+        http = _session({url: 200})
+        mock_session.return_value = http
+        webhook = _webhook(organization, "aged", url)
+        (old,) = _events(webhook, 1, start_minutes_ago=120)
+        (fresh,) = _events(webhook, 1, start_minutes_ago=10)
+
+        with override_settings(AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS=1):
+            result = deliver_webhook(webhook.pk)
+
+        assert result["delivered"] == 1
+        assert AgentccWebhookEvent.all_objects.get(pk=old.pk).status == "pending"
+        assert AgentccWebhookEvent.all_objects.get(pk=fresh.pk).status == "delivered"
+
+
+@pytest.mark.integration
+class TestDeliveryConcurrencyCap:
+    def _dispatch(self):
+        with patch.object(
+            webhook_delivery.deliver_webhook_activity, "apply_async"
+        ) as start:
+            result = dispatch_webhook_deliveries_activity._original_func()
+        return result, [c.kwargs["args"][0] for c in start.call_args_list]
+
+    def test_no_more_runs_than_the_cap_are_in_flight(self, organization):
+        from django.test import override_settings
+
+        hooks = [
+            _webhook(organization, f"hook-{i}", f"https://h{i}.example.com/x")
+            for i in range(5)
+        ]
+        for i, hook in enumerate(hooks):
+            _events(hook, 2, start_minutes_ago=60 - i)
+
+        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=2):
+            first, started = self._dispatch()
+            # Oldest waiting events first.
+            assert started == [str(hooks[0].pk), str(hooks[1].pk)]
+            assert first == {"webhooks": 5, "started": 2, "running": 0, "waiting": 3}
+
+            # Both runs still going: the next tick starts none.
+            second, started = self._dispatch()
+            assert started == []
+            assert second == {"webhooks": 3, "started": 0, "running": 2, "waiting": 3}
+
+            # One run ends and frees its slot.
+            with patch(SESSION) as mock_session, patch(URL_CHECK):
+                mock_session.return_value = _session({"https://h0.example.com/x": 200})
+                deliver_webhook(hooks[0].pk)
+            third, started = self._dispatch()
+            assert started == [str(hooks[2].pk)]
+            assert third["running"] == 1
+
+    def test_webhooks_that_are_not_failing_go_first(self, organization):
+        from django.test import override_settings
+
+        failing = _webhook(
+            organization, "failing", "https://a.example.com/x", consecutive_failures=4
+        )
+        healthy = _webhook(organization, "healthy", "https://b.example.com/x")
+        _events(failing, 1, start_minutes_ago=120)
+        _events(healthy, 1, start_minutes_ago=5)
+
+        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=1):
+            _, started = self._dispatch()
+
+        assert started == [str(healthy.pk)]
+
+    def test_paused_inactive_and_deleted_webhooks_get_no_run(self, organization):
+        paused = _webhook(
+            organization,
+            "paused",
+            "https://a.example.com/x",
+            next_delivery_at=timezone.now() + timedelta(minutes=2),
+        )
+        inactive = _webhook(
+            organization, "inactive", "https://b.example.com/x", is_active=False
+        )
+        deleted = _webhook(organization, "deleted", "https://c.example.com/x")
+        ready = _webhook(organization, "ready", "https://d.example.com/x")
+        for hook in (paused, inactive, deleted, ready):
+            _events(hook, 1)
+        AgentccWebhook.all_objects.filter(pk=deleted.pk).update(deleted=True)
+
+        result, started = self._dispatch()
+
+        assert started == [str(ready.pk)]
+        assert result["webhooks"] == 1
+
+    def test_a_run_holds_its_lease_until_it_ends(self, organization):
+        url = "https://hooks.example.com/ok"
+        webhook = _webhook(organization, "leased", url)
+        _events(webhook, 1)
+        seen = []
+
+        def post(*args, **kwargs):
+            seen.append(
+                AgentccWebhook.all_objects.get(pk=webhook.pk).delivery_lease_until
+            )
+            return _response(200)
+
+        http = MagicMock()
+        http.post.side_effect = post
+        with patch(SESSION, return_value=http), patch(URL_CHECK):
+            webhook_delivery.deliver_webhook_activity._original_func(str(webhook.pk))
+
+        assert seen[0] > timezone.now()
+        webhook.refresh_from_db()
+        assert webhook.delivery_lease_until is None
+
+    def test_the_cap_is_a_setting(self):
+        from django.conf import settings
+
+        assert settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES == 3
+        assert settings.AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES == 60

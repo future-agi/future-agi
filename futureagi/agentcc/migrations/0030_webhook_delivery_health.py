@@ -1,7 +1,7 @@
 # Webhook delivery health and the terminal event statuses.
 #
-# Every new column has a db_default, so pods still on the old code keep
-# inserting webhooks while the deploy rolls out. The status change only adds
+# Every new column has a db_default or is nullable, so pods still on the old
+# code keep inserting webhooks while the deploy rolls out. The status change only adds
 # choices; the column is unchanged. The indexes are built concurrently in 0031.
 
 from django.db import migrations, models
@@ -36,6 +36,21 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="agentccwebhook",
             name="last_dropped_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="agentccwebhook",
+            name="failing_since",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="agentccwebhook",
+            name="delivery_lease_until",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="agentccwebhook",
+            name="next_delivery_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AlterField(
