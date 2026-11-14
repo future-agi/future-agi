@@ -282,17 +282,17 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         pr: 1.25,
         borderRadius: "8px",
         border: "1px solid",
-        borderColor: selected ? "text.primary" : "divider",
+        borderColor: selected ? "border.selected" : "divider",
         bgcolor: selected ? "action.selected" : "background.paper",
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
         gap: 1,
         transition: "border-color 120ms, background-color 120ms",
-        "&:hover": selected ? undefined : { borderColor: "text.disabled" },
+        "&:hover": selected ? undefined : { borderColor: "border.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 2,
         },
       }}
@@ -338,6 +338,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         <Stack spacing={0.75}>
           <Stack direction="row" spacing={0.75} alignItems="center">
             <StatusBadge
+              variant="dot"
               status={run.status === "pending" ? "queued" : "running"}
               label={
                 run.status === "pending"
@@ -363,7 +364,8 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
               (stageIndex(run.stage) / (STAGES.length - 1)) * 100,
             )}
             aria-label="Run progress"
-            sx={{ height: 3, borderRadius: 2 }}
+            color="secondary"
+            sx={{ height: 4, borderRadius: "4px", bgcolor: "background.muted" }}
           />
         </Stack>
       ) : run?.status === "failed" ? (
@@ -462,7 +464,7 @@ function RailTemplates({ onNew }) {
             "&:hover": { bgcolor: "action.hover" },
             "&:focus-visible": {
               outline: "2px solid",
-              outlineColor: "primary.main",
+              outlineColor: "border.focus",
             },
           }}
         >

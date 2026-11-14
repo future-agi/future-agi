@@ -419,7 +419,7 @@ const svgSx = (theme, drag) => ({
     "& path.part": { transition: "none" },
   },
   "&:focus-visible": {
-    outline: `2px solid ${theme.palette.primary.main}`,
+    outline: `2px solid ${theme.palette.border.focus}`,
     outlineOffset: 2,
     borderRadius: "4px",
   },
@@ -1478,7 +1478,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         py: 0.25,
         ml: -0.75,
         border: "1px solid",
-        borderColor: active ? "text.primary" : "transparent",
+        borderColor: active ? "border.selected" : "transparent",
         borderRadius: 1,
         bgcolor: "transparent",
         font: "inherit",
@@ -1486,7 +1486,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         opacity: faded ? 0.5 : 1,
         "&:hover": { bgcolor: "action.hover" },
         "&:focus-visible": {
-          outline: `2px solid ${theme.palette.primary.main}`,
+          outline: `2px solid ${theme.palette.border.focus}`,
         },
       }}
     >

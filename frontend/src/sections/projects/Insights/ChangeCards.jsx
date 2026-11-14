@@ -51,10 +51,10 @@ function ChangeCard({ card }) {
         textAlign: "left",
         color: strong ? "text.primary" : "text.secondary",
         cursor: clickable ? "pointer" : "default",
-        "&:hover": clickable ? { borderColor: "text.disabled" } : undefined,
+        "&:hover": clickable ? { borderColor: "border.hover" } : undefined,
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 1,
         },
       }}

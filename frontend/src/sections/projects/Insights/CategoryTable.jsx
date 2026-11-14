@@ -339,7 +339,7 @@ function CategoryRow({
         "&:hover .open-hint": { opacity: 1 },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: -2,
         },
       }}

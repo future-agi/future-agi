@@ -78,10 +78,10 @@ function Chips({ items, onPick, disabled, line }) {
             typography: "s1",
             cursor: disabled ? "default" : "pointer",
             opacity: disabled ? 0.6 : 1,
-            "&:hover": disabled ? undefined : { borderColor: "text.disabled" },
+            "&:hover": disabled ? undefined : { borderColor: "border.hover" },
             "&:focus-visible": {
               outline: "2px solid",
-              outlineColor: "primary.main",
+              outlineColor: "border.focus",
               outlineOffset: 1,
             },
           }}
@@ -121,7 +121,8 @@ function Thinking({ startedAt, reading, hint }) {
       </Stack>
       <LinearProgress
         aria-label="Answering"
-        sx={{ height: 2, borderRadius: 1 }}
+        color="secondary"
+        sx={{ height: 4, borderRadius: "4px", bgcolor: "background.muted" }}
       />
       {hint && (
         <Typography variant="caption" color="text.secondary">
@@ -526,7 +527,7 @@ export default function AskPanel({ run, lens }) {
           borderColor: "divider",
           borderRadius: "8px",
           bgcolor: "background.paper",
-          "&:focus-within": { borderColor: "primary.main" },
+          "&:focus-within": { borderColor: "border.focus" },
         }}
       >
         {/* Starting questions live inside the composer, on one line. */}

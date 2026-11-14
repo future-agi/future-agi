@@ -536,7 +536,7 @@ export default function AskPatterns({
                     minWidth: 0,
                     px: 1,
                     border: "1px solid",
-                    borderColor: active ? "text.primary" : "divider",
+                    borderColor: active ? "border.selected" : "divider",
                     color: active ? "text.primary" : "text.secondary",
                   }}
                 >

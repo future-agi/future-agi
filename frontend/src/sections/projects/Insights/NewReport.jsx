@@ -244,7 +244,7 @@ function LensPicker({ value, onChange, disabled }) {
               color: "text.primary",
               bgcolor: active ? "action.selected" : "background.paper",
               border: "1px solid",
-              borderColor: active ? "text.primary" : "divider",
+              borderColor: active ? "border.selected" : "divider",
               borderRadius: "8px",
               cursor: disabled ? "default" : "pointer",
               display: "flex",
@@ -252,10 +252,10 @@ function LensPicker({ value, onChange, disabled }) {
               gap: 0.5,
               "&:hover": disabled
                 ? undefined
-                : { borderColor: active ? "text.primary" : "text.disabled" },
+                : { borderColor: active ? "border.selected" : "border.hover" },
               "&:focus-visible": {
                 outline: "2px solid",
-                outlineColor: "primary.main",
+                outlineColor: "border.focus",
                 outlineOffset: 2,
               },
             }}
@@ -795,7 +795,9 @@ export default function NewReport({
               severity="error"
               action={
                 <Button
+                  variant="outlined"
                   color="inherit"
+                  size="small"
                   onClick={() => (fixed ? handedCost : count).refetch()}
                 >
                   Retry cost check
@@ -968,7 +970,10 @@ export default function NewReport({
           </Alert>
         )}
         {previewState.status === "busy" && (
-          <LinearProgress sx={{ borderRadius: 1 }} />
+          <LinearProgress
+            color="secondary"
+            sx={{ height: 4, borderRadius: "4px", bgcolor: "background.muted" }}
+          />
         )}
         {previewState.status === "done" && (
           <Stack spacing={1}>

@@ -206,7 +206,7 @@ export function CitationChip({ n, unitId }) {
           px: 0.5,
           mx: 0.25,
           border: "1px solid",
-          borderColor: anchor ? "text.primary" : "divider",
+          borderColor: anchor ? "border.selected" : "divider",
           borderRadius: "4px",
           bgcolor: anchor ? "action.selected" : "background.neutral",
           color: anchor ? "text.primary" : "text.secondary",
@@ -218,10 +218,10 @@ export function CitationChip({ n, unitId }) {
           verticalAlign: "1px",
           cursor: "pointer",
           fontVariantNumeric: "tabular-nums",
-          "&:hover": { color: "text.primary", borderColor: "text.disabled" },
+          "&:hover": { color: "text.primary", borderColor: "border.hover" },
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 1,
           },
         }}
@@ -316,10 +316,10 @@ export function MoreRefs({ refs }) {
         lineHeight: 1,
         verticalAlign: "1px",
         cursor: "pointer",
-        "&:hover": { color: "text.primary", borderColor: "text.disabled" },
+        "&:hover": { color: "text.primary", borderColor: "border.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 1,
         },
       }}

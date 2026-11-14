@@ -110,7 +110,7 @@ function TreeItem({
         "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: -2,
         },
       }}
@@ -689,7 +689,7 @@ function SummariesTable({ units, onOpen }) {
               sx={{
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                   outlineOffset: -2,
                 },
               }}
@@ -808,7 +808,7 @@ function ItemsTable({ units, unit, onOpen }) {
                 "&:hover .go": { color: "text.primary" },
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                   outlineOffset: -2,
                 },
                 "& td": { fontVariantNumeric: "tabular-nums" },

@@ -121,7 +121,7 @@ function InlineName({ config }) {
             ml: -0.75,
             borderRadius: 0.75,
             outline: "1px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
           }}
         />
         {saving.state.status === "error" && (
@@ -263,7 +263,7 @@ function ReportHeader({
                 },
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                 },
               }}
             >
@@ -471,13 +471,20 @@ function FailedRun({ run, lens, onRerun }) {
   let action = null;
   if (next.rerun)
     action = (
-      <Button color="inherit" size="small" onClick={onRerun} disabled={!canRun}>
+      <Button
+        variant="outlined"
+        color="inherit"
+        size="small"
+        onClick={onRerun}
+        disabled={!canRun}
+      >
         {next.rerun}
       </Button>
     );
   else if (next.license)
     action = (
       <Button
+        variant="outlined"
         color="inherit"
         size="small"
         sx={{ whiteSpace: "nowrap" }}
@@ -635,6 +642,7 @@ export default function ReportPage({
         severity="info"
         action={
           <Button
+            variant="outlined"
             color="inherit"
             size="small"
             disabled={!canRun}
@@ -732,6 +740,7 @@ export default function ReportPage({
                   sx={{ mt: 2 }}
                   action={
                     <Button
+                      variant="outlined"
                       color="inherit"
                       size="small"
                       onClick={() => onSelectRun(latest.id)}

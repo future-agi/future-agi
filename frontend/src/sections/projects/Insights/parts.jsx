@@ -191,10 +191,10 @@ export function CategoryLink({ category, color, onClick, maxWidth = 260 }) {
           font: "inherit",
           typography: "s1",
           cursor: "pointer",
-          "&:hover": { borderColor: "text.disabled" },
+          "&:hover": { borderColor: "border.hover" },
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 1,
           },
         }}

@@ -81,7 +81,7 @@ export default function EvaluateMenu({
           "& .MuiButton-endIcon": { ml: 0.5 },
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 1,
           },
         }}

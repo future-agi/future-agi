@@ -260,7 +260,9 @@ function RerunForm({
               severity="error"
               action={
                 <Button
+                  variant="outlined"
                   color="inherit"
+                  size="small"
                   onClick={() => (sameRows ? sameCost : count).refetch()}
                 >
                   Retry cost check

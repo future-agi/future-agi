@@ -325,7 +325,12 @@ export default function EditDrawer({
                 <Alert
                   severity="success"
                   action={
-                    <Button color="inherit" size="small" onClick={onRunNow}>
+                    <Button
+                      variant="outlined"
+                      color="inherit"
+                      size="small"
+                      onClick={onRunNow}
+                    >
                       Run now
                     </Button>
                   }

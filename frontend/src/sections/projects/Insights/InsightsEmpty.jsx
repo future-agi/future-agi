@@ -91,11 +91,11 @@ export default function InsightsEmpty({ onNew }) {
               display: "flex",
               flexDirection: "column",
               gap: 1,
-              "&:hover": { borderColor: "text.disabled" },
+              "&:hover": { borderColor: "border.hover" },
               "&:hover .go": { color: "text.primary" },
               "&:focus-visible": {
                 outline: "2px solid",
-                outlineColor: "primary.main",
+                outlineColor: "border.focus",
                 outlineOffset: 2,
               },
             }}

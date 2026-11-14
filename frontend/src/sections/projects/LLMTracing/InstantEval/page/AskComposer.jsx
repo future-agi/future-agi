@@ -88,7 +88,7 @@ function ChoiceCard({
         flex: 1,
         minWidth: 240,
         p: 1.5,
-        borderColor: selected ? "text.primary" : "divider",
+        borderColor: selected ? "border.selected" : "divider",
       }}
     >
       <Box
@@ -112,7 +112,7 @@ function ChoiceCard({
           opacity: disabled ? 0.55 : 1,
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 4,
           },
         }}
@@ -991,7 +991,13 @@ export default function AskComposer({
           severity="info"
           action={
             jev.settingsPath && (
-              <Button size="small" component={RouterLink} to={jev.settingsPath}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                component={RouterLink}
+                to={jev.settingsPath}
+              >
                 Open AI Providers
               </Button>
             )
@@ -1144,7 +1150,12 @@ export default function AskComposer({
           icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
           action={
             <Stack direction="row" spacing={1}>
-              <Button size="small" onClick={() => setConfirming(false)}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                onClick={() => setConfirming(false)}
+              >
                 Back
               </Button>
               <Button
@@ -1217,7 +1228,7 @@ export default function AskComposer({
           sx={{
             "&:focus-visible": {
               outline: "2px solid",
-              outlineColor: "primary.main",
+              outlineColor: "border.focus",
               outlineOffset: 2,
             },
           }}

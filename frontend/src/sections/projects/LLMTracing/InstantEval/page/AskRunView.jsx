@@ -208,15 +208,15 @@ function StatusLine({ run, unit, creating }) {
         sx={{ fontVariantNumeric: "tabular-nums" }}
         label={
           <>
-            {/* The line reads as before: primary text, red when the run
-                answered nothing. */}
+            {/* A status label is fg.secondary beside its dot (design
+                system · status dot); red when the run answered nothing. */}
             <Box
               component="span"
               sx={{
                 color:
                   run.status === "failed" || nothing
                     ? "status.danger.fg"
-                    : "text.primary",
+                    : "text.secondary",
               }}
             >
               {text}
@@ -237,9 +237,17 @@ function StatusLine({ run, unit, creating }) {
               : "determinate"
           }
           value={progress}
-          color={PAUSED_STATES.has(run.status) ? "inherit" : "primary"}
+          color={PAUSED_STATES.has(run.status) ? "inherit" : "secondary"}
           aria-label="Answers so far"
-          sx={{ height: 4, borderRadius: 2 }}
+          sx={{
+            height: 4,
+            borderRadius: "4px",
+            bgcolor: "background.muted",
+            // A paused run's bar takes its status dot's fill (paused: warning).
+            ...(PAUSED_STATES.has(run.status) && {
+              color: "status.warning.solid",
+            }),
+          }}
         />
       )}
       {run.createdBy && (
@@ -1293,6 +1301,8 @@ export default function AskRunView({
                 <Button
                   key={item.configId}
                   size="small"
+                  variant="outlined"
+                  color="inherit"
                   component={RouterLink}
                   to={`/dashboard/evaluations/${item.templateId}`}
                 >

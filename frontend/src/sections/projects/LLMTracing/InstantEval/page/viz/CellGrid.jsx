@@ -212,7 +212,7 @@ export default function CellGrid({
           cursor: "pointer",
           outline: "none",
           "&:focus-visible": {
-            outline: `2px solid ${theme.palette.primary.main}`,
+            outline: `2px solid ${theme.palette.border.focus}`,
             outlineOffset: 2,
             borderRadius: "4px",
           },

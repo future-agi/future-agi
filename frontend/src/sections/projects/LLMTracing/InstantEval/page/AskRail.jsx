@@ -229,14 +229,14 @@ function RunCard({
         p: 1.5,
         borderRadius: "8px",
         border: "1px solid",
-        borderColor: selected ? "text.primary" : "divider",
+        borderColor: selected ? "border.selected" : "divider",
         bgcolor: selected ? "action.selected" : "background.paper",
         cursor: "pointer",
         transition: "border-color 120ms",
-        "&:hover": selected ? undefined : { borderColor: "text.disabled" },
+        "&:hover": selected ? undefined : { borderColor: "border.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 2,
         },
       }}

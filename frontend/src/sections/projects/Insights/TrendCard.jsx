@@ -337,7 +337,7 @@ function TrendLegend({ items, onCategory }) {
                   : undefined,
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                 },
               }}
             >
