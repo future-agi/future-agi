@@ -150,15 +150,16 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext, readable Realt
 	return bound, nil
 }
 
-// bindRealtimeKeyPolicies adds the checks of the key's Enforce policies that
-// apply to the session's key, after the org checks, in the order chat runs
-// them, and keeps each check's action.
+// bindRealtimeKeyPolicies adds the blocking checks of the key's Enforce
+// policies that apply to the session's key, after the org checks, in the
+// order chat runs them.
 //
-// Two kinds of key-policy check are left out instead of changing the session:
-//   - Monitor policies. Any bound rule installs the relay's hold/refuse filter,
-//     which holds text until a unit completes and closes the session on frames
-//     it cannot parse. A Monitor policy must never change traffic, so it does
-//     not run on speech relays at all.
+// Three kinds of key-policy check are left out instead of changing the session:
+//   - Monitor policies, and an Enforce policy's warn and log checks. Any bound
+//     rule installs the relay's hold/refuse filter, which holds text until a
+//     unit completes and closes the session on frames it cannot parse, while
+//     a non-blocking check could only write a log line. So only block checks
+//     run on speech relays.
 //   - Checks for a direction the session carries no readable text in (a
 //     pre-stage check on transcription, a post-stage check on synthesis).
 //     Org checks refuse such sessions; a key policy is skipped, so enforcing a
@@ -189,12 +190,14 @@ func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *mod
 				continue
 			}
 			action := parseAction(check.Action)
+			if action != ActionBlock {
+				// On a relay a warn or log check could only emit a log line,
+				// yet any bound rule installs the hold/refuse filter.
+				continue
+			}
 			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
 			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
-				if action == ActionBlock {
-					return realtimeUnsupported("configured guardrail implementation or stage is unavailable")
-				}
-				continue
+				return realtimeUnsupported("configured guardrail implementation or stage is unavailable")
 			}
 			if !readable[g.Stage()] {
 				continue

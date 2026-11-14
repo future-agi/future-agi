@@ -97,3 +97,44 @@ func TestSpeechEnforceKeyPolicyBlocksReadableDirection(t *testing.T) {
 		t.Fatalf("blocked text reached the vendor: %v", f.received)
 	}
 }
+
+// An Enforce key policy's warn and log checks do not run on speech relays:
+// they could only write a log line there, yet any bound rule installs the
+// hold/refuse filter. Interim transcripts stream and Speak text is not held.
+func TestSpeechEnforceKeyPolicyNonBlockingChecksDoNotFilter(t *testing.T) {
+	t.Run("warn post check on deepgram listen forwards interim transcripts", func(t *testing.T) {
+		interim := `{"type":"Results","is_final":false,"channel":{"alternatives":[{"transcript":"prohibited interim"}]}}`
+		f := newSpeechFixture(t, "deepgram", "post", "key-policy-enforce", "warn", []string{interim})
+		client, _, err := f.dial(t, "/deepgram/v1/listen?encoding=linear16&sample_rate=16000", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = client.Close() }()
+		if err := client.WriteMessage(websocket.BinaryMessage, []byte{0, 0}); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, data, err := client.ReadMessage(); err != nil || string(data) != interim {
+			t.Fatalf("interim transcript under a warn key check: data=%s err=%v", data, err)
+		}
+	})
+	t.Run("log pre check on deepgram speak does not hold Speak text", func(t *testing.T) {
+		f := newSpeechFixture(t, "deepgram", "pre", "key-policy-enforce", "log", nil)
+		client, _, err := f.dial(t, "/deepgram/v1/speak?model=aura-2-thalia-en", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = client.Close() }()
+		if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"Speak","text":"prohibited"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, data, err := client.ReadMessage(); err != nil || string(data) != `{"type":"ack"}` {
+			t.Fatalf("Speak under a log key check must stream without Flush: data=%s err=%v", data, err)
+		}
+	})
+}

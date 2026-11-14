@@ -514,9 +514,10 @@ HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection
 documented vendor speech route.
 
 Dashboard key policies (Guardrails → Policies) apply to speech sessions opened with
-one of their keys, with two differences from chat. Monitor (log only) policies do
-not run on speech relays, so they never hold, buffer or refuse speech traffic. An
-Enforce policy's checks run only in the direction the session reads as text: its
+one of their keys, with two differences from chat. Only an Enforce policy's Block
+checks run on speech relays: Monitor (log only) policies and Warn or Log checks would
+only write a log line there, so they never hold, buffer or refuse speech traffic. An
+Enforce policy's Block checks run only in the direction the session reads as text: its
 pre-stage checks on synthesis input, its post-stage checks on transcripts. A check
 for the other direction is skipped instead of refusing the session, so enforcing a
 pre-stage check (secret detection, PII, injection, blocklist and the like) on a key

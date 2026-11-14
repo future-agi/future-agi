@@ -80,8 +80,15 @@ func (r *StreamCheckResult) StoreBlock(rc *models.RequestContext) {
 	before := len(rc.GuardrailResults)
 	if r.pipeline != nil {
 		storeGuardrailResults(rc, r.pipeline)
-		if len(r.pipeline.Triggered) > 0 {
-			name = r.pipeline.Triggered[0].Name
+		// The engine records each triggered warn/log rule and stops at the
+		// first block, so the blocking rule is the last block entry.
+		for _, tg := range r.pipeline.Triggered {
+			if tg.Action == ActionBlock {
+				name = tg.Name
+			}
+		}
+		if name == "streaming" && len(r.pipeline.Triggered) > 0 {
+			name = r.pipeline.Triggered[len(r.pipeline.Triggered)-1].Name
 		}
 	}
 	if len(rc.GuardrailResults) == before {
