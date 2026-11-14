@@ -149,7 +149,9 @@ export function useValidateScenarios(jobId) {
 export function useScenarioValidation(jobId, validationJobId) {
   const queryClient = useQueryClient();
   return useQuery({
-    queryKey: [...scenariosListKey(jobId), "validation", validationJobId],
+    // Outside the list's key: the list is invalidated when the validation ends, and a key under it
+    // refetched this query, which invalidated the list again, forever.
+    queryKey: ["harness-scenario-validation", jobId, validationJobId],
     queryFn: async () => {
       const status = await getHarnessScenarioValidation(jobId, validationJobId);
       if (status.state !== "validating") {
