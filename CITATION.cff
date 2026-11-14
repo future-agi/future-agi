@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - name: "Future AGI"
+    website: "https://futureagi.com"
+title: "Future AGI"
+# Keep these fields aligned with the release manifest and changelog.
+# release-please refreshes both when preparing a release; do not pin them manually.
+version: 1.56.1 # x-release-please-version
+date-released: 2026-10-28 # x-release-please-date
+# See LICENSE and LICENSE-EE for the repository's dual licensing terms.
+repository-code: "https://github.com/future-agi/future-agi"
+keywords:
+  - "AI agents"
+  - "self-improving agents"
+  - "agent evaluation"
+  - "agent simulation"
+  - "LLM observability"
+  - "OpenTelemetry"
+  - "guardrails"
+  - "LLM gateway"
+abstract: >-
+  The infrastructure for self-improving AI agents. Future AGI turns an agent's
+  traces, evaluations and simulations into improvements to the agent, and is open
+  source and self-hostable.

@@ -53,6 +53,10 @@
         {
           "type": "generic",
           "path": "deploy/helm/futureagi/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "CITATION.cff"
         }
       ]
     }
