@@ -387,41 +387,45 @@ def build_run_dashboard(
     comparison: dict | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
-    queryset = annotate_goal_outcome(queryset).annotate(
-        # Provider-reported only: the platform does not compute sentiment (v1 D1).
-        dashboard_sentiment=Lower(
-            Coalesce(
-                _json_text("analysis_data", "user_sentiment"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "user_sentiment",
-                ),
-            )
-        ),
-        dashboard_success_raw=Lower(
-            Coalesce(
-                _json_text("analysis_data", "call_successful"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "call_successful",
-                ),
-                _json_text("analysis_data", "successEvaluation"),
-            )
-        ),
-    ).annotate(
-        dashboard_provider_success=Case(
-            When(
-                dashboard_success_raw__in=["true", "false"],
-                then=F("dashboard_success_raw"),
+    queryset = (
+        annotate_goal_outcome(queryset)
+        .annotate(
+            # Provider-reported only: the platform does not compute sentiment (v1 D1).
+            dashboard_sentiment=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "user_sentiment"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "user_sentiment",
+                    ),
+                )
             ),
-            default=None,
-            output_field=TextField(),
-        ),
-        dashboard_csat=F("result_csat"),
+            dashboard_success_raw=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "call_successful"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "call_successful",
+                    ),
+                    _json_text("analysis_data", "successEvaluation"),
+                )
+            ),
+        )
+        .annotate(
+            dashboard_provider_success=Case(
+                When(
+                    dashboard_success_raw__in=["true", "false"],
+                    then=F("dashboard_success_raw"),
+                ),
+                default=None,
+                output_field=TextField(),
+            ),
+            dashboard_csat=F("result_csat"),
+        )
     )
     voice = queryset.filter(simulation_call_type="voice")
     # A run is one modality in practice; a mixed run counts as voice.

@@ -278,7 +278,9 @@ def test_failed_resync_dispatch_keeps_the_probe_result_and_releases_the_claim(
 
 @pytest.mark.unit
 @pytest.mark.parametrize("operation", ["get", "add", "delete"])
-def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, operation):
+def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(
+    monkeypatch, operation
+):
     """TH-3947 FX1-1: optional re-sync cache failures cannot invalidate a probe."""
     completed = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
     clock = {"now": completed}
@@ -307,7 +309,8 @@ def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, o
     assert response.status_code == 200
     assert payload["result"]["status"] == "healthy"
     assert (
-        datetime.datetime.fromisoformat(payload["result"]["last_health_check"]) == completed
+        datetime.datetime.fromisoformat(payload["result"]["last_health_check"])
+        == completed
     )
     assert f"cache.{operation}" not in response.content.decode()
     getattr(cache, operation).assert_called_once()

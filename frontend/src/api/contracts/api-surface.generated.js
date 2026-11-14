@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1141,
+  endpointCount: 1142,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -640,6 +640,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/kb/supported-embedding-models": ["get"],
       "/model-hub/kb/supported_embedding_models/": ["get"],
       "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+      "/model-hub/kb/{id}/download-file/": ["get"],
       "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
       "/model-hub/knowledge-base/files/": ["delete", "post"],
       "/model-hub/knowledge-base/get/": ["get"],
@@ -2024,6 +2025,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/kb/supported-embedding-models": ["get"],
   "/model-hub/kb/supported_embedding_models/": ["get"],
   "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+  "/model-hub/kb/{id}/download-file/": ["get"],
   "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
   "/model-hub/knowledge-base/files/": ["delete", "post"],
   "/model-hub/knowledge-base/get/": ["get"],

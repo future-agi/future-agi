@@ -83,7 +83,9 @@ def test_time_aggregated_historical_agg_per_metric() -> None:
 
 
 def test_time_aggregated_historical_defaults_to_hour() -> None:
-    sql, _ = _builder().build_historical_stats_query(MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END)
+    sql, _ = _builder().build_historical_stats_query(
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
+    )
     assert "toStartOfHour(start_time) AS bucket_ts" in sql
 
 
@@ -110,7 +112,11 @@ def test_eval_stats_use_population_stddev() -> None:
 
 @pytest.mark.parametrize(
     "metric_type",
-    [MonitorMetricTypeChoices.TOKEN_USAGE, MonitorMetricTypeChoices.DAILY_TOKENS_SPENT, MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT],
+    [
+        MonitorMetricTypeChoices.TOKEN_USAGE,
+        MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+        MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+    ],
 )
 def test_token_value_null_on_empty_window(metric_type: str) -> None:
     sql, _ = _builder().build_metric_value_query(metric_type, START, END)

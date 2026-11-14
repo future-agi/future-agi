@@ -63,7 +63,10 @@ def test_user_aggregate_graph_replays_latest_physical_span_versions():
     sql, params = builder.build()
 
     _assert_latest_replay_precedes_live_filter(sql)
-    assert "physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id" in sql
+    assert (
+        "physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id"
+        in sql
+    )
     # Both the aggregate and trace-membership filter read the replayed CTE.
     assert sql.count("FROM latest_spans") >= 2
     assert "FROM latest_spans WHERE" in " ".join(sql.split())

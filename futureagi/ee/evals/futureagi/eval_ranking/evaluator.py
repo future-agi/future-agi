@@ -57,6 +57,7 @@ class RankingEvaluator(LLM):
             api_key=api_key,
         )
         self.kwargs = kwargs
+
     @property
     def name(self):
         return FutureAgiEvalTypeId.RANKING_EVAL.value
@@ -73,13 +74,16 @@ class RankingEvaluator(LLM):
     def required_args(self):
         return ["input", "context", "criteria"]
 
-    
-    def _strip_outer_quotes(self,text: str) -> str:
+    def _strip_outer_quotes(self, text: str) -> str:
         # Define all characters you'd consider as "quotes" for outer removal
         possible_quotes = ['"', "'", '""', '""']
 
         # Keep peeling off the outer quotes if they match
-        while len(text) >= 2 and (text[0] in possible_quotes) and (text[-1] in possible_quotes):
+        while (
+            len(text) >= 2
+            and (text[0] in possible_quotes)
+            and (text[-1] in possible_quotes)
+        ):
             text = text[1:-1].strip()
 
         return text
@@ -98,11 +102,9 @@ class RankingEvaluator(LLM):
                 # Remove outer quotes (including curly quotes) if present
                 context_str = self._strip_outer_quotes(context_str)
 
-
                 # Normalize any remaining single quotes or curly quotes to double quotes
                 context_str = context_str.replace("'", '"')
                 context_str = context_str.replace('"', '"').replace('"', '"')
-
 
                 try:
                     # Try parsing as JSON first
@@ -112,7 +114,9 @@ class RankingEvaluator(LLM):
                     elif isinstance(parsed_context, dict):
                         contexts = [str(v).strip() for v in parsed_context.values()]
                     else:
-                        raise ValueError("Context must be either a list or dictionary format string")
+                        raise ValueError(
+                            "Context must be either a list or dictionary format string"
+                        )
                 except json.JSONDecodeError:
                     # If JSON parsing fails, try manual parsing for common formats
                     if context_str.startswith("[") and context_str.endswith("]"):
@@ -136,14 +140,16 @@ class RankingEvaluator(LLM):
                                         quote_char = None
                                     else:
                                         current_item += char
-                                elif char == ',' and not in_quotes and bracket_count == 0:
-                                    contexts.append(current_item.strip().strip('"\'\\'))
+                                elif (
+                                    char == "," and not in_quotes and bracket_count == 0
+                                ):
+                                    contexts.append(current_item.strip().strip("\"'\\"))
                                     current_item = ""
                                 else:
                                     current_item += char
 
                             if current_item:
-                                contexts.append(current_item.strip().strip('"\'\\'))
+                                contexts.append(current_item.strip().strip("\"'\\"))
 
                             # Clean up the contexts
                             contexts = [c.strip() for c in contexts if c.strip()]
@@ -156,10 +162,12 @@ class RankingEvaluator(LLM):
                             contexts = []
                             for pair in pairs:
                                 if ":" in pair:
-                                    value = pair.split(":", 1)[1].strip().strip('"\'\\')
+                                    value = pair.split(":", 1)[1].strip().strip("\"'\\")
                                     contexts.append(value)
                     else:
-                        raise ValueError("Invalid context format. Must be either a list format string like \"['context1', 'context2']\" or a dictionary format string like \"{\'context1\': 'text1', \'context2\': 'text2'}\"")
+                        raise ValueError(
+                            "Invalid context format. Must be either a list format string like \"['context1', 'context2']\" or a dictionary format string like \"{'context1': 'text1', 'context2': 'text2'}\""
+                        )
             else:
                 # Handle direct list/dict input
                 if isinstance(kwargs["context"], list):
@@ -167,24 +175,25 @@ class RankingEvaluator(LLM):
                 elif isinstance(kwargs["context"], dict):
                     contexts = [str(v).strip() for v in kwargs["context"].values()]
                 else:
-                    raise ValueError("Context must be either a list, dictionary, or their string representations")
+                    raise ValueError(
+                        "Context must be either a list, dictionary, or their string representations"
+                    )
 
             # Remove empty strings and ensure we have at least two contexts
             contexts = [c for c in contexts if c.strip()]
             if len(contexts) < 2:
-                raise ValueError("At least two contexts are required for ranking evaluation")
+                raise ValueError(
+                    "At least two contexts are required for ranking evaluation"
+                )
 
             chat_history = [
                 {
                     "role": "user",
                     "content": kwargs["input"],
                     "context": contexts,
-                    "original_context": contexts
+                    "original_context": contexts,
                 },
-                {
-                    "role": "assistant",
-                    "content": kwargs.get("output")
-                }
+                {"role": "assistant", "content": kwargs.get("output")},
             ]
             return chat_history
         except KeyError:
@@ -197,40 +206,52 @@ class RankingEvaluator(LLM):
         start_time = time.time()
         # Validate that correct args were passed
         self.validate_args(**kwargs)
-        
-        chat_history = self._format_chat_history(**kwargs)
-        fewshots=kwargs.get("few_shots")
 
-        agent_task1 = EvalTextLLM(llm=self,check_internet=self.kwargs.get("check_internet",False),fewshots=fewshots)
-        
+        chat_history = self._format_chat_history(**kwargs)
+        fewshots = kwargs.get("few_shots")
+
+        agent_task1 = EvalTextLLM(
+            llm=self,
+            check_internet=self.kwargs.get("check_internet", False),
+            fewshots=fewshots,
+        )
 
         dataset = agent_task1.format_data_for_rag_rank(chat_history)
-        
+
         if len(dataset[0]["context"]) == 1:
-            raise ValueError("At least two contexts are required for ranking evaluation. Only one context was provided. Kindly ensure that the context is properly formatted. For CSV inputs : 'context1'; 'context2' ; ... . For Json inputs, context should be a list of strings.")
+            raise ValueError(
+                "At least two contexts are required for ranking evaluation. Only one context was provided. Kindly ensure that the context is properly formatted. For CSV inputs : 'context1'; 'context2' ; ... . For Json inputs, context should be a list of strings."
+            )
 
         # criteria_breakdown = eval_instruction_process_data_format(criteria_breakdown)
 
-
-        agent_task2 = RagRankEval(dataset,"criteria_breakdown",llm=agent_task1.llm)
+        agent_task2 = RagRankEval(dataset, "criteria_breakdown", llm=agent_task1.llm)
         results = agent_task2.process_data()
 
-        
         total_score, judgments = get_criteria_judegement_score_ragrank(results)
-        summary_judgement = get_summary_judgement_ragrank_v2(self, judgments[0].get("judgment"), question=results[0]["question"], context=results[0]["context"], subqueries = results[0]["subqueries"] )
+        summary_judgement = get_summary_judgement_ragrank_v2(
+            self,
+            judgments[0].get("judgment"),
+            question=results[0]["question"],
+            context=results[0]["context"],
+            subqueries=results[0]["subqueries"],
+        )
 
         formatted_summary = []
         if summary_judgement:
             # Extract lines that contain "Document" and scores
-            for line in summary_judgement.split('\n'):
-                if 'Document' in line and 'Final score:' in line:
+            for line in summary_judgement.split("\n"):
+                if "Document" in line and "Final score:" in line:
                     # Extract document number and score
-                    doc_num = line.split('Document')[1].split('(')[0].strip()
-                    score = line.split('Final score:')[1].strip(')')
+                    doc_num = line.split("Document")[1].split("(")[0].strip()
+                    score = line.split("Final score:")[1].strip(")")
                     formatted_summary.append(f"Doc {doc_num}: {score}")
 
-        formatted_summary = '\n'.join(formatted_summary) if formatted_summary else "No rankings available"
-       
+        formatted_summary = (
+            "\n".join(formatted_summary)
+            if formatted_summary
+            else "No rankings available"
+        )
 
         if judgments[0]["judgment"] == "Error":
             # raise ValueError("The context may not be formatted correctly.")
@@ -238,16 +259,15 @@ class RankingEvaluator(LLM):
             summary_judgement = "A valid judgment could not be produced. The context may be too irrelevant or improperly formatted. It must be either a list-format string like ['context1', 'context2'] or a dictionary-format string like {'context1': 'text1', 'context2': 'text2'}. Also, ensure that the input can be successfully parsed as JSON—JSON conversion might be failing of context."
             total_score = 0.0
 
-
         score_results = {
             "score": total_score,
             "summary_judgement": summary_judgement,
         }
 
-
         end_time = time.time()
         eval_runtime_ms = int((end_time - start_time) * 1000)
-        metadata = json.dumps({
+        metadata = json.dumps(
+            {
                 "usage": {
                     "completion_tokens": self.token_usage["completion_tokens"],
                     "prompt_tokens": self.token_usage["prompt_tokens"],
@@ -259,8 +279,8 @@ class RankingEvaluator(LLM):
                     "completion_cost": self.cost["completion_cost"],
                 },
                 "response_time": eval_runtime_ms,
-            })
-
+            }
+        )
 
         llm_eval_result: EvalResult = {
             "name": self.name,
@@ -272,10 +292,12 @@ class RankingEvaluator(LLM):
             "metadata": metadata,
             "runtime": eval_runtime_ms,
             "model": self.model_name,
-            "metrics": [{
-                "id": self.__class__.__name__,
-                "value": score_results.get('score', 0.0)
-            }],
+            "metrics": [
+                {
+                    "id": self.__class__.__name__,
+                    "value": score_results.get("score", 0.0),
+                }
+            ],
             "datapoint_field_annotations": None,
         }
         return {k: v for k, v in llm_eval_result.items() if v is not None}

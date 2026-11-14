@@ -206,8 +206,7 @@ def run_warnings(
         warnings.append(
             _warning(
                 "bundle_cache_failed",
-                "The last preparation of this combination failed and will be"
-                " retried",
+                "The last preparation of this combination failed and will be retried",
                 None,
             )
         )

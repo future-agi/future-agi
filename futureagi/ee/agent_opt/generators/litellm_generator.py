@@ -67,7 +67,7 @@ class LiteLLMGenerator(BaseGenerator):
                 messages=messages_for_litellm,
                 api_key=api_key,
                 drop_params=True,
-                **litellm_kwargs
+                **litellm_kwargs,
             )
             return response.choices[0].message.content
         except Exception as e:

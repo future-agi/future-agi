@@ -13,9 +13,11 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_pil_image(width=64, height=64, color="red"):
     """Create a small PIL Image for testing."""
     from PIL import Image
+
     return Image.new("RGB", (width, height), color=color)
 
 
@@ -26,12 +28,14 @@ def _import_functions():
         calculate_clip_score,
         calculate_fid,
     )
+
     return _parse_image_list, calculate_fid, calculate_clip_score
 
 
 # ---------------------------------------------------------------------------
 # _parse_image_list
 # ---------------------------------------------------------------------------
+
 
 class TestParseImageList:
     """Unit tests for _parse_image_list."""
@@ -137,6 +141,7 @@ class TestParseImageList:
 # calculate_fid
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateFid:
     """Unit tests for calculate_fid."""
 
@@ -202,7 +207,9 @@ class TestCalculateFid:
 
         imgs = [_make_pil_image() for _ in range(3)]
 
-        with patch("torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid):
+        with patch(
+            "torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid
+        ):
             result = calculate_fid(real_images=imgs, fake_images=imgs)
 
         assert result["result"] == pytest.approx(42.5)
@@ -220,7 +227,9 @@ class TestCalculateFid:
 
         imgs = [_make_pil_image() for _ in range(3)]
 
-        with patch("torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid):
+        with patch(
+            "torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid
+        ):
             result = calculate_fid(real_images=imgs, fake_images=imgs)
 
         assert result["result"] is None
@@ -239,8 +248,12 @@ class TestCalculateFid:
         mock_fid.compute.return_value = torch.tensor(10.0)
         mock_fid.to.return_value = mock_fid
 
-        with patch("tfc.utils.storage.open_image_from_url", return_value=fake_img), \
-             patch("torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid):
+        with (
+            patch("tfc.utils.storage.open_image_from_url", return_value=fake_img),
+            patch(
+                "torchmetrics.image.fid.FrechetInceptionDistance", return_value=mock_fid
+            ),
+        ):
             result = calculate_fid(real_images=urls, fake_images=urls)
 
         assert result["result"] == pytest.approx(10.0)
@@ -249,6 +262,7 @@ class TestCalculateFid:
 # ---------------------------------------------------------------------------
 # calculate_clip_score
 # ---------------------------------------------------------------------------
+
 
 class TestCalculateClipScore:
     """Unit tests for calculate_clip_score."""
@@ -267,7 +281,9 @@ class TestCalculateClipScore:
 
         img = _make_pil_image()
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(images=img, text="a red square")
 
         assert result["result"] is not None
@@ -284,7 +300,9 @@ class TestCalculateClipScore:
 
         img = _make_pil_image()
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(images=img, text="test")
 
         assert result["result"] is None
@@ -300,7 +318,9 @@ class TestCalculateClipScore:
 
         imgs = [_make_pil_image(), _make_pil_image(), _make_pil_image()]
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(
                 images=imgs,
                 text=["text1", "text2"],  # 2 texts for 3 images
@@ -323,7 +343,9 @@ class TestCalculateClipScore:
 
         imgs = [_make_pil_image(), _make_pil_image()]
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(images=imgs, text="a red square")
 
         assert result["result"] is not None
@@ -333,7 +355,9 @@ class TestCalculateClipScore:
         """Returns error for unparseable image input."""
         _, _, calculate_clip_score = _import_functions()
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", MagicMock()):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", MagicMock()
+        ):
             result = calculate_clip_score(images="not-a-url", text="test")
 
         assert result["result"] is None
@@ -346,7 +370,9 @@ class TestCalculateClipScore:
         import numpy as np
 
         fake_img = _make_pil_image()
-        urls_json = json.dumps(["https://example.com/1.png", "https://example.com/2.png"])
+        urls_json = json.dumps(
+            ["https://example.com/1.png", "https://example.com/2.png"]
+        )
 
         mock_model = MagicMock()
         mock_model.side_effect = lambda x: np.array([0.6, 0.8])
@@ -354,8 +380,13 @@ class TestCalculateClipScore:
         mock_manager = MagicMock()
         mock_manager.image_text_model = mock_model
 
-        with patch("tfc.utils.storage.open_image_from_url", return_value=fake_img), \
-             patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with (
+            patch("tfc.utils.storage.open_image_from_url", return_value=fake_img),
+            patch(
+                "agentic_eval.core.embeddings.embedding_manager.model_manager",
+                mock_manager,
+            ),
+        ):
             result = calculate_clip_score(images=urls_json, text="test")
 
         assert result["result"] is not None
@@ -374,7 +405,9 @@ class TestCalculateClipScore:
 
         imgs = [_make_pil_image(), _make_pil_image()]
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(
                 images=imgs,
                 text=json.dumps(["text one", "text two"]),
@@ -395,7 +428,9 @@ class TestCalculateClipScore:
 
         img = _make_pil_image()
 
-        with patch("agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager", mock_manager
+        ):
             result = calculate_clip_score(images=img, text="test")
 
         assert result["result"] is None
@@ -406,6 +441,7 @@ class TestCalculateClipScore:
 # Wrapper classes
 # ---------------------------------------------------------------------------
 
+
 class TestFidScoreWrapper:
     """Unit tests for FidScore wrapper class."""
 
@@ -413,6 +449,7 @@ class TestFidScoreWrapper:
     def test_initialization(self):
         """FidScore wrapper initializes with correct function name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import FidScore
+
         evaluator = FidScore()
         assert evaluator.name == "FidScore"
 
@@ -420,6 +457,7 @@ class TestFidScoreWrapper:
     def test_custom_display_name(self):
         """FidScore accepts a custom display name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import FidScore
+
         evaluator = FidScore(display_name="My FID")
         assert evaluator.display_name == "My FID"
 
@@ -427,6 +465,7 @@ class TestFidScoreWrapper:
     def test_default_display_name(self):
         """FidScore uses function name as default display name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import FidScore
+
         evaluator = FidScore()
         assert evaluator.display_name == "FidScore"
 
@@ -438,6 +477,7 @@ class TestClipScoreWrapper:
     def test_initialization(self):
         """ClipScore wrapper initializes with correct function name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import ClipScore
+
         evaluator = ClipScore()
         assert evaluator.name == "ClipScore"
 
@@ -445,6 +485,7 @@ class TestClipScoreWrapper:
     def test_custom_display_name(self):
         """ClipScore accepts a custom display name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import ClipScore
+
         evaluator = ClipScore(display_name="My CLIP")
         assert evaluator.display_name == "My CLIP"
 
@@ -452,6 +493,7 @@ class TestClipScoreWrapper:
     def test_default_display_name(self):
         """ClipScore uses function name as default display name."""
         from agentic_eval.core_evals.fi_evals.function.wrapper import ClipScore
+
         evaluator = ClipScore()
         assert evaluator.display_name == "ClipScore"
 
@@ -460,6 +502,7 @@ class TestClipScoreWrapper:
 # Operations registry
 # ---------------------------------------------------------------------------
 
+
 class TestOperationsRegistry:
     """Verify new evals are registered in the operations dict."""
 
@@ -467,6 +510,7 @@ class TestOperationsRegistry:
     def test_fid_score_registered(self):
         """FidScore is registered in the operations dict."""
         from agentic_eval.core_evals.fi_evals.function.functions import operations
+
         assert "FidScore" in operations
         assert callable(operations["FidScore"])
 
@@ -474,5 +518,6 @@ class TestOperationsRegistry:
     def test_clip_score_registered(self):
         """ClipScore is registered in the operations dict."""
         from agentic_eval.core_evals.fi_evals.function.functions import operations
+
         assert "ClipScore" in operations
         assert callable(operations["ClipScore"])

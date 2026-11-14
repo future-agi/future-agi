@@ -398,7 +398,9 @@ class BlandService(VoiceServiceBlueprint):
             if isinstance(started_at, datetime):
                 call.started_at = started_at
                 update_fields.append("started_at")
-            call.ended_at = ended_at if isinstance(ended_at, datetime) else timezone.now()
+            call.ended_at = (
+                ended_at if isinstance(ended_at, datetime) else timezone.now()
+            )
             update_fields.append("ended_at")
 
             # No per-message timing from Bland; idx*1000 keeps the read order
@@ -533,12 +535,17 @@ class BlandService(VoiceServiceBlueprint):
         # expected, and refresh the stored raw payload so it doesn't keep an
         # empty URL (the rehost below still serves the durable S3 copy).
         if not recording_url and self._recording_expected(bland_data):
-            provider_call_id = bland_data.get("call_id") or call.service_provider_call_id
+            provider_call_id = (
+                bland_data.get("call_id") or call.service_provider_call_id
+            )
             if provider_call_id:
                 recording_url = await self._await_recording_url(provider_call_id)
                 if recording_url:
                     full = dict(call.provider_call_data or {})
-                    full[self.PROVIDER_KEY] = {**bland_data, "recording_url": recording_url}
+                    full[self.PROVIDER_KEY] = {
+                        **bland_data,
+                        "recording_url": recording_url,
+                    }
                     result.provider_call_data = full
 
         if not recording_url:
