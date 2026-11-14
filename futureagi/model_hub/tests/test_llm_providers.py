@@ -67,8 +67,7 @@ class TestIsModelInCatalog:
         # Suffix matching applies only to non-chat modes: retired chat
         # models must still be reported as unavailable.
         assert (
-            is_model_in_catalog("perplexity/llama-3.1-sonar-huge-128k-online")
-            is False
+            is_model_in_catalog("perplexity/llama-3.1-sonar-huge-128k-online") is False
         )
 
     def test_custom_model_is_in_catalog_for_its_org(

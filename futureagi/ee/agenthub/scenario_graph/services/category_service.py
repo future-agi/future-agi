@@ -49,9 +49,7 @@ def _category_from_branch_name(branch_name: str) -> str:
     if not key_nodes:
         key_nodes = parts[-2:] if len(parts) > 1 else parts
     # Convert snake_case to Title Case
-    label = " ".join(
-        word.replace("_", " ").title() for word in key_nodes
-    )
+    label = " ".join(word.replace("_", " ").title() for word in key_nodes)
     return label
 
 
@@ -151,13 +149,9 @@ def categorize_branches_batch(
                 categories_returned=sum(1 for v in chunk_result.values() if v),
             )
         except Exception as e:
-            logger.warning(
-                f"Batch chunk failed, falling back to per-branch: {e}"
-            )
+            logger.warning(f"Batch chunk failed, falling back to per-branch: {e}")
             for branch_name, situations in chunk.items():
-                categorized[branch_name] = categorize_branch(
-                    branch_name, situations
-                )
+                categorized[branch_name] = categorize_branch(branch_name, situations)
 
     # Retry any branches that got empty/generic categories via per-branch calls
     empty_branches = [b for b, cat in categorized.items() if _is_generic(cat)]
@@ -186,7 +180,9 @@ def categorize_branches_batch(
     logger.info(
         "batch_categorization_complete",
         branch_count=len(branch_situations),
-        categories_assigned=sum(1 for v in categorized.values() if v and not _is_generic(v)),
+        categories_assigned=sum(
+            1 for v in categorized.values() if v and not _is_generic(v)
+        ),
         empty_remaining=sum(1 for v in categorized.values() if _is_generic(v)),
     )
     return categorized
@@ -209,10 +205,9 @@ def deduplicate_categories(categorized_branches: Dict[str, str]) -> Dict[str, st
         return {}
 
     # Collect unique category values (excluding empty/generic)
-    unique_categories = sorted(set(
-        v for v in categorized_branches.values()
-        if v and not _is_generic(v)
-    ))
+    unique_categories = sorted(
+        set(v for v in categorized_branches.values() if v and not _is_generic(v))
+    )
 
     # Nothing to dedup if 0 or 1 unique categories
     if len(unique_categories) <= 1:

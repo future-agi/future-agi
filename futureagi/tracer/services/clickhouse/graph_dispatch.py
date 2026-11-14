@@ -975,10 +975,10 @@ def _read_or_refresh_exact_graph(
         schedule_on_miss=schedule_on_miss,
         revalidate_open_window=revalidate_open_window,
         # A stale worker's missing companion is a miss, never a free price.
-        accept_snapshot=lambda payload: snapshot_names_its_statistic(
-            namespace, metric_id, payload
-        )
-        and _snapshot_has_monetary_coverage(namespace, metric_id, payload),
+        accept_snapshot=lambda payload: (
+            snapshot_names_its_statistic(namespace, metric_id, payload)
+            and _snapshot_has_monetary_coverage(namespace, metric_id, payload)
+        ),
     )
 
 
