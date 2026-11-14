@@ -39366,6 +39366,10 @@ export type ModelHubKbSupportedEmbeddingModelsParams = {
   limit?: number;
 };
 
+export type ModelHubKbDownloadFileParams = {
+  file_id: string;
+};
+
 export type ModelHubOptimisationListParams = {
   optimize_type?: string;
   status?: string;

@@ -42,6 +42,7 @@ from agentic_eval.core.utils.model_config import (
     ModelConfig,
     ModelConfigs,
 )
+
 try:
     from ee.usage.services.gateway_llm_client import (
         call_llm as gateway_call_llm,
@@ -125,7 +126,10 @@ def _final_response_output(trace, span_id):
     if not spans:
         return None
     return max(
-        (str((s.get("span_attributes") or {}).get("output.value") or "") for s in spans),
+        (
+            str((s.get("span_attributes") or {}).get("output.value") or "")
+            for s in spans
+        ),
         key=len,
     )
 
@@ -685,15 +689,19 @@ def _collapse_same_event(failed: set, dims: dict) -> set:
     """
     ordered = sorted(
         failed,
-        key=lambda d: _DIMENSION_SPECIFICITY.index(d)
-        if d in _DIMENSION_SPECIFICITY
-        else len(_DIMENSION_SPECIFICITY),
+        key=lambda d: (
+            _DIMENSION_SPECIFICITY.index(d)
+            if d in _DIMENSION_SPECIFICITY
+            else len(_DIMENSION_SPECIFICITY)
+        ),
     )
     kept: list = []
     dropped: list = []
     for dim in ordered:
         evidence = (dims.get(dim) or {}).get("evidence")
-        if any(_same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept):
+        if any(
+            _same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept
+        ):
             dropped.append(dim)
             continue
         kept.append(dim)
@@ -995,12 +1003,10 @@ class TraceScanner:
         response = _result.response
         usage = getattr(response, "usage", None)
         if usage:
-            self.token_usage["prompt_tokens"] += getattr(
-                usage, "prompt_tokens", 0
-            ) or 0
-            self.token_usage["completion_tokens"] += getattr(
-                usage, "completion_tokens", 0
-            ) or 0
+            self.token_usage["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
+            self.token_usage["completion_tokens"] += (
+                getattr(usage, "completion_tokens", 0) or 0
+            )
             self.token_usage["total_tokens"] += getattr(usage, "total_tokens", 0) or 0
         try:
             return response.choices[0].message.content
@@ -1163,7 +1169,9 @@ class TraceScanner:
             # Prefer the model's own subcategory: DIMENSION_TO_SUBCATEGORY alone can only ever
             # emit 5 of 20, which halves category accuracy on TRAIL (36.8% -> 18.8%).
             cat = str(item.get("cat") or "").strip()
-            subcat = cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
+            subcat = (
+                cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
+            )
             if not subcat:
                 continue
             # NEVER fall back to the evidence quote. `brief` is what _retitle_from_members
@@ -1185,11 +1193,13 @@ class TraceScanner:
             brief = " ".join(str(item.get("brief") or "").split())
             if not brief or len(brief) > _MAX_BRIEF_CHARS:
                 brief = subcat
-            issues.append({
-                "cat": subcat,
-                "conf": conf if conf in ("H", "M") else "M",
-                "brief": brief[:_MAX_BRIEF_CHARS],
-            })
+            issues.append(
+                {
+                    "cat": subcat,
+                    "conf": conf if conf in ("H", "M") else "M",
+                    "brief": brief[:_MAX_BRIEF_CHARS],
+                }
+            )
         if low_confidence:
             # Suppression has to be visible. Going quiet and being precise look
             # identical from the outside, and only these counters tell them apart.

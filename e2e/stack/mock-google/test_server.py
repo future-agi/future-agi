@@ -1,5 +1,7 @@
 """Real HTTPS self-tests for the synthetic provider, without Django startup."""
 
+import base64
+import hashlib
 import json
 import ssl
 import tempfile
@@ -9,9 +11,31 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from jose import JWTError, jwt
+import jwt
 
 from server import CALLBACK, CLIENT, IdentityServer, tls_context
+
+
+def verify(id_token, keys, access_token):
+    """Verify like the backend: the published key named by kid, RS256 only,
+    the fixture's audience and issuer, and at_hash against the access token."""
+    kid = jwt.get_unverified_header(id_token).get("kid")
+    try:
+        key = jwt.PyJWKSet.from_dict(keys)[kid]
+    except KeyError:
+        raise jwt.PyJWTError("No published key for kid") from None
+    claims = jwt.decode(
+        id_token,
+        key,
+        algorithms=["RS256"],
+        audience=CLIENT,
+        issuer="https://accounts.google.com",
+    )
+    digest = hashlib.sha256(access_token.encode()).digest()
+    at_hash = base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode()
+    if claims.get("at_hash") != at_hash:
+        raise jwt.PyJWTError("at_hash does not match the access token")
+    return claims
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -99,23 +123,15 @@ class ProviderTests(unittest.TestCase):
                 tokens = json.load(self.request("/token", payload))
                 keys = json.load(self.request("/certs"))
 
-                def decode():
-                    return jwt.decode(
-                        tokens["id_token"],
-                        keys,
-                        algorithms=["RS256"],
-                        audience=CLIENT,
-                        issuer="https://accounts.google.com",
-                        access_token=tokens["access_token"],
-                    )
-
+                token = tokens["id_token"]
                 if mode in ("valid", "rotated"):
+                    claims = verify(token, keys, tokens["access_token"])
                     self.assertEqual(
-                        decode()["email"], "e2e-provider-selftest@futureagi.com"
+                        claims["email"], "e2e-provider-selftest@futureagi.com"
                     )
                 else:
-                    with self.assertRaises(JWTError):
-                        decode()
+                    with self.assertRaises(jwt.PyJWTError):
+                        verify(token, keys, tokens["access_token"])
                 self.assertEqual(self.request("/token", payload).status, 400)
 
     def test_refuses_non_fixture_inputs(self):

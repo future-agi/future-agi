@@ -253,6 +253,13 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	// Decided here, so every caller gets it: the chat handlers, failover and
+	// model fallbacks, async jobs, scheduled completions, batches, the traffic
+	// mirror and the routes that translate their own dialect into a chat
+	// request. See ChatNeedsResponses.
+	if p.ChatNeedsResponses(req) {
+		return p.ChatCompletionViaResponses(ctx, req)
+	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
 	}
@@ -310,6 +317,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming chat completion request.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// As in ChatCompletion: every streaming caller gets the Responses route.
+	if p.ChatNeedsResponses(req) {
+		return p.StreamChatCompletionViaResponses(ctx, req)
+	}
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
