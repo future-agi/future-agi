@@ -1,4 +1,3 @@
-import { LinearProgress } from "@mui/material";
 import React, { useRef, useState } from "react";
 import {
   useInfiniteQuery,
@@ -15,6 +14,7 @@ import DatasetHeader from "../datasets/DatasetHeader";
 import OptimizeDetailDrawer from "../optimize/OptimizeDetailDrawer";
 
 import RightAnswerTable from "./RightAnswerTable";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const RightAnswerExplore = ({ selectedOptimization }) => {
   const { id } = useParams();
@@ -145,7 +145,7 @@ const RightAnswerExplore = ({ selectedOptimization }) => {
           saveLoading={false}
         />
       ) : null}
-      {isLoading ? <LinearProgress /> : null}
+      {isLoading ? <LoadingScreen compact /> : null}
       {/* {!isLoading && !datasetData?.length && <DatasetNoData />} */}
       {!isLoading && Boolean(datasetData?.length) && (
         <RightAnswerTable

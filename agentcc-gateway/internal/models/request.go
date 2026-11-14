@@ -9,6 +9,11 @@ import (
 
 // ChatCompletionRequest represents an OpenAI-compatible chat completion request.
 type ChatCompletionRequest struct {
+	// TranslatedFrom names the dialect a gateway route translated this
+	// request from ("anthropic" for /v1/messages, "google" for the GenAI
+	// routes); empty for a caller's own chat request. It is never sent.
+	TranslatedFrom string `json:"-"`
+
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
 	Temperature         *float64        `json:"temperature,omitempty"`

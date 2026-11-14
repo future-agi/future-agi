@@ -304,6 +304,8 @@ def _public_poll_refresh_flag(auth_client, template, monkeypatch, completed_at):
         "read_exact_snapshot",
         lambda _namespace, _identity: {
             "query_completed_at": completed_at.isoformat(),
+            # Payloads this code computes name their listing rule.
+            "trace_logs_by": separate_evals.EVAL_USAGE_TRACE_LOGS_BY,
         },
     )
     seen = {}
@@ -446,6 +448,8 @@ def _complete_usage_payload(template):
         "query_complete": True,
         "query_status": "complete",
         "query_sampled": False,
+        # A current worker's payload names its listing rule (TH-4804).
+        "trace_logs_by": separate_evals.EVAL_USAGE_TRACE_LOGS_BY,
     }
 
 

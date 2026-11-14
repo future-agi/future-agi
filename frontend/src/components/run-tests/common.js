@@ -1,6 +1,31 @@
 import axios, { endpoints } from "src/utils/axios";
 import logger from "../../utils/logger";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useDebounce } from "src/hooks/use-debounce";
+
+/**
+ * Search + pagination state for a server-paginated, searchable list.
+ *
+ * Resets to page 1 whenever the debounced search term changes: the filtered
+ * result set can have fewer pages than the current page, and requesting a
+ * page that no longer exists makes the backend answer "Invalid page." (#1485)
+ * The reset happens during render, not in an effect, so a query keyed on the
+ * returned state never fires for the new term with the old page.
+ */
+export function useSearchedPagination(delay = 500, pageSize = 10) {
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, delay);
+  const [pagination, setPagination] = useState({ page: 1, pageSize });
+
+  const [pagedSearch, setPagedSearch] = useState(debouncedSearch);
+  if (debouncedSearch !== pagedSearch) {
+    setPagedSearch(debouncedSearch);
+    setPagination((prev) => (prev.page === 1 ? prev : { ...prev, page: 1 }));
+  }
+
+  return { search, setSearch, debouncedSearch, pagination, setPagination };
+}
 
 /**
  * Enum for simulation source types - matches backend RunTest.SourceTypes
@@ -191,3 +216,18 @@ export const chatEvalColumns = [
     dataType: "text",
   },
 ];
+
+// Fields sent with the create test event: which agent version runs, how many
+// scenarios and evaluations, and the tool evaluation flag. The test's name,
+// description and evaluation settings are not part of the event.
+export const runTestEventFields = (payload = {}) => ({
+  agent_definition_id: payload.agent_definition_id,
+  agent_version: payload.agent_version,
+  scenario_count: Array.isArray(payload.scenario_ids)
+    ? payload.scenario_ids.length
+    : 0,
+  evaluation_count: Array.isArray(payload.evaluations_config)
+    ? payload.evaluations_config.length
+    : 0,
+  enable_tool_evaluation: Boolean(payload.enable_tool_evaluation),
+});

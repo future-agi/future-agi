@@ -394,7 +394,7 @@ const AddFeedbackForm = (props) => {
                 fontWeight: 500,
                 mb: 1,
                 color: "text.primary",
-                fontSize: "13px",
+                fontSize: "12px",
               }}
             >
               Explanation
@@ -422,7 +422,7 @@ const AddFeedbackForm = (props) => {
                 fontWeight: 500,
                 mb: 1,
                 color: "text.primary",
-                fontSize: "13px",
+                fontSize: "12px",
               }}
             >
               {outputType === OUTPUT_TYPES.BOOL ||
@@ -441,7 +441,7 @@ const AddFeedbackForm = (props) => {
                 mb: 1,
                 mt: 1,
                 color: "text.primary",
-                fontSize: "13px",
+                fontSize: "12px",
               }}
             >
               What would you like to improve
