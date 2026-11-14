@@ -86,7 +86,7 @@ const BulkSelectRow = ({ label, state, onToggle }) => (
       variant="body2"
       noWrap
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: "22px",
         color: "text.primary",
         flex: 1,
@@ -176,7 +176,7 @@ const DraggableColumnRow = ({ id, name, checked, onChange }) => {
         variant="body2"
         noWrap
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           lineHeight: "22px",
           color: "text.primary",
           flex: 1,
@@ -280,7 +280,6 @@ const ColumnConfigureDropDown = ({
             width: placement === "right" ? 240 : 320,
             maxHeight: 400,
             ...(placement === "right" && { ml: 0.5 }),
-            border: `1px solid ${theme.palette.divider}`,
             borderRadius: "8px",
             display: "flex",
             flexDirection: "column",
@@ -312,7 +311,7 @@ const ColumnConfigureDropDown = ({
           sx={{
             "& .MuiOutlinedInput-root": {
               height: 28,
-              fontSize: 13,
+              fontSize: 12,
               "& input": {
                 py: 0,
                 px: 0.5,
@@ -392,7 +391,7 @@ const ColumnConfigureDropDown = ({
             variant="body2"
             sx={{
               color: "text.disabled",
-              fontSize: 13,
+              fontSize: 12,
               textAlign: "center",
               py: 2,
             }}

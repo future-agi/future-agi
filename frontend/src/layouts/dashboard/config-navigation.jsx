@@ -454,11 +454,11 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Providers,
       });
     }
-    // Falcon AI Connectors — same access as integrations
+    // Connectors (tools for Chat) — same access as integrations
     if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
-        title: "Falcon AI Connectors",
-        path: "/dashboard/settings/falcon-ai-connectors",
+        title: "Connectors",
+        path: "/dashboard/settings/connectors",
         icon: SettingsIcons.Integrations,
       });
     }

@@ -216,7 +216,7 @@ const CodeEditor = ({
           customStyle={{
             margin: 0,
             padding: "12px 16px",
-            fontSize: "13px",
+            fontSize: "12px",
             fontFamily:
               "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace",
             background: "transparent",
@@ -257,7 +257,7 @@ const CodeEditor = ({
         onChange={onChange}
         options={{
           minimap: { enabled: false },
-          fontSize: 13,
+          fontSize: 12,
           fontFamily:
             "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace",
           fontLigatures: true,
@@ -296,7 +296,7 @@ const CodeEditor = ({
             top: 12,
             left: 64,
             color: "text.disabled",
-            fontSize: "13px",
+            fontSize: "12px",
             fontFamily:
               "'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
             pointerEvents: "none",

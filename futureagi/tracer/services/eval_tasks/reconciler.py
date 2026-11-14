@@ -17,6 +17,7 @@ from django.db import transaction
 from django.db.models import Case, CharField, Value, When
 from django.utils import timezone
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import EvalTask, RowType, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.selectors.eval_tasks.row_resolver import (
@@ -29,6 +30,7 @@ from tracer.services.eval_tasks.entries import (
     materialize_pending,
     soft_delete_eval_results,
 )
+from tracer.services.eval_tasks.recalculate import put_back_dropped_replacements
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -48,6 +50,7 @@ class ReconcileResult:
     dropped: int = 0
 
 
+@primary_required
 def reconcile(task: EvalTask) -> ReconcileResult:
     """Make the task's live entries match its desired config + row set.
 
@@ -57,6 +60,14 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     *pending* entries while keeping out-of-scope *completed* results (paid
     data). For continuous tasks, advances the forward cursor so the next pass
     scans only the new tail.
+
+    The whole pass reads from the primary. The task's eval set (``task.evals``)
+    is written by the create / edit request a moment before the workflow runs
+    this, and a replica that has not applied it yet returns no evals (the task
+    finishes with no results) or the pre-edit set (the removed eval runs, the
+    added one never does). Pinning the pass as one block, rather than each
+    read, also keeps the revision taken before the lock and the one taken
+    under it on the same database, so they can only differ on a real edit.
     """
     if isinstance(task, EvalTask):
         # Callers may retain the model instance across passes while the previous
@@ -64,6 +75,11 @@ def reconcile(task: EvalTask) -> ReconcileResult:
         # from a fresh database snapshot so that ordinary sequential passes do
         # not look like concurrent edits to the revision fence.
         task = EvalTask.objects.get(id=task.id)
+
+    if getattr(task, "sampling_policy", None):
+        from tracer.services.eval_tasks.sampling.service import reconcile_policy
+
+        return reconcile_policy(task)
 
     now = timezone.now()
     force_full = _continuous_requires_full_reclassification(task)
@@ -174,13 +190,18 @@ def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
 
 
 def _live_count(task: EvalTask) -> int:
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).count()
+    # Primary, on the reconcile transaction's own connection: the count must
+    # include the entries this pass just inserted (uncommitted) and any a
+    # lagging replica has not applied, or ``created`` and the requeue branch
+    # are decided from a stale zero.
+    return EvalLogger.objects.using("default").filter(eval_task_id=str(task.id)).count()
 
 
 def _requeue_and_drop(
     task: EvalTask,
     *,
     resolved: ResolvedRowSet,
+    scope_to_candidates: bool = False,
 ) -> tuple[int, int]:
     hashes = {cfg.id: resolved_config_hash(cfg) for cfg in task.evals.all()}
     current_eval_ids = set(hashes)
@@ -196,7 +217,17 @@ def _requeue_and_drop(
     # what turns it into a statement about *when* the row changed.
     window_floor = getattr(task, "continuous_cursor", None)
     # Stream the live entries — we only collect ids, never hold all objects.
-    for entry in EvalLogger.objects.filter(eval_task_id=str(task.id)).iterator():
+    # Primary: a replica that still shows an entry as RUNNING (or an old hash)
+    # would skip a requeue this full proof is the only pass to make.
+    entries = EvalLogger.objects.using("default").filter(eval_task_id=str(task.id))
+    if scope_to_candidates:
+        field = {
+            RowType.SPANS: "observation_span_id",
+            RowType.TRACES: "trace_id",
+            RowType.SESSIONS: "trace_session_id",
+        }[task.row_type]
+        entries = entries.filter(**{f"{field}__in": candidates})
+    for entry in entries.iterator():
         cfg_id = entry.custom_eval_config_id
         current_eval = cfg_id in current_eval_ids
         identity = _entry_identity(entry, task.row_type)
@@ -298,7 +329,10 @@ def _requeue_and_drop(
             )
     dropped = 0
     if drop_ids:
-        dropped = soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
+        # A dropped entry may be a Recalculate's replacement the engine took
+        # over: its previous result comes back rather than staying retired.
+        dropped = put_back_dropped_replacements(drop_ids)
+        dropped += soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
     return requeued, dropped
 
 
@@ -351,6 +385,7 @@ def _task_revision(task: EvalTask) -> str:
         "id": str(task.id),
         "filters": task.filters,
         "sampling_rate": task.sampling_rate,
+        "sampling_policy": task.sampling_policy,
         "spans_limit": task.spans_limit,
         "run_type": task.run_type,
         "row_type": task.row_type,

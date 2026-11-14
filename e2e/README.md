@@ -29,12 +29,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
 │                                                                                 │
-│  deliberately NOT started: serving · code-executor · sized workers · peerdb-ui   │
+│  deliberately NOT started: serving · sized workers · peerdb-ui   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Because code-executor is not started, `e2e/stack/e2e.env` sets `CODE_EXECUTOR_LOCAL_FALLBACK=true` so
-code evals run in the worker instead of failing with "Code executor unavailable".
+The distributed harness starts the dedicated `code-executor` and sets
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
+only joins internal Docker networks, with no default route. `allowed.example`
+resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
+not on the internet. `private.example` resolves to its private interface and is
+operator-listed to prove that admission cannot override the public-IP rule.
+The listener never makes outbound requests. Its loopback-only journal is at
+`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
+Redirects point only to that owned private interface. No real third party is contacted.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
@@ -189,7 +197,8 @@ production images CI and users run:
 bin/e2e build backend     # futureagi/future-agi:e2e-local   (futureagi/Dockerfile.oss, context futureagi/)
 bin/e2e build frontend    # futureagi/frontend:e2e-local     (context frontend/)
 bin/e2e build collector   # futureagi/fi-collector:e2e-local (context fi-collector/)
-bin/e2e build all         # all three
+bin/e2e build executor    # futureagi/code-executor:e2e-local (futureagi/code-executor/)
+bin/e2e build all         # all four
 ```
 
 Each build prints the line to run next; the stack picks the images up through these variables:
@@ -199,10 +208,11 @@ Each build prints the line to run next; the stack picks the images up through th
 | `backend`    | `FUTURE_AGI_VERSION=e2e-local`       | the `worker` container |
 | `frontend`   | `FRONTEND_VERSION=e2e-local`         | —                      |
 | `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | observation consumer   |
+| `executor`   | `CODE_EXECUTOR_VERSION=e2e-local`    | —                      |
 
 ```bash
 bin/e2e build all
-FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up
+FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local CODE_EXECUTOR_VERSION=e2e-local bin/e2e up
 bin/e2e test
 ```
 
@@ -630,14 +640,14 @@ at the original spec path so relative fixtures/contracts still resolve. All anch
 for uniqueness before edits. The spec's annotation, `@flow`, seeding, authentication, 240s timeout
 and ordinary `UI_READY=60s` remain unchanged.
 
-| Check | One-sided perturbation | Required failure evidence |
-| --- | --- | --- |
-| 1 | First API candidate expectation A → B; seed stays A | Expected minted B / received minted A at that assertion |
-| 2 | Only first available-version UI expected array A → B | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
-| 3 | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement |
-| 4 | Omit owned report deletion; keep `ownsStatus=true` | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file |
-| 5a | Only POST's expected status 405 → 200 | POST expected 200 / received 405 |
-| 5b | Anonymous GET's expected status 401 → 200 | Expected 200 / received 401, after unchanged method checks |
+| Check | One-sided perturbation                                             | Required failure evidence                                                                                            |
+| ----- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| 1     | First API candidate expectation A → B; seed stays A                | Expected minted B / received minted A at that assertion                                                              |
+| 2     | Only first available-version UI expected array A → B               | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
+| 3     | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement                                                              |
+| 4     | Omit owned report deletion; keep `ownsStatus=true`                 | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file     |
+| 5a    | Only POST's expected status 405 → 200                              | POST expected 200 / received 405                                                                                     |
+| 5b    | Anonymous GET's expected status 401 → 200                          | Expected 200 / received 401, after unchanged method checks                                                           |
 
 Each child invokes the installed Playwright CLI on only the original file, with one worker,
 zero retries, one repetition, `--forbid-only`, the existing config and JSON-only reporting. It
