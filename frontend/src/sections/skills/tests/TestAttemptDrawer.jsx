@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { addIcon } from "@iconify/react";
 import {
@@ -502,6 +502,20 @@ export default function TestAttemptDrawer({
 }) {
   const covered = useDrawerCovered(open);
   const titleId = useId();
+  // Focus returns to whatever opened the drawer, without scrolling: MUI's own restore calls a bare
+  // focus(), which scrolls every scrollable ancestor (the dashboard frame and the document too) and
+  // could shift the whole shell. The opener is read in a layout effect, before the drawer's focus
+  // trap moves focus inside.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const opener = document.activeElement;
+    // Restore after the focus trap has let go; inside it, the trap would pull focus straight back.
+    return () => {
+      window.setTimeout(() => {
+        if (opener && opener !== document.body && opener.isConnected) opener.focus?.({ preventScroll: true });
+      }, 0);
+    };
+  }, [open]);
   const [repeat, setRepeat] = useState(0);
   const selected = caseResult?.variants
     .flatMap((variant) => variant.attempts)
@@ -528,6 +542,7 @@ export default function TestAttemptDrawer({
       anchor="right"
       open={open}
       onClose={onClose}
+      disableRestoreFocus
       sx={coveredDrawerSx(covered)}
       PaperProps={{
         role: "dialog",

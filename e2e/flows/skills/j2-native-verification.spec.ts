@@ -141,12 +141,12 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.goto('/dashboard/observe');
     await page.getByText(projectName, { exact: true }).click();
     await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
-    await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
+    await page.getByRole('button', { name: 'Save as test case', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('checkbox')).toHaveCount(2);
     for (const box of await dialog.getByRole('checkbox').all()) await expect(box).toBeChecked();
     await dialog.getByRole('button', { name: 'Preview selected text', exact: true }).click();
-    await dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill('Original refund failure');
+    await dialog.getByRole('textbox', { name: 'Case name', exact: true }).fill('Original refund failure');
     await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt');
     // The reviewer chooses the required skill and business action in the same review; no identity or JSON is typed.
     await dialog.getByLabel('Required skill', { exact: true }).click();
@@ -158,7 +158,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
     await dialog.getByRole('checkbox', { name: /workspace/ }).check();
     const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
-    await dialog.getByRole('button', { name: 'Save reviewed example', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Save test case', exact: true }).click();
     expect((await accepted).ok()).toBe(true);
 
     // The saved example hands off to its reproduction: the recorded version is carried, not chosen.

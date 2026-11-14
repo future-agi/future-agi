@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -11,7 +11,7 @@ vi.mock('../utils/access', async (original) => ({ ...(await original()), useSkil
 vi.mock('src/api/skills/context-testing', () => ({
   useNativeTargets: () => (h.targetsLoading ? { isLoading: true, data: undefined } : { data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets ?? [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
-  useNativeRun: (_, id) => ({ data: id ? h.detail : undefined, isLoading: false }),
+  useNativeRun: (_, id) => (h.detailError ? { isError: true, isLoading: false, refetch: () => {} } : { data: id ? h.detail : undefined, isLoading: false }),
   usePreviewNativeRun: () => ({
     get data() { return h.preview.data; }, isPending: false, isError: false, reset: () => { h.preview.data = undefined; },
     mutate: (plan, options) => { h.preview.plans.push(plan); h.preview.data = { executionFingerprint: 'sha256:plan', reproducible: true, missingInputs: [], cells: 6, ceilingUsd: 1.5, arms: [{ variant: 'candidate', version: plan.candidateVersion }] }; options?.onSuccess?.(); },
@@ -103,7 +103,9 @@ it('opens an attempt with the keyboard, shows disagreement scope and returns foc
   inspect.focus();
   await user.keyboard('{Enter}');
   expect(screen.getByRole('heading', { name: 'Refund', level: 2 })).toBeVisible();
-  expect(screen.getByText(/Applies to this whole run/)).toBeVisible();
+  // A review is recorded against this one attempt, and says so.
+  expect(screen.getByText('Applies to this attempt: candidate v6 · Refund · run 1')).toBeVisible();
+  expect(screen.queryByText(/whole run/)).not.toBeInTheDocument();
   expect(screen.getByText('Candidate v6 · Run 1 of 1')).toBeVisible();
   expect(screen.getByText("Your review is added next to the automatic result; it doesn't change it.")).toBeVisible();
   expect(screen.getByText('Disagrees')).toBeVisible();
@@ -136,7 +138,7 @@ it('explains disabled packet prerequisites and marks the earlier-run scope', () 
   renderPanel();
   expect(screen.getByRole('button', { name: 'Attach your CI run (optional)' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Fill in the three CI fields to attach your CI run.')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Share run and attach CI result' })).toBeDisabled();
   expect(screen.getByText('This applies to the earlier run, not your current selection.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-contained');
   expect(screen.getByRole('button', { name: 'Run on the application' })).toHaveClass('MuiButton-outlined');
@@ -170,7 +172,7 @@ it('continues to release review without CI and keeps the CI run an optional, fol
   expect(disclosure).toHaveAttribute('aria-expanded', 'false');
   expect(screen.getByRole('textbox', { name: 'CI run link', hidden: true })).not.toBeVisible();
   fireEvent.click(disclosure);
-  expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Share run and attach CI result' })).toHaveClass('MuiButton-outlined');
   // Opening the release review never shares or prepares anything by itself.
   expect(screen.queryByText(/Packet ready/)).not.toBeInTheDocument();
 });
@@ -198,7 +200,8 @@ it('leads with the server result and opens the first disagreeing attempt from it
   h.detail.cases[0].title = 'Refund';
   h.annotations = [{ id: 'annotation', attemptId: 'refund', actorId: 'reviewer', verdict: 'disagree', comment: 'Inspect receipt', createdAt: '2026-11-12T12:00:00Z' }];
   renderPanel();
-  expect(screen.getByText('Repair verified: v6 passed all 2 cases; the recorded failure reproduced on v4. No regressions.')).toBeVisible();
+  // Two of the context's three cases ran, so the regression sentence is scoped to them.
+  expect(screen.getByText('Repair verified: v6 passed all 2 cases; the recorded failure reproduced on v4. No regressions in the 2 tested cases; 1 other case was not tested.')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: '1 disagreement to inspect' }));
   expect(screen.getByRole('heading', { name: 'Refund' })).toBeVisible();
   expect(screen.getByText('Inspect receipt')).toBeVisible();
@@ -209,14 +212,18 @@ it('does not infer a verified repair or release readiness from a passing answer'
   h.detail.decision = { state: 'hold', reasons: ['Business action failed'] };
   h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'completed', answer: 'pass', tools: 'fail', selection: 'pass', delivery: 'pass' }];
   renderPanel();
-  expect(screen.getByText('Repair not verified: v6 passed 0 of 2 cases; the recorded failure did not reproduce. 1 case regressed.')).toBeVisible();
+  expect(screen.getByText('Repair not verified: v6 passed 0 of 2 cases; the recorded failure did not reproduce. 1 case regressed; 1 other case was not tested.')).toBeVisible();
   expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Share evidence and prepare packet' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Share run and attach CI result' })).not.toBeInTheDocument();
 });
 
-it('offers the first-run primary in the real-route empty preview even with retained history', () => {
+it('makes the open setup the one primary in the empty preview, with no empty-state button', async () => {
   renderPanel({ state: 'empty' });
-  expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
+  expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
+  expect(screen.getByText('No tests yet')).toBeVisible();
+  const run = await screen.findByRole('button', { name: 'Run on the application' });
+  expect(run).toHaveClass('MuiButton-contained');
+  expect(run).not.toHaveClass('MuiButton-sizeSmall');
 });
 
 it('hands the primary to the chosen answer form when the packet belongs to an earlier selection', () => {
@@ -260,7 +267,7 @@ it('names the case a version fixes against production and counts untested cases 
   h.detail = { id: 'matched', status: 'completed', received: 2, planned: 2, arms: h.runs[0].arms, cases: [{ id: 'refund', title: 'Damaged mug refund' }], result: { reproduction: 'not_requested', regressed_cases: 0 }, decision: { state: 'release_ready', reasons: [] },
     cells: [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, attemptId: 'a1', ...pass }, { caseId: 'refund', variant: 'production', repeatIndex: 0, attemptId: 'a2', ...pass, tools: 'fail' }] };
   renderPanel();
-  expect(screen.getByText('v7 passed 1 of 1 case and fixes Damaged mug refund, which fails on production v6. No regressions.')).toBeVisible();
+  expect(screen.getByText('v7 passed 1 of 1 case and fixes Damaged mug refund, which fails on production v6. No regression in the tested case; 2 other cases were not tested.')).toBeVisible();
   expect(screen.getByText(/1 case tested \(2 others not selected\)/)).toBeVisible();
 });
 it('shows a missing allowance as a calm prerequisite before consent, with the admin action', async () => {
@@ -316,4 +323,114 @@ it('waits for the registered targets before choosing what to test, then keeps th
   fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   view.rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} state="empty" /></MemoryRouter>);
   expect(screen.getByRole('radio', { name: /^Verify on the application/ })).toBeChecked();
+});
+
+// UX iteration 2 (TST1-TST3, TST5).
+const containedNames = () => [...document.querySelectorAll('.MuiButton-contained')].filter((el) => !el.closest('[hidden]') && !el.closest('.MuiCollapse-hidden')).map((el) => el.textContent);
+it('keeps exactly one contained primary as the reviewer moves between result and setup', async () => {
+  h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' };
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  renderPanel();
+  // A ready result with the setup folded: the release review is the one primary.
+  expect(containedNames()).toEqual(['Continue to release review']);
+  // Opening the setup engages it: its run button leads and the release review steps back.
+  fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
+  const run = await screen.findByRole('button', { name: 'Run on the application' });
+  expect(run).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
+  expect(containedNames()).toEqual(['Run on the application']);
+});
+it('keeps one primary with no runs at all', async () => {
+  h.runs = []; h.detail = undefined;
+  renderPanel();
+  await screen.findByRole('button', { name: 'Run on the application' });
+  expect(containedNames()).toEqual(['Run on the application']);
+});
+it('drops the visible Latest result heading but keeps the region name', () => {
+  renderPanel();
+  expect(screen.getByRole('region', { name: 'Latest result' })).toBeInTheDocument();
+  expect(screen.queryByText('Latest result')).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Application verification', level: 2 })).toBeVisible();
+});
+it('puts the per-case table before the CI attachment, and both before History and the setup', () => {
+  h.detail.arms[0] = { variant: 'candidate', version: 7 };
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'completed', attemptId: 'a', answer: 'pass', selection: 'pass', delivery: 'pass', tools: 'pass' }];
+  renderPanel();
+  const order = [screen.getByRole('table', { name: 'Verification cells' }), screen.getByRole('button', { name: 'Attach your CI run (optional)' }), screen.getByRole('table', { name: 'Test history' }), screen.getByRole('heading', { name: 'Run a test' })];
+  for (let i = 1; i < order.length; i += 1) expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Attach your CI run (optional)' })).toHaveAttribute('aria-expanded', 'true');
+});
+it('describes each History row by comparison, coverage and a separate outcome', () => {
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  renderPanel({ answerHistory: { data: { results: [{ id: 'answer', status: 'completed', created_at: '2026-11-10T12:00:00Z', candidate: { version: 7 }, reference: { version: 6 }, selected_case_ids: ['one'], decision: { state: 'needs_changes' } }] } }, renderAnswer: (id) => <p>Answer result {id}</p> });
+  const history = screen.getByRole('table', { name: 'Test history' });
+  const application = within(history).getByText('Application verification · v6 vs recorded v4 · 2 cases').closest('tr');
+  expect(within(application).getByText('Passed')).toBeVisible();
+  expect(within(application).getByRole('button', { name: 'Inspect Application verification · v6 vs recorded v4 · 2 cases' })).toBeVisible();
+  const answer = within(history).getByText('Answer check · v7 vs v6 · 1 case').closest('tr');
+  expect(within(answer).getByText('Needs changes')).toBeVisible();
+  // The precise time is the shared When tooltip on the relative time.
+  expect(answer.querySelector('time')).toHaveAttribute('datetime', '2026-11-10T12:00:00.000Z');
+});
+it('never shows a verdict for an application row before its detail loads', () => {
+  h.detail = { ...h.detail, decision: undefined };
+  renderPanel();
+  const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Application verification/).closest('tr');
+  expect(within(row).getByText('Loading…')).toBeVisible();
+  expect(within(row).queryByText('Passed')).not.toBeInTheDocument();
+});
+it('states the allowance rule beside the run choice', () => {
+  h.runs = []; h.detail = undefined;
+  renderPanel();
+  expect(screen.getByText('Answer checks don’t need a workspace allowance; application verification spends from it.')).toBeVisible();
+});
+it('moves only the main scroller and focuses without scrolling when a run starts', async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  const focused = [];
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'focus');
+  const originalFocus = HTMLElement.prototype.focus;
+  Object.defineProperty(HTMLElement.prototype, 'focus', { configurable: true, writable: true, value(options) { focused.push([this, options]); return originalFocus.call(this, options); } });
+  const scrollTo = vi.fn();
+  h.detail.arms[0] = { variant: 'candidate', version: 7 };
+  render(<MemoryRouter><main ref={(node) => { if (node) node.scrollTo = scrollTo; }}><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} /></main></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
+  const run = await screen.findByRole('button', { name: 'Run on the application' });
+  fireEvent.click(screen.getByRole('checkbox', { name: /I accept up to/ }));
+  await waitFor(() => expect(run).toBeEnabled());
+  focused.length = 0;
+  fireEvent.click(run);
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  const region = screen.getByRole('region', { name: 'Latest result' });
+  await waitFor(() => expect(focused.map(([element]) => element)).toContain(region));
+  for (const [element, options] of focused) if (element === region) expect(options).toEqual({ preventScroll: true });
+  expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }));
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  Object.defineProperty(HTMLElement.prototype, 'focus', descriptor);
+  delete Element.prototype.scrollIntoView;
+});
+it('keeps the screen-reader-only plan header 1px wide inside its cell, so it cannot widen the page', async () => {
+  h.runs = []; h.detail = undefined;
+  renderPanel();
+  const label = (await screen.findAllByText('Was failing', { exact: true, selector: 'span' }))[0];
+  expect(getComputedStyle(label).width).toBe('1px');
+  expect(getComputedStyle(label.closest('th')).position).toBe('relative');
+});
+it('claims no regression when no attempt finished', () => {
+  h.detail = { ...h.detail, status: 'failed', jobState: 'failed', failure: 'runtime_dispatch_failed', received: 0, result: { reproduction: 'not_requested', regressed_cases: 0 }, decision: { state: 'hold', reasons: [] },
+    cells: [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'not_started', answer: 'unverifiable', selection: 'unverifiable', delivery: 'unverifiable', tools: 'unverifiable' }] };
+  renderPanel();
+  expect(screen.getByText('v6 passed 0 of 2 cases.')).toBeVisible();
+  expect(screen.queryByText(/regression/i)).not.toBeInTheDocument();
+});
+it('reads an application row whose detail fails as not reported, never loading forever', () => {
+  h.detailError = true;
+  try {
+    renderPanel({ answerHistory: { data: { results: [] } }, renderAnswer: () => null });
+    const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Application verification/).closest('tr');
+    const outcome = row.querySelectorAll('td')[1];
+    expect(outcome).toHaveTextContent('Not reported');
+    expect(within(row).queryByText('Loading…')).not.toBeInTheDocument();
+  } finally { h.detailError = false; }
 });

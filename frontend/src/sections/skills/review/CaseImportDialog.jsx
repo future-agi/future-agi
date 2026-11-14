@@ -93,7 +93,7 @@ function ReviewedExample({
     : expired ? "This preview expired. Start a new capture."
     : suiteChanged ? "Saved test cases changed. Reopen this capture."
     : locked ? null
-    : !title.trim() ? "Add a title."
+    : !title.trim() ? "Add a case name."
     : !prompt.trim() ? "Add the request."
     : promptBytes > 16384 ? "Shorten the request to 16 KB."
     : fixtureBytes > 49152 ? "Shorten the tool results to 48 KB."
@@ -115,9 +115,8 @@ function ReviewedExample({
       <DialogContent>
         <Stack spacing={1.5}>
           <Alert severity="success" role="status">
-            Reviewed example saved: {title}. Nothing was run or published.
+            {targetName ? `Test case saved to ${targetName}` : "Test case saved"}: {title}. Nothing was run or published.
           </Alert>
-          {targetName && <Typography variant="s1">Saved to {targetName}.</Typography>}
           {saved?.action && <Typography variant="s1">Next, reproduce it on the application to confirm the failure and test a fix.</Typography>}
           {saved?.notice}
         </Stack>
@@ -136,9 +135,9 @@ function ReviewedExample({
           {/* Readable provenance first; fingerprints and exact identities are details. */}
           <Typography variant="s1">{describeSource?.(preview) || (preview.recordedContext ? "From a recorded trace" : "From a trace with no recorded context version")}</Typography>
           <Typography variant="s3" color="text.secondary">
-            {targetName ? "Step 2 of 2 · " : ""}The test case replays this text only; no tools run,
-            and saving doesn&apos;t run a model. Set the expected answer from your policy, not from
-            the failed answer.
+            {targetName ? "Step 2 of 2 · " : ""}Saving this case doesn&apos;t run a model or tools. An answer
+            check replays the selected text{applicationBehavior ? "; application verification checks the skills and business actions you specify below" : ""}.
+            Set the expected answer from your policy, not from the failed answer.
           </Typography>
           <TechnicalDetails title="Source details">
             <Stack spacing={1}>
@@ -147,7 +146,7 @@ function ReviewedExample({
               {preview.recordedContext ? <>
                 <IdentityValue label="Recorded context version" value={preview.recordedContext.versionId} />
                 <IdentityValue label="Recorded context digest" value={preview.recordedContext.digest} />
-              </> : <IdentityValue label="Recorded context" value="Unavailable — diagnostic example, not exact historical replay" />}
+              </> : <IdentityValue label="Recorded context" value="Unavailable — diagnostic case, not exact historical replay" />}
               <IdentityValue label="Private preview expires (UTC)" value={preview.expiresAt} />
             </Stack>
           </TechnicalDetails>
@@ -159,9 +158,9 @@ function ReviewedExample({
           )}
           {suiteChanged && !operation.result && (
             <Alert severity="warning">
-              Saved examples changed while this capture was open. Your edits are
-              preserved, but the suite precondition will not be refreshed
-              silently. Reopen after reviewing the current suite.
+              Test cases changed while this capture was open. Your edits are
+              preserved but can&apos;t be saved against the changed list. Reopen
+              this capture after reviewing the current test cases.
             </Alert>
           )}
           {preview.omitted?.length > 0 && (
@@ -176,7 +175,7 @@ function ReviewedExample({
           ))}
           <TextField
             autoFocus
-            label="Example title"
+            label="Case name"
             size="small"
             value={title}
             inputProps={{ maxLength: 120 }}
@@ -231,7 +230,7 @@ function ReviewedExample({
             inputProps={{ maxLength: 2000 }}
             onChange={edit(setExpectation)}
             disabled={locked}
-            helperText="An explicit, case-sensitive literal text check, not an AI judge. Add more checks in saved examples after import."
+            helperText="An explicit, case-sensitive literal text check, not an AI judge. You can add more checks to the saved test case."
           />
           {applicationBehavior && (
             <ApplicationBehaviorFields
@@ -245,7 +244,7 @@ function ReviewedExample({
             />
           )}
           {subjectKind !== "agent_context" && <Typography variant="s3">
-            This example checks the answer, not skill selection.
+            This test case checks the answer, not skill selection.
           </Typography>}
           <FormControlLabel
             control={
@@ -274,9 +273,9 @@ function ReviewedExample({
         {!operation.result && (
           <Stack sx={{ mr: "auto", minWidth: 0 }} spacing={0.25}>
             <ActionReason id="save-case-reason" reason={saveReason} />
-            {!expired && (
+            {!expired && expiresIn(preview.expiresAt, now).startsWith("Preview expires in") && (
               <Typography variant="s3" color="text.secondary">
-                {expiresIn(preview.expiresAt, now).replace("Preview expires in", "Time left to save:")}
+                {expiresIn(preview.expiresAt, now).replace("Preview expires in", "The trace snapshot expires in")}; after that, start again from the trace.
               </Typography>
             )}
           </Stack>
@@ -318,7 +317,7 @@ function ReviewedExample({
             })
           }
         >
-          Save reviewed example
+          Save test case
         </Button>}
       </DialogActions>
     </>

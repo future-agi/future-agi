@@ -68,7 +68,7 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await page.goto('/dashboard/observe');
   await page.getByText(projectName, { exact: true }).click();
   await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
-  await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
+  await page.getByRole('button', { name: 'Save as test case', exact: true }).click();
   // The span names the context it was delivered from, so the review opens in it with no context choice,
   // and every supported request and tool-result segment starts selected.
   const dialog = page.getByRole('dialog');
@@ -83,13 +83,13 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await expect(dialog.getByRole('textbox', { name: 'Redacted request', exact: true })).toHaveValue(capturedPrompt);
   await expect(dialog.getByRole('textbox', { name: 'Redacted tool result 1', exact: true })).toHaveValue(toolText);
   await expect(dialog.getByRole('textbox', { name: 'Redacted tool result 2', exact: true })).toHaveValue(followupToolText);
-  await dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill('Reviewed refund boundary');
+  await dialog.getByRole('textbox', { name: 'Case name', exact: true }).fill('Reviewed refund boundary');
   await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt');
   await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
   await dialog.getByRole('checkbox', { name: /workspace/ }).check();
   await page.screenshot({ path: testInfo.outputPath('J2-redaction-review.png'), animations: 'disabled' });
   const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
-  await dialog.getByRole('button', { name: 'Save reviewed example', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save test case', exact: true }).click();
   expect((await accepted).ok()).toBe(true);
   const suite = await read(`${root}tests/`);
   assertCase(suite);
@@ -108,7 +108,7 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   // With no application registered the answer check is the default, so choose the application test first.
   await page.getByRole('radio', { name: /^Verify on the application/ }).check();
   await expect(page.getByText('Application target', { exact: true })).toBeVisible();
-  await expect(page.getByText('Reviewed cases', { exact: true })).toBeVisible();
+  await expect(page.getByText('Test cases', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests.png'), animations: 'disabled' });
   await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); settings.themeMode = 'dark'; localStorage.setItem('settings', JSON.stringify(settings)); });
   await page.reload();

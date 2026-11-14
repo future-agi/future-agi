@@ -61,7 +61,7 @@ const capturedProps = {
   canSave: true,
 };
 function fillExample() {
-  fireEvent.change(screen.getByRole("textbox", { name: "Example title" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: "Case name" }), {
     target: { value: "Refund boundary" },
   });
   fireEvent.change(
@@ -160,7 +160,7 @@ describe("reviewed source capture", () => {
       { target: { value: "Customer asks for refund." } },
     );
     fillExample();
-    click("Save reviewed example");
+    click("Save test case");
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     const sent = save.mock.calls[0][0];
     expect(sent).toMatchObject({
@@ -185,14 +185,14 @@ describe("reviewed source capture", () => {
     render(<CaseImportDialog {...capturedProps} onSave={vi.fn()} />);
     fillExample();
     expect(
-      screen.getByRole("button", { name: "Save reviewed example" }),
+      screen.getByRole("button", { name: "Save test case" }),
     ).toBeEnabled();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Redacted tool result 1" }),
       { target: { value: "Changed fixture" } },
     );
     expect(
-      screen.getByRole("button", { name: "Save reviewed example" }),
+      screen.getByRole("button", { name: "Save test case" }),
     ).toBeDisabled();
     expect(
       screen.getByRole("checkbox", { name: /confirmed the expected behavior/ }),
@@ -211,9 +211,9 @@ describe("reviewed source capture", () => {
     fillExample();
     act(() => vi.advanceTimersByTime(3000));
     expect(
-      screen.getByRole("button", { name: "Save reviewed example" }),
+      screen.getByRole("button", { name: "Save test case" }),
     ).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Example title" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Case name" })).toHaveValue(
       "Refund boundary",
     );
   });
@@ -230,9 +230,9 @@ describe("reviewed source capture", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Save reviewed example" }),
+      screen.getByRole("button", { name: "Save test case" }),
     ).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Example title" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Case name" })).toHaveValue(
       "Refund boundary",
     );
   });
@@ -247,7 +247,7 @@ describe("reviewed source capture", () => {
       screen.getByRole("textbox", { name: "Redacted request" }),
     ).toHaveAttribute("aria-invalid", "true");
     expect(
-      screen.getByRole("button", { name: "Save reviewed example" }),
+      screen.getByRole("button", { name: "Save test case" }),
     ).toBeDisabled();
   });
   it("removes captured text immediately after access loss", () => {

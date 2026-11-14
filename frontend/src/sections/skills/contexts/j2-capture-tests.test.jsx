@@ -45,8 +45,8 @@ it('carries the exact physical identity without truncating sub-millisecond preci
 });
 it('selects a destination and passes all captured identities without manual fields', () => {
   render(<ContextTraceCaptureAction traceRef={ref} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
-  fireEvent.mouseDown(screen.getByLabelText('Regression context'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
+  fireEvent.mouseDown(screen.getByLabelText('Context'));
   fireEvent.click(screen.getByRole('option', { name: 'Refund policy' }));
   fireEvent.click(screen.getByRole('button', { name: 'Review selected span' }));
   expect(state.capture).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context', traceRef: ref, canCapture: true }));
@@ -55,23 +55,23 @@ it('selects a destination and passes all captured identities without manual fiel
 });
 it('opens the review directly in the context the span was delivered from, keeping every identity', () => {
   render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   expect(state.capture).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context', traceRef: ref, canCapture: true }));
-  expect(screen.queryByLabelText('Regression context')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Context')).not.toBeInTheDocument();
 });
 it('lets the reviewer leave the delivered context for another one', () => {
   render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   fireEvent.click(screen.getByRole('button', { name: 'Change context' }));
-  expect(screen.getByLabelText('Regression context')).toBeInTheDocument();
+  expect(screen.getByLabelText('Context')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
 });
 it('falls back to choosing a context when the delivered context cannot be captured into', () => {
   state.canPublish = false;
   render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   expect(state.capture).not.toHaveBeenCalled();
-  expect(screen.getByLabelText('Regression context')).toBeInTheDocument();
+  expect(screen.getByLabelText('Context')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
 });
 it('reads only a well-formed context id from the span attributes as a default', () => {
@@ -82,7 +82,7 @@ it('reads only a well-formed context id from the span attributes as a default', 
 });
 it('drops an open source selection when the authenticated workspace changes', () => {
   const view = render(<ContextTraceCaptureAction traceRef={ref} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   expect(screen.getByRole('dialog')).toBeVisible();
   state.identity = 'scope-b';
   view.rerender(<ContextTraceCaptureAction traceRef={ref} />);
@@ -91,18 +91,18 @@ it('drops an open source selection when the authenticated workspace changes', ()
 it('does not grant capture rights from a context list entry alone', () => {
   state.canPublish = false;
   render(<ContextTraceCaptureAction traceRef={ref} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
-  fireEvent.mouseDown(screen.getByLabelText('Regression context'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
+  fireEvent.mouseDown(screen.getByLabelText('Context'));
   fireEvent.click(screen.getByRole('option', { name: 'Refund policy' }));
   expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
   expect(state.capture).not.toHaveBeenCalled();
 });
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite /></MemoryRouter>);
-  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  expect(screen.getByText('Test cases')).toBeVisible();
   fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText(/Application verification is off/)).toBeVisible();
-  expect(screen.getByText('No regression cases yet')).toBeVisible();
+  expect(screen.getByText('No test cases yet')).toBeVisible();
 });
 it('offers application verification only when the deployment has a hosted runtime', () => {
   state.runtime = true;
@@ -117,6 +117,6 @@ it('offers application verification only when the deployment has a hosted runtim
 it('does not turn an inaccessible suite into empty successful coverage', () => {
   state.suiteError = true;
   render(<MemoryRouter><ContextTestsPanel contextId="context" canWrite /></MemoryRouter>);
-  expect(screen.getByText('Could not load context regression cases')).toBeVisible();
-  expect(screen.queryByText('No regression cases yet')).not.toBeInTheDocument();
+  expect(screen.getByText("Couldn't load test cases")).toBeVisible();
+  expect(screen.queryByText('No test cases yet')).not.toBeInTheDocument();
 });

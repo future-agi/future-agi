@@ -154,7 +154,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const before = await api('GET', `${root}tests/`);
           const sourceResponse = page.waitForResponse((res) => res.url().endsWith(`${root}captures/source/`) && res.request().method() === 'POST');
           // The span names the context it was delivered from, so the review opens in it without choosing one.
-          await op.click(page.getByRole('button', { name: 'Create context regression case', exact: true }), 'capture-selected-span');
+          await op.click(page.getByRole('button', { name: 'Save as test case', exact: true }), 'capture-selected-span');
           const response = await sourceResponse;
           requireValue(response.ok(), 'Selected source was not authorized');
           state.source = (await response.json()).result;
@@ -166,7 +166,7 @@ export async function createDriver({ jobId, runId, registration }) {
           for (let index = 0; index < state.source.segments.length; index++) await expect(boxes.nth(index)).toBeChecked();
           await shot('02a-segments-preselected');
           await op.transition('redaction-review', () => op.click(dialog.getByRole('button', { name: 'Preview selected text', exact: true }), 'review-selected-text'));
-          await edit('case-title', () => dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill(TITLE.refund));
+          await edit('case-title', () => dialog.getByRole('textbox', { name: 'Case name', exact: true }).fill(TITLE.refund));
           await edit('expected-answer', () => dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt'));
           // The reviewer adds which skill and which business action the case requires, in the same review.
           // Chosen from the context's own skills and the application's actions; nothing is typed.
@@ -180,7 +180,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
           await op.review('review-captured-case', state.source.segments.map((_, i) => `segment-${i}`), [], async () => { await shot('02-captured-case-review'); }, decision);
           const saved = page.waitForResponse((res) => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
-          await op.click(dialog.getByRole('button', { name: 'Save reviewed example', exact: true }), 'save-reviewed-case');
+          await op.click(dialog.getByRole('button', { name: 'Save test case', exact: true }), 'save-reviewed-case');
           requireValue((await saved).ok(), 'Capture acceptance failed');
           await expect(dialog.getByRole('button', { name: 'Reproduce on the application', exact: true })).toBeVisible();
           const suite = await api('GET', `${root}tests/`);
@@ -365,7 +365,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await page.getByLabel('CI configuration ID').fill(state.ci.report.configuration_identity);
             await page.getByLabel('CI result (pass or hold)').fill(state.ci.report.passed ? 'passed' : 'failed');
           });
-          await op.click(page.getByRole('button', { name: 'Share evidence and prepare packet', exact: true }), 'prepare-release-packet');
+          await op.click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 'prepare-release-packet');
           await expect(page.getByText(/Packet ready/)).toBeVisible();
           await shot('08-release-packet');
           const evidence = await api('GET', `evidence/simulation_native/${state.matchedId}/`);

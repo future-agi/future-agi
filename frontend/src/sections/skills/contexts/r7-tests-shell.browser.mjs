@@ -112,7 +112,7 @@ try {
   await page.goto('/dashboard/observe');
   await page.getByText(input.projectName, { exact: true }).click();
   await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
-  await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
+  await page.getByRole('button', { name: 'Save as test case', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('checkbox')).toHaveCount(2);
   for (const box of await dialog.getByRole('checkbox').all()) await expect(box).toBeChecked();
