@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Button, MenuItem, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Button,
+  MenuItem,
+  TextField,
+  Typography,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
@@ -19,11 +26,19 @@ const SEARCH_OWN_ROW = "@container (max-width: 599px)";
 // read the same filtered, grouped rows. The "N of M · Clear" readout sits with
 // the results, in the list's footer, not here.
 export default function ScenarioToolbar({
-  query, onQueryChange,
-  view, onViewChange,
-  groupBy, onGroupByChange, groupings = [],
-  filterFields, filters, onApplyFilters, filterCount,
-  rowHeight = "Short", onRowHeightChange,
+  query,
+  onQueryChange,
+  view,
+  onViewChange,
+  groupBy,
+  onGroupByChange,
+  groupings = [],
+  filterFields,
+  filters,
+  onApplyFilters,
+  filterCount,
+  rowHeight = "Short",
+  onRowHeightChange,
   proofCounts = null,
   lifecycleFilter = "",
   onLifecycleFilterChange,
@@ -39,8 +54,13 @@ export default function ScenarioToolbar({
           and the controls wrap beneath it, the actions staying right-aligned. */}
       <Box sx={{ containerType: "inline-size" }}>
         <Stack
-          role="toolbar" aria-label="Scenarios"
-          direction="row" alignItems="center" columnGap={0.5} rowGap={1} flexWrap="wrap"
+          role="toolbar"
+          aria-label="Scenarios"
+          direction="row"
+          alignItems="center"
+          columnGap={0.5}
+          rowGap={1}
+          flexWrap="wrap"
           sx={{ pb: 1.5 }}
         >
           <TextField
@@ -50,15 +70,27 @@ export default function ScenarioToolbar({
             placeholder={SCENARIOS_COPY.searchPlaceholder}
             InputProps={{
               startAdornment: (
-                <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
+                <Box
+                  sx={{
+                    pr: 0.75,
+                    pl: 0.25,
+                    display: "flex",
+                    color: "text.subtitle",
+                  }}
+                >
                   <Iconify icon="solar:magnifer-linear" width={14} />
                 </Box>
               ),
             }}
             sx={{
-              flex: 1, minWidth: 200, maxWidth: 420, mr: 0.5,
+              flex: 1,
+              minWidth: 200,
+              maxWidth: 420,
+              mr: 0.5,
               [SEARCH_OWN_ROW]: {
-                flexBasis: "100%", maxWidth: "none", mr: 0,
+                flexBasis: "100%",
+                maxWidth: "none",
+                mr: 0,
               },
             }}
           />
@@ -70,17 +102,33 @@ export default function ScenarioToolbar({
             startIcon={<Iconify icon="solar:filter-linear" width={16} />}
             sx={scenarioToolbarButtonSx}
           >
-            {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
+            {SCENARIOS_COPY.filterLabel}
+            {filterCount ? ` (${filterCount})` : ""}
           </Button>
           {onLifecycleFilterChange ? (
             <TextField
               select
               size="small"
-              label={SCENARIOS_COPY.lifecycleFilterLabel}
               value={lifecycleFilter}
               onChange={(e) => onLifecycleFilterChange(e.target.value)}
               inputProps={{ "data-testid": "lifecycle-filter" }}
-              sx={{ minWidth: 150 }}
+              // No floating label: the value reads "Lifecycle: All" in the toolbar row itself.
+              SelectProps={{
+                displayEmpty: true,
+                renderValue: (value) =>
+                  `${SCENARIOS_COPY.lifecycleFilterLabel}: ${
+                    SCENARIOS_COPY.lifecycleFilters.find(
+                      (one) => one.value === value,
+                    )?.label ?? ""
+                  }`,
+                SelectDisplayProps: {
+                  "aria-label": SCENARIOS_COPY.lifecycleFilterLabel,
+                },
+              }}
+              sx={{
+                minWidth: 170,
+                "& .MuiSelect-select": { py: 0.5, typography: "s2" },
+              }}
             >
               {SCENARIOS_COPY.lifecycleFilters.map((one) => (
                 <MenuItem key={one.value || "all"} value={one.value}>
@@ -122,7 +170,12 @@ export default function ScenarioToolbar({
               {SCENARIOS_COPY.proofCounts(proofCounts)}
             </Typography>
           ) : null}
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: "auto" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ ml: "auto" }}
+          >
             {actions}
           </Stack>
         </Stack>
