@@ -196,10 +196,33 @@ export const PropertyName = {
   goals: "goals",
 };
 
+const CUSTOM_MODEL_PROVIDERS = new Set([
+  "azure",
+  "openai",
+  "vertex_ai",
+  "custom",
+  "bedrock",
+  "sagemaker",
+]);
+
+// Custom-model events use a fixed property set: the provider (or "other") and
+// whether it was a create or an edit.
+const customModelEventProperties = (properties) => ({
+  model_provider: CUSTOM_MODEL_PROVIDERS.has(properties?.model_provider)
+    ? properties.model_provider
+    : "other",
+  operation: properties?.operation === "edit" ? "edit" : "create",
+});
+
 export const trackEvent = (eventName, properties) => {
   if (!MIXPANEL_ENABLED) return;
   try {
-    mixpanel.track(eventName, properties);
+    mixpanel.track(
+      eventName,
+      eventName === Events.customModelAdded
+        ? customModelEventProperties(properties)
+        : properties,
+    );
   } catch (error) {
     logger.error("Failed to track event:", error);
   }
@@ -242,13 +265,6 @@ export const identifyUser = (userData = {}) => {
     mixpanel.get_group("org_id", userData?.organization?.id).set_once({
       "Organization Name": userData?.organization?.name,
     });
-
-    // Appcues identification
-    if (window.Appcues) {
-      window.Appcues.identify(id, {
-        email: email,
-      });
-    }
   } catch (error) {
     logger.error("Failed to identify user:", error);
     trackError({
@@ -261,15 +277,9 @@ export const identifyUser = (userData = {}) => {
 };
 
 export const resetUser = () => {
-  if (!MIXPANEL_ENABLED) {
-    if (window.Appcues) window.Appcues.reset();
-    return;
-  }
+  if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.reset();
-    if (window.Appcues) {
-      window.Appcues.reset();
-    }
   } catch (error) {
     logger.error("Failed to reset user:", error);
   }

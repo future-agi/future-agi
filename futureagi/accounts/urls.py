@@ -8,6 +8,10 @@ from accounts.views.aws_marketplace import (
     aws_marketplace_verify_token,
 )
 from accounts.views.config import public_config
+from accounts.views.gcp_marketplace import (
+    gcp_marketplace_signup,
+    gcp_marketplace_verify_token,
+)
 from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
@@ -85,6 +89,7 @@ from accounts.views.workspace_management import (
     WorkspaceInviteAPIView,
     WorkspaceListAPIView,
 )
+from tfc.ee_gating import is_oss
 
 router = DefaultRouter()
 router.register("key", SecretKeyAPIViewSet, basename="user-secret-keys")
@@ -311,6 +316,22 @@ aws_marketplace_urls = [
     ),
 ]
 
+gcp_marketplace_urls = [
+    path(
+        "gcp-marketplace/verify-token/",
+        gcp_marketplace_verify_token,
+        name="gcp-marketplace-verify-token",
+    ),
+    path(
+        "gcp-marketplace/signup/", gcp_marketplace_signup, name="gcp-marketplace-signup"
+    ),
+]
+
+# AWS and GCP Marketplace sign-up is Future AGI Cloud's. The endpoints are
+# anonymous and call AWS and Google, so a self-hosted install does not mount
+# them (tfc.openapi_urls still documents them).
+marketplace_urls = aws_marketplace_urls + gcp_marketplace_urls
+
 config_urls = [
     path("config/", public_config, name="public-config"),
 ]
@@ -394,7 +415,7 @@ urlpatterns = (
     + rbac_urls
     + workspace_member_urls
     + organization_urls
-    + aws_marketplace_urls
+    + ([] if is_oss() else marketplace_urls)
     + config_urls
     + two_factor_urls
     + passkey_urls

@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Future AGI Design System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="tokens/tokens.css?v=27">
+<link rel="stylesheet" href="ds.css?v=38">
+<link rel="stylesheet" href="docs.css?v=25">
+<script>
+  try { var t = localStorage.getItem("ds-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-columns" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M14 4v16"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M6 5h12l2 8v6H4v-6z"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3c.6 4.5 2.5 6.4 7 7-4.5.6-6.4 2.5-7 7-.6-4.5-2.5-6.4-7-7 4.5-.6 6.4-2.5 7-7z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 10a1 1 0 0 0 .9 1.5h12.2A1 1 0 0 0 19 19l-5-10V3"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2z"/><path d="M10 21h4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.7 3 2.6 3.5 5.2"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/><path d="M8 10h8M8 13h5"/></symbol><symbol id="i-chat" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 1 0 17c-1.4 0-2.7-.3-3.9-.9L4 20.5l.9-4A8.5 8.5 0 0 1 12 3.5z"/><path d="M8.5 11h7M8.5 14h4.5"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16"/><path d="M8 16v-5M12 16V8M16 16v-3"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h6"/></symbol>
+    <symbol id="i-trend" viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 15l-3-3c1-4 4-8 10-9-1 6-5 9-9 10z"/><path d="M9 12H5l3-4h4M12 15v4l4-3v-4M6 18l-2 2"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l9 9-8 8-9-9z"/><circle cx="7.5" cy="8.5" r="1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20h-5v-6H9v6H4z"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+    <symbol id="i-chevron-updown" viewBox="0 0 24 24"><path d="m8 9 4-4 4 4M8 15l4 4 4-4"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <aside class="side" id="side">
+    <div class="brand"><img class="brand-mark" src="assets/future-agi-mark.svg" alt="Future AGI"><div><b>Future AGI</b><span>Design System · v0.2.4</span></div></div>
+    <nav aria-label="Sections">
+      <div class="grp">Overview</div>
+      <a class="lnk" href="#principles">Principles</a>
+      <a class="lnk" href="#using">Getting started</a>
+      <a class="lnk" href="#changelog">Changelog</a>
+      <div class="grp">Foundations</div>
+      <a class="lnk" href="#color">Colour</a>
+      <a class="lnk" href="#status-colors">Status and data colours</a>
+      <a class="lnk" href="#contrast">Contrast</a>
+      <a class="lnk" href="#type">Typography</a>
+      <a class="lnk" href="#writing">Writing</a>
+      <a class="lnk" href="#space">Spacing</a>
+      <a class="lnk" href="#radius">Radius and borders</a>
+      <a class="lnk" href="#elevation">Elevation</a>
+      <a class="lnk" href="#focus">Focus</a>
+      <a class="lnk" href="#sizing">Sizing and density</a>
+      <a class="lnk" href="#motion">Motion</a>
+      <a class="lnk" href="#icons">Icons</a>
+      <div class="grp">Components</div>
+      <a class="lnk" href="#button">Button</a>
+      <a class="lnk" href="#input">Text field</a>
+      <a class="lnk" href="#select">Select and search</a>
+      <a class="lnk" href="#filter">Filter</a>
+      <a class="lnk" href="#choice">Checkbox, radio, switch</a>
+      <a class="lnk" href="#tabs">Tabs and segmented control</a>
+      <a class="lnk" href="#badge">Badge and status</a>
+      <a class="lnk" href="#tag">Tag, count, version</a>
+      <a class="lnk" href="#avatar">Avatar</a>
+      <a class="lnk" href="#table">Table</a>
+      <a class="lnk" href="#panel">Panel and key-value</a>
+      <a class="lnk" href="#metric">Metric strip</a>
+      <a class="lnk" href="#menu">Menu and tooltip</a>
+      <a class="lnk" href="#dialog">Dialog</a>
+      <a class="lnk" href="#drawer">Drawer</a>
+      <a class="lnk" href="#feedback">Toast and banner</a>
+      <a class="lnk" href="#states">Empty, loading, error</a>
+      <a class="lnk" href="#navigation">Navigation</a>
+      <a class="lnk" href="#code">Code</a>
+      <div class="grp">Patterns</div>
+      <a class="lnk" href="#status-map">Status map</a>
+      <a class="lnk" href="#pricing">Money and cost</a>
+      <a class="lnk" href="#scores">Scores and deltas</a>
+      <a class="lnk" href="#page">Page layout</a>
+      <div class="grp">Migration guide</div>
+      <a class="lnk" href="#inventory">What we have today</a>
+      <a class="lnk" href="#mapping">From today to the system</a>
+      <a class="lnk" href="#rollout">Rollout</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="ds-btn ds-btn--ghost ds-icon-btn ds-btn--sm menu-btn" id="menuBtn" aria-label="Open sections" aria-controls="side" aria-expanded="false"><svg class="i"><use href="#i-menu"/></svg></button>
+      <div class="crumb">Design System · <b id="crumbNow">Principles</b></div>
+      <div class="theme-switch" role="group" aria-label="Page theme">
+        <button type="button" id="th-light" data-set="light"><svg class="i" style="width:14px;height:14px"><use href="#i-sun"/></svg>Light</button>
+        <button type="button" id="th-dark" data-set="dark"><svg class="i" style="width:14px;height:14px"><use href="#i-moon"/></svg>Dark</button>
+        <button type="button" id="th-system" data-set="system"><svg class="i" style="width:14px;height:14px"><use href="#i-monitor"/></svg>System</button>
+      </div>
+    </div>
+
+    <main class="content">
+
+      <!-- ===================================================== OVERVIEW -->
+      <section class="doc" id="principles">
+        <header>
+          <div class="eyebrow">Future AGI · v0.2.4 · 11 Nov 2026</div>
+          <h1>Future AGI Design System</h1>
+          <p class="lede">One set of tokens, components and rules for the whole Future AGI product, in light and dark. Every screen draws each thing one way, from one shared component, and the rules are checked in code so the product stays consistent as it grows.</p>
+        </header>
+        <div class="rules">
+          <div class="rule"><b>Data over decoration</b><p>Facts, numbers and status do the work: no tinted cards, emoji or ornament.</p></div>
+          <div class="rule"><b>Calm by default</b><p>Neutral greys and flat surfaces; colour only when it means something.</p></div>
+          <div class="rule"><b>Dense, but easy to scan</b><p>More on screen; hierarchy comes from weight and grey, not size.</p></div>
+          <div class="rule"><b>Say less, plainly</b><p>Short text in the user's words; anything longer is a docs link.</p></div>
+          <div class="rule"><b>Nothing left undesigned</b><p>Every state, in both themes.</p></div>
+        </div>
+      </section>
+
+      <section class="doc" id="using">
+        <header>
+          <h2>Getting started</h2>
+          <p class="muted">Tokens live in one file and are generated into CSS variables, a docs bundle and an MUI theme. Change <code>tokens/tokens.json</code>, run the build, and every output updates.</p>
+          <p class="muted"><b>One name, two themes.</b> Components use semantic tokens only (<code>fg.secondary</code>, <code>border.default</code>). No hex values and no <code>isDark</code> checks in components.</p>
+        </header>
+        <div class="tscroll"><table class="spec">
+          <thead><tr><th>You need</th><th>Use</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td>A colour in MUI <code>sx</code></td><td>The palette path the token maps to</td><td><span class="mono">color: "text.secondary"</span>, <span class="mono">borderColor: "divider"</span></td></tr>
+            <tr><td>A colour in CSS</td><td>The CSS variable</td><td><span class="mono">var(--ds-fg-secondary)</span>, <span class="mono">var(--ds-border-default)</span></td></tr>
+            <tr><td>A status colour</td><td><span class="mono">theme.palette.status.&lt;role&gt;.&lt;fg|bg|border|solid&gt;</span></td><td><span class="mono">status.danger.fg</span> on <span class="mono">status.danger.bg</span></td></tr>
+            <tr><td>Text style</td><td>A type role as a Typography variant</td><td><span class="mono">&lt;Typography variant="body_sm"&gt;</span>, <span class="mono">variant="label_md"</span></td></tr>
+            <tr><td>A size</td><td>Size tokens</td><td>Control <span class="mono">md 32</span>, row <span class="mono">36</span> (<span class="mono">ROW_HEIGHT.default</span>), icon <span class="mono">16</span></td></tr>
+            <tr><td>A page frame or repeated block</td><td>The shared component, never a local copy</td><td><span class="mono">PageHeader</span>, <span class="mono">Section</span> (plain | panel), <span class="mono">MetricStrip</span>, <span class="mono">SelectionBar</span>, <span class="mono">StatusBadge</span>, <span class="mono">EmptyState</span> / <span class="mono">EmptyContent</span>, <span class="mono">Loader</span> / <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span>, <span class="mono">DataTablePagination</span>, <span class="mono">FormSearchField</span>, <span class="mono">CustomTabs</span> / <span class="mono">SegmentedTabs</span>, <span class="mono">ConfirmDialog</span> / <span class="mono">ClosableDialog</span>. <span class="mono">PageHeader</span>, <span class="mono">MetricStrip</span>, <span class="mono">EmptyState</span>, <span class="mono">Loader</span>, <span class="mono">ContentSkeleton</span>, <span class="mono">ErrorState</span> and <span class="mono">ClosableDialog</span> are not on <span class="mono">dev</span> yet.</td></tr>
+            <tr><td>Where it lives in the product</td><td><span class="mono">frontend/src/theme/</span>: <span class="mono">ds-tokens.js</span> (generated) plus the product text variants and component styling</td><td>Change component styling in <span class="mono">frontend/src/theme/overrides/components/</span>; change a value in <span class="mono">tokens.json</span>.</td></tr>
+            <tr><td>To check a screen</td><td><span class="mono">yarn lint:ds:changed</span> and <span class="mono">yarn ds:optouts</span> from <span class="mono">frontend/</span> (CI runs both)</td><td>Flags hex colours, legacy palette hues, sizes off the scale, weights above 600, uppercase, restyled Avatar/Tab/Toggle/Menu/Alert/Button/Chip, Card/Paper styling, custom shadows, purple selected states, and <span class="mono">Card</span> imports</td></tr>
+            <tr><td>To change a value</td><td>Edit <span class="mono">frontend/design-system/tokens/tokens.json</span>, then run <span class="mono">yarn tokens:build</span> from <span class="mono">frontend/</span></td><td>The build fails if any promised text contrast drops below its minimum</td></tr>
+          </tbody>
+        </table></div>
+        <p class="small muted">Generated files: <a href="tokens/tokens.css?v=27">tokens.css</a> · <a href="tokens/tokens.json">tokens.json</a> (source) · <span class="mono">frontend/src/theme/ds-tokens.js</span> (what the product uses).</p>
+      </section>
+
+      <section class="doc" id="changelog">
+        <header>
+          <h2>Changelog</h2>
+          <p class="muted">What changed in each version.</p>
+        </header>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Version</th><th>Date</th><th>Changes</th></tr></thead><tbody>
+          <tr><td>0.2.4</td><td>11 Nov 2026</td><td>13px is gone: <code>body-md</code> and <code>title-xs</code> are 12/18, so section and panel titles, paragraphs, input values, toasts and dialog body text are 12px. Legacy <span class="mono">s1_2</span> and <span class="mono">m3</span> follow. Hard-coded 13px sizes in the product moved to 12. Loading: a skeleton only where it copies the content (table rows, a screen's own cards); pages and panels use the simple <span class="mono">Loader</span>. Replaces the 0.2.2 “no centred spinners” rule. The top progress bar on page changes is removed; the content-area loader is the only page loader. Tables load as skeleton rows under their real headers; a page never shows two loaders in a row.</td></tr>
+          <tr><td>0.2.3</td><td>31 Oct 2026</td><td>Unselected tab labels darker: <code>fg.secondary</code>, was <code>fg.tertiary</code>. Every dialog that can be closed has a close cross top right; new <span class="mono">ClosableDialog</span> for raw dialogs.</td></tr>
+          <tr><td>0.2.2</td><td>31 Oct 2026</td><td>Table rows 36, two-line rows 48. Tab rail: the theme draws one hairline under every tab row. Sidebar labels darker: items <code>fg.default</code>, section labels <code>fg.secondary</code>. Loading is <span class="mono">ContentSkeleton</span>, no centred spinners. Knowledge base statuses in the status map.</td></tr>
+          <tr><td>0.2.1</td><td>30 Oct 2026</td><td>Docs match the product: page titles, object headers, dialog and drawer titles 15/600, section and panel titles 13/500; table rows 36 everywhere (one shared setting); 12 inside panels. Removed screen-specific notes (Evidence and requirements, the long density note, run and issue header details). Status map, merged with Run status into one table. Getting started and Rollout apply the theme kit, not <span class="mono">mui-theme.js</span> alone. White tab underline and focus in dark. Product text sizes and the theme kit.</td></tr>
+          <tr><td>0.2</td><td>27 Oct 2026</td><td>Text one step smaller (UI default 12px, captions 11px; 11px is the floor). Denser screens: rows 32 (28 compact, 44 two-line), compact panels, section and panel titles at 500, counts as one line. Tighter sidebar: 24px items with no gap, 20px section labels, 8px between groups. New Writing, Money and cost, and Evidence and requirements pages. Principles simplified to five. Main button in dark mode confirmed white with dark text.</td></tr>
+          <tr><td>0.1</td><td>24 Oct 2026</td><td>First version: zinc neutrals in both themes, purple main button in light mode, info in blue and AI suggestions in purple, one icon set (Solar linear), AG Grid for data grids and the system table for simple lists.</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <!-- ===================================================== FOUNDATIONS -->
+      <div class="part-head"><div class="eyebrow">Foundations</div><p class="muted">Tokens and rules every component is built from.</p></div>
+
+      <section class="doc" id="color">
+        <header>
+          <h2>Colour</h2>
+          <p class="muted">Two tiers. <b>Primitives</b> are raw ramps and are never used in components. <b>Semantic tokens</b> name a job (“secondary text”, “panel background”) and point at a primitive per theme. The neutral ramp is zinc: the same family in both themes.</p>
+          <p class="muted">Greys do the structure. Purple marks the one main action, focus and AI. Green, amber, red and blue only ever mean a status.</p>
+        </header>
+        <h3>Primitives</h3>
+        <div class="ramps" id="ramps"></div>
+        <h3>Semantic tokens</h3>
+        <div class="tscroll"><table class="spec" id="semanticTable"><thead><tr><th>Token</th><th>Light</th><th>Dark</th><th>Use</th></tr></thead><tbody></tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Pick the token by its job, not because its colour looks right.</li><li>Use <code>bg.hover</code> / <code>bg.selected</code> (alpha) so states work on any surface.</li><li>Use <code>fg.tertiary</code> for meta text; it passes AA on every surface.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Write hex values or primitives in components.</li><li>Use purple for avatars, tags, chips or secondary buttons.</li><li>Use <code>fg.disabled</code> for anything a person needs to read.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="status-colors">
+        <header>
+          <h2>Status and data colours</h2>
+          <p class="muted">Six status roles, each with a tint, a border, readable text, a solid fill and a label colour for that fill. Chart and category colours are a separate set of eight, so a chart series never reads as “failed”. <code>dataMono</code> is a quieter set of eight purple shades for charts that read better in one colour family, such as cost by group.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="stack">
+            <div class="row"><span class="ds-badge ds-badge--success">Success</span><span class="ds-badge ds-badge--warning">Warning</span><span class="ds-badge ds-badge--danger">Danger</span><span class="ds-badge ds-badge--info">Info</span><span class="ds-badge">Neutral</span><span class="ds-badge ds-badge--discovery">Discovery</span></div>
+            <div class="row"><span class="ds-badge ds-badge--solid ds-badge--success">Success</span><span class="ds-badge ds-badge--solid ds-badge--warning">Warning</span><span class="ds-badge ds-badge--solid ds-badge--danger">Danger</span><span class="ds-badge ds-badge--solid ds-badge--info">Info</span><span class="ds-badge ds-badge--solid ds-badge--discovery">Discovery</span></div>
+            <div class="row" data-fill="data"></div>
+            <div class="row" data-fill="dataMono"></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec" id="statusTable"><thead><tr><th>Role</th><th>Means</th><th>Light · fg / bg / solid</th><th>Dark · fg / bg / solid</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="doc" id="contrast">
+        <header>
+          <h2>Contrast</h2>
+          <p class="muted">Checked by the build in both themes. Text needs 4.5:1; icons and focus rings need 3:1. Alpha fills are measured over the panel background.</p>
+        </header>
+        <div class="tscroll"><table class="spec" id="contrastTable"><thead><tr><th>Pair</th><th>Tokens</th><th>Light</th><th>Dark</th><th>Minimum</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="doc" id="type">
+        <header>
+          <h2>Typography</h2>
+          <p class="muted">Inter, three weights (400, 500, 600), tabular figures for numbers. Line heights sit on a 4px grid. <code>body-sm</code> (12px) is the UI default; <code>body-md</code> (12/18) is for long reading text. 12px is the largest body size; nothing uses 13px. Legacy variants map onto the scale: <span class="mono">s1</span> 12, <span class="mono">s3</span> 11, <span class="mono">m3</span> 12, <span class="mono">m1</span>/<span class="mono">m2</span> 15.</p>
+        </header>
+        <div class="type-spec" id="typeSpec"></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Make a name stand out with <code>label-md</code> (500) and <code>fg.default</code>.</li><li>Put descriptions under names in <code>caption</code> and <code>fg.tertiary</code>.</li><li>Use <code>overline</code> only for short section labels.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Use 700 or bold anywhere; 600 is the heaviest weight.</li><li>Use sizes outside the scale (10, 10.5, 11.5, 12.5, 14px).</li><li>Set text below 11px.</li><li>Set code identifiers in bold; monospace names in rows are 12/400.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="writing">
+        <header>
+          <h2>Writing</h2>
+          <p class="muted">Words are part of the interface. Say what it does and what to do next, in the user's words.</p>
+        </header>
+        <div class="rules">
+          <div class="rule"><b>Helper text is one line, two at most</b><p>Descriptions, subtitles, helper text, notices, dialog bodies and hover hints: one line where possible, never more than two (about 140 characters). Say what it does and what to do next; cut the why, the edge cases and the history. Anything longer is a docs link, never another paragraph.</p></div>
+          <div class="rule"><b>The user's words</b><p>Name things by what people recognise: "Run simulation", not "Execute job". No internal words (project phases, document names); something not built yet is "Coming soon".</p></div>
+          <div class="rule"><b>Sentence case, verb first</b><p>Sentence case everywhere, including buttons, titles, tabs and menus; uppercase only through the overline. Buttons start with the verb that says what happens ("Build environment"); a confirm button repeats the dialog title's verb.</p></div>
+          <div class="rule"><b>Errors say what failed and what to do</b><p>No apology, no exclamation marks: "Couldn't reach the agent. The endpoint returned 502. Check it's running, then retry."</p></div>
+          <div class="rule"><b>Real numbers and units</b><p>Digits and real units ("4m 31s", "96 of 113", "1.8s"). A dash — means "no value yet"; never "N/A" or "null". No emoji.</p></div>
+        </div>
+      </section>
+
+      <section class="doc" id="space">
+        <header>
+          <h2>Spacing</h2>
+          <p class="muted">A 4px grid with a 2px half step. The MUI theme keeps its 8px unit (<code>theme.spacing(1)</code> = 8px), so write these values in px. Common gaps: 4 inside controls, 8 between controls, 12 inside panels, 24 between panels, 32 between page sections.</p>
+        </header>
+        <div class="stack" id="spaceScale"></div>
+      </section>
+
+      <section class="doc" id="radius">
+        <header>
+          <h2>Radius and borders</h2>
+          <p class="muted">Six radii, each with a job. Every border is 1px; 2px is only for the selected tab indicator and focus.</p>
+        </header>
+        <div class="radius-row" id="radiusScale"></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Controls 6, panels and menus 8, dialogs 12.</li><li>Use <code>border.default</code> around things and between table rows; <code>border.subtle</code> only for dividers inside a panel.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Put a coloured stripe on one edge of a rounded card. Use a header label or a tint instead.</li><li>Use dashed borders except for drop zones.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="elevation">
+        <header>
+          <h2>Elevation</h2>
+          <p class="muted">Four levels. Everything in the page is flat with a 1px border, never a shadow. Floating layers get a 1px ring plus a soft shadow; in dark mode they also sit on a lighter surface, because shadows barely show on dark backgrounds.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="shadow-row">
+            <div style="background:var(--ds-bg-surface);box-shadow:0 0 0 1px var(--ds-border-default)">flat · border</div>
+            <div style="background:var(--ds-bg-surface);box-shadow:0 0 0 1px var(--ds-border-default), var(--ds-shadow-raised)">raised · sticky</div>
+            <div style="box-shadow:var(--ds-shadow-overlay)">overlay · menu</div>
+            <div style="box-shadow:var(--ds-shadow-modal);border-radius:12px">modal · dialog</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="focus">
+        <header>
+          <h2>Focus</h2>
+          <p class="muted">Shown on keyboard focus only (<span class="mono">:focus-visible</span>). Buttons, links and checkboxes get a 2px <code>border.focus</code> outline outside the control; tabs, menu items, nav items and table rows draw it inside; inputs switch to the focus border with a soft 3px ring.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="stack" style="gap:18px">
+            <div class="row">
+              <button class="ds-btn ds-btn--primary is-focus">Run simulation</button>
+              <button class="ds-btn is-focus">Cancel</button>
+              <div class="ds-input is-focus" style="width:200px"><span class="grow">Billing copilot</span></div>
+            </div>
+            <div class="ds-tabs" style="max-width:360px"><span class="ds-tab is-selected is-focus">Overview</span><span class="ds-tab">World</span><span class="ds-tab">Scenarios</span><span class="ds-tab">Runs</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="sizing">
+        <header>
+          <h2>Sizing and density</h2>
+          <p class="muted">Controls share heights so toolbars line up: a 32px button sits next to a 32px input. Tables default to 36px rows, 48px for two-line rows (name plus description); headers, inputs and tabs are 32.</p>
+        </header>
+        <div class="tscroll"><table class="spec" id="sizeTable"><thead><tr><th>Token</th><th>Values</th><th>Use</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="doc" id="motion">
+        <header>
+          <h2>Motion</h2>
+          <p class="muted">Productive and quick: things appear with ease-out, leave with ease-in, and move with ease-in-out. Nothing animates for decoration. Motion turns off under <code>prefers-reduced-motion</code>. Hover a tile to compare.</p>
+        </header>
+        <div class="motion-row" id="motionRow"></div>
+      </section>
+
+      <section class="doc" id="icons">
+        <header>
+          <h2>Icons</h2>
+          <p class="muted">One set: Solar, linear style, through <code>Iconify</code>. Brand marks come from <code>logos</code> or <code>simple-icons</code>. Sizes 12, 14, 16 (default), 20. Icons take <code>icon.default</code> next to text and <code>icon.strong</code> on icon-only buttons.</p>
+          <p class="muted"><span class="mono">solar:record-circle-linear</span> is never used. Dataset table column-type icons keep their original set (agreed exception).</p>
+          <p class="muted">One exception, where Solar has no glyph: Fix uses <span class="mono">ph:screwdriver</span> (Phosphor regular, the closest stroke to Solar linear). Add an exception here before using another set.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="row" style="gap:18px;color:var(--ds-icon-default)">
+            <svg class="i xs"><use href="#i-search"/></svg><svg class="i sm"><use href="#i-search"/></svg><svg class="i"><use href="#i-search"/></svg><svg class="i lg"><use href="#i-search"/></svg>
+            <svg class="i"><use href="#i-globe"/></svg><svg class="i"><use href="#i-bot"/></svg><svg class="i"><use href="#i-flask"/></svg><svg class="i"><use href="#i-activity"/></svg><svg class="i"><use href="#i-layers"/></svg><svg class="i"><use href="#i-settings"/></svg><svg class="i"><use href="#i-sparkle"/></svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================== COMPONENTS -->
+      <div class="part-head"><div class="eyebrow">Components</div><p class="muted">Each shown in both themes with its states. “Replaces” lists what it retires in today's code.</p></div>
+
+      <section class="doc" id="button">
+        <header>
+          <h2>Button</h2>
+          <p class="muted">Buttons start an action. One primary per view; everything else is secondary.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="stack">
+            <div class="row"><button class="ds-btn ds-btn--primary"><svg class="i"><use href="#i-play"/></svg>Run simulation</button><button class="ds-btn"><svg class="i"><use href="#i-plus"/></svg>Add scenario</button><button class="ds-btn ds-btn--ghost">Cancel</button><button class="ds-btn ds-btn--danger">Delete</button><button class="ds-btn ds-btn--link">View agent</button></div>
+            <div class="grid-states">
+              <span class="state-label">primary</span>
+              <button class="ds-btn ds-btn--primary">Rest</button><button class="ds-btn ds-btn--primary is-hover">Hover</button><button class="ds-btn ds-btn--primary is-active">Pressed</button><button class="ds-btn ds-btn--primary is-focus">Focus</button><button class="ds-btn ds-btn--primary is-disabled">Disabled</button><button class="ds-btn ds-btn--primary is-loading">Loading</button>
+              <span class="state-label">secondary</span>
+              <button class="ds-btn">Rest</button><button class="ds-btn is-hover">Hover</button><button class="ds-btn is-active">Pressed</button><button class="ds-btn is-focus">Focus</button><button class="ds-btn is-disabled">Disabled</button><button class="ds-btn is-loading">Loading</button>
+              <span class="state-label">ghost</span>
+              <button class="ds-btn ds-btn--ghost">Rest</button><button class="ds-btn ds-btn--ghost is-hover">Hover</button><button class="ds-btn ds-btn--ghost is-active">Pressed</button><button class="ds-btn ds-btn--ghost is-focus">Focus</button><button class="ds-btn ds-btn--ghost is-disabled">Disabled</button><span></span>
+            </div>
+            <div class="row"><button class="ds-btn ds-btn--xs">xs 24</button><button class="ds-btn ds-btn--sm">sm 28</button><button class="ds-btn">md 32</button><button class="ds-btn ds-btn--lg">lg 36</button><button class="ds-btn ds-icon-btn ds-btn--ghost ds-btn--sm" aria-label="More"><svg class="i"><use href="#i-more"/></svg></button><button class="ds-btn ds-icon-btn" aria-label="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Height · padding</td><td>xs 24 · 8, sm 28 · 10, <b>md 32 · 12</b> (default), lg 36 · 14. Icon-only: square.</td></tr>
+          <tr><td>Text</td><td><code>label-md</code> 12/18 500 (xs and sm: 11/16). Sentence case, verb first: “Run simulation”, not “Simulation”.</td></tr>
+          <tr><td>Radius · border</td><td><code>radius.md</code> 6; every neutral outlined button uses <code>border.default</code>, hover <code>border.strong</code> — never a darker or purple stroke. Icon buttons: radius 6, padding 4 (sm) / 6 (md), hover <code>bg.hover</code>.</td></tr>
+          <tr><td>Wrapping</td><td>Labels never wrap; a button that doesn't fit moves into the ⋯ menu.</td></tr>
+          <tr><td>Primary</td><td><code>action.primaryBg</code> / <code>primaryBgHover</code> / <code>primaryFg</code>. Purple in light; white with dark text in dark. No shadow, no glow.</td></tr>
+          <tr><td>Loading</td><td>Keeps its width, hides the label, shows a spinner, ignores clicks.</td></tr>
+          <tr><td>MUI</td><td><span class="mono">Button variant="contained|outlined|text" size="small|medium|large"</span>, <span class="mono">LoadingButton</span>, <span class="mono">IconButton</span>.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Use primary for the one main action in a view.</li><li>Use secondary (outlined) for other actions, including header actions.</li><li>Use ghost only in toolbars and table rows.</li><li>Keep labels short and fixed; put counts and scope in the tooltip.</li><li>Collapse header buttons to their icons on narrow screens before anything wraps.</li><li>In a chooser of separate flows, each flow's start button may be primary.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Put two primary buttons in one view.</li><li>Use danger outside a destructive confirm.</li><li>Put numbers in the label (“Run 12 scenarios”).</li><li>Let a button shrink below its icon and label; truncate the text beside it instead.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="input">
+        <header>
+          <h2>Text field</h2>
+          <p class="muted">Label above, helper or error below. 32px tall, value in 12px. The label never sits inside the field.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack" style="max-width:520px">
+            <div class="row" style="align-items:flex-start;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px">
+              <div class="ds-field"><label class="ds-label">Environment name</label><div class="ds-input"><span class="grow ph">e.g. Billing copilot</span></div><span class="ds-help">Shown in runs and reports.</span></div>
+              <div class="ds-field"><label class="ds-label">Environment name</label><div class="ds-input is-hover"><span class="grow">Billing copilot</span></div><span class="ds-help">Hover</span></div>
+              <div class="ds-field"><label class="ds-label">Environment name</label><div class="ds-input is-focus"><span class="grow">Billing copilot|</span></div><span class="ds-help">Focus</span></div>
+              <div class="ds-field"><label class="ds-label">API key <span class="opt">· required</span></label><div class="ds-input is-invalid"><span class="grow">sk-…</span></div><span class="ds-help is-error">This key was revoked. Paste a new one.</span></div>
+              <div class="ds-field"><label class="ds-label">Workspace</label><div class="ds-input is-disabled"><span class="grow">Default Workspace</span></div><span class="ds-help">Disabled</span></div>
+              <div class="ds-field"><label class="ds-label">Agent ID</label><div class="ds-input is-readonly"><span class="grow mono" style="font-size:12px">agt_9f2c41</span><svg class="i"><use href="#i-copy"/></svg></div><span class="ds-help">Read-only</span></div>
+            </div>
+            <div class="ds-field"><label class="ds-label">System prompt</label><div class="ds-input ds-textarea"><span class="grow" style="white-space:normal">You are a billing support agent. Verify identity before discussing any charge.</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="select">
+        <header>
+          <h2>Select and search</h2>
+          <p class="muted">Same box as the text field. Toolbar filters use the 32px size with the value inline (“All statuses”); search has a leading 16px magnifier icon. One component: <span class="mono">FormSearchField</span>.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="row">
+            <div class="ds-input" style="width:240px"><svg class="i"><use href="#i-search"/></svg><span class="grow ph">Search environments</span><span class="ds-kbd">/</span></div>
+            <div class="ds-input" style="width:160px"><span class="grow">All statuses</span><svg class="i"><use href="#i-chevron-down"/></svg></div>
+            <div class="ds-input is-focus" style="width:160px"><span class="grow">Voice</span><svg class="i"><use href="#i-chevron-down"/></svg></div>
+            <button class="ds-btn"><svg class="i"><use href="#i-filter"/></svg>Filter<span class="ds-count">2</span></button>
+          </div>
+          <div style="margin-top:12px" class="ds-menu">
+            <div class="ds-menu-item">All agent types</div>
+            <div class="ds-menu-item is-hover is-selected">Voice<svg class="i check"><use href="#i-check"/></svg></div>
+            <div class="ds-menu-item">Chat</div>
+            <div class="ds-menu-item">Computer use</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="filter">
+        <header>
+          <h2>Filter</h2>
+          <p class="muted">The one way to filter a list, table or chart. A Filter button opens a panel with Ask AI, a Basic tab of property rows and a Query tab of typed tokens. Filters apply as you change them; there is no Apply button.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="stack" style="gap:8px">
+            <div class="row" style="gap:8px">
+              <button class="ds-btn ds-btn--sm"><svg class="i"><use href="#i-clock"/></svg>Past 7D<svg class="i"><use href="#i-chevron-down"/></svg></button>
+              <button class="ds-btn ds-btn--sm is-active"><svg class="i"><use href="#i-filter"/></svg>Filter<span class="ds-count">1</span></button>
+              <button class="ds-btn ds-btn--sm"><svg class="i"><use href="#i-columns"/></svg>Display</button>
+            </div>
+            <div class="row" style="align-items:flex-start;gap:16px">
+              <div class="ds-filter">
+                <div class="ds-filter-ai"><svg class="i"><use href="#i-sparkle"/></svg><span class="grow">Ask AI — e.g. 'show traces with errors on gpt-4'</span></div>
+                <div class="ds-filter-tabs"><span class="is-selected">Basic</span><span>Query</span></div>
+                <div class="ds-filter-body">
+                  <div class="ds-filter-row">
+                    <div class="ds-input prop"><span class="grow">Status</span><svg class="i sm"><use href="#i-chevron-down"/></svg></div>
+                    <div class="ds-input op"><span class="grow">equals</span><svg class="i sm"><use href="#i-chevron-down"/></svg></div>
+                    <div class="ds-input val"><span class="grow">Failed</span><svg class="i sm"><use href="#i-chevron-down"/></svg></div>
+                    <button class="ds-btn ds-btn--ghost ds-btn--xs ds-icon-btn" aria-label="Remove filter"><svg class="i"><use href="#i-x"/></svg></button>
+                  </div>
+                  <div class="ds-filter-row">
+                    <div class="ds-input prop is-empty"><span class="grow">Property</span><svg class="i sm"><use href="#i-chevron-down"/></svg></div>
+                    <div class="ds-input op"><span class="grow">equals</span><svg class="i sm"><use href="#i-chevron-down"/></svg></div>
+                    <div class="ds-input val is-waiting"><span>Select property first</span></div>
+                    <button class="ds-btn ds-btn--ghost ds-btn--xs ds-icon-btn" aria-label="Remove filter"><svg class="i"><use href="#i-x"/></svg></button>
+                  </div>
+                </div>
+                <div class="ds-filter-foot"><button class="ds-btn ds-btn--ghost ds-btn--sm"><svg class="i"><use href="#i-plus"/></svg>Add filter</button><button class="ds-btn ds-btn--ghost ds-btn--sm clear">Clear all</button></div>
+              </div>
+              <div class="ds-filter" style="width:360px">
+                <div class="ds-filter-tabs"><span>Basic</span><span class="is-selected">Query</span></div>
+                <div class="ds-filter-body">
+                  <div class="ds-filter-query"><span class="ds-filter-token"><span class="k">status:</span>failed<svg class="i x"><use href="#i-x"/></svg></span><span class="ds-filter-token"><span class="k">model:</span>gpt-4<svg class="i x"><use href="#i-x"/></svg></span><span class="ds-filter-caret"></span></div>
+                  <div class="ds-filter-note">Type a field, then <span class="ds-kbd">:</span> and a value. <span class="ds-kbd">Enter</span> adds the token.</div>
+                </div>
+                <div class="ds-filter-foot"><span></span><button class="ds-btn ds-btn--ghost ds-btn--sm clear">Clear all</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Trigger</td><td>Small secondary button “Filter” with the filter icon, in the toolbar. Shows a <span class="mono">count</span> of active filters; pressed state while the panel is open.</td></tr>
+          <tr><td>Panel</td><td>Popover under the trigger, left-aligned. 560 wide (full width minus 24 on phones), padding 8, <code>bg.overlay</code>, <code>shadow.overlay</code>, <code>radius.lg</code>.</td></tr>
+          <tr><td>Ask AI</td><td>32 high, sparkle icon in <code>accent.solid</code>, placeholder “Ask AI — e.g. …” with an example from the current page. Enter or the arrow turns the sentence into rows. Errors show as one <code>caption</code> line below (“AI unavailable, use filters below”). Optional per page.</td></tr>
+          <tr><td>Tabs</td><td>Basic and Query, 28 high, <code>label-md</code>, the tab underline (<code>border.selected</code>). Query is optional per page.</td></tr>
+          <tr><td>Rows</td><td>Property (flex 220), operator (flex 120), value (flex 160), remove ×. Controls are <code>size.control.sm</code> 28 at 11px. Value waits with “Select property first”. Value pickers follow the property type: text, number, date, boolean, list.</td></tr>
+          <tr><td>Footer</td><td>“+ Add filter” ghost, left; “Clear all” ghost, right.</td></tr>
+          <tr><td>Query tab</td><td>One field of <span class="mono">field:value</span> tokens in <code>code-sm</code> on <code>bg.muted</code>, with autocomplete for fields and values.</td></tr>
+          <tr><td>Behaviour</td><td>Auto-applies after each complete row; incomplete rows are ignored. Same filters in both tabs. Escape closes; filters stay.</td></tr>
+          <tr><td>MUI</td><td><span class="mono">TraceFilterPanel</span>, configured with <span class="mono">showAi</span>, <span class="mono">showQueryTab</span>, a properties override, <span class="mono">operatorFilter</span>, <span class="mono">ValuePickerOverride</span> and <span class="mono">panelWidth</span>, moved to <span class="mono">components/filter</span> as <span class="mono">FilterPanel</span>.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Use this panel for every list, table and chart filter.</li><li>Give Ask AI an example that fits the page (“runs that failed on billing scenarios”).</li><li>Keep quick filters (status, agent type) as selects in the toolbar; they write into the same filter set.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Build a page-specific filter popover, drawer or bar.</li><li>Add an Apply button; filters apply as they change.</li><li>Put filters in a side drawer.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="choice">
+        <header>
+          <h2>Checkbox, radio, switch</h2>
+          <p class="muted">Checked controls use <code>control.checked</code>: purple in light, white in dark. A switch applies at once; a checkbox is saved with its form.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack">
+            <div class="row" style="gap:20px"><span class="ds-check"><span class="box"><svg viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg></span>Unchecked</span><span class="ds-check is-checked"><span class="box"><svg viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg></span>Checked</span><span class="ds-check is-mixed"><span class="box"></span>Some selected</span><span class="ds-check is-focus"><span class="box"></span>Focus</span><span class="ds-check is-disabled"><span class="box"></span>Disabled</span></div>
+            <div class="row" style="gap:20px"><span class="ds-check is-radio"><span class="box"></span>Inbound</span><span class="ds-check is-radio is-checked"><span class="box"></span>Outbound</span><span class="ds-check is-radio is-disabled"><span class="box"></span>Both</span></div>
+            <div class="row" style="gap:20px"><span class="ds-check"><span class="ds-switch"></span>Observability</span><span class="ds-check is-on"><span class="ds-switch"></span>Auto refresh</span><span class="ds-check is-on is-disabled"><span class="ds-switch"></span>Locked by admin</span></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Checkbox, radio</td><td>The themed <span class="mono">Checkbox</span> / <span class="mono">Radio</span> everywhere, including pickers, filter lists and menus. When the row is the control, the box takes <span class="mono">tabIndex={-1}</span>.</td></tr>
+          <tr><td>Selected label</td><td>500, not bold.</td></tr>
+          <tr><td>Opt-in set</td><td>A switch that turns on a group of options sits in a plain 1px <code>border.default</code> block. Its options show only while it's on; the first is ticked by default; unticking the last turns the switch off.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Use a switch for settings that apply immediately.</li><li>Say what each opt-in option adds (“Prompt injection · 5”).</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Draw a checkbox or radio with an icon, or pass <span class="mono">icon</span> / <span class="mono">checkedIcon</span>.</li><li>Tint an opt-in block in a status colour.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="tabs">
+        <header>
+          <h2>Tabs and segmented control</h2>
+          <p class="muted">Tabs switch between views of one object. A segmented control switches how the same data is shown (list or grid, 7d or 30d).</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack">
+            <div class="ds-tabs"><span class="ds-tab is-selected">Overview</span><span class="ds-tab is-hover">World</span><span class="ds-tab">Scenarios<span class="ds-count">10</span></span><span class="ds-tab">Evaluations<span class="ds-count">2</span></span><span class="ds-tab">Runs</span><span class="ds-tab">Settings</span></div>
+            <div class="row"><div class="ds-seg"><button class="is-selected">List</button><button>Grid</button></div><div class="ds-seg"><button>24h</button><button class="is-selected">7d</button><button>30d</button></div></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Tabs</td><td>Underline, 32 high, 6 inner padding, 8 apart. Unselected label <code>fg.secondary</code>; selected label <code>fg.default</code> with a 2px <code>border.selected</code> underline (purple in light, white in dark). A 1px <code>border.default</code> line runs the full width under the tab row; the theme draws it, so screens don't add their own.</td></tr>
+          <tr><td>Segmented</td><td><code>bg.muted</code> track with 2 padding; 24px options in 11/500 <code>fg.secondary</code>; the selected option is a <code>bg.surface</code> pill with a 1px <code>border.default</code> ring. Fits its options; splits evenly when full width.</td></tr>
+          <tr><td>Code</td><td>MUI <span class="mono">Tabs</span>; <span class="mono">ToggleButtonGroup</span> and <span class="mono">SegmentedTabs</span> render the segmented control.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Put sibling pages in one tab block.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Colour the tab label purple.</li><li>Let options wrap.</li><li>Restyle tabs on a screen.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="badge">
+        <header>
+          <h2>Badge and status</h2>
+          <p class="muted">A tinted <b>badge</b> where status is the point of the cell; a <b>dot + label</b> where the row has lots going on, and for every neutral state. Never outlined, never colour alone.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack">
+            <div class="row"><span class="ds-badge ds-badge--success"><span class="dot"></span>Passed</span><span class="ds-badge ds-badge--danger"><span class="dot"></span>Failed</span><span class="ds-badge ds-badge--info"><span class="dot"></span>Running</span><span class="ds-badge ds-badge--warning"><span class="dot"></span>Needs input</span><span class="ds-badge"><span class="dot"></span>Not run yet</span><span class="ds-badge ds-badge--discovery"><svg class="i"><use href="#i-sparkle"/></svg>Suggested</span></div>
+            <div class="row" style="gap:18px"><span class="ds-status ds-status--success"><span class="ds-dot"></span>Passed</span><span class="ds-status ds-status--danger"><span class="ds-dot"></span>Failed</span><span class="ds-status ds-status--info ds-status--running"><span class="ds-dot"></span>Running</span><span class="ds-status ds-status--neutral"><span class="ds-dot"></span>Queued</span><span class="ds-status ds-status--canceled"><span class="ds-dot"></span>Stopped</span></div>
+            <div class="row"><span class="ds-badge ds-badge--sm ds-badge--success">Live</span><span class="ds-badge ds-badge--sm">Sealed</span><span class="ds-badge ds-badge--sm ds-badge--outline">Draft</span></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Badge</td><td>md 20 / sm 18 tall, padding 6, <code>radius.sm</code> 4, <code>label-sm</code> 11/16 500, <code>status.*.bg</code> + <code>status.*.fg</code>, optional 6px dot or 12px icon.</td></tr>
+          <tr><td>Status dot</td><td>8px dot in <code>status.*.solid</code> + <code>body-sm</code> label in <code>fg.secondary</code>. Queued is hollow; running pulses.</td></tr>
+          <tr><td>Solid badge</td><td>Only for counts that must stand out (“3 new”). Never for run status.</td></tr>
+          <tr><td>One source</td><td>Every status maps through one table (see <a href="#status-map">Status map</a>), not per-screen <span class="mono">STATUS_COLORS</span>.</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="doc" id="tag">
+        <header>
+          <h2>Tag, count, version</h2>
+          <p class="muted">Tags label categories and are neutral: 11/500 in <code>fg.secondary</code> on <code>bg.selected</code>, sentence case. Colour never encodes the tag kind. Versions are monospaced (“v8 · main @ b2ca42d”).</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack">
+            <div class="row"><span class="ds-tag">Agents</span><span class="ds-tag"><span class="sw" style="background:var(--ds-data-2)"></span>Audio</span><span class="ds-tag"><span class="sw" style="background:var(--ds-data-5)"></span>Red teaming</span><span class="ds-tag">+3</span><span class="ds-tag">Finance<svg class="i x"><use href="#i-x"/></svg></span></div>
+            <div class="row"><span class="ds-count">4</span><span class="ds-count">128</span><span class="ds-count ds-count--accent">3</span></div>
+            <div class="row"><span class="ds-version">v8 <span class="sha">· main @ b2ca42d</span></span><span class="ds-version">v14</span><span class="ds-version">env v2</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="avatar">
+        <header>
+          <h2>Avatar</h2>
+          <p class="muted">Neutral initials for people, systems and agents. Third-party logos use a shared logo tile.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="row" style="gap:16px"><span class="ds-avatar ds-avatar--sm">VE</span><span class="ds-avatar">VE</span><span class="ds-avatar ds-avatar--lg">VE</span><span class="ds-avatar ds-avatar--system"><svg class="i xs"><use href="#i-bot"/></svg></span><span class="ds-avatars"><span class="ds-avatar">VE</span><span class="ds-avatar">NK</span><span class="ds-avatar">AS</span><span class="ds-avatar">+2</span></span></div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Avatar</td><td>One solid tile (<span class="mono">#EFEFF1</span> light, <span class="mono">#27272A</span> dark), initials in <code>fg.default</code> 600. Square for systems and agents, round for people. Sizes 20 (nav, menus), 24, 32.</td></tr>
+          <tr><td>Brand logo</td><td><span class="mono">BrandMark</span> / <span class="mono">LogoTile</span>: the brand's mark in a <code>border.default</code> tile on <code>bg.hover</code>, 24 in pickers, 28 in catalogs. No reliable mark: its first letter in the same tile.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Use mono brand marks in <code>fg.default</code> so they follow the theme.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Colour avatars by brand or per user.</li><li>Show a vendor's raster logo from an API.</li><li>Borrow another company's logo.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="table">
+        <header>
+          <h2>Table</h2>
+          <p class="muted">The default way to show a list of records. Unboxed: rows sit on the page, divided by hairlines.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="ds-table-wrap">
+            <div class="ds-table-bar"><div class="ds-input" style="width:220px"><svg class="i"><use href="#i-search"/></svg><span class="grow ph">Search by name</span></div><div class="ds-input" style="width:140px"><span class="grow">All statuses</span><svg class="i"><use href="#i-chevron-down"/></svg></div><span style="flex:1"></span><button class="ds-btn ds-btn--ghost"><svg class="i"><use href="#i-columns"/></svg>Columns</button></div>
+            <table class="ds-table two-line">
+              <thead><tr><th class="cb"><span class="ds-check"><span class="box"></span></span></th><th><span class="sort">Name<svg class="i xs"><use href="#i-arrow-down"/></svg></span></th><th>Status</th><th class="num">Last run</th><th class="num">Runs</th><th>Owner</th><th></th></tr></thead>
+              <tbody>
+                <tr><td class="cb"><span class="ds-check"><span class="box"></span></span></td><td class="name">Billing copilot environment<span class="sub">Billing and account support</span></td><td><span class="ds-badge ds-badge--danger"><span class="dot"></span>Failed</span></td><td class="num"><span class="ds-score">44%</span></td><td class="num">1</td><td><span class="ds-avatar">VE</span></td><td><button class="ds-btn ds-btn--sm">Run · v8</button></td></tr>
+                <tr class="is-hover"><td class="cb"><span class="ds-check"><span class="box"></span></span></td><td class="name">Returns &amp; refunds line<span class="sub">Phone support for an online storefront</span></td><td><span class="ds-badge ds-badge--success"><span class="dot"></span>Passed</span></td><td class="num"><span class="ds-score">85%</span> <span class="ds-delta ds-delta--up"><svg class="i xs"><use href="#i-arrow-up"/></svg>9</span></td><td class="num">3</td><td><span class="ds-avatar">VE</span></td><td><button class="ds-btn ds-btn--sm">Run · v3</button></td></tr>
+                <tr class="is-selected"><td class="cb"><span class="ds-check is-checked"><span class="box"><svg viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg></span></span></td><td class="name">Clinic appointment line<span class="sub">Patients call to book an appointment</span></td><td><span class="ds-badge ds-badge--info"><span class="dot"></span>Running</span></td><td class="num"><span class="ds-score">71%</span></td><td class="num">1</td><td><span class="ds-avatar">NK</span></td><td><button class="ds-btn ds-btn--sm">Run · v1</button></td></tr>
+                <tr><td class="cb"><span class="ds-check"><span class="box"></span></span></td><td class="name">Scratch environment<span class="sub">The agent gets triggered when…</span></td><td><span class="ds-badge"><span class="dot"></span>Not run yet</span></td><td class="num">—</td><td class="num">0</td><td><span class="ds-avatar">VE</span></td><td><button class="ds-btn ds-btn--sm">Run</button></td></tr>
+              </tbody>
+            </table>
+            <div class="ds-table-foot">Rows per page 25 · 1–4 of 29<div class="ds-pager"><button class="ds-btn ds-btn--ghost ds-btn--xs ds-icon-btn" aria-label="Previous"><svg class="i"><use href="#i-chevron-left"/></svg></button><button class="ds-btn ds-btn--ghost ds-btn--xs ds-icon-btn" aria-label="Next"><svg class="i"><use href="#i-chevron-right"/></svg></button></div></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Header</td><td>32 (compact 28), <code>label-sm</code> 11/16 in <code>fg.tertiary</code>, no fill, bottom <code>border.default</code>. Sorted column label in <code>fg.default</code> with an arrow.</td></tr>
+          <tr><td>Container</td><td>None. No outer border, radius, background or shadow; the table runs the full width of its column on the page surface. Don't put a table inside a Panel or Card.</td></tr>
+          <tr><td>Toolbar</td><td>Above the table, outside it: search, filters and tag chips left, Columns right, 12 below.</td></tr>
+          <tr><td>Rows</td><td>36 default, 28 compact, 48 two-line. Every table reads <span class="mono">ROW_HEIGHT</span> from <span class="mono">src/theme/sizes.js</span>; no screen types its own number. Full-width separator <code>border.default</code> under every row, the last one included. Hover <code>bg.hover</code>, selected <code>bg.selected</code>.</td></tr>
+          <tr><td>List rows</td><td>Hand-built lists (card rows, folders, settings, pickers) match the table: title 12/500, meta 11 in <code>fg.tertiary</code>, 28px icon tile, 36px one-line / 48px two-line rows, section headings 12/500 with the count inside the heading. Side trees: 12px items in 28px rows. In-page side panels 224px.</td></tr>
+          <tr><td>Row text</td><td>Values 12/18 in <code>fg.secondary</code>; the row title 12/500 in <code>fg.default</code>; secondary text 11 in <code>fg.tertiary</code>. A status label never sits a size above the cells beside it.</td></tr>
+          <tr><td>Cells</td><td>Padding 12. Text left, numbers right with tabular figures. Truncate with an ellipsis and a tooltip; never wrap a single-line row.</td></tr>
+          <tr><td>Cell content</td><td>No boxes inside cells: tags, versions and qualifiers are plain text in <code>fg.tertiary</code> joined with “ · ”; counts are plain numbers. The status badge is the only filled element in a row.</td></tr>
+          <tr><td>Height</td><td>A full-page table fills to the bottom of the window from where it starts, so its pagination is always on screen; never a hard-coded <code>100vh − N</code> that breaks when the header above changes.</td></tr><tr><td>Actions</td><td>The ⋯ menu stays visible at the end of the row and holds every row action. No per-row buttons, on hover or otherwise, that repeat a menu item; clicking the row opens it.</td></tr>
+          <tr><td>Selection</td><td>Selecting rows shows the shared <span class="mono">SelectionBar</span> in the toolbar: “N selected”, neutral actions, Cancel. Delete is neutral there; red appears only in the confirm dialog.</td></tr>
+          <tr><td>Tech</td><td>AG Grid themed from these tokens for data grids; MUI Table for simple lists.</td></tr>
+          <tr><td>Groups</td><td>A group header shows the label and count, then at most one summary value. A new way to slice rows is a Group by option, not a tab.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Right-align numbers with tabular figures.</li><li>Keep every row action in the ⋯ menu.</li><li>Let a full-page table fill to the bottom of the window.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Put a table inside a panel or card.</li><li>Wrap a single-line row.</li><li>Put boxes or chips inside cells; the status badge is the only filled element.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="panel">
+        <header>
+          <h2>Panel and key-value</h2>
+          <p class="muted">A panel is a <code>bg.surface</code> block with a 1px <code>border.default</code> and radius 8; no shadow. Facts go in a key-value list, not in decorated cards. Compact: a 36px header with the title in 12/500, 12px body padding, key-value rows 6 · 12.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="ds-panel" style="max-width:520px">
+            <div class="ds-panel-head"><h4>Agent</h4><span class="meta">Synced 3d ago</span><button class="ds-btn ds-btn--ghost ds-btn--sm">View agent<svg class="i"><use href="#i-external"/></svg></button></div>
+            <dl class="ds-kv">
+              <dt>Agent</dt><dd>Billing copilot <span class="ds-version">v8 <span class="sha">· main @ b2ca42d</span></span></dd>
+              <dt>Source</dt><dd>GitHub · future-agi/billing-copilot</dd>
+              <dt>Connection</dt><dd><span class="ds-badge ds-badge--sm">Sealed</span> default: production</dd>
+              <dt>Channel</dt><dd>Voice · SIP trunk, WebRTC</dd>
+              <dt>Observe project</dt><dd><a href="#panel" class="ds-btn ds-btn--link">Billing copilot</a></dd>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="metric">
+        <header>
+          <h2>Metric strip</h2>
+          <p class="muted">Numbers that summarise a page sit in one bordered strip, divided by hairlines. The number does the work; the change beside it carries the colour.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="ds-metrics">
+            <div class="ds-metric"><span class="k">Pass rate</span><span class="v">85% <span class="ds-delta ds-delta--up"><svg class="i xs"><use href="#i-arrow-up"/></svg>9 pts</span></span></div>
+            <div class="ds-metric"><span class="k">Scenarios run</span><span class="v">96 <small>of 113</small></span></div>
+            <div class="ds-metric"><span class="k">Failures</span><span class="v">14 <span class="ds-delta ds-delta--down"><svg class="i xs"><use href="#i-arrow-up"/></svg>3</span></span></div>
+            <div class="ds-metric"><span class="k">Median latency</span><span class="v">1.8s <span class="ds-delta ds-delta--flat">0.0</span></span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="menu">
+        <header>
+          <h2>Menu and tooltip</h2>
+          <p class="muted">Menus list actions or choices. A tooltip names or explains one thing; a hover card holds richer content.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="row" style="align-items:flex-start;gap:24px">
+            <div class="ds-menu">
+              <div class="ds-menu-label">Environment</div>
+              <div class="ds-menu-item"><svg class="i"><use href="#i-edit"/></svg>Rename<span class="hint">R</span></div>
+              <div class="ds-menu-item is-hover"><svg class="i"><use href="#i-copy"/></svg>Duplicate</div>
+              <div class="ds-menu-item"><svg class="i"><use href="#i-refresh"/></svg>Sync agent</div>
+              <div class="ds-menu-item is-disabled"><svg class="i"><use href="#i-external"/></svg>Open in Observe</div>
+              <div class="ds-menu-sep"></div>
+              <div class="ds-menu-item is-danger"><svg class="i"><use href="#i-trash"/></svg>Delete</div>
+            </div>
+            <div class="stack"><span class="ds-tooltip">Copy run link<span class="ds-kbd">⌘C</span></span><span class="ds-tooltip">Scored by 2 of 3 evaluators. The third timed out.</span></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Menu</td><td>Radius 8, 30px items, 12/400 labels (500 for the current choice), 16px icons in <code>icon.default</code>. Section labels 11/500 in <code>fg.tertiary</code>. Account and workspace menus 240 wide.</td></tr>
+          <tr><td>Tooltip</td><td><code>bg.inverse</code>, 11/16 text, radius 4, padding 4 · 8, up to 240 wide, after 300ms. A link in it uses its text colour, underlined.</td></tr>
+          <tr><td>Hover card</td><td>Menu surface: <code>bg.overlay</code>, 1px <code>border.default</code>, <code>shadow.overlay</code>, radius 8, padding 12, up to 400 wide.</td></tr>
+          <tr><td>Code</td><td><span class="mono">CustomTooltip</span> (<span class="mono">card</span> for a hover card) or MUI <span class="mono">Tooltip</span> from the theme.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Put destructive items last, after a separator.</li><li>Use a hover card for breakdowns, previews and small tables.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Write section labels in capitals.</li><li>Restyle a menu or tooltip on a screen.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="dialog">
+        <header>
+          <h2>Dialog</h2>
+          <p class="muted">For a decision or a short form that blocks the page.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="ds-dialog">
+            <div class="ds-dialog-head"><h4>Delete Billing copilot environment?</h4><button class="ds-btn ds-btn--ghost ds-icon-btn ds-btn--sm" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+            <div class="ds-dialog-body">Its 10 scenarios and 1 run are deleted with it. The agent stays connected.</div>
+            <div class="ds-dialog-foot"><button class="ds-btn">Cancel</button><button class="ds-btn ds-btn--danger">Delete environment</button></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Widths</td><td>sm 400 (confirm), md 560 (form), lg 720, xl 960.</td></tr>
+          <tr><td>Title</td><td>States the action; the confirm button repeats the verb.</td></tr>
+          <tr><td>Close</td><td>A close cross top right on every dialog that can be closed, as well as Cancel. Only a dialog that can't be stopped (a step already running) has none.</td></tr>
+          <tr><td>Delete</td><td>Every remove or delete asks first, for one row or many: the question, one line on what happens, Cancel, and the verb in danger.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Say in one line what happens after confirming.</li><li>Use <span class="mono">ConfirmDialog</span>, <span class="mono">ModalWrapper</span> or <span class="mono">ClosableDialog</span>; each draws the cross.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Delete without asking, even for a single row.</li><li>Leave Cancel as the only way out.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="drawer">
+        <header>
+          <h2>Drawer</h2>
+          <p class="muted">Opens from the right to show detail without leaving the list. Widths 480, 640, 960; surface <code>bg.surface</code> with a 1px <code>border.default</code> on the open edge. One drawer at a time: opening another replaces it (<span class="mono">use-drawer-stack</span>).</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="ds-drawer">
+            <div class="ds-drawer-head"><h4>Run #12</h4><span class="ds-badge ds-badge--danger"><span class="dot"></span>Failed</span><button class="ds-btn ds-btn--ghost ds-icon-btn ds-btn--sm" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+            <div class="ds-drawer-body"><dl class="ds-kv" style="margin:0 -16px"><dt>Scenario</dt><dd>Dispute a duplicate charge</dd><dt>Persona</dt><dd>Frustrated customer</dd><dt>Duration</dt><dd>4m 31s</dd></dl><div class="ds-banner ds-banner--danger"><svg class="i lead"><use href="#i-x-circle"/></svg><div class="grow"><div class="t">Identity not verified</div><div class="d">The agent discussed the charge before asking for two factors.</div></div></div></div>
+            <div class="ds-drawer-foot"><button class="ds-btn">Open transcript</button><button class="ds-btn ds-btn--primary">Debug failure</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="feedback">
+        <header>
+          <h2>Toast and banner</h2>
+          <p class="muted">A toast confirms something that just happened. A banner explains a condition on the page and stays until it's resolved. Press a <b>Show … toast</b> button to see one live.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="stack">
+            <div class="row" style="align-items:flex-start;gap:12px">
+              <div class="stack" style="gap:8px">
+                <div class="ds-toast ds-toast--success is-static"><span class="lead"><svg class="i"><use href="#i-check-circle"/></svg></span><span class="msg">Environment saved as v2</span><button class="ds-btn ds-btn--link act">Undo</button><button class="close" aria-label="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div>
+                <div class="ds-toast ds-toast--danger is-static"><span class="lead"><svg class="i"><use href="#i-x-circle"/></svg></span><span class="msg">Couldn't reach the agent. The endpoint returned 502.</span><button class="close" aria-label="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div>
+                <div class="ds-toast ds-toast--warning is-static"><span class="lead"><svg class="i"><use href="#i-alert"/></svg></span><span class="msg">Run started with 2 scenarios skipped</span><button class="close" aria-label="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div>
+                <div class="ds-toast ds-toast--info is-static"><span class="lead"><svg class="i"><use href="#i-info"/></svg></span><span class="msg">Sync started. We'll tell you when it's done.</span><button class="close" aria-label="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div>
+              </div>
+              <div class="stack" style="gap:8px">
+                <button class="ds-btn" data-toast="success">Show success toast</button>
+                <button class="ds-btn" data-toast="danger">Show error toast</button>
+                <button class="ds-btn" data-toast="warning">Show warning toast</button>
+                <button class="ds-btn" data-toast="info">Show info toast</button>
+              </div>
+            </div>
+            <div class="ds-banner"><svg class="i lead"><use href="#i-info"/></svg><div class="grow"><span class="t">Built for ISS-4585.</span> <span class="d">The fix runs this environment's scenarios on today's version first.</span></div><button class="ds-btn ds-btn--sm">Continue fixing</button></div>
+            <div class="ds-banner ds-banner--warning"><svg class="i lead"><use href="#i-alert"/></svg><div class="grow"><span class="t">This run passes your 90% budget line.</span> <span class="d">It adds about 691 minutes. It still runs.</span></div></div>
+            <div class="ds-banner ds-banner--discovery"><svg class="i lead"><use href="#i-sparkle"/></svg><div class="grow"><span class="t">3 scenarios suggested from last week's failures.</span> <span class="d">Review before they're added.</span></div><button class="ds-btn ds-btn--sm">Review</button></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Position</td><td>Bottom right, 24 from the edges; newest at the bottom; at most 5; duplicates are dropped. Slides in from the right (200ms, ease-out) and out to the right.</td></tr>
+          <tr><td>Lifetime</td><td>Auto-hides after 6s. A 3px bar along the bottom counts down in the status colour and pauses while the toast is hovered. Always closable with ×.</td></tr>
+          <tr><td>Card</td><td>320–420 wide, padding 12 · 14 (16 at the bottom for the bar), <code>bg.overlay</code>, 1px <code>border.default</code>, <code>radius.lg</code>, <code>shadow.overlay</code>.</td></tr>
+          <tr><td>Icon</td><td>28px circle in <code>status.*.bg</code> with an 18px filled status icon in <code>status.*.solid</code> (Solar bold: check-circle, danger-circle, danger-triangle, info-circle).</td></tr>
+          <tr><td>Message</td><td>One sentence, 12/18 at 500 in <code>fg.default</code>, clamped to 3 lines with “Show more”. One optional link action (“Undo”).</td></tr>
+          <tr><td>Variants</td><td>success, error (danger), warning, info, default (neutral).</td></tr>
+          <tr><td>Code</td><td><span class="mono">enqueueSnackbar(message, { variant })</span> through <span class="mono">components/snackbar</span>.</td></tr>
+          <tr><td>Banner</td><td>When the page's main button is disabled, a warning banner under the header says what's needed in one sentence and carries the button that does it.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Let the user close every toast.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Rely on a disabled button's tooltip alone to explain why.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="states">
+        <header>
+          <h2>Empty, loading, error</h2>
+          <p class="muted">Every screen designs empty, loading and error. One component, <span class="mono">EmptyState</span>, with two variants.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="stack">
+            <div class="ds-panel"><div class="ds-empty"><div class="art"><svg class="i lg"><use href="#i-globe"/></svg></div><h5>No environments yet</h5><p>An environment is a simulated world your agent is tested in. Build one from your agent's tools and prompts.</p><div class="actions"><button class="ds-btn ds-btn--primary"><svg class="i"><use href="#i-plus"/></svg>Build environment</button><button class="ds-btn ds-btn--ghost"><svg class="i"><use href="#i-book"/></svg>Docs</button></div></div></div>
+            <div class="ds-panel"><div class="ds-panel-body stack" style="gap:16px"><div class="row" style="gap:12px"><span class="ds-skel" style="width:28%"></span><span class="ds-skel" style="width:12%"></span><span class="ds-skel" style="width:8%"></span></div><div class="row" style="gap:12px"><span class="ds-skel" style="width:34%"></span><span class="ds-skel" style="width:10%"></span><span class="ds-skel" style="width:8%"></span></div><div class="row" style="gap:16px"><span class="ds-inline-loading"><span class="ds-spinner"></span>Building world…</span><div class="ds-progress" style="flex:1"><span style="width:62%"></span></div><div class="ds-progress is-indeterminate" style="flex:1"><span></span></div></div></div></div>
+            <div class="ds-panel"><div class="ds-empty"><div class="art is-danger"><svg class="i lg"><use href="#i-alert"/></svg></div><h5>Couldn't load runs</h5><p>The request timed out after 30 seconds. Your runs are safe.</p><div class="actions"><button class="ds-btn"><svg class="i"><use href="#i-refresh"/></svg>Retry</button></div></div></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>First run</td><td>Nothing exists yet. Header and tabs stay; the toolbar and empty table headers hide. A centred 400px block about 160px below the header: 40px icon tile, “No ___ yet” in 12/600, one sentence in 12px <code>fg.tertiary</code>, one primary button (verb + noun), optional docs link.</td></tr>
+          <tr><td>First run, optional</td><td>Up to three numbered steps. For anything fed from code, a quickstart panel with language tabs, copy and “Waiting for the first …”.</td></tr>
+          <tr><td>No results</td><td>A search or filter matched nothing: inside the table frame, “No tasks match “query””, with Clear filters.</td></tr>
+          <tr><td>Loading</td><td>The page header, tabs and toolbar are always real; only the region that waits shows a loader. A table's first load is skeleton rows under its real column headers (<span class="mono">DataTable</span> and every AG Grid table do this; never AG Grid's “Loading…” popup; elsewhere <span class="mono">ContentSkeleton variant="rows"</span>), or a screen's own skeleton of its real cards. Everywhere else, the simple loader: <span class="mono">Loader</span> (or <span class="mono">LoadingScreen</span> for a page), one 20px spinner in <code>fg.secondary</code>, centred, shown after 300 ms. Never grey text bars that don't match the content. One loader per wait, inside the content area: the sidebar and header stay put, and there is no top progress bar.</td></tr>
+          <tr><td>Error</td><td>Says what failed and offers a retry.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Say what will appear and how to add the first one.</li><li>Show the primary action once.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Use illustrations, fake previews or marketing heroes.</li><li>Label the action “Get started” or “Start creating”.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="navigation">
+        <header>
+          <h2>Navigation</h2>
+          <p class="muted">The app sidebar, kept compact so the work gets the space.</p>
+        </header>
+        <div class="demo" data-demo>
+          <div class="row" style="align-items:stretch;gap:16px;flex-wrap:nowrap">
+            <nav class="ds-nav" style="border:1px solid var(--ds-border-default);border-radius:8px" aria-label="Main"><div class="ds-nav-head"><span class="ds-nav-mark"><svg class="lm" viewBox="0 0 47 47" fill="none" aria-hidden="true"><path d="M46.8996 25.4157L43.4957 27.3812L40.0896 29.3467L36.6856 31.3143L33.2816 33.2798L31.314 36.686L29.3485 40.0899L27.383 43.496L25.4175 46.9H21.4844L23.4499 43.496L25.4175 40.0899L27.383 36.686L29.3485 33.2798L30.787 30.7852L33.2795 29.3467L36.6856 27.3812L40.0896 25.4157L36.6856 23.4502L33.2795 21.4826L29.8733 19.5171L28.2923 18.6056L27.3808 17.0268L25.4153 13.6206L23.4499 10.2145L25.4153 6.81055L27.3808 10.2145L29.3463 13.6206L30.7848 16.1131L33.2795 17.5516L36.6856 19.5171L40.0896 21.4826L43.4957 23.4502L46.8996 25.4157Z" fill="url(#fagi-logo-g1)"/><path d="M40.0895 25.4153L36.6855 27.3808L33.2794 29.3463L30.7869 30.7848L29.3484 33.2795L27.3829 36.6856L25.4174 40.0896L23.4498 43.4957L21.4843 46.8996L19.5188 43.4957L17.5533 40.0896L15.5857 36.6856L13.6202 33.2816L10.2141 31.314L6.81009 29.3485L3.40397 27.383L0 25.4175V21.4844L3.40397 23.4499L6.81009 25.4175L10.2141 27.383L13.6202 29.3485L16.1148 30.787L17.5533 33.2795L19.5188 36.6856L21.4843 40.0896L23.4498 36.6856L25.4174 33.2795L27.3829 29.8733L28.2944 28.2923L29.8732 27.3808L33.2794 25.4153L36.6855 23.4499L40.0895 25.4153Z" fill="url(#fagi-logo-g2)"/><path d="M10.2141 19.5188L6.81009 21.4843L10.2141 23.4498L13.6202 25.4174L17.0263 27.3829L18.6073 28.2944L19.5188 29.8732L21.4843 33.2794L23.4498 36.6855L21.4843 40.0895L19.5188 36.6855L17.5533 33.2794L16.1148 30.7869L13.6202 29.3484L10.2141 27.3829L6.81009 25.4174L3.40397 23.4498L0 21.4843L3.40397 19.5188L6.81009 17.5533L10.2141 15.5857L13.618 13.6202L15.5857 10.2141L17.5512 6.81009L19.5166 3.40397L21.4821 0H25.4153L23.4498 3.40397L21.4821 6.81009L19.5166 10.2141L17.5512 13.6202L16.1127 16.1148L15.2638 16.6051L13.6202 17.5533L10.2141 19.5188Z" fill="url(#fagi-logo-g3)"/><path d="M46.9 21.4821V25.4153L43.496 23.4498L40.0899 21.4821L36.686 19.5166L33.2798 17.5512L30.7852 16.1127L29.3467 13.6202L27.3812 10.2141L25.4157 6.81009L23.4502 10.2141L21.4826 13.6202L19.5171 17.0263L18.6056 18.6073L17.0268 19.5188L13.6206 21.4843L10.2145 23.4498L6.81055 21.4843L10.2145 19.5188L13.6206 17.5533L15.2643 16.6051L16.1131 16.1148L17.5516 13.6202L19.5171 10.2141L21.4826 6.81009L23.4502 3.40397L25.4157 0L27.3812 3.40397L29.3467 6.81009L31.3143 10.2141L33.2798 13.618L36.686 15.5857L40.0899 17.5512L43.496 19.5166L46.9 21.4821Z" fill="url(#fagi-logo-g4)"/><defs><linearGradient id="fagi-logo-g1" x1="34.192" y1="6.81055" x2="34.192" y2="46.9" gradientUnits="userSpaceOnUse"><stop stop-color="#CF6BE8"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g2" x1="20.0447" y1="21.4844" x2="20.0447" y2="46.8996" gradientUnits="userSpaceOnUse"><stop stop-color="#8B44FF"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g3" x1="12.7076" y1="0" x2="12.7076" y2="40.0895" gradientUnits="userSpaceOnUse"><stop stop-color="#CF6BE8"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g4" x1="26.8553" y1="0" x2="26.8553" y2="25.4153" gradientUnits="userSpaceOnUse"><stop stop-color="#8B44FF"/><stop offset="1" stop-color="#7857FC"/></linearGradient></defs></svg><svg class="dm" viewBox="0 0 51 51" aria-hidden="true" fill="currentColor"><path d="M51 27.628L47.2995 29.7647L43.5967 31.9013L39.8963 34.0404L36.1958 36.177L34.0568 39.8798L31.9201 43.5803L29.7835 47.2831L27.6468 50.9835H23.3711L25.5078 47.2831L27.6468 43.5803L29.7835 39.8798L31.9201 36.177L33.4839 33.4651L36.1935 31.9013L39.8963 29.7647L43.5967 27.628L39.8963 25.4913L36.1935 23.3523L32.4907 21.2156L30.772 20.2248L29.7811 18.5084L27.6444 14.8056L25.5078 11.1028L27.6444 7.40234L29.7811 11.1028L31.9178 14.8056L33.4816 17.5152L36.1935 19.0789L39.8963 21.2156L43.5967 23.3523L47.2995 25.4913L51 27.628Z"/><path d="M43.5812 27.6444L39.8807 29.7811L36.1779 31.9178L33.4683 33.4816L31.9046 36.1935L29.7679 39.8963L27.6312 43.5967L25.4922 47.2995L23.3555 51L21.2188 47.2995L19.0822 43.5967L16.9431 39.8963L14.8065 36.1958L11.1037 34.0568L7.40323 31.9201L3.70044 29.7835L0 27.6468L0 23.3711L3.70044 25.5078L7.40323 27.6468L11.1037 29.7835L14.8065 31.9201L17.5184 33.4839L19.0822 36.1935L21.2188 39.8963L23.3555 43.5967L25.4922 39.8963L27.6312 36.1935L29.7679 32.4907L30.7588 30.772L32.4751 29.7811L36.1779 27.6444L39.8807 25.5078L43.5812 27.6444Z"/><path d="M11.1037 21.2188L7.40323 23.3555L11.1037 25.4922L14.8065 27.6312L18.5093 29.7679L20.228 30.7588L21.2188 32.4751L23.3555 36.1779L25.4922 39.8807L23.3555 43.5812L21.2188 39.8807L19.0822 36.1779L17.5184 33.4683L14.8065 31.9046L11.1037 29.7679L7.40323 27.6312L3.70044 25.4922L0 23.3555L3.70044 21.2188L7.40323 19.0822L11.1037 16.9431L14.8041 14.8065L16.9431 11.1037L19.0798 7.40323L21.2165 3.70044L23.3532 0H27.6289L25.4922 3.70044L23.3532 7.40323L21.2165 11.1037L19.0798 14.8065L17.516 17.5184L16.5933 18.0514L14.8065 19.0822L11.1037 21.2188Z"/><path d="M50.9884 23.3532V27.6289L47.2879 25.4922L43.5852 23.3532L39.8847 21.2165L36.1819 19.0798L33.47 17.516L31.9062 14.8065L29.7695 11.1037L27.6329 7.40323L25.4962 11.1037L23.3572 14.8065L21.2205 18.5093L20.2296 20.228L18.5132 21.2188L14.8105 23.3555L11.1077 25.4922L7.40723 23.3555L11.1077 21.2188L14.8105 19.0822L16.5973 18.0514L17.52 17.5184L19.0838 14.8065L21.2205 11.1037L23.3572 7.40323L25.4962 3.70044L27.6329 0L29.7695 3.70044L31.9062 7.40323L34.0452 11.1037L36.1819 14.8041L39.8847 16.9431L43.5852 19.0798L47.2879 21.2165L50.9884 23.3532Z"/></svg></span><span class="ds-nav-logo"><svg aria-hidden="true" viewBox="54 12 139 23" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M54.7168 34.0518V12.8484H68.1504V15.4099H57.506V22.2689H67.1542V24.8304H57.506V34.0518H54.7168Z" fill="currentColor"></path><path d="M76.1548 34.3933C75.0543 34.3933 74.0582 34.1372 73.1664 33.6249C72.2936 33.1126 71.6105 32.4011 71.1172 31.4903C70.6429 30.5606 70.4057 29.498 70.4057 28.3027V18.7113H73.0525V28.0181C73.0525 28.777 73.2043 29.4411 73.5079 30.0103C73.8305 30.5795 74.2669 31.0254 74.8171 31.348C75.3863 31.6706 76.0315 31.8318 76.7525 31.8318C77.4735 31.8318 78.1091 31.6706 78.6594 31.348C79.2286 31.0254 79.665 30.5606 79.9686 29.9534C80.2911 29.3462 80.4524 28.6252 80.4524 27.7904V18.7113H83.1277V34.0518H80.5378V31.0634L80.9647 31.3195C80.6042 32.2872 79.9875 33.0462 79.1147 33.5964C78.2609 34.1277 77.2743 34.3933 76.1548 34.3933Z" fill="currentColor"></path><path d="M93.4613 34.2226C91.9623 34.2226 90.8049 33.7956 89.989 32.9418C89.1921 32.088 88.7937 30.8831 88.7937 29.3273V21.2444H86.0045V18.7113H86.5737C87.2568 18.7113 87.7975 18.5026 88.196 18.0852C88.5945 17.6678 88.7937 17.1175 88.7937 16.4344V15.1822H91.4406V18.7113H94.8843V21.2444H91.4406V29.2419C91.4406 29.7542 91.5164 30.2001 91.6682 30.5795C91.839 30.959 92.1141 31.2626 92.4936 31.4903C92.8731 31.699 93.3759 31.8034 94.002 31.8034C94.1349 31.8034 94.2961 31.7939 94.4859 31.7749C94.6946 31.7559 94.8843 31.737 95.0551 31.718V34.0518C94.8084 34.1087 94.5333 34.1467 94.2297 34.1656C93.9261 34.2036 93.67 34.2226 93.4613 34.2226Z" fill="currentColor"></path><path d="M103.949 34.3933C102.848 34.3933 101.852 34.1372 100.96 33.6249C100.088 33.1126 99.4044 32.4011 98.9111 31.4903C98.4368 30.5606 98.1996 29.498 98.1996 28.3027V18.7113H100.846V28.0181C100.846 28.777 100.998 29.4411 101.302 30.0103C101.624 30.5795 102.061 31.0254 102.611 31.348C103.18 31.6706 103.825 31.8318 104.546 31.8318C105.267 31.8318 105.903 31.6706 106.453 31.348C107.022 31.0254 107.459 30.5606 107.762 29.9534C108.085 29.3462 108.246 28.6252 108.246 27.7904V18.7113H110.922V34.0518H108.332V31.0634L108.759 31.3195C108.398 32.2872 107.781 33.0462 106.909 33.5964C106.055 34.1277 105.068 34.3933 103.949 34.3933Z" fill="currentColor"></path><path d="M115.022 34.0518V18.7113H117.612V21.529L117.328 21.1305C117.688 20.2577 118.238 19.6126 118.978 19.1952C119.718 18.7588 120.62 18.5406 121.682 18.5406H122.621V21.0451H121.284C120.202 21.0451 119.329 21.3867 118.665 22.0697C118.001 22.7338 117.669 23.6825 117.669 24.9158V34.0518H115.022Z" fill="currentColor"></path><path d="M132.031 34.3933C130.551 34.3933 129.232 34.0423 128.075 33.3403C126.917 32.6382 126.007 31.68 125.342 30.4657C124.678 29.2324 124.346 27.8568 124.346 26.3389C124.346 24.802 124.669 23.4358 125.314 22.2405C125.978 21.0451 126.87 20.1059 127.989 19.4229C129.128 18.7208 130.399 18.3698 131.803 18.3698C132.942 18.3698 133.947 18.5785 134.82 18.9959C135.712 19.3944 136.461 19.9446 137.068 20.6467C137.695 21.3297 138.169 22.1172 138.491 23.0089C138.833 23.8817 139.004 24.7925 139.004 25.7412C139.004 25.9499 138.985 26.1871 138.947 26.4527C138.928 26.6994 138.899 26.9365 138.861 27.1642H126.282V24.8874H137.325L136.072 25.912C136.243 24.9253 136.148 24.043 135.788 23.2651C135.427 22.4871 134.896 21.8705 134.194 21.4151C133.492 20.9597 132.695 20.7321 131.803 20.7321C130.911 20.7321 130.095 20.9597 129.355 21.4151C128.615 21.8705 128.037 22.5251 127.619 23.3789C127.221 24.2138 127.06 25.2099 127.135 26.3673C127.06 27.4868 127.23 28.4734 127.648 29.3273C128.084 30.1621 128.691 30.8167 129.469 31.2911C130.266 31.7464 131.13 31.9741 132.059 31.9741C133.084 31.9741 133.947 31.737 134.649 31.2626C135.351 30.7883 135.92 30.1811 136.357 29.4411L138.577 30.5795C138.273 31.2816 137.799 31.9267 137.154 32.5149C136.528 33.0841 135.778 33.5395 134.905 33.881C134.052 34.2226 133.093 34.3933 132.031 34.3933Z" fill="currentColor"></path><path d="M145.638 34.0518L153.237 12.8484H156.539L164.138 34.0518H161.149L159.413 29.0711H150.363L148.627 34.0518H145.638ZM151.245 26.5096H158.531L154.49 14.8691H155.286L151.245 26.5096Z" fill="currentColor"></path><path d="M175.739 34.3933C174.24 34.3933 172.855 34.1277 171.583 33.5964C170.312 33.0462 169.212 32.2777 168.282 31.2911C167.352 30.3044 166.622 29.147 166.09 27.8188C165.578 26.4907 165.322 25.0391 165.322 23.4643C165.322 21.8705 165.578 20.4095 166.09 19.0813C166.603 17.7531 167.324 16.5957 168.253 15.6091C169.183 14.6224 170.284 13.8635 171.555 13.3322C172.826 12.782 174.211 12.5068 175.71 12.5068C177.171 12.5068 178.48 12.763 179.638 13.2753C180.814 13.7876 181.801 14.4517 182.598 15.2675C183.414 16.0834 183.992 16.9562 184.334 17.886L181.829 19.1098C181.336 17.8765 180.567 16.8993 179.524 16.1783C178.48 15.4573 177.209 15.0968 175.71 15.0968C174.23 15.0968 172.911 15.4478 171.754 16.1498C170.616 16.8519 169.724 17.829 169.079 19.0813C168.434 20.3336 168.111 21.7946 168.111 23.4643C168.111 25.115 168.434 26.5666 169.079 27.8188C169.743 29.0711 170.644 30.0483 171.783 30.7503C172.94 31.4524 174.259 31.8034 175.739 31.8034C177.029 31.8034 178.196 31.5282 179.239 30.978C180.283 30.4278 181.108 29.6688 181.715 28.7011C182.323 27.7335 182.626 26.614 182.626 25.3427V24.0335L183.907 25.2289H175.71V22.8097H185.444V24.6881C185.444 26.1681 185.188 27.5058 184.675 28.7011C184.163 29.8965 183.461 30.9211 182.569 31.7749C181.677 32.6098 180.643 33.2549 179.467 33.7103C178.291 34.1656 177.048 34.3933 175.739 34.3933Z" fill="currentColor"></path><path d="M189.212 34.0518V12.8484H192.001V34.0518H189.212Z" fill="currentColor"></path></svg></span><button class="ds-btn ds-btn--ghost ds-btn--sm ds-icon-btn" aria-label="Collapse sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m11 17l-5-5l5-5m7 10l-5-5l5-5"/></svg></button></div><div class="ds-nav-switch"><span class="ds-nav-ws">D</span><span class="ds-nav-org"><b>Default Workspace</b></span><svg class="i sm caret" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 9l6 6l6-6"/></svg></div><div class="ds-nav-body"><div class="ds-nav-group"><div class="ds-nav-item"><svg class="i" viewBox="0 0 20 20" aria-hidden="true">
+<path d="M5.83334 3.33337V16.6667L16.6667 10L5.83334 3.33337Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span>Get started</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"></path><path d="M8 10.5H16"></path><path d="M8 14H13.5"></path></g></svg><span>Chat</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Build</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 18V6"></path><path d="M20 6V18"></path><path d="M12 10C16.4183 10 20 8.20914 20 6C20 3.79086 16.4183 2 12 2C7.58172 2 4 3.79086 4 6C4 8.20914 7.58172 10 12 10Z"></path><path d="M20 12C20 14.2091 16.4183 16 12 16C7.58172 16 4 14.2091 4 12"></path><path d="M20 18C20 20.2091 16.4183 22 12 22C7.58172 22 4 20.2091 4 18"></path></g></svg><span>Dataset</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M20.3116 12.6473L20.8293 10.7154C21.4335 8.46034 21.7356 7.3328 21.5081 6.35703C21.3285 5.58657 20.9244 4.88668 20.347 4.34587C19.6157 3.66095 18.4881 3.35883 16.2331 2.75458C13.978 2.15033 12.8504 1.84821 11.8747 2.07573C11.1042 2.25537 10.4043 2.65945 9.86351 3.23687C9.27709 3.86298 8.97128 4.77957 8.51621 6.44561C8.43979 6.7254 8.35915 7.02633 8.27227 7.35057L8.27222 7.35077L7.75458 9.28263C7.15033 11.5377 6.84821 12.6652 7.07573 13.641C7.25537 14.4115 7.65945 15.1114 8.23687 15.6522C8.96815 16.3371 10.0957 16.6392 12.3508 17.2435L12.3508 17.2435C14.3834 17.7881 15.4999 18.0873 16.415 17.9744C16.5152 17.9621 16.6129 17.9448 16.7092 17.9223C17.4796 17.7427 18.1795 17.3386 18.7203 16.7612C19.4052 16.0299 19.7074 14.9024 20.3116 12.6473Z"></path><path d="M16.415 17.9741C16.2065 18.6126 15.8399 19.1902 15.347 19.6519C14.6157 20.3368 13.4881 20.6389 11.2331 21.2432C8.97798 21.8474 7.85044 22.1495 6.87466 21.922C6.10421 21.7424 5.40432 21.3383 4.86351 20.7609C4.17859 20.0296 3.87647 18.9021 3.27222 16.647L2.75458 14.7151C2.15033 12.46 1.84821 11.3325 2.07573 10.3567C2.25537 9.58627 2.65945 8.88638 3.23687 8.34557C3.96815 7.66065 5.09569 7.35853 7.35077 6.75428C7.77741 6.63996 8.16368 6.53646 8.51621 6.44531"></path><path d="M11.7769 10L16.6065 11.2941"></path><path d="M11 12.8975L13.8978 13.6739"></path></g></svg><span>Prompts</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M7 10C7 8.58579 7 7.87868 7.43934 7.43934C7.87868 7 8.58579 7 10 7H14C15.4142 7 16.1213 7 16.5607 7.43934C17 7.87868 17 8.58579 17 10V14C17 15.4142 17 16.1213 16.5607 16.5607C16.1213 17 15.4142 17 14 17H10C8.58579 17 7.87868 17 7.43934 16.5607C7 16.1213 7 15.4142 7 14V10Z"></path><path stroke-linejoin="round" d="M12.4286 10L11 12H13L11.5714 14"></path><path d="M4 12C4 8.22876 4 6.34315 5.17157 5.17157C6.34315 4 8.22876 4 12 4C15.7712 4 17.6569 4 18.8284 5.17157C20 6.34315 20 8.22876 20 12C20 15.7712 20 17.6569 18.8284 18.8284C17.6569 20 15.7712 20 12 20C8.22876 20 6.34315 20 5.17157 18.8284C4 17.6569 4 15.7712 4 12Z"></path><path d="M4 12H2"></path><path d="M22 12H20"></path><path d="M4 9H2"></path><path d="M22 9H20"></path><path d="M4 15H2"></path><path d="M22 15H20"></path><path d="M12 20L12 22"></path><path d="M12 2L12 4"></path><path d="M9 20L9 22"></path><path d="M9 2L9 4"></path><path d="M15 20L15 22"></path><path d="M15 2L15 4"></path></g></svg><span>Agents</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8V16C20 18.8284 20 20.2426 19.1213 21.1213C18.2426 22 16.8284 22 14 22H10C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8Z"></path><path d="M19.9997 16H7.89749C6.96751 16 6.50253 16 6.12103 16.1022C5.08575 16.3796 4.29986 17.1212 4.02246 18.1564"></path><path d="M8 7H16"></path><path d="M8 10.5H13"></path><path d="M19.9239 19H8"></path></g></svg><span>Knowledge base</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path stroke-linejoin="round" d="M2 5.5L3.21429 7L7.5 3"></path><path stroke-linejoin="round" d="M2 12.5L3.21429 14L7.5 10"></path><path stroke-linejoin="round" d="M2 19.5L3.21429 21L7.5 17"></path><path d="M22 19L12 19"></path><path d="M22 12L12 12"></path><path d="M22 5L12 5"></path></g></svg><span>Evals</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M8.85996 19.3261L7.61956 20.5665C7.30164 20.8844 6.85645 21.0406 6.4096 20.9909L4.32101 20.7589C4.09834 20.7341 3.89072 20.6343 3.73229 20.4759L3.52408 20.2677C3.36566 20.1093 3.26587 19.9017 3.24113 19.679L3.00906 17.5904C2.95941 17.1435 3.11558 16.6984 3.43349 16.3804L7.14558 12.6684C7.41492 12.399 7.49906 12 7.40432 11.6311C6.8169 9.34366 7.41866 6.81385 9.20961 5.02291C11.9068 2.3257 16.2799 2.3257 18.9771 5.02291C21.6743 7.72013 21.6743 12.0932 18.9771 14.7904C17.1861 16.5813 14.6563 17.1831 12.3689 16.5957C12 16.5009 11.6013 16.5848 11.3319 16.8541L8.85996 19.3261ZM8.85996 19.3261L7.11091 17.5962M12.5858 8.58579C13.3668 7.80474 14.6332 7.80474 15.4142 8.58579C16.1953 9.36683 16.1953 10.6332 15.4142 11.4142C14.6332 12.1953 13.3668 12.1953 12.5858 11.4142C11.8047 10.6332 11.8047 9.36683 12.5858 8.58579Z"></path></svg><span>Keys</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Observe</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 5.25732C2 3.45835 3.567 2 5.5 2C7.433 2 9 3.45835 9 5.25732C9 7.04219 7.88292 9.12497 6.14003 9.86978C5.73374 10.0434 5.26626 10.0434 4.85997 9.86978C3.11708 9.12497 2 7.04219 2 5.25732Z"></path><path d="M15 17.2573C15 15.4584 16.567 14 18.5 14C20.433 14 22 15.4584 22 17.2573C22 19.0422 20.8829 21.125 19.14 21.8698C18.7337 22.0434 18.2663 22.0434 17.86 21.8698C16.1171 21.125 15 19.0422 15 17.2573Z"></path><path stroke-linejoin="round" d="M18.5 17.5H18.509"></path><path stroke-linejoin="round" d="M5.49072 5.5H5.49972"></path><path stroke-linejoin="round" d="M12.0002 5H16.1321C18.133 5 18.8939 7.61309 17.2059 8.68732L6.79459 15.3127C5.10651 16.3869 5.86744 19 7.86833 19H12.0002M10.5002 20.5L12.0002 19L10.5002 17.5"></path></g></svg><span>Tracing</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M19 15V11.9375C19 9.76288 17.2371 8 15.0625 8H8.9375C6.76288 8 5 9.76288 5 11.9375V15C5 18.866 8.13401 22 12 22C15.866 22 19 18.866 19 15Z"></path><path d="M16.5 8.27065V7.5C16.5 5.01472 14.4853 3 12 3C9.51472 3 7.5 5.01472 7.5 7.5V8.27065"></path><path d="M19 14H22"></path><path d="M5 14H2"></path><path d="M14.2905 3.62571C15.1937 3.08381 16.0969 2.5419 17 2"></path><path d="M9.70947 3.62569C8.80631 3.0838 7.90315 2.5419 6.99998 2"></path><path d="M17.8003 18.9202C18.7003 19.2801 19.6002 19.6401 20.5002 20.0001"></path><path d="M17.7798 9.08789C18.6865 8.72521 19.5932 8.36252 20.4999 7.99984"></path><path d="M6.19971 18.9202C5.29976 19.2801 4.39981 19.6401 3.49987 20.0001"></path><path d="M12 22V15"></path><path d="M6.22021 9.08789C5.31354 8.72522 4.40686 8.36255 3.50018 7.99988"></path></g></svg><span>Error Feed</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"></path><path stroke-linejoin="round" d="M6 15.8L7.14286 17L10 14"></path><path stroke-linejoin="round" d="M6 8.8L7.14286 10L10 7"></path><path d="M13 9L18 9"></path><path d="M13 16L18 16"></path></g></svg><span>Tasks</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="9" cy="6" r="4"></circle><path d="M15 9C16.6569 9 18 7.65685 18 6C18 4.34315 16.6569 3 15 3"></path><ellipse cx="9" cy="17" rx="7" ry="4"></ellipse><path d="M18 14C19.7542 14.3847 21 15.3589 21 16.5C21 17.5293 19.9863 18.4229 18.5 18.8704"></path></g></svg><span>Users</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 22H20"></path><path d="M13.8881 3.66293L14.6296 2.92142C15.8581 1.69286 17.85 1.69286 19.0786 2.92142C20.3071 4.14999 20.3071 6.14188 19.0786 7.37044L18.3371 8.11195M13.8881 3.66293C13.8881 3.66293 13.9807 5.23862 15.3711 6.62894C16.7614 8.01926 18.3371 8.11195 18.3371 8.11195M13.8881 3.66293L7.07106 10.4799C6.60933 10.9416 6.37846 11.1725 6.17992 11.4271C5.94571 11.7273 5.74491 12.0522 5.58107 12.396C5.44219 12.6874 5.33894 12.9972 5.13245 13.6167L4.25745 16.2417M4.25745 16.2417L4.04356 16.8833C3.94194 17.1882 4.02128 17.5243 4.2485 17.7515C4.47573 17.9787 4.81182 18.0581 5.11667 17.9564L5.75834 17.7426L8.38334 16.8675C9.00282 16.6611 9.31256 16.5578 9.60398 16.4189C9.94775 16.2551 10.2727 16.0543 10.5729 15.8201C10.8275 15.6215 11.0584 15.3907 11.5201 14.9289L18.3371 8.11195M5.75834 17.7426L4.25745 16.2417"></path></g></svg><span>Annotations</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M18.7491 9.70957V9.00496C18.7491 5.13623 15.7274 2 12 2C8.27256 2 5.25087 5.13623 5.25087 9.00496V9.70957C5.25087 10.5552 5.00972 11.3818 4.5578 12.0854L3.45036 13.8095C2.43882 15.3843 3.21105 17.5249 4.97036 18.0229C9.57274 19.3257 14.4273 19.3257 19.0296 18.0229C20.789 17.5249 21.5612 15.3843 20.5496 13.8095L19.4422 12.0854C18.9903 11.3818 18.7491 10.5552 18.7491 9.70957Z"></path><path d="M7.5 19C8.15503 20.7478 9.92246 22 12 22C14.0775 22 15.845 20.7478 16.5 19"></path></g></svg><span>Alerts</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 18V6"></path><path d="M20 6V18"></path><path d="M12 10C16.4183 10 20 8.20914 20 6C20 3.79086 16.4183 2 12 2C7.58172 2 4 3.79086 4 6C4 8.20914 7.58172 10 12 10Z"></path><path d="M20 12C20 14.2091 16.4183 16 12 16C7.58172 16 4 14.2091 4 12"></path><path d="M20 18C20 20.2091 16.4183 22 12 22C7.58172 22 4 20.2091 4 18"></path></g></svg><span>Dashboards</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Gateway</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 5.25732C2 3.45835 3.567 2 5.5 2C7.433 2 9 3.45835 9 5.25732C9 7.04219 7.88292 9.12497 6.14003 9.86978C5.73374 10.0434 5.26626 10.0434 4.85997 9.86978C3.11708 9.12497 2 7.04219 2 5.25732Z"></path><path d="M15 17.2573C15 15.4584 16.567 14 18.5 14C20.433 14 22 15.4584 22 17.2573C22 19.0422 20.8829 21.125 19.14 21.8698C18.7337 22.0434 18.2663 22.0434 17.86 21.8698C16.1171 21.125 15 19.0422 15 17.2573Z"></path><path stroke-linejoin="round" d="M18.5 17.5H18.509"></path><path stroke-linejoin="round" d="M5.49072 5.5H5.49972"></path><path stroke-linejoin="round" d="M12.0002 5H16.1321C18.133 5 18.8939 7.61309 17.2059 8.68732L6.79459 15.3127C5.10651 16.3869 5.86744 19 7.86833 19H12.0002M10.5002 20.5L12.0002 19L10.5002 17.5"></path></g></svg><span>Gateway</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Simulate</div><div class="ds-nav-item is-selected"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M9.5 14C11.1569 14 12.5 15.3431 12.5 17C12.5 18.6568 11.1569 20 9.5 20C7.84315 20 6.5 18.6568 6.5 17C6.5 15.3431 7.84315 14 9.5 14Z"></path><path d="M14.5 3.99998C12.8431 3.99998 11.5 5.34312 11.5 6.99998C11.5 8.65683 12.8431 9.99998 14.5 9.99998C16.1569 9.99998 17.5 8.65683 17.5 6.99998C17.5 5.34312 16.1569 3.99998 14.5 3.99998Z"></path><path d="M15 16.9585L22 16.9585"></path><path d="M9 6.9585L2 6.9585"></path><path d="M2 16.9585L4 16.9585"></path><path d="M22 6.9585L20 6.9585"></path></g></svg><span>Environments</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"></path><path stroke-linejoin="round" d="M7 14L9.29289 11.7071C9.68342 11.3166 10.3166 11.3166 10.7071 11.7071L12.2929 13.2929C12.6834 13.6834 13.3166 13.6834 13.7071 13.2929L17 10M14.5 10H17V12.5"></path></g></svg><span>Improvements</span></div></div></div><div class="ds-nav-foot"><div class="ds-nav-label">Resources</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M3 10C3 6.22876 3 4.34315 4.17157 3.17157C5.34315 2 7.22876 2 11 2H13C16.7712 2 18.6569 2 19.8284 3.17157C21 4.34315 21 6.22876 21 10V14C21 17.7712 21 19.6569 19.8284 20.8284C18.6569 22 16.7712 22 13 22H11C7.22876 22 5.34315 22 4.17157 20.8284C3 19.6569 3 17.7712 3 14V10Z"></path><path d="M8 12H16"></path><path d="M8 8H16"></path><path d="M8 16H13"></path></g></svg><span>Docs</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M10.125 8.875C10.125 7.83947 10.9645 7 12 7C13.0355 7 13.875 7.83947 13.875 8.875C13.875 9.56245 13.505 10.1635 12.9534 10.4899C12.478 10.7711 12 11.1977 12 11.75V13"></path><path stroke-linejoin="round" d="M12 16H12.0001"></path></g></svg><span>Help</span></div></div></nav>
+            <nav class="ds-nav is-collapsed" style="border:1px solid var(--ds-border-default);border-radius:8px" aria-label="Main, collapsed"><div class="ds-nav-head"><span class="ds-nav-mark"><svg class="lm" viewBox="0 0 47 47" fill="none" aria-hidden="true"><path d="M46.8996 25.4157L43.4957 27.3812L40.0896 29.3467L36.6856 31.3143L33.2816 33.2798L31.314 36.686L29.3485 40.0899L27.383 43.496L25.4175 46.9H21.4844L23.4499 43.496L25.4175 40.0899L27.383 36.686L29.3485 33.2798L30.787 30.7852L33.2795 29.3467L36.6856 27.3812L40.0896 25.4157L36.6856 23.4502L33.2795 21.4826L29.8733 19.5171L28.2923 18.6056L27.3808 17.0268L25.4153 13.6206L23.4499 10.2145L25.4153 6.81055L27.3808 10.2145L29.3463 13.6206L30.7848 16.1131L33.2795 17.5516L36.6856 19.5171L40.0896 21.4826L43.4957 23.4502L46.8996 25.4157Z" fill="url(#fagi-logo-g1)"/><path d="M40.0895 25.4153L36.6855 27.3808L33.2794 29.3463L30.7869 30.7848L29.3484 33.2795L27.3829 36.6856L25.4174 40.0896L23.4498 43.4957L21.4843 46.8996L19.5188 43.4957L17.5533 40.0896L15.5857 36.6856L13.6202 33.2816L10.2141 31.314L6.81009 29.3485L3.40397 27.383L0 25.4175V21.4844L3.40397 23.4499L6.81009 25.4175L10.2141 27.383L13.6202 29.3485L16.1148 30.787L17.5533 33.2795L19.5188 36.6856L21.4843 40.0896L23.4498 36.6856L25.4174 33.2795L27.3829 29.8733L28.2944 28.2923L29.8732 27.3808L33.2794 25.4153L36.6855 23.4499L40.0895 25.4153Z" fill="url(#fagi-logo-g2)"/><path d="M10.2141 19.5188L6.81009 21.4843L10.2141 23.4498L13.6202 25.4174L17.0263 27.3829L18.6073 28.2944L19.5188 29.8732L21.4843 33.2794L23.4498 36.6855L21.4843 40.0895L19.5188 36.6855L17.5533 33.2794L16.1148 30.7869L13.6202 29.3484L10.2141 27.3829L6.81009 25.4174L3.40397 23.4498L0 21.4843L3.40397 19.5188L6.81009 17.5533L10.2141 15.5857L13.618 13.6202L15.5857 10.2141L17.5512 6.81009L19.5166 3.40397L21.4821 0H25.4153L23.4498 3.40397L21.4821 6.81009L19.5166 10.2141L17.5512 13.6202L16.1127 16.1148L15.2638 16.6051L13.6202 17.5533L10.2141 19.5188Z" fill="url(#fagi-logo-g3)"/><path d="M46.9 21.4821V25.4153L43.496 23.4498L40.0899 21.4821L36.686 19.5166L33.2798 17.5512L30.7852 16.1127L29.3467 13.6202L27.3812 10.2141L25.4157 6.81009L23.4502 10.2141L21.4826 13.6202L19.5171 17.0263L18.6056 18.6073L17.0268 19.5188L13.6206 21.4843L10.2145 23.4498L6.81055 21.4843L10.2145 19.5188L13.6206 17.5533L15.2643 16.6051L16.1131 16.1148L17.5516 13.6202L19.5171 10.2141L21.4826 6.81009L23.4502 3.40397L25.4157 0L27.3812 3.40397L29.3467 6.81009L31.3143 10.2141L33.2798 13.618L36.686 15.5857L40.0899 17.5512L43.496 19.5166L46.9 21.4821Z" fill="url(#fagi-logo-g4)"/><defs><linearGradient id="fagi-logo-g1" x1="34.192" y1="6.81055" x2="34.192" y2="46.9" gradientUnits="userSpaceOnUse"><stop stop-color="#CF6BE8"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g2" x1="20.0447" y1="21.4844" x2="20.0447" y2="46.8996" gradientUnits="userSpaceOnUse"><stop stop-color="#8B44FF"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g3" x1="12.7076" y1="0" x2="12.7076" y2="40.0895" gradientUnits="userSpaceOnUse"><stop stop-color="#CF6BE8"/><stop offset="1" stop-color="#7857FC"/></linearGradient><linearGradient id="fagi-logo-g4" x1="26.8553" y1="0" x2="26.8553" y2="25.4153" gradientUnits="userSpaceOnUse"><stop stop-color="#8B44FF"/><stop offset="1" stop-color="#7857FC"/></linearGradient></defs></svg><svg class="dm" viewBox="0 0 51 51" aria-hidden="true" fill="currentColor"><path d="M51 27.628L47.2995 29.7647L43.5967 31.9013L39.8963 34.0404L36.1958 36.177L34.0568 39.8798L31.9201 43.5803L29.7835 47.2831L27.6468 50.9835H23.3711L25.5078 47.2831L27.6468 43.5803L29.7835 39.8798L31.9201 36.177L33.4839 33.4651L36.1935 31.9013L39.8963 29.7647L43.5967 27.628L39.8963 25.4913L36.1935 23.3523L32.4907 21.2156L30.772 20.2248L29.7811 18.5084L27.6444 14.8056L25.5078 11.1028L27.6444 7.40234L29.7811 11.1028L31.9178 14.8056L33.4816 17.5152L36.1935 19.0789L39.8963 21.2156L43.5967 23.3523L47.2995 25.4913L51 27.628Z"/><path d="M43.5812 27.6444L39.8807 29.7811L36.1779 31.9178L33.4683 33.4816L31.9046 36.1935L29.7679 39.8963L27.6312 43.5967L25.4922 47.2995L23.3555 51L21.2188 47.2995L19.0822 43.5967L16.9431 39.8963L14.8065 36.1958L11.1037 34.0568L7.40323 31.9201L3.70044 29.7835L0 27.6468L0 23.3711L3.70044 25.5078L7.40323 27.6468L11.1037 29.7835L14.8065 31.9201L17.5184 33.4839L19.0822 36.1935L21.2188 39.8963L23.3555 43.5967L25.4922 39.8963L27.6312 36.1935L29.7679 32.4907L30.7588 30.772L32.4751 29.7811L36.1779 27.6444L39.8807 25.5078L43.5812 27.6444Z"/><path d="M11.1037 21.2188L7.40323 23.3555L11.1037 25.4922L14.8065 27.6312L18.5093 29.7679L20.228 30.7588L21.2188 32.4751L23.3555 36.1779L25.4922 39.8807L23.3555 43.5812L21.2188 39.8807L19.0822 36.1779L17.5184 33.4683L14.8065 31.9046L11.1037 29.7679L7.40323 27.6312L3.70044 25.4922L0 23.3555L3.70044 21.2188L7.40323 19.0822L11.1037 16.9431L14.8041 14.8065L16.9431 11.1037L19.0798 7.40323L21.2165 3.70044L23.3532 0H27.6289L25.4922 3.70044L23.3532 7.40323L21.2165 11.1037L19.0798 14.8065L17.516 17.5184L16.5933 18.0514L14.8065 19.0822L11.1037 21.2188Z"/><path d="M50.9884 23.3532V27.6289L47.2879 25.4922L43.5852 23.3532L39.8847 21.2165L36.1819 19.0798L33.47 17.516L31.9062 14.8065L29.7695 11.1037L27.6329 7.40323L25.4962 11.1037L23.3572 14.8065L21.2205 18.5093L20.2296 20.228L18.5132 21.2188L14.8105 23.3555L11.1077 25.4922L7.40723 23.3555L11.1077 21.2188L14.8105 19.0822L16.5973 18.0514L17.52 17.5184L19.0838 14.8065L21.2205 11.1037L23.3572 7.40323L25.4962 3.70044L27.6329 0L29.7695 3.70044L31.9062 7.40323L34.0452 11.1037L36.1819 14.8041L39.8847 16.9431L43.5852 19.0798L47.2879 21.2165L50.9884 23.3532Z"/></svg></span><span class="ds-nav-logo"><svg aria-hidden="true" viewBox="54 12 139 23" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M54.7168 34.0518V12.8484H68.1504V15.4099H57.506V22.2689H67.1542V24.8304H57.506V34.0518H54.7168Z" fill="currentColor"></path><path d="M76.1548 34.3933C75.0543 34.3933 74.0582 34.1372 73.1664 33.6249C72.2936 33.1126 71.6105 32.4011 71.1172 31.4903C70.6429 30.5606 70.4057 29.498 70.4057 28.3027V18.7113H73.0525V28.0181C73.0525 28.777 73.2043 29.4411 73.5079 30.0103C73.8305 30.5795 74.2669 31.0254 74.8171 31.348C75.3863 31.6706 76.0315 31.8318 76.7525 31.8318C77.4735 31.8318 78.1091 31.6706 78.6594 31.348C79.2286 31.0254 79.665 30.5606 79.9686 29.9534C80.2911 29.3462 80.4524 28.6252 80.4524 27.7904V18.7113H83.1277V34.0518H80.5378V31.0634L80.9647 31.3195C80.6042 32.2872 79.9875 33.0462 79.1147 33.5964C78.2609 34.1277 77.2743 34.3933 76.1548 34.3933Z" fill="currentColor"></path><path d="M93.4613 34.2226C91.9623 34.2226 90.8049 33.7956 89.989 32.9418C89.1921 32.088 88.7937 30.8831 88.7937 29.3273V21.2444H86.0045V18.7113H86.5737C87.2568 18.7113 87.7975 18.5026 88.196 18.0852C88.5945 17.6678 88.7937 17.1175 88.7937 16.4344V15.1822H91.4406V18.7113H94.8843V21.2444H91.4406V29.2419C91.4406 29.7542 91.5164 30.2001 91.6682 30.5795C91.839 30.959 92.1141 31.2626 92.4936 31.4903C92.8731 31.699 93.3759 31.8034 94.002 31.8034C94.1349 31.8034 94.2961 31.7939 94.4859 31.7749C94.6946 31.7559 94.8843 31.737 95.0551 31.718V34.0518C94.8084 34.1087 94.5333 34.1467 94.2297 34.1656C93.9261 34.2036 93.67 34.2226 93.4613 34.2226Z" fill="currentColor"></path><path d="M103.949 34.3933C102.848 34.3933 101.852 34.1372 100.96 33.6249C100.088 33.1126 99.4044 32.4011 98.9111 31.4903C98.4368 30.5606 98.1996 29.498 98.1996 28.3027V18.7113H100.846V28.0181C100.846 28.777 100.998 29.4411 101.302 30.0103C101.624 30.5795 102.061 31.0254 102.611 31.348C103.18 31.6706 103.825 31.8318 104.546 31.8318C105.267 31.8318 105.903 31.6706 106.453 31.348C107.022 31.0254 107.459 30.5606 107.762 29.9534C108.085 29.3462 108.246 28.6252 108.246 27.7904V18.7113H110.922V34.0518H108.332V31.0634L108.759 31.3195C108.398 32.2872 107.781 33.0462 106.909 33.5964C106.055 34.1277 105.068 34.3933 103.949 34.3933Z" fill="currentColor"></path><path d="M115.022 34.0518V18.7113H117.612V21.529L117.328 21.1305C117.688 20.2577 118.238 19.6126 118.978 19.1952C119.718 18.7588 120.62 18.5406 121.682 18.5406H122.621V21.0451H121.284C120.202 21.0451 119.329 21.3867 118.665 22.0697C118.001 22.7338 117.669 23.6825 117.669 24.9158V34.0518H115.022Z" fill="currentColor"></path><path d="M132.031 34.3933C130.551 34.3933 129.232 34.0423 128.075 33.3403C126.917 32.6382 126.007 31.68 125.342 30.4657C124.678 29.2324 124.346 27.8568 124.346 26.3389C124.346 24.802 124.669 23.4358 125.314 22.2405C125.978 21.0451 126.87 20.1059 127.989 19.4229C129.128 18.7208 130.399 18.3698 131.803 18.3698C132.942 18.3698 133.947 18.5785 134.82 18.9959C135.712 19.3944 136.461 19.9446 137.068 20.6467C137.695 21.3297 138.169 22.1172 138.491 23.0089C138.833 23.8817 139.004 24.7925 139.004 25.7412C139.004 25.9499 138.985 26.1871 138.947 26.4527C138.928 26.6994 138.899 26.9365 138.861 27.1642H126.282V24.8874H137.325L136.072 25.912C136.243 24.9253 136.148 24.043 135.788 23.2651C135.427 22.4871 134.896 21.8705 134.194 21.4151C133.492 20.9597 132.695 20.7321 131.803 20.7321C130.911 20.7321 130.095 20.9597 129.355 21.4151C128.615 21.8705 128.037 22.5251 127.619 23.3789C127.221 24.2138 127.06 25.2099 127.135 26.3673C127.06 27.4868 127.23 28.4734 127.648 29.3273C128.084 30.1621 128.691 30.8167 129.469 31.2911C130.266 31.7464 131.13 31.9741 132.059 31.9741C133.084 31.9741 133.947 31.737 134.649 31.2626C135.351 30.7883 135.92 30.1811 136.357 29.4411L138.577 30.5795C138.273 31.2816 137.799 31.9267 137.154 32.5149C136.528 33.0841 135.778 33.5395 134.905 33.881C134.052 34.2226 133.093 34.3933 132.031 34.3933Z" fill="currentColor"></path><path d="M145.638 34.0518L153.237 12.8484H156.539L164.138 34.0518H161.149L159.413 29.0711H150.363L148.627 34.0518H145.638ZM151.245 26.5096H158.531L154.49 14.8691H155.286L151.245 26.5096Z" fill="currentColor"></path><path d="M175.739 34.3933C174.24 34.3933 172.855 34.1277 171.583 33.5964C170.312 33.0462 169.212 32.2777 168.282 31.2911C167.352 30.3044 166.622 29.147 166.09 27.8188C165.578 26.4907 165.322 25.0391 165.322 23.4643C165.322 21.8705 165.578 20.4095 166.09 19.0813C166.603 17.7531 167.324 16.5957 168.253 15.6091C169.183 14.6224 170.284 13.8635 171.555 13.3322C172.826 12.782 174.211 12.5068 175.71 12.5068C177.171 12.5068 178.48 12.763 179.638 13.2753C180.814 13.7876 181.801 14.4517 182.598 15.2675C183.414 16.0834 183.992 16.9562 184.334 17.886L181.829 19.1098C181.336 17.8765 180.567 16.8993 179.524 16.1783C178.48 15.4573 177.209 15.0968 175.71 15.0968C174.23 15.0968 172.911 15.4478 171.754 16.1498C170.616 16.8519 169.724 17.829 169.079 19.0813C168.434 20.3336 168.111 21.7946 168.111 23.4643C168.111 25.115 168.434 26.5666 169.079 27.8188C169.743 29.0711 170.644 30.0483 171.783 30.7503C172.94 31.4524 174.259 31.8034 175.739 31.8034C177.029 31.8034 178.196 31.5282 179.239 30.978C180.283 30.4278 181.108 29.6688 181.715 28.7011C182.323 27.7335 182.626 26.614 182.626 25.3427V24.0335L183.907 25.2289H175.71V22.8097H185.444V24.6881C185.444 26.1681 185.188 27.5058 184.675 28.7011C184.163 29.8965 183.461 30.9211 182.569 31.7749C181.677 32.6098 180.643 33.2549 179.467 33.7103C178.291 34.1656 177.048 34.3933 175.739 34.3933Z" fill="currentColor"></path><path d="M189.212 34.0518V12.8484H192.001V34.0518H189.212Z" fill="currentColor"></path></svg></span><button class="ds-btn ds-btn--ghost ds-btn--sm ds-icon-btn" aria-label="Collapse sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m11 17l-5-5l5-5m7 10l-5-5l5-5"/></svg></button></div><div class="ds-nav-switch"><span class="ds-nav-ws">D</span><span class="ds-nav-org"><b>Default Workspace</b></span><svg class="i sm caret" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 9l6 6l6-6"/></svg></div><div class="ds-nav-body"><div class="ds-nav-group"><div class="ds-nav-item"><svg class="i" viewBox="0 0 20 20" aria-hidden="true">
+<path d="M5.83334 3.33337V16.6667L16.6667 10L5.83334 3.33337Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span>Get started</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"></path><path d="M8 10.5H16"></path><path d="M8 14H13.5"></path></g></svg><span>Chat</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Build</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 18V6"></path><path d="M20 6V18"></path><path d="M12 10C16.4183 10 20 8.20914 20 6C20 3.79086 16.4183 2 12 2C7.58172 2 4 3.79086 4 6C4 8.20914 7.58172 10 12 10Z"></path><path d="M20 12C20 14.2091 16.4183 16 12 16C7.58172 16 4 14.2091 4 12"></path><path d="M20 18C20 20.2091 16.4183 22 12 22C7.58172 22 4 20.2091 4 18"></path></g></svg><span>Dataset</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M20.3116 12.6473L20.8293 10.7154C21.4335 8.46034 21.7356 7.3328 21.5081 6.35703C21.3285 5.58657 20.9244 4.88668 20.347 4.34587C19.6157 3.66095 18.4881 3.35883 16.2331 2.75458C13.978 2.15033 12.8504 1.84821 11.8747 2.07573C11.1042 2.25537 10.4043 2.65945 9.86351 3.23687C9.27709 3.86298 8.97128 4.77957 8.51621 6.44561C8.43979 6.7254 8.35915 7.02633 8.27227 7.35057L8.27222 7.35077L7.75458 9.28263C7.15033 11.5377 6.84821 12.6652 7.07573 13.641C7.25537 14.4115 7.65945 15.1114 8.23687 15.6522C8.96815 16.3371 10.0957 16.6392 12.3508 17.2435L12.3508 17.2435C14.3834 17.7881 15.4999 18.0873 16.415 17.9744C16.5152 17.9621 16.6129 17.9448 16.7092 17.9223C17.4796 17.7427 18.1795 17.3386 18.7203 16.7612C19.4052 16.0299 19.7074 14.9024 20.3116 12.6473Z"></path><path d="M16.415 17.9741C16.2065 18.6126 15.8399 19.1902 15.347 19.6519C14.6157 20.3368 13.4881 20.6389 11.2331 21.2432C8.97798 21.8474 7.85044 22.1495 6.87466 21.922C6.10421 21.7424 5.40432 21.3383 4.86351 20.7609C4.17859 20.0296 3.87647 18.9021 3.27222 16.647L2.75458 14.7151C2.15033 12.46 1.84821 11.3325 2.07573 10.3567C2.25537 9.58627 2.65945 8.88638 3.23687 8.34557C3.96815 7.66065 5.09569 7.35853 7.35077 6.75428C7.77741 6.63996 8.16368 6.53646 8.51621 6.44531"></path><path d="M11.7769 10L16.6065 11.2941"></path><path d="M11 12.8975L13.8978 13.6739"></path></g></svg><span>Prompts</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M7 10C7 8.58579 7 7.87868 7.43934 7.43934C7.87868 7 8.58579 7 10 7H14C15.4142 7 16.1213 7 16.5607 7.43934C17 7.87868 17 8.58579 17 10V14C17 15.4142 17 16.1213 16.5607 16.5607C16.1213 17 15.4142 17 14 17H10C8.58579 17 7.87868 17 7.43934 16.5607C7 16.1213 7 15.4142 7 14V10Z"></path><path stroke-linejoin="round" d="M12.4286 10L11 12H13L11.5714 14"></path><path d="M4 12C4 8.22876 4 6.34315 5.17157 5.17157C6.34315 4 8.22876 4 12 4C15.7712 4 17.6569 4 18.8284 5.17157C20 6.34315 20 8.22876 20 12C20 15.7712 20 17.6569 18.8284 18.8284C17.6569 20 15.7712 20 12 20C8.22876 20 6.34315 20 5.17157 18.8284C4 17.6569 4 15.7712 4 12Z"></path><path d="M4 12H2"></path><path d="M22 12H20"></path><path d="M4 9H2"></path><path d="M22 9H20"></path><path d="M4 15H2"></path><path d="M22 15H20"></path><path d="M12 20L12 22"></path><path d="M12 2L12 4"></path><path d="M9 20L9 22"></path><path d="M9 2L9 4"></path><path d="M15 20L15 22"></path><path d="M15 2L15 4"></path></g></svg><span>Agents</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8V16C20 18.8284 20 20.2426 19.1213 21.1213C18.2426 22 16.8284 22 14 22H10C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8Z"></path><path d="M19.9997 16H7.89749C6.96751 16 6.50253 16 6.12103 16.1022C5.08575 16.3796 4.29986 17.1212 4.02246 18.1564"></path><path d="M8 7H16"></path><path d="M8 10.5H13"></path><path d="M19.9239 19H8"></path></g></svg><span>Knowledge base</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path stroke-linejoin="round" d="M2 5.5L3.21429 7L7.5 3"></path><path stroke-linejoin="round" d="M2 12.5L3.21429 14L7.5 10"></path><path stroke-linejoin="round" d="M2 19.5L3.21429 21L7.5 17"></path><path d="M22 19L12 19"></path><path d="M22 12L12 12"></path><path d="M22 5L12 5"></path></g></svg><span>Evals</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M8.85996 19.3261L7.61956 20.5665C7.30164 20.8844 6.85645 21.0406 6.4096 20.9909L4.32101 20.7589C4.09834 20.7341 3.89072 20.6343 3.73229 20.4759L3.52408 20.2677C3.36566 20.1093 3.26587 19.9017 3.24113 19.679L3.00906 17.5904C2.95941 17.1435 3.11558 16.6984 3.43349 16.3804L7.14558 12.6684C7.41492 12.399 7.49906 12 7.40432 11.6311C6.8169 9.34366 7.41866 6.81385 9.20961 5.02291C11.9068 2.3257 16.2799 2.3257 18.9771 5.02291C21.6743 7.72013 21.6743 12.0932 18.9771 14.7904C17.1861 16.5813 14.6563 17.1831 12.3689 16.5957C12 16.5009 11.6013 16.5848 11.3319 16.8541L8.85996 19.3261ZM8.85996 19.3261L7.11091 17.5962M12.5858 8.58579C13.3668 7.80474 14.6332 7.80474 15.4142 8.58579C16.1953 9.36683 16.1953 10.6332 15.4142 11.4142C14.6332 12.1953 13.3668 12.1953 12.5858 11.4142C11.8047 10.6332 11.8047 9.36683 12.5858 8.58579Z"></path></svg><span>Keys</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Observe</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 5.25732C2 3.45835 3.567 2 5.5 2C7.433 2 9 3.45835 9 5.25732C9 7.04219 7.88292 9.12497 6.14003 9.86978C5.73374 10.0434 5.26626 10.0434 4.85997 9.86978C3.11708 9.12497 2 7.04219 2 5.25732Z"></path><path d="M15 17.2573C15 15.4584 16.567 14 18.5 14C20.433 14 22 15.4584 22 17.2573C22 19.0422 20.8829 21.125 19.14 21.8698C18.7337 22.0434 18.2663 22.0434 17.86 21.8698C16.1171 21.125 15 19.0422 15 17.2573Z"></path><path stroke-linejoin="round" d="M18.5 17.5H18.509"></path><path stroke-linejoin="round" d="M5.49072 5.5H5.49972"></path><path stroke-linejoin="round" d="M12.0002 5H16.1321C18.133 5 18.8939 7.61309 17.2059 8.68732L6.79459 15.3127C5.10651 16.3869 5.86744 19 7.86833 19H12.0002M10.5002 20.5L12.0002 19L10.5002 17.5"></path></g></svg><span>Tracing</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M19 15V11.9375C19 9.76288 17.2371 8 15.0625 8H8.9375C6.76288 8 5 9.76288 5 11.9375V15C5 18.866 8.13401 22 12 22C15.866 22 19 18.866 19 15Z"></path><path d="M16.5 8.27065V7.5C16.5 5.01472 14.4853 3 12 3C9.51472 3 7.5 5.01472 7.5 7.5V8.27065"></path><path d="M19 14H22"></path><path d="M5 14H2"></path><path d="M14.2905 3.62571C15.1937 3.08381 16.0969 2.5419 17 2"></path><path d="M9.70947 3.62569C8.80631 3.0838 7.90315 2.5419 6.99998 2"></path><path d="M17.8003 18.9202C18.7003 19.2801 19.6002 19.6401 20.5002 20.0001"></path><path d="M17.7798 9.08789C18.6865 8.72521 19.5932 8.36252 20.4999 7.99984"></path><path d="M6.19971 18.9202C5.29976 19.2801 4.39981 19.6401 3.49987 20.0001"></path><path d="M12 22V15"></path><path d="M6.22021 9.08789C5.31354 8.72522 4.40686 8.36255 3.50018 7.99988"></path></g></svg><span>Error Feed</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"></path><path stroke-linejoin="round" d="M6 15.8L7.14286 17L10 14"></path><path stroke-linejoin="round" d="M6 8.8L7.14286 10L10 7"></path><path d="M13 9L18 9"></path><path d="M13 16L18 16"></path></g></svg><span>Tasks</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="9" cy="6" r="4"></circle><path d="M15 9C16.6569 9 18 7.65685 18 6C18 4.34315 16.6569 3 15 3"></path><ellipse cx="9" cy="17" rx="7" ry="4"></ellipse><path d="M18 14C19.7542 14.3847 21 15.3589 21 16.5C21 17.5293 19.9863 18.4229 18.5 18.8704"></path></g></svg><span>Users</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 22H20"></path><path d="M13.8881 3.66293L14.6296 2.92142C15.8581 1.69286 17.85 1.69286 19.0786 2.92142C20.3071 4.14999 20.3071 6.14188 19.0786 7.37044L18.3371 8.11195M13.8881 3.66293C13.8881 3.66293 13.9807 5.23862 15.3711 6.62894C16.7614 8.01926 18.3371 8.11195 18.3371 8.11195M13.8881 3.66293L7.07106 10.4799C6.60933 10.9416 6.37846 11.1725 6.17992 11.4271C5.94571 11.7273 5.74491 12.0522 5.58107 12.396C5.44219 12.6874 5.33894 12.9972 5.13245 13.6167L4.25745 16.2417M4.25745 16.2417L4.04356 16.8833C3.94194 17.1882 4.02128 17.5243 4.2485 17.7515C4.47573 17.9787 4.81182 18.0581 5.11667 17.9564L5.75834 17.7426L8.38334 16.8675C9.00282 16.6611 9.31256 16.5578 9.60398 16.4189C9.94775 16.2551 10.2727 16.0543 10.5729 15.8201C10.8275 15.6215 11.0584 15.3907 11.5201 14.9289L18.3371 8.11195M5.75834 17.7426L4.25745 16.2417"></path></g></svg><span>Annotations</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M18.7491 9.70957V9.00496C18.7491 5.13623 15.7274 2 12 2C8.27256 2 5.25087 5.13623 5.25087 9.00496V9.70957C5.25087 10.5552 5.00972 11.3818 4.5578 12.0854L3.45036 13.8095C2.43882 15.3843 3.21105 17.5249 4.97036 18.0229C9.57274 19.3257 14.4273 19.3257 19.0296 18.0229C20.789 17.5249 21.5612 15.3843 20.5496 13.8095L19.4422 12.0854C18.9903 11.3818 18.7491 10.5552 18.7491 9.70957Z"></path><path d="M7.5 19C8.15503 20.7478 9.92246 22 12 22C14.0775 22 15.845 20.7478 16.5 19"></path></g></svg><span>Alerts</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M4 18V6"></path><path d="M20 6V18"></path><path d="M12 10C16.4183 10 20 8.20914 20 6C20 3.79086 16.4183 2 12 2C7.58172 2 4 3.79086 4 6C4 8.20914 7.58172 10 12 10Z"></path><path d="M20 12C20 14.2091 16.4183 16 12 16C7.58172 16 4 14.2091 4 12"></path><path d="M20 18C20 20.2091 16.4183 22 12 22C7.58172 22 4 20.2091 4 18"></path></g></svg><span>Dashboards</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Gateway</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 5.25732C2 3.45835 3.567 2 5.5 2C7.433 2 9 3.45835 9 5.25732C9 7.04219 7.88292 9.12497 6.14003 9.86978C5.73374 10.0434 5.26626 10.0434 4.85997 9.86978C3.11708 9.12497 2 7.04219 2 5.25732Z"></path><path d="M15 17.2573C15 15.4584 16.567 14 18.5 14C20.433 14 22 15.4584 22 17.2573C22 19.0422 20.8829 21.125 19.14 21.8698C18.7337 22.0434 18.2663 22.0434 17.86 21.8698C16.1171 21.125 15 19.0422 15 17.2573Z"></path><path stroke-linejoin="round" d="M18.5 17.5H18.509"></path><path stroke-linejoin="round" d="M5.49072 5.5H5.49972"></path><path stroke-linejoin="round" d="M12.0002 5H16.1321C18.133 5 18.8939 7.61309 17.2059 8.68732L6.79459 15.3127C5.10651 16.3869 5.86744 19 7.86833 19H12.0002M10.5002 20.5L12.0002 19L10.5002 17.5"></path></g></svg><span>Gateway</span></div></div><div class="ds-nav-group"><div class="ds-nav-label">Simulate</div><div class="ds-nav-item is-selected"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M9.5 14C11.1569 14 12.5 15.3431 12.5 17C12.5 18.6568 11.1569 20 9.5 20C7.84315 20 6.5 18.6568 6.5 17C6.5 15.3431 7.84315 14 9.5 14Z"></path><path d="M14.5 3.99998C12.8431 3.99998 11.5 5.34312 11.5 6.99998C11.5 8.65683 12.8431 9.99998 14.5 9.99998C16.1569 9.99998 17.5 8.65683 17.5 6.99998C17.5 5.34312 16.1569 3.99998 14.5 3.99998Z"></path><path d="M15 16.9585L22 16.9585"></path><path d="M9 6.9585L2 6.9585"></path><path d="M2 16.9585L4 16.9585"></path><path d="M22 6.9585L20 6.9585"></path></g></svg><span>Environments</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"></path><path stroke-linejoin="round" d="M7 14L9.29289 11.7071C9.68342 11.3166 10.3166 11.3166 10.7071 11.7071L12.2929 13.2929C12.6834 13.6834 13.3166 13.6834 13.7071 13.2929L17 10M14.5 10H17V12.5"></path></g></svg><span>Improvements</span></div></div></div><div class="ds-nav-foot"><div class="ds-nav-label">Resources</div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M3 10C3 6.22876 3 4.34315 4.17157 3.17157C5.34315 2 7.22876 2 11 2H13C16.7712 2 18.6569 2 19.8284 3.17157C21 4.34315 21 6.22876 21 10V14C21 17.7712 21 19.6569 19.8284 20.8284C18.6569 22 16.7712 22 13 22H11C7.22876 22 5.34315 22 4.17157 20.8284C3 19.6569 3 17.7712 3 14V10Z"></path><path d="M8 12H16"></path><path d="M8 8H16"></path><path d="M8 16H13"></path></g></svg><span>Docs</span></div><div class="ds-nav-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M10.125 8.875C10.125 7.83947 10.9645 7 12 7C13.0355 7 13.875 7.83947 13.875 8.875C13.875 9.56245 13.505 10.1635 12.9534 10.4899C12.478 10.7711 12 11.1977 12 11.75V13"></path><path stroke-linejoin="round" d="M12 16H12.0001"></path></g></svg><span>Help</span></div></div></nav>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Sidebar</td><td><code>size.sidebar.expanded</code> 200, collapsed 52. <code>bg.canvas</code>, right <code>border.default</code>, padding 8, 12 between groups.</td></tr>
+          <tr><td>Workspace switcher</td><td>36 high: Future AGI mark (22 tile), product name 12/600, workspace in <code>caption</code> <code>fg.tertiary</code>, up-down chevron. Collapse button beside it.</td></tr>
+          
+          <tr><td>Items</td><td>24 high, no gap, padding 0 8, <code>radius.md</code>. 14px icon, 8px to the label. Label <code>body-sm</code> 12 regular in <code>fg.default</code>. Hover <code>bg.hover</code>. Current: <code>bg.selected</code>, weight 500. Counts and shortcuts right-aligned in <code>fg.tertiary</code>.</td></tr>
+          <tr><td>Icons</td><td>14px Solar linear (collapsed rail too) in <code>icon.default</code>; the current item's icon is <code>fg.default</code>. No colour: the current page stands out by fill, weight and tone.</td></tr>
+          <tr><td>Section labels</td><td>20 high, 11 medium in <code>fg.secondary</code>, sentence case, no divider rule. Collapsible: the chevron appears on hover.</td></tr>
+          <tr><td>Footer</td><td>Resources: Docs and Help. No account row.</td></tr>
+          <tr><td>Collapsed</td><td>52 wide rail with the open sidebar's rhythm: 24px item rows (36 wide) with tooltips; each group label's 20px slot stays, holding a 20px hairline.</td></tr>
+          <tr><td>Logo</td><td>Gradient mark and purple wordmark in light, both white in dark; no tile (mark 18, wordmark 14 tall). Pinned with the switcher.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Keep the logo row and switcher pinned; only the item list scrolls.</li><li>Keep icons monochrome; let the current item's fill and weight mark where you are.</li><li>Put the count of things needing attention on the item (Error feed 12).</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Add divider rules under section labels or between every group.</li><li>Make labels bold or bright; the current item is the only one at 500.</li><li>Colour the current item purple.</li><li>Put a search field or an account row in the sidebar.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="doc" id="code">
+        <header>
+          <h2>Code</h2>
+          <p class="muted">Monospace for code, IDs, hashes and JSON. A code identifier used as a row name (a tool, a file) is mono 12/400 — never bold. Code blocks sit on <code>bg.subtle</code> with a border; syntax colours come from the data palette so they work in both themes.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="stack">
+            <p class="small">Set <span class="ds-code">FAGI_API_KEY</span> before calling <span class="ds-code">trace()</span>.</p>
+            <div class="ds-codeblock">{
+  <span class="k">"scenario"</span>: <span class="s">"duplicate_charge"</span>,
+  <span class="k">"passed"</span>: <span class="n">false</span>,
+  <span class="k">"score"</span>: <span class="n">0.44</span>
+}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================== PATTERNS -->
+      <div class="part-head"><div class="eyebrow">Patterns</div><p class="muted">How components combine for things the product shows everywhere.</p></div>
+
+      <section class="doc" id="status-map">
+        <header>
+          <h2>Status map</h2>
+          <p class="muted">One table maps every status to a role and a shape; screens import it and never define their own colours. Neutral states are a dot and label; every other role is a tinted badge. A new status gets a row here before it ships. Colour follows what a status means, not the word: a run's <b>Completed</b> (finished, mixed results) is neutral, a knowledge base's <b>Completed</b> (processed, ready to use) is success.</p>
+        </header>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Status</th><th>Role</th><th>Shown as</th><th>Where</th></tr></thead><tbody>
+          <tr><td>Queued</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Queued</span></td><td>Runs and results</td></tr>
+          <tr><td>Provisioning</td><td>info</td><td><span class="ds ds-badge ds-badge--info"><span class="dot"></span>Provisioning</span></td><td>Runs and results</td></tr>
+          <tr><td>Running</td><td>info</td><td><span class="ds ds-badge ds-badge--info"><span class="dot"></span>Running</span></td><td>Runs and results</td></tr>
+          <tr><td>Grading</td><td>info</td><td><span class="ds ds-badge ds-badge--info"><span class="dot"></span>Grading</span></td><td>Runs and results</td></tr>
+          <tr><td>Needs input</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Needs input</span></td><td>Runs and results</td></tr>
+          <tr><td>Passed</td><td>success</td><td><span class="ds ds-badge ds-badge--success"><span class="dot"></span>Passed</span></td><td>Runs and results</td></tr>
+          <tr><td>Flaky</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Flaky</span></td><td>Runs and results</td></tr>
+          <tr><td>Not measured</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Not measured</span></td><td>Runs and results</td></tr>
+          <tr><td>Completed</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Completed</span></td><td>Runs and results</td></tr>
+          <tr><td>Failed</td><td>danger</td><td><span class="ds ds-badge ds-badge--danger"><span class="dot"></span>Failed</span></td><td>Runs and results</td></tr>
+          <tr><td>Error</td><td>danger</td><td><span class="ds ds-badge ds-badge--danger"><svg class="i" style="width:12px;height:12px"><use href="#i-alert"/></svg>Error</span></td><td>Runs and results</td></tr>
+          <tr><td>Cancelled</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Cancelled</span></td><td>Runs and results</td></tr>
+          <tr><td>Stopped at limit</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Stopped at limit</span></td><td>Runs and results</td></tr>
+          <tr><td>Stopped early</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Stopped early</span></td><td>Runs and results</td></tr>
+          <tr><td>Supported</td><td>success</td><td><span class="ds ds-badge ds-badge--success"><span class="dot"></span>Supported</span></td><td>Compatibility</td></tr>
+          <tr><td>Partial</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Partial</span></td><td>Compatibility</td></tr>
+          <tr><td>Blocked</td><td>danger</td><td><span class="ds ds-badge ds-badge--danger"><span class="dot"></span>Blocked</span></td><td>Compatibility</td></tr>
+          <tr><td>Unavailable</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Unavailable</span></td><td>Compatibility</td></tr>
+          <tr><td>Untested</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Untested</span></td><td>Compatibility</td></tr>
+          <tr><td>Stale</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Stale</span></td><td>Compatibility</td></tr>
+          <tr><td>Deprecated</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Deprecated</span></td><td>Compatibility</td></tr>
+          <tr><td>Running</td><td>info</td><td><span class="ds ds-badge ds-badge--info"><span class="dot"></span>Running</span></td><td>Improvements</td></tr>
+          <tr><td>Ready for review</td><td>success</td><td><span class="ds ds-badge ds-badge--success"><span class="dot"></span>Ready for review</span></td><td>Improvements</td></tr>
+          <tr><td>Ready · re-check</td><td>warning</td><td><span class="ds ds-badge ds-badge--warning"><span class="dot"></span>Ready · re-check</span></td><td>Improvements</td></tr>
+          <tr><td>Failed for infrastructure reasons</td><td>danger</td><td><span class="ds ds-badge ds-badge--danger"><span class="dot"></span>Failed for infrastructure reasons</span></td><td>Improvements</td></tr>
+          <tr><td>No safe improvement</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>No safe improvement</span></td><td>Improvements</td></tr>
+          <tr><td>Nothing to improve</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Nothing to improve</span></td><td>Improvements</td></tr>
+          <tr><td>Suggestion only</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Suggestion only</span></td><td>Improvements</td></tr>
+          <tr><td>Stopped</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Stopped</span></td><td>Improvements</td></tr>
+          <tr><td>Stopped early</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Stopped early</span></td><td>Improvements</td></tr>
+          <tr><td>Processing</td><td>info</td><td><span class="ds ds-badge ds-badge--info"><span class="dot"></span>Processing</span></td><td>Knowledge base</td></tr>
+          <tr><td>Completed</td><td>success</td><td><span class="ds ds-badge ds-badge--success"><span class="dot"></span>Completed</span></td><td>Knowledge base</td></tr>
+          <tr><td>Failed</td><td>danger</td><td><span class="ds ds-badge ds-badge--danger"><span class="dot"></span>Failed</span></td><td>Knowledge base</td></tr>
+          <tr><td>Not run yet · Draft</td><td>neutral</td><td><span class="ds ds-status ds-status--neutral"><span class="ds-dot"></span>Not run yet</span></td><td>Anywhere</td></tr>
+          <tr><td>Live · Sealed</td><td>success · neutral</td><td><span class="ds ds-badge ds-badge--sm ds-badge--success">Live</span> <span class="ds ds-badge ds-badge--sm">Sealed</span></td><td>Agent connection mode</td></tr>
+          <tr><td>Suggested</td><td>discovery</td><td><span class="ds ds-badge ds-badge--discovery"><svg class="i" style="width:12px;height:12px"><use href="#i-sparkle"/></svg>Suggested</span></td><td>AI-proposed scenario, fix or rule</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="doc" id="pricing">
+        <header>
+          <h2>Money and cost</h2>
+          <p class="muted">How credits, estimates and costs are shown.</p>
+        </header>
+        <div class="rules">
+          <div class="rule"><b>Credits and money states</b><p>Amounts are in credits with digits and the unit ("1,971 credits"); money paid outside the platform is shown apart, in its own currency. An estimate reads "≈ 90 credits" or "Up to 4,300 credits". Estimated, held, used and pending are different words, never interchangeable. An unknown amount reads "unknown", never 0 or "free".</p></div>
+          <div class="rule"><b>Colour for money</b><p>Money is neutral text. A limit reached is amber (warning), not red; red is only for a failure. Held or released amounts are quiet (fg.tertiary).</p></div>
+          <div class="rule"><b>Cost tables</b><p>Costs use the system table, full width like any results tab: one row per item with quantity × rate and credits right-aligned in tabular numbers, a bold total row with a plain label ("Charged", "Up to", "Spent"), and one note line under the table for rates and limits. A part breakdown is Part · Conversations · Credits.</p></div>
+          <div class="rule"><b>A price on a paid action</b><p>A button that costs something shows its price after the label until it's charged ("Debug failures · ≈ 5 credits"). Why something stopped is said in words ("Limit reached", "Stopped early"), never a code.</p></div>
+        </div>
+      </section>
+
+      <section class="doc" id="scores">
+        <header>
+          <h2>Scores and deltas</h2>
+          <p class="muted">A score is a number in <code>fg.default</code>, not a coloured pill. Colour goes on the change: green when it improved, red when it got worse, grey when flat. If a lower number is better (latency, cost), the colour follows better or worse, not the arrow.</p>
+        </header>
+        <div class="demo" data-demo="surface">
+          <div class="row" style="gap:24px">
+            <span class="ds-score">85%</span><span class="ds-delta ds-delta--up"><svg class="i xs"><use href="#i-arrow-up"/></svg>9 pts</span>
+            <span class="ds-score">43%</span><span class="ds-delta ds-delta--down"><svg class="i xs"><use href="#i-arrow-down"/></svg>43 pts</span>
+            <span class="ds-score">1.8s</span><span class="ds-delta ds-delta--up"><svg class="i xs"><use href="#i-arrow-down"/></svg>0.4s</span>
+            <span class="ds-meter"><span class="track"><span class="fill" style="width:71%;display:block"></span></span><span class="ds-score">71%</span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc" id="page">
+        <header>
+          <h2>Page layout</h2>
+          <p class="muted">Sidebar and content share one surface; sections and tables sit directly on the page.</p>
+        </header>
+        <div class="demo" data-demo="stack">
+          <div class="stack" style="gap:16px">
+            <div class="ds-page-head"><div class="titles"><h3>Environments</h3><p>Build a simulated world for your agent, then run callers against it.</p></div><div class="actions"><button class="ds-btn"><svg class="i"><use href="#i-book"/></svg>Docs</button><button class="ds-btn ds-btn--primary"><svg class="i"><use href="#i-plus"/></svg>Build environment</button></div></div>
+            <div class="ds-tabs"><span class="ds-tab is-selected">My environments<span class="ds-count">29</span></span><span class="ds-tab">Personas</span></div>
+            <div class="ds-panel"><div class="ds-panel-head"><h4>Recent runs</h4><span class="meta">Last 7 days</span></div><div class="ds-panel-body small muted">Table goes here.</div></div>
+          </div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
+          <tr><td>Divider</td><td>One 1px <code>border.default</code> line on the sidebar's right edge; no inset panel or frame.</td></tr>
+          <tr><td>Rhythm</td><td>24 page gutter; title → tabs 12; tabs → toolbar 12; toolbar → table 8; between sections 24.</td></tr>
+          <tr><td>Page header</td><td>Title in <code>title-sm</code> (15/600), one line of description, actions on the right with at most one primary.</td></tr>
+          <tr><td>Object header</td><td>Back arrow, name (15/600, <code>title-sm</code>) and status on one line, at most one line of facts below. Its primary button is the object's next step.</td></tr>
+        </tbody></table></div>
+        <div class="dd">
+          <div class="do"><div class="h"><svg class="i"><use href="#i-check-circle"/></svg>Do</div><ul><li>Show only unusual states as header chips.</li></ul></div>
+          <div class="dont"><div class="h"><svg class="i"><use href="#i-x-circle"/></svg>Don't</div><ul><li>Stack extra padding between these spacings.</li><li>Repeat in the header what a side panel already shows.</li></ul></div>
+        </div>
+      </section>
+
+      <!-- ===================================================== MIGRATION -->
+      <div class="part-head"><div class="eyebrow">Migration guide</div><p class="muted">Where the product is today and how it gets to the system.</p></div>
+
+      <section class="doc" id="inventory">
+        <header>
+          <h2>What we have today</h2>
+          <p class="muted">Counted across <span class="mono">frontend/src</span> (theme, tests and generated code excluded), 24 Oct 2026.</p>
+        </header>
+        <div class="stats">
+          <div><b>9</b><span>ways status is drawn, from ~37 colour maps</span></div>
+          <div><b>113</b><span>distinct corner radii</span></div>
+          <div><b>534</b><span>hard-coded colours (2,610 uses)</span></div>
+          <div><b>1,018</b><span>theme-mode checks in components, plus 676 isDark ternaries</span></div>
+        </div>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Element</th><th>Today</th><th>System</th></tr></thead><tbody>
+          <tr><td>Chips</td><td>683 MUI chips, 61% restyled: 15 heights, 14 font sizes, 18 radii; ~150 local pill components</td><td>Badge (2 sizes), tag, count, version</td></tr>
+          <tr><td>Buttons</td><td>Theme 30/38px; overrides at 12 heights (24–44)</td><td>24 / 28 / 32 / 36</td></tr>
+          <tr><td>Inputs</td><td>No theme height; 10 heights (26–48), 21 outline colours</td><td>32 (28 small), one border token</td></tr>
+          <tr><td>Tables</td><td>AG Grid, DataGrid, MUI Table, CSS grid, unused tanstack; 13+ row heights</td><td>AG Grid + MUI Table; rows 28 / 32 / 44</td></tr>
+          <tr><td>Filters</td><td><span class="mono">TraceFilterPanel</span> plus ~12 other filter UIs; <span class="mono">ComplexFilter</span> alone in 41 files</td><td>One Filter panel everywhere</td></tr>
+          <tr><td>Tabs</td><td>48 / 42 / 32 / 28px; 32 local tab components</td><td>Underline tab 32 + segmented control</td></tr>
+          <tr><td>Overlays</td><td>4 dialog wrappers, 35 dialog widths, 39 drawer widths</td><td>Dialog 400/560/720/960, drawer 480/640/960</td></tr>
+          <tr><td>States</td><td>23 empty, 91 loader, ~10 error one-offs</td><td>Empty, loading, error components</td></tr>
+          <tr><td>Icons</td><td>30+ icon sets, 20+ sizes</td><td>Solar linear, 12/14/16/20</td></tr>
+          <tr><td>Type</td><td>~2,900 font sizes in 14 values; 1,428 bold</td><td>15 roles; 400/500/600</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="doc" id="mapping">
+        <header>
+          <h2>From today to the system</h2>
+          <p class="muted">Which existing component becomes the canonical one, so migration extends code we already have instead of starting over.</p>
+        </header>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Element</th><th>Keep and restyle</th><th>Retire into it</th></tr></thead><tbody>
+          <tr><td>Status</td><td><span class="mono">CustomStatusChip</span> + one <span class="mono">utils/statusUtils.js</span></td><td>~37 STATUS_* maps, IssueStatusChip, StatusBadge ×2, 6 status cell renderers</td></tr>
+          <tr><td>Badge, tag</td><td>MUI <span class="mono">Chip</span> theme override (20 / 18px)</td><td><span class="mono">Label</span>, AGIChip, local pills</td></tr>
+          <tr><td>Button</td><td>Theme <span class="mono">Button</span>, <span class="mono">LoadingButton</span>, <span class="mono">IconButton</span></td><td>sx heights, clickable Box, <span class="mono">styled(Button)</span></td></tr>
+          <tr><td>Text field</td><td><span class="mono">FormTextFieldV2</span></td><td><span class="mono">rhf-text-field</span>, <span class="mono">FormTextField</span> v1</td></tr>
+          <tr><td>Select, search</td><td><span class="mono">FormSelectField</span>, <span class="mono">FormSearchField</span></td><td><span class="mono">custom-select</span>, <span class="mono">FromSearchSelectField</span></td></tr>
+          <tr><td>Filter</td><td><span class="mono">TraceFilterPanel</span>, moved to <span class="mono">components/filter</span></td><td><span class="mono">ComplexFilter</span>, <span class="mono">DatasetFilter</span>, <span class="mono">NewTaskFilterBox</span>, Evals filter boxes, <span class="mono">MetricFilterDrawer</span>, <span class="mono">ErrorFeedFilters</span></td></tr>
+          <tr><td>Tabs</td><td><span class="mono">CustomTabs</span>, <span class="mono">SegmentedTabs</span></td><td><span class="mono">CustomTabsPrimaryColorTheme</span>, 32 local tabs</td></tr>
+          <tr><td>Tooltip, menu</td><td><span class="mono">CustomTooltip</span>, <span class="mono">CustomPopover</span></td><td>Ad-hoc widths</td></tr>
+          <tr><td>Dialog</td><td><span class="mono">ModalWrapper</span>, <span class="mono">ConfirmDialog</span>, <span class="mono">ClosableDialog</span></td><td><span class="mono">ModalComponent</span>, raw <span class="mono">Modal</span>, 87 raw <span class="mono">Dialog</span>s without a close cross</td></tr>
+          <tr><td>Drawer</td><td>simulate-v2 <span class="mono">SideDrawer</span> + <span class="mono">use-drawer-stack</span></td><td>39 width variants</td></tr>
+          <tr><td>Panel</td><td>simulate-v2 <span class="mono">SectionCard</span></td><td>Card (16px + shadow), Paper</td></tr>
+          <tr><td>Empty, error</td><td><span class="mono">EmptyContent</span> + simulate-v2 <span class="mono">EmptyState</span>; new <span class="mono">ErrorState</span></td><td>23 empties, ~10 error one-offs</td></tr>
+          <tr><td>Icons</td><td><span class="mono">Iconify</span> locked to Solar</td><td>mdi, eva, mingcute and 25 other sets</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="doc" id="rollout">
+        <header>
+          <h2>Rollout</h2>
+          <p class="muted">Each step ships on its own and is checked by screenshot against the current screens in both themes.</p>
+        </header>
+        <div class="tscroll"><table class="spec"><thead><tr><th>Step</th><th>What changes</th><th>Effect</th></tr></thead><tbody>
+          <tr><td>1 · Theme</td><td>Replace <span class="mono">frontend/src/theme/</span> with the theme kit (<span class="mono">theme-kit/theme/</span>): tokens, product text variants and component styling together. Theme AG Grid from the same tokens.</td><td>Greys, borders, surfaces, shadows, buttons, inputs, table headers change everywhere at once.</td></tr>
+          <tr><td>2 · Scripted cleanup</td><td>Snap font sizes to the scale, bold → 600, retired purples and greys → tokens.</td><td>Removes most hard-coded type and colour.</td></tr>
+          <tr><td>3 · Status</td><td>One status map and the badge / dot components; replace the 9 styles.</td><td>The most visible inconsistency gone.</td></tr>
+          <tr><td>4 · Components</td><td>Chip, tabs, dialogs, drawers, empty / loading / error to the canonical components.</td><td>Consistent behaviour, not just looks.</td></tr>
+          <tr><td>5 · Screens</td><td>Environments, environment page, Evals, Agents, Tracing first; then by traffic. Remove <span class="mono">isDark</span> ternaries as each screen moves to tokens.</td><td>Dark mode stops needing per-component checks.</td></tr>
+        </tbody></table></div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<script src="tokens/tokens.js?v=29"></script>
+<script src="docs.js?v=25"></script>
+</body>
+</html>

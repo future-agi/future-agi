@@ -63,7 +63,7 @@ const ErrorAnalysis = ({ traceId, traceDetail, defaultExpanded = false }) => {
   }, [errors, errorName, activeIndex, treeData, setSelectedNode]);
 
   return isPendingTraceErrorAnalysis ? (
-    <Skeleton height={300} variant="rectangular" sx={{ borderRadius: 0.5 }} />
+    <Skeleton height={300} variant="rectangular" sx={{ borderRadius: "4px" }} />
   ) : (
     <Box display="flex" flexDirection="column" gap={1.5}>
       <Typography
@@ -200,10 +200,10 @@ const ErrorAnalysis = ({ traceId, traceDetail, defaultExpanded = false }) => {
                       <Typography
                         typography="s2_1"
                         sx={{
-                          backgroundColor: "green.o10",
+                          backgroundColor: "status.success.bg",
                           py: 1,
                           px: 1.5,
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                         }}
                         color="text.primary"
                       >
@@ -376,10 +376,6 @@ const ErrorAnalysis = ({ traceId, traceDetail, defaultExpanded = false }) => {
                             }}
                             variant="outlined"
                             label={spanData?.name}
-                            sx={{
-                              borderRadius: 2,
-                              typography: "s2",
-                            }}
                           />
                         );
                       },

@@ -3,6 +3,7 @@ import urllib.parse
 import structlog
 from django.conf import settings
 from django.http import HttpResponseRedirect
+from django.utils.functional import SimpleLazyObject
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, parser_classes
@@ -25,7 +26,9 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 _gm = GeneralMethods()
-aws_marketplace_service = AWSMarketplaceService()
+# Lazy: building boto3 clients at import costs ~8 MB RSS in every process
+# and only AWS Marketplace deployments use them.
+aws_marketplace_service = SimpleLazyObject(AWSMarketplaceService)
 APP_URL = (
     f"https://{settings.APP_URL}"
     if settings.APP_URL

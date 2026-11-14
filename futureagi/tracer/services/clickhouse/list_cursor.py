@@ -12,19 +12,26 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from django.conf import settings
 from django.core import signing
 
-# Version 3 deliberately removes ReplacingMergeTree version ceilings.  A
+# Version 3 deliberately removed ReplacingMergeTree version ceilings.  A
 # ceiling is not an MVCC snapshot: after a background merge the older version
 # may no longer exist, so a continuation could silently lose a row.  Cursors
-# now freeze only immutable request bounds and keyset progress.  The salt bump
-# makes every token carrying the former false-snapshot contract fail closed.
-CURSOR_VERSION = 3
-CURSOR_SALT = "tracer.clickhouse-list-cursor.v3"
+# freeze only immutable request bounds and keyset progress. Version 4 also
+# invalidates progress computed before explicit custom-source precedence and
+# session/user independent-witness fixes: resuming that prefix could skip rows
+# that now qualify. This is not a database/projection revision change.
+CURSOR_VERSION = 4
+CURSOR_SALT = "tracer.clickhouse-list-cursor.v4"
 DEFAULT_CURSOR_MAX_AGE_SECONDS = 24 * 60 * 60
+
+# Hours of witness slack a running pagination may carry. The ceiling matches
+# FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS's own range; a token outside it
+# was not minted by this codec.
+MAX_CURSOR_WITNESS_SLACK_HOURS = 168
 
 
 class ListCursorError(ValueError):
@@ -46,6 +53,14 @@ class ListCursor:
     scan_slice_end: datetime | None = None
     scan_before_start_time: datetime | None = None
     scan_before_id: Any = None
+    # The witness slack the pagination STARTED with, when the read that minted
+    # this token had one. ``None`` is the legacy shape - a token minted before
+    # this field, or by a lane that has no witness envelope - and resolves to
+    # the current runtime setting, which is exactly what those tokens got
+    # before. Deliberately NOT a CURSOR_VERSION bump: rejecting live tokens
+    # would 400 the grid down to the numbered lane for a field whose absence
+    # is already well defined.
+    witness_slack_hours: int | None = None
 
 
 def _utc_datetime(value: datetime, field_name: str) -> datetime:
@@ -175,17 +190,38 @@ def _normalized_filter(item: Any) -> Any:
         canonical_item["output_type"] = normalized["output_type"]
     elif "outputType" in normalized:
         canonical_item["output_type"] = normalized["outputType"]
+    # The private canonical-root marker (voice calls, eval-task trace
+    # selection) turns an observation_type leaf into a root predicate, so an
+    # exact worker handed this leaf must see it. Requests cannot carry it:
+    # FilterItemField rejects the key.
+    if normalized.get("_eval_task_trace_root") is True:
+        canonical_item["_eval_task_trace_root"] = True
     return canonical_item
+
+
+def canonical_filter_leaf(item: Any) -> str:
+    """One filter leaf as a cursor binds it: the key ``normalize_filter_conjunction``
+    sorts and deduplicates the conjunction by.
+
+    Two leaves a cursor cannot tell apart (the same leaf in another position,
+    with another display label, or with its ``in`` values in another order)
+    have the same key, so a choice ranked on it is the same for every request
+    a cursor admits.
+    """
+
+    return _canonical_json(_normalized_filter(item))
 
 
 def normalize_filter_conjunction(filters: list[Any] | tuple[Any, ...]) -> list[Any]:
     """Canonicalize one AND-conjunction without presentation-only metadata."""
 
-    normalized = [_normalized_filter(item) for item in (filters or [])]
     # Repeated identical leaves are idempotent under conjunction. Removing them
     # keeps cursor/cache identities stable and bounds redundant query predicates.
-    by_json = {_canonical_json(item): item for item in normalized}
-    return [by_json[key] for key in sorted(by_json)]
+    by_leaf = {
+        canonical_filter_leaf(item): _normalized_filter(item)
+        for item in (filters or [])
+    }
+    return [by_leaf[key] for key in sorted(by_leaf)]
 
 
 def normalize_cursor_query(query: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +266,11 @@ def exact_total_explicitly_required(
     implementing and exposing the same signed exact-continuation contract.
     """
 
-    query_params = getattr(request, "query_params", None)
+    query_params = getattr(
+        getattr(request, "validated_query_serializer", None),
+        "initial_data",
+        getattr(request, "query_params", None),
+    )
     return (
         query_params is not None
         and "allow_sampled" in query_params
@@ -302,6 +342,7 @@ def encode_list_cursor(
     scan_slice_end: datetime | None = None,
     scan_before_start_time: datetime | None = None,
     scan_before_id: Any = None,
+    witness_slack_hours: int | None = None,
 ) -> str:
     window_start = _utc_datetime(window_start, "window_start")
     window_end = _utc_datetime(window_end, "window_end")
@@ -333,6 +374,12 @@ def encode_list_cursor(
         < (scan_slice_end or window_end)
     ):
         raise ValueError("invalid list scan checkpoint")
+    if witness_slack_hours is not None and (
+        not isinstance(witness_slack_hours, int)
+        or isinstance(witness_slack_hours, bool)
+        or not 0 <= witness_slack_hours <= MAX_CURSOR_WITNESS_SLACK_HOURS
+    ):
+        raise ValueError("invalid list cursor witness slack")
     payload = {
         "v": CURSOR_VERSION,
         "resource": resource,
@@ -349,6 +396,11 @@ def encode_list_cursor(
         "scan_before_start_time": _json_value(scan_before_start_time),
         "scan_before_id": _json_value(scan_before_id),
     }
+    if witness_slack_hours is not None:
+        # Absent, not null: a caller with no slack to carry must mint the same
+        # payload - and therefore the same boundary fingerprint - as before
+        # this field existed.
+        payload["witness_slack_hours"] = int(witness_slack_hours)
     return signing.dumps(
         payload, key=settings.SECRET_KEY, salt=CURSOR_SALT, compress=True
     )
@@ -433,9 +485,8 @@ def decode_list_cursor(
         or payload["seen_rows"] < 0
     ):
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
-    # v3 cursors issued before scan_slice_start was added remain valid. A
-    # missing lower boundary falls back to the frozen request start when the
-    # selector resumes an in-slice keyset, which may rescan but cannot skip.
+    # A missing optional lower boundary falls back to the frozen request start
+    # when the selector resumes an in-slice keyset. It may rescan but cannot skip.
     scan_slice_start = _restore_json_value(payload.get("scan_slice_start"))
     scan_slice_end = _restore_json_value(payload.get("scan_slice_end"))
     scan_before_start_time = _restore_json_value(payload.get("scan_before_start_time"))
@@ -452,6 +503,13 @@ def decode_list_cursor(
     ):
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
     if (scan_before_start_time is None) != (scan_before_id is None):
+        raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
+    witness_slack_hours = payload.get("witness_slack_hours")
+    if witness_slack_hours is not None and (
+        not isinstance(witness_slack_hours, int)
+        or isinstance(witness_slack_hours, bool)
+        or not 0 <= witness_slack_hours <= MAX_CURSOR_WITNESS_SLACK_HOURS
+    ):
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
     if scan_before_start_time is not None and (
         not isinstance(scan_before_start_time, datetime)
@@ -474,6 +532,7 @@ def decode_list_cursor(
         scan_slice_end=scan_slice_end,
         scan_before_start_time=scan_before_start_time,
         scan_before_id=scan_before_id,
+        witness_slack_hours=witness_slack_hours,
     )
 
 
@@ -496,6 +555,33 @@ def snapshot_cursor_supported(filters: list[dict[str, Any]], *, resource: str) -
     except (TypeError, ValueError):
         return False
     return True
+
+
+def bounded_chunk_complete(
+    *,
+    read_complete: bool,
+    cursor_has_more: bool,
+    published_rows: int,
+) -> bool:
+    """Whether a bounded page may be published as a complete public answer.
+
+    A bounded read that exhausted the requested window is complete by
+    construction.  An unfinished read is still a complete *chunk* when it
+    publishes latest-state classified rows in canonical order beside a signed
+    continuation token: the caller receives real results and resumes exactly
+    where the scan stopped, so reporting it as degraded would show a query
+    failure for a page that exposed no unproven row.
+
+    An unfinished read that proved no row at all is not an answer.  It is a
+    scan that ran out of its query or time budget over a prefix of the
+    requested window, and calling it complete presents a still-unsearched
+    population as an empty one.  Such a chunk keeps the selector's own status
+    and error code while still carrying its continuation token.
+    """
+
+    if read_complete:
+        return True
+    return cursor_has_more and published_rows > 0
 
 
 def cursor_page_metadata(
@@ -527,6 +613,49 @@ def cursor_page_metadata(
     }
 
 
+class WitnessSlackBuilder(Protocol):
+    """The list builders whose filter-seed witness slack a cursor carries."""
+
+    def filter_seed_witness_slack_hours(self) -> int | None: ...
+
+    def pin_filter_seed_witness_slack_hours(self, hours: int | None) -> None: ...
+
+
+def read_filter_seed_witness_slack(builder: WitnessSlackBuilder) -> int | None:
+    """The witness slack this read used, for its continuation to carry.
+
+    ``None`` for every builder and every request shape that has no witness
+    envelope, which keeps their cursors byte-identical to the ones minted
+    before the field existed.
+    """
+
+    read = getattr(builder, "filter_seed_witness_slack_hours", None)
+    return read() if callable(read) else None
+
+
+def pin_filter_seed_witness_slack(
+    builder: WitnessSlackBuilder, cursor_state: ListCursor | None
+) -> None:
+    """Finish a pagination under the slack its first hop was minted with.
+
+    The slack decides candidacy, so an operator turning the runtime knob
+    between two hops of one cursor would move the boundary under a
+    half-published page - duplicating rows that stop being candidates and
+    losing rows that start being them. A token that carries no slack field is
+    passed on as ``None`` and each lane resolves it by what such a token can
+    mean there: the short exact-string lane writes its own slack into every
+    cursor, so an absent field is a pre-field token and returns to the
+    setting; the wide lanes emit no field until the setting is on, so an
+    absent field means that chain ran unbounded and finishes unbounded.
+    """
+
+    if cursor_state is None:
+        return
+    pin = getattr(builder, "pin_filter_seed_witness_slack_hours", None)
+    if callable(pin):
+        pin(cursor_state.witness_slack_hours)
+
+
 def frozen_window_filter(cursor: ListCursor) -> dict[str, Any]:
     """Return the immutable time bound carried by a live keyset cursor."""
 
@@ -543,6 +672,7 @@ def frozen_window_filter(cursor: ListCursor) -> dict[str, Any]:
 __all__ = [
     "ListCursor",
     "ListCursorError",
+    "bounded_chunk_complete",
     "cursor_page_metadata",
     "cursor_scope_for_request",
     "decode_list_cursor",
@@ -551,5 +681,7 @@ __all__ = [
     "frozen_window_filter",
     "normalize_filter_conjunction",
     "normalize_cursor_query",
+    "pin_filter_seed_witness_slack",
+    "read_filter_seed_witness_slack",
     "snapshot_cursor_supported",
 ]

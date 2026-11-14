@@ -60,7 +60,13 @@ const SaveReport = ({
   };
 
   return (
-    <Dialog open={open} onClose={onCloseClick} fullWidth maxWidth="xs">
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+    >
       <DialogTitle>Save Report</DialogTitle>
       <DialogContent>
         <Box sx={{ paddingY: 1 }}>

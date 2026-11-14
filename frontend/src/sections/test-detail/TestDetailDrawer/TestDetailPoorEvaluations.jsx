@@ -17,16 +17,12 @@ const ChipForPoorEval = ({ label }) => {
       size="medium"
       sx={{
         typography: "s2",
-        fontWeight: "fontWeightMedium",
         border: "1px solid",
-        borderColor: "red.500",
-        backgroundColor: "red.o5",
-        color: "red.500",
-        borderRadius: 0.5,
-        px: 0.75,
-        py: 0.75,
+        borderColor: "status.danger.solid",
+        backgroundColor: "status.danger.bg",
+        color: "status.danger.fg",
         "&:hover": {
-          backgroundColor: "red.o5",
+          backgroundColor: "status.danger.bg",
         },
         "& .MuiChip-deleteIcon": {
           color: "red.400 !important",
@@ -61,9 +57,9 @@ const TestDetailPoorEvaluations = ({ data }) => {
         <AccordionSummary
           expandIcon={
             <Iconify
-              icon="line-md:chevron-up"
-              width={22}
-              height={22}
+              icon="solar:alt-arrow-up-linear"
+              width={20}
+              height={20}
               color="text.primary"
             />
           }

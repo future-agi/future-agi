@@ -34,17 +34,16 @@ const CustomTab = styled(Tab)(({ theme }) => ({
 }));
 
 const CustomLabel = styled(Typography)(({ theme }) => ({
-  fontSize: "11px",
+  fontSize: "12px",
   fontWeight: typography.fontWeightBold,
   color: theme.palette.text.disabled,
-  textTransform: "uppercase",
   paddingLeft: "5px",
   marginBottom: "20px",
 }));
 
 const CustomTabButton = styled(Button)(({ theme }) => ({
   width: "100%",
-  fontSize: "14px",
+  fontSize: "12px",
   fontWeight: typography.fontWeightRegular,
   justifyContent: "flex-start",
   color: theme.palette.text.primary,
@@ -60,7 +59,7 @@ const CustomTabButton = styled(Button)(({ theme }) => ({
 }));
 
 const HeadingH6 = styled(Typography)(({ theme }) => ({
-  fontSize: "18px !important",
+  fontSize: "16px !important",
   fontWeight: typography.fontWeightSemiBold,
   color: theme.palette.text.primary,
   textTransform: "capitalize",
@@ -69,14 +68,14 @@ const HeadingH6 = styled(Typography)(({ theme }) => ({
 }));
 
 const SubHeading = styled(Typography)(({ theme }) => ({
-  fontSize: "14px !important",
+  fontSize: "12px !important",
   fontWeight: typography.fontWeightRegular,
   color: theme.palette.text.secondary,
   marginBottom: "24px",
 }));
 
 const PropmtTitle = styled(Typography)(({ theme }) => ({
-  fontSize: "13px !important",
+  fontSize: "12px !important",
   fontFamily: typography.fontFamily,
   fontWeight: typography.fontWeightBold,
   color: theme.palette.text.secondary,

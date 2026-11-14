@@ -1,4 +1,4 @@
-import { Box, Collapse, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Collapse, Tab, Tabs, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { ShowComponent } from "src/components/show";
@@ -10,8 +10,6 @@ const PreviewAddColumn = ({ open, previewData }) => {
   const handleChange = (event, newValue) => {
     setSelectedTab(newValue);
   };
-
-  const theme = useTheme();
 
   return (
     <Collapse in={open} orientation="horizontal" unmountOnExit>
@@ -31,7 +29,7 @@ const PreviewAddColumn = ({ open, previewData }) => {
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             Preview Test
           </Typography>
         </Box>
@@ -40,11 +38,6 @@ const PreviewAddColumn = ({ open, previewData }) => {
           onChange={handleChange}
           aria-label="basic tabs example"
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
         >
           <Tab label="Markdown" value="markdown" />
           <Tab label="Raw" value="raw" />
@@ -66,7 +59,7 @@ const PreviewAddColumn = ({ open, previewData }) => {
                     padding: "10px",
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: "10px",
+                    borderRadius: "8px",
                     wordWrap: "break-word",
                     whiteSpace: "normal",
                   }}
@@ -94,7 +87,7 @@ const PreviewAddColumn = ({ open, previewData }) => {
                     padding: "10px",
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: "10px",
+                    borderRadius: "8px",
                     wordWrap: "break-word",
                     whiteSpace: "normal",
                   }}

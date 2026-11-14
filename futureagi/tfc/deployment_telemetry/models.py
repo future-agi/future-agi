@@ -48,6 +48,8 @@ class DeploymentTelemetryState(models.Model):
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_window_start = models.DateTimeField(null=True, blank=True)
     last_heartbeat_window_end = models.DateTimeField(null=True, blank=True)
+    # Set once when the first lifecycle event is queued for this install.
+    boot_event_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

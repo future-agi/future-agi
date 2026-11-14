@@ -5,7 +5,9 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
+from django.utils import timezone
 
+from tracer.models.observation_span import EvalEntryStatus
 from tracer.services.clickhouse.v2.eval_loader import (
     EvalTelemetryReadError,
     _hybrid_load_from_ch,
@@ -317,9 +319,13 @@ def test_run_entry_does_not_terminalize_transient_span_read(monkeypatch):
         id="entry-1",
         custom_eval_config_id="config-1",
         eval_task_id="task-1",
+        # run_entry takes the claim before it spends anything: it refuses a row
+        # that is not RUNNING, then compare-and-sets the claim stamp.
+        status=EvalEntryStatus.RUNNING,
+        updated_at=timezone.now(),
     )
     config = SimpleNamespace(id="config-1")
-    filtered = SimpleNamespace(first=lambda: fresh)
+    filtered = SimpleNamespace(first=lambda: fresh, update=lambda **_kwargs: 1)
     monkeypatch.setattr(
         run_entry_module,
         "EvalLogger",
@@ -371,8 +377,10 @@ def test_run_entry_does_not_terminalize_transient_task_project_lookup(monkeypatc
         id="entry-1",
         custom_eval_config_id="config-1",
         eval_task_id="task-1",
+        status=EvalEntryStatus.RUNNING,
+        updated_at=timezone.now(),
     )
-    filtered = SimpleNamespace(first=lambda: fresh)
+    filtered = SimpleNamespace(first=lambda: fresh, update=lambda **_kwargs: 1)
     monkeypatch.setattr(
         run_entry_module,
         "EvalLogger",

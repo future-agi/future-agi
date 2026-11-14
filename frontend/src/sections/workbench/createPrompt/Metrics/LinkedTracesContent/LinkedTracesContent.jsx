@@ -4,6 +4,7 @@ import "src/styles/clean-data-table.css";
 import { Box, Button, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { getMetricsListColumnDefs, normalizeFilters } from "../common";
@@ -23,6 +24,7 @@ import MetricEmptyState from "../MetricEmptyState";
 import { getZeroBasedGridPage } from "src/utils/agGridPagination";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readPromptMetricsGridPage } from "../prompt_metrics_grid_read";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -288,7 +290,7 @@ const LinkedTracesContent = () => {
           columnDefs={columnDefs}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
-          rowHeight={40}
+          rowHeight={ROW_HEIGHT.default}
           theme={agTheme}
           rowSelection="single"
           paginationPageSizeSelector={false}
@@ -303,7 +305,7 @@ const LinkedTracesContent = () => {
           suppressSizeToFit={true}
           suppressAutoSize={true}
           animateRows={true}
-          headerHeight={40}
+          headerHeight={32}
           groupHeaderHeight={40}
           tooltipShowDelay={0}
           tooltipHideDelay={2000}

@@ -2,6 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { Box, Typography, Stack, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import { formatPercentage } from "../../../utils/utils";
 import { getLabel } from "./common";
 
@@ -60,7 +61,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
     chart: {
       type: "donut",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: chartAxisColors(theme).foreColor,
       toolbar: { show: false },
     },
     theme: {
@@ -73,7 +74,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
       enabled: true,
       formatter: (val) => `${val.toFixed(0)}%`,
       style: {
-        fontSize: "11px",
+        fontSize: "12px",
         fontWeight: 600,
       },
     },
@@ -91,7 +92,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: chartAxisColors(theme).gridColor,
     },
   };
 
@@ -155,7 +156,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
                   sx={{
                     width: 12,
                     height: 12,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                     backgroundColor: item.color,
                   }}
                 />

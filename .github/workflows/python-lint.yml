@@ -1,0 +1,174 @@
+name: Python lint
+
+# Fails on Python lint violations that a PR adds; old ones are left for cleanup
+# PRs. Rules: the repo's ruff config plus the banned patterns from the coding
+# standards that the config does not select yet. See
+# scripts/check_python_lint_delta.py. S608 (SQL built from strings) only warns.
+#
+# The check to require is "Python Lint Pass". It reports on every PR: a PR that
+# changes none of the paths in the changes job skips Ruff, and the summary still
+# passes. No workflow-level paths filter, because a required check that never
+# starts leaves the PR waiting forever. Same pattern as "E2E Tests Pass" in
+# e2e-ci.yml.
+#
+# No branches filter: stacked PRs into feature branches get the check too.
+
+on:
+  pull_request:
+    # edited: a stacked PR moved to another base branch gets a new baseline.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with scripts/lint-staged-python.sh; a test checks they match.
+  RUFF_VERSION: "0.17.3"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny/paths-filter reads the PR's file list
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - 'futureagi/**/*.py'
+              - 'futureagi/pyproject.toml'
+              - 'futureagi/**/pyproject.toml'
+              - 'futureagi/**/ruff.toml'
+              - 'futureagi/**/.ruff.toml'
+              - 'pyproject.toml'
+              - 'ruff.toml'
+              - '.ruff.toml'
+              - 'scripts/check_python_lint_delta.py'
+              - 'scripts/test_check_python_lint_delta.py'
+              - 'scripts/lint-staged-python.sh'
+              - 'futureagi/Makefile'
+              - 'futureagi/.pre-commit-config.yaml'
+              - '.github/workflows/python-lint.yml'
+
+  ruff-self-test:
+    name: Ruff gate self-tests
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff for head self-tests
+        run: |
+          if [ ! -f scripts/test_check_python_lint_delta.py ]; then
+            echo "This branch predates the gate's self-test; no head Ruff is needed."
+            exit 0
+          fi
+          # The workflow comes from the merge ref, but self-tests use the head.
+          head_ruff_version="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' .github/workflows/python-lint.yml)"
+          if ! [[ "$head_ruff_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the head workflow."
+            exit 1
+          fi
+          python3 -I -m pip install --quiet "ruff==${head_ruff_version}"
+      - name: Self-test the gate
+        # Only a branch that carries the gate's tests can test its own copy of
+        # the gate. Branches older than the gate have none; the gate below runs
+        # from the base branch either way.
+        run: |
+          if [ -f scripts/test_check_python_lint_delta.py ]; then
+            python3 -I scripts/test_check_python_lint_delta.py
+          else
+            echo "This branch predates the gate's self-test; nothing to self-test."
+          fi
+
+  ruff-delta:
+    name: Ruff (new violations only)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The PR head, not the merge commit, so annotation lines match the diff.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Report new violations
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          trusted_ref="$(git rev-parse "origin/${BASE_REF}")"
+          base="$(git merge-base "$trusted_ref" HEAD)"
+          # Take the gate AND its Ruff pin from the same base-branch commit.
+          # Head self-tests run in a different job; an upgrade must not run the
+          # old gate with the new Ruff, or let a PR change its own judging gate.
+          gate="$RUNNER_TEMP/check_python_lint_delta.py"
+          git show "${trusted_ref}:scripts/check_python_lint_delta.py" > "$gate"
+          git show "${trusted_ref}:.github/workflows/python-lint.yml" > "$RUNNER_TEMP/python-lint-base.yml"
+          RUFF_VERSION="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' "$RUNNER_TEMP/python-lint-base.yml")"
+          if ! [[ "$RUFF_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the base workflow."
+            exit 1
+          fi
+          # Provision Ruff independently of the head self-test job.
+          venv="$RUNNER_TEMP/python-lint-base-venv"
+          python3 -I -m venv "$venv"
+          "$venv/bin/python" -I -m pip install --quiet "ruff==${RUFF_VERSION}"
+          # Older trusted gates do not take --config-ref; read the trusted gate
+          # (not head code) to decide whether to pass it.
+          config_ref_args=()
+          if grep -q -- "--config-ref" "$gate"; then
+            config_ref_args=(--config-ref "$trusted_ref")
+          fi
+          python3 -I "$gate" --base "$base" "${config_ref_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
+
+  python-lint-pass:
+    name: Python Lint Pass
+    needs: [changes, ruff-delta, ruff-self-test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless the change check ran and Ruff passed or was not needed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
+          RUFF: ${{ needs.ruff-delta.result }}
+          SELF_TEST: ${{ needs.ruff-self-test.result }}
+        run: |
+          echo "changes: $CHANGES, python paths changed: ${PYTHON_CHANGED:-<none>}, ruff-delta: $RUFF, self-tests: $SELF_TEST"
+          # Stricter than "every dependency succeeded or was skipped": a skipped
+          # or failed changes job, or a Ruff skip that changes did not ask for,
+          # fails the check.
+          if [ "$CHANGES" != success ]; then
+            echo "::error::The changes job did not succeed ($CHANGES)."
+            exit 1
+          fi
+          if [ "$PYTHON_CHANGED" = true ] && [ "$RUFF" = success ] && [ "$SELF_TEST" = success ]; then
+            echo "Ruff found no new violations and the self-tests passed."
+          elif [ "$PYTHON_CHANGED" = false ] && [ "$RUFF" = skipped ] && [ "$SELF_TEST" = skipped ]; then
+            echo "No Python lint paths changed, so Ruff was not needed."
+          else
+            echo "::error::Python lint did not pass (ruff-delta: $RUFF, self-tests: $SELF_TEST, python paths changed: ${PYTHON_CHANGED:-<none>})."
+            exit 1
+          fi

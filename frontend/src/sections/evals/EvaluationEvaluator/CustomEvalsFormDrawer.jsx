@@ -2,12 +2,15 @@ import { Box, Divider, Drawer } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import CustomEvalsForm from "src/sections/common/EvaluationDrawer/CustomEvalsForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const CustomEvalsFormDrawer = ({ open, onClose, ...rest }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="persistent"
       onClose={onClose}
       PaperProps={{
@@ -15,7 +18,6 @@ const CustomEvalsFormDrawer = ({ open, onClose, ...rest }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "0px !important",
           backgroundColor: "background.paper",
         },

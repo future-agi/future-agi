@@ -14,7 +14,7 @@ import Iconify from "../iconify";
 
 const ConfirmAnnotationDelete = ({ open, onClose, onConfirm, loading }) => {
   return (
-    <Dialog open={open} onClose={onClose} PaperProps={{ sx: { width: 480 } }}>
+    <Dialog open={open} onClose={onClose} PaperProps={{ sx: { width: 560 } }}>
       <DialogTitle
         sx={{
           p: 2,
@@ -26,7 +26,7 @@ const ConfirmAnnotationDelete = ({ open, onClose, onConfirm, loading }) => {
       >
         Delete Label
         <IconButton onClick={onClose}>
-          <Iconify icon="mingcute:close-line" width={20} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ px: 2 }}>

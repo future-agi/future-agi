@@ -78,9 +78,8 @@ export default function Header({
           variant="outlined"
           startIcon={
             <SvgColor
+              width="20px"
               sx={{
-                height: "20px",
-                width: "20px",
                 bgcolor:
                   !hasPrevTrace || isNextLoading || isPrevLoading
                     ? "divider"
@@ -101,9 +100,8 @@ export default function Header({
           variant="outlined"
           startIcon={
             <SvgColor
+              width="20px"
               sx={{
-                height: "20px",
-                width: "20px",
                 bgcolor:
                   !hasNextTrace || isPrevLoading || isNextLoading
                     ? "divider"

@@ -14,7 +14,7 @@ const PromptItemDisplay = ({ item, index, loading, handleEditClick }) => (
       // maxHeight:"200px",
       overflowY: "auto",
       paddingRight: 2,
-      borderRadius: 1.4,
+      borderRadius: "8px",
       fontWeight: "400",
       wordWrap: "break-word",
       position: "relative",
@@ -39,7 +39,7 @@ const PromptItemDisplay = ({ item, index, loading, handleEditClick }) => (
               onClick={loading ? () => {} : () => handleEditClick(index)}
             >
               <Iconify
-                icon="material-symbols:edit-outline"
+                icon="solar:pen-linear"
                 color="text.disabled"
                 style={{ pointerEvents: loading ? "none" : "auto" }}
               />

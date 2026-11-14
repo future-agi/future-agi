@@ -431,6 +431,8 @@ class FileUploadView(APIView):
 
         from minio import Minio
 
+        from tfc.utils.storage_client import storage_http_client
+
         minio_endpoint = os.getenv("MINIO_ENDPOINT") or os.getenv(
             "S3_ENDPOINT_URL", "minio:9000"
         )
@@ -457,6 +459,9 @@ class FileUploadView(APIView):
             access_key=access_key,
             secret_key=secret_key,
             secure=secure,
+            # The app storage's transport, so uploads honour HTTP(S)_PROXY
+            # and NO_PROXY as well.
+            http_client=storage_http_client(),
         )
 
         # Ensure bucket exists

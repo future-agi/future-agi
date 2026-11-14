@@ -15,8 +15,9 @@ criteria: "You are evaluating whether the output avoids unnecessary apologies or
   \ pervasive hedging. Return 'Failed' if it contains unjustified apologies or excessive hedging that weakens otherwise clear\
   \ information.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
-- Chatbot behaviors
-- NLP Metrics
+- Tone
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

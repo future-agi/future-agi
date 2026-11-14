@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
+from clickhouse_driver.errors import ServerException
 from django.conf import settings as django_settings
 
 from tracer.services.clickhouse import exact_graph_reads as exact_reads
@@ -141,3 +143,89 @@ def test_span_partition_deadline_stops_before_an_over_budget_subquery(monkeypatc
 
     assert timeouts == [wall_ms - 250, wall_ms - 2_500]
     assert timeouts == sorted(timeouts, reverse=True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("proof,failures", [(True, ()), (True, (1,)), (True, (1, 3)), (False, ())])
+def test_span_witness_whole_window_retry_is_disjoint_and_never_publishes_partial(monkeypatch, proof, failures):
+    start = datetime(2026, 8, 1)
+    end = start + timedelta(hours=3)
+    calls, successful = [], []
+    formatted = mock.Mock(return_value={})
+    builder = SimpleNamespace(_exact_span_candidate_plan=lambda: object() if proof else None,
+        build_exact_span_partition=lambda **params: ("partition", params), format_result=formatted)
+    monkeypatch.setattr(exact_reads, "EXACT_GRAPH_SPAN_PARTITION_WIDTH", timedelta(hours=1))
+    monkeypatch.setattr(exact_reads, "_remaining_exact_graph_timeout_ms", lambda *_: 10000)
+
+    def execute(_sql, params, **_kwargs):
+        bounds = params["partition_start"], params["partition_end"]
+        calls.append(bounds)
+        if len(calls) in failures:
+            raise ServerException("fixture memory failure", code=241)
+        successful.append(bounds)
+        return SimpleNamespace(data=[], columns=[], query_time_ms=100000)
+
+    try:
+        exact_reads._read_exact_filtered_span_graph(analytics=SimpleNamespace(execute_ch_query=execute),
+            builder=builder, exact_filter_plan=None, start_date=start, end_date=end, started=0)
+    except ServerException:
+        assert failures == (1, 3) and len(calls) == 3
+        formatted.assert_not_called()
+        return
+    assert failures != (1, 3)
+    formatted.assert_called_once()
+    assert calls[0] == (start, end if proof else start + timedelta(hours=1))
+    expected = [(start, end)] if proof and not failures else [
+        (start + timedelta(hours=i), start + timedelta(hours=i + 1)) for i in range(3)]
+    assert successful == expected  # Whole-hour, gap-free, nonoverlapping; no failed contribution.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("later_failures,edges", [
+    ((), [0, 1, 3, 7, 15, 31, 55, 79, 80]),
+    ((5,), [0, 1, 3, 7, *range(11, 80, 4), 80]),
+    ((4, 5, 6), [0, 1, 3]),
+], ids=["empty-regrows-to-24h", "later-8h-failure-caps-4h", "hour-floor-no-partial"])
+def test_span_whole_window_failure_preserves_normal_adaptive_growth(monkeypatch, later_failures, edges):
+    start = datetime(2026, 8, 1)
+    calls, successful = [], []
+    formatted = mock.Mock(return_value={})
+    builder = SimpleNamespace(_exact_span_candidate_plan=lambda: object(),
+        build_exact_span_partition=lambda **params: ("partition", params), format_result=formatted)
+    for name, hours in (("MIN_PARTITION_WIDTH", 1), ("PARTITION_WIDTH", 1), ("MAX_PARTITION_WIDTH", 24)):
+        monkeypatch.setattr(exact_reads, "EXACT_GRAPH_SPAN_" + name, timedelta(hours=hours))
+    monkeypatch.setattr(exact_reads, "EXACT_GRAPH_SPAN_GROW_BELOW_QUERY_MS", 10)
+    monkeypatch.setattr(exact_reads, "_remaining_exact_graph_timeout_ms", lambda *_: 10000)
+
+    def execute(_sql, params, **_kwargs):
+        bounds = tuple((params[k] - start) // timedelta(hours=1) for k in ("partition_start", "partition_end"))
+        assert all(params[k].minute == params[k].second == params[k].microsecond == 0
+                   for k in ("partition_start", "partition_end"))
+        calls.append(bounds)
+        formatted.assert_not_called()
+        if len(calls) in (1, *later_failures):
+            raise ServerException("fixture memory failure", code=307)
+        successful.append(bounds)
+        rows = [{"time_bucket": start, "traffic_count": bounds[1] - bounds[0]}] if later_failures else []
+        return SimpleNamespace(data=rows, columns=[], query_time_ms=1)
+
+    def read():
+        return exact_reads._read_exact_filtered_span_graph(analytics=SimpleNamespace(execute_ch_query=execute),
+            builder=builder, exact_filter_plan=None, start_date=start, end_date=start + timedelta(hours=80), started=0)
+
+    if later_failures == (4, 5, 6):
+        with pytest.raises(ServerException, match="fixture memory failure"):
+            read()
+        assert calls == [(0, 80), (0, 1), (1, 3), (3, 7), (3, 5), (3, 4)]
+        formatted.assert_not_called()  # Two completed, nonempty states remain unpublished.
+    else:
+        _, count, rows_returned = read()
+        assert count == len(calls) == len(edges) + len(later_failures)
+        formatted.assert_called_once()
+        merged = formatted.call_args.args[0]
+        assert rows_returned == (len(successful) if later_failures else 0)
+        assert (len(merged) == 1 and merged[0]["traffic_count"] == 80) if later_failures else merged == []
+        if later_failures:
+            assert calls[4] == (7, 15) and calls[5] == (7, 11)
+    assert calls[0] == (0, 80) and calls[1] == (0, 1)
+    assert successful == list(zip(edges, edges[1:], strict=False))  # Independent gap-free/disjoint boundaries.

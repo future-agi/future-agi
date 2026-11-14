@@ -99,7 +99,8 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
                 completion_tokens Int64,
                 status String,
                 is_deleted UInt8,
-                _version UInt64
+                _version UInt64,
+                project_version_id Nullable(UUID)
             )
             ENGINE = ReplacingMergeTree(_version, is_deleted)
             PARTITION BY toDate(start_time)
@@ -177,7 +178,7 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
             ),
         ]
         for row in rows:
-            admin.execute("INSERT INTO spans VALUES", [row])
+            admin.execute("INSERT INTO spans VALUES", [(*row, None)])
         assert admin.execute("SELECT count() FROM spans") == [(3,)]
         assert admin.execute(
             """
@@ -219,7 +220,8 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
             "GROUP BY observation_type, service_name, "
             "toStartOfHour(start_time), trace_id, id" in query
         )
-        assert "argMax(start_time, _version) AS latest_start_time" in query
+        assert "argMax(" in query
+        assert "_physical_winner.2 AS latest_start_time" in query
         assert admin.execute(query, params) == []
     finally:
         admin.execute("USE default")
@@ -250,6 +252,9 @@ def test_ch25_trace_contribution_collapses_complete_boundary_hour() -> None:
                 start_time DateTime64(6, 'UTC'),
                 trace_id String,
                 id String,
+                name String DEFAULT '',
+                parent_span_id String DEFAULT '',
+                attrs_string Map(LowCardinality(String), String) DEFAULT map(),
                 latency_ms Int64,
                 total_tokens Int64,
                 cost Float64,
@@ -308,7 +313,12 @@ def test_ch25_trace_contribution_collapses_complete_boundary_hour() -> None:
             ),
         ]
         for row in rows:
-            admin.execute("INSERT INTO spans VALUES", [row])
+            admin.execute(
+                "INSERT INTO spans (project_id, observation_type, service_name, "
+                "start_time, trace_id, id, latency_ms, total_tokens, cost, "
+                "prompt_tokens, completion_tokens, status, is_deleted, _version) VALUES",
+                [row],
+            )
         assert admin.execute("SELECT count() FROM spans") == [(2,)]
 
         builder = TimeSeriesQueryBuilder(

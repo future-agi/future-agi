@@ -13,6 +13,11 @@ on:
         description: "Branch to deploy"
         required: false
         default: "dev"
+      repair_spa_routes:
+        description: "Install the guarded dev-only SPA route rewrite"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   deploy:
@@ -68,6 +73,17 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
+
+      # Check and apply the optional routing change before replacing assets.
+      # A permission failure must not strand a new asset set without invalidation.
+      - name: Repair dev SPA routes
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_spa_routes
+        env:
+          DEV_DISTRIBUTION_ID: ${{ secrets.DEV_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          python ../scripts/deploy-dev-spa-router.py \
+            --distribution-id "$DEV_DISTRIBUTION_ID" \
+            --code ../deploy/dev-cdn/spa-router.js
 
       - name: Sync dist/ to S3
         run: |

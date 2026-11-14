@@ -140,6 +140,65 @@ describe("buildTraceGraph recorded hierarchy", () => {
     expect(pathPairs(graph)).toEqual([]);
   });
 
+  it("does not chain siblings when their parent span closed before they ran", () => {
+    // TH-4321: an orchestrating agent span that returns before the work it
+    // dispatched leaves its children back to back in time. The retired
+    // timestamp-step inference turned exactly this shape into
+    // input -> intent -> quality -> response, although every step is an
+    // independent child of the agent.
+    const graph = buildTraceGraph([
+      entry(
+        "agent",
+        "Agent",
+        "2026-04-20T08:00:00.000Z",
+        "2026-04-20T08:00:00.500Z",
+        [
+          entry(
+            "ip",
+            "input_processing",
+            "2026-04-20T08:00:01.000Z",
+            "2026-04-20T08:00:02.000Z",
+          ),
+          entry(
+            "ic",
+            "intent_classification",
+            "2026-04-20T08:00:02.000Z",
+            "2026-04-20T08:00:03.000Z",
+          ),
+          entry(
+            "qc",
+            "quality_check",
+            "2026-04-20T08:00:03.000Z",
+            "2026-04-20T08:00:04.000Z",
+          ),
+          entry(
+            "rg",
+            "response_generation",
+            "2026-04-20T08:00:04.000Z",
+            "2026-04-20T08:00:09.000Z",
+            [
+              entry(
+                "pb",
+                "prompt_building",
+                "2026-04-20T08:00:04.500Z",
+                "2026-04-20T08:00:06.000Z",
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]);
+
+    expect(edgePairs(graph)).toEqual([
+      "agent:Agent->agent:input_processing",
+      "agent:Agent->agent:intent_classification",
+      "agent:Agent->agent:quality_check",
+      "agent:Agent->agent:response_generation",
+      "agent:response_generation->agent:prompt_building",
+    ]);
+    expect(pathPairs(graph)).toEqual([]);
+  });
+
   it("uses hierarchy regardless of malformed sibling timestamps", () => {
     const graph = buildTraceGraph([
       entry("root", "root", "bad", "bad", [

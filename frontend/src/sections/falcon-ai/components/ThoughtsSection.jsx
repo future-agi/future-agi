@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -10,8 +11,8 @@ function StepIcon({ status }) {
   if (status === "completed") {
     return (
       <Iconify
-        icon="mdi:check-circle"
-        width={18}
+        icon="solar:check-circle-bold"
+        width={20}
         sx={{ color: "success.main" }}
       />
     );
@@ -22,16 +23,16 @@ function StepIcon({ status }) {
   if (status === "error") {
     return (
       <Iconify
-        icon="mdi:alert-circle"
-        width={18}
+        icon="solar:danger-circle-linear"
+        width={20}
         sx={{ color: "error.main" }}
       />
     );
   }
   return (
     <Iconify
-      icon="mdi:radiobox-blank"
-      width={18}
+      icon="solar:circle-linear"
+      width={20}
       sx={{ color: "text.disabled" }}
     />
   );
@@ -73,17 +74,20 @@ export default function ThoughtsSection({ thoughts, isStreaming }) {
         mb: 1.5,
         border: 1,
         borderColor: hasInProgress ? "primary.main" : "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         overflow: "hidden",
         transition: "border-color 0.2s",
       }}
     >
       {/* Header — always visible */}
-      <Box
+      <ButtonBase
+        component="div"
         onClick={() =>
           setManualToggle((prev) => (prev === null ? !expanded : !prev))
         }
         sx={{
+          justifyContent: "flex-start",
+          textAlign: "left",
           display: "flex",
           alignItems: "center",
           gap: 1,
@@ -99,7 +103,7 @@ export default function ThoughtsSection({ thoughts, isStreaming }) {
           <CircularProgress size={14} thickness={5} />
         ) : (
           <Iconify
-            icon="mdi:check-circle"
+            icon="solar:check-circle-bold"
             width={16}
             sx={{ color: "success.main" }}
           />
@@ -108,11 +112,15 @@ export default function ThoughtsSection({ thoughts, isStreaming }) {
           {statusText}
         </Typography>
         <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={18}
+          icon={
+            expanded
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
+          width={20}
           sx={{ color: "text.secondary" }}
         />
-      </Box>
+      </ButtonBase>
 
       {/* Steps timeline — collapsible */}
       <Collapse in={expanded}>

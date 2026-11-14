@@ -71,6 +71,9 @@ func New(cfg map[string]interface{}) *InjectionGuardrail {
 func (g *InjectionGuardrail) Name() string            { return "prompt-injection" }
 func (g *InjectionGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// ChecksRequestTextOnly marks that Check reads only request messages.
+func (g *InjectionGuardrail) ChecksRequestTextOnly() {}
+
 // Check evaluates user messages for injection patterns.
 func (g *InjectionGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || input.Request == nil {

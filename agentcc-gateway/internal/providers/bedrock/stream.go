@@ -267,7 +267,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 				Choices: []models.StreamChoice{
 					{Index: 0, Delta: models.Delta{ToolCalls: []models.ToolCallDelta{{
 						Index:    tcIdx,
-						Function: &models.FunctionCall{Arguments: inputJSONDelta.PartialJSON},
+						Function: &models.FunctionCallDelta{Arguments: inputJSONDelta.PartialJSON},
 					}}}},
 				},
 			}, false, nil
@@ -306,7 +306,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 						Index:    idx,
 						ID:       block.ID,
 						Type:     "function",
-						Function: &models.FunctionCall{Name: block.Name, Arguments: ""},
+						Function: &models.FunctionCallDelta{Name: block.Name, Arguments: ""},
 					}}}},
 				},
 			}, false, nil

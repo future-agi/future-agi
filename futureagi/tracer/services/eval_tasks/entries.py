@@ -12,13 +12,16 @@ import contextvars
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from django.db import transaction
 from django.utils import timezone
 
 from tracer.models.eval_task import RowType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
+from tracer.queries.eval_clustering import retire_eval_memberships
 from tracer.selectors.eval_tasks.row_resolver import (
     EvalTaskSelectionRejected,
     TraceFilterWitness,
@@ -28,10 +31,12 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from django.db.models import QuerySet
 
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+logger = structlog.get_logger(__name__)
 
 _TARGET_TYPE = {
     RowType.SPANS: EvalTargetType.SPAN,
@@ -54,6 +59,15 @@ _engine_entry_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 _engine_task_selection: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar("eval_engine_task_selection", default=None)
+)
+# The claim this run owns, as the ``updated_at`` stamp the row carried when the
+# run began. ``RUNNING`` on its own is not an identity: the reaper can requeue
+# an entry a worker is still holding and another worker can re-claim it, and the
+# row is ``RUNNING`` again under that new claim. Every write this run makes is
+# fenced on the epoch as well, so an abandoned run's result no-ops instead of
+# landing on the re-claimed row under the abandoned run's config hash.
+_engine_entry_epoch: contextvars.ContextVar[datetime | None] = contextvars.ContextVar(
+    "eval_engine_entry_epoch", default=None
 )
 
 # Identity / FK / lifecycle columns the materialized entry already owns — the
@@ -106,6 +120,17 @@ def writing_onto_entry(
         _engine_entry_id.reset(token)
 
 
+@contextmanager
+def running_entry_epoch(epoch: datetime) -> Iterator[None]:
+    """Within this block, every write onto the running entry is fenced on the
+    claim that opened it, not merely on the entry still being ``RUNNING``."""
+    token = _engine_entry_epoch.set(epoch)
+    try:
+        yield
+    finally:
+        _engine_entry_epoch.reset(token)
+
+
 def in_engine_write_mode() -> bool:
     """True while the eval-task engine is running one entry — result writes
     should update that entry rather than create a new EvalLogger row."""
@@ -133,31 +158,23 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
             **result_metadata,
             "_task_selection": deepcopy(selection),
         }
-    # Fence on RUNNING so a stale worker's late result write no-ops after a
-    # reaper requeue + re-claim (see mark_terminal).
-    EvalLogger.objects.filter(id=entry_id, status=EvalEntryStatus.RUNNING).update(
-        **fields
-    )
-    return EvalLogger.objects.filter(id=entry_id).first()
+    # Fence on the claim this run owns so a stale worker's late result write
+    # no-ops after a reaper requeue + re-claim (see mark_terminal). RUNNING
+    # alone does not distinguish the abandoned claim from the live one.
+    fence: dict[str, Any] = {"id": entry_id, "status": EvalEntryStatus.RUNNING}
+    epoch = _engine_entry_epoch.get()
+    if epoch is not None:
+        fence["updated_at"] = epoch
+    if not EvalLogger.objects.filter(**fence).update(**fields):
+        # A deleted/reclaimed entry did not accept this result. Do not hand a
+        # newer claim to callers that may start follow-up work such as localization.
+        return None
+    return EvalLogger.objects.filter(**fence).first()
 
 
-def materialize_pending(
-    task: EvalTask,
-    resolved_row_ids: Iterable[str] | None = None,
-    *,
-    ceiling: datetime | None = None,
-    trace_filter_witnesses: Iterable[TraceFilterWitness] = (),
-) -> int:
-    """Create one pending entry per (desired row, eval). Returns rows submitted.
-
-    ``ceiling`` (the reconcile pass's frozen now) upper-bounds the continuous
-    arrival window so a slow pass can't leave rows above the next cursor.
-    """
-    evals = list(task.evals.all())
-    if not evals:
-        return 0
-    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in evals}
-    target_type = _TARGET_TYPE[task.row_type]
+def serialize_trace_witnesses(
+    trace_filter_witnesses: Iterable[TraceFilterWitness],
+) -> dict[str, list[dict[str, Any]]]:
     witnesses_by_trace: dict[str, list[dict[str, Any]]] = {}
     for witness in trace_filter_witnesses:
         witnesses_by_trace.setdefault(str(witness.trace_id), []).append(
@@ -171,11 +188,43 @@ def materialize_pending(
                 "start_time": witness.start_time.isoformat(),
             }
         )
+    return {
+        key: sorted(value, key=lambda item: item["filter_ordinal"])
+        for key, value in witnesses_by_trace.items()
+    }
+
+
+def materialize_pending(
+    task: EvalTask,
+    resolved_row_ids: Iterable[str] | None = None,
+    *,
+    ceiling: datetime | None = None,
+    trace_filter_witnesses: Iterable[TraceFilterWitness] = (),
+    sampling_metadata: dict[str, dict] | None = None,
+) -> int:
+    """Create one pending entry per (desired row, eval). Returns rows submitted.
+
+    ``ceiling`` (the reconcile pass's frozen now) upper-bounds the continuous
+    arrival window so a slow pass can't leave rows above the next cursor.
+    """
+    evals = list(task.evals.all())
+    if not evals:
+        return 0
+    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in evals}
+    target_type = _TARGET_TYPE[task.row_type]
+    witnesses_by_trace = serialize_trace_witnesses(trace_filter_witnesses)
     submitted = 0
     reader = get_reader()
     try:
         batches = (
-            _iter_materialize_batches(resolved_row_ids)
+            _iter_materialize_batches(
+                resolved_row_ids,
+                batch_size=(
+                    max(1, _MATERIALIZE_BATCH // len(evals))
+                    if sampling_metadata is not None
+                    else _MATERIALIZE_BATCH
+                ),
+            )
             if resolved_row_ids is not None
             else iter_desired_rows(task, batch_size=_MATERIALIZE_BATCH, ceiling=ceiling)
         )
@@ -201,6 +250,11 @@ def materialize_pending(
                                 )
                             }
                         }
+                    if sampling_metadata and str(identity) in sampling_metadata:
+                        metadata = entry_fields.setdefault("output_metadata", {})
+                        metadata.setdefault("_task_selection", {})["sampling"] = (
+                            sampling_metadata[str(identity)]
+                        )
                     rows.append(
                         EvalLogger(
                             target_type=target_type,
@@ -289,23 +343,39 @@ def _refresh_waiting_trace_witnesses(
         EvalLogger.objects.bulk_update(updates, ["output_metadata"])
 
 
-def _iter_materialize_batches(row_ids: Iterable[str]) -> Iterator[list[str]]:
+def _iter_materialize_batches(
+    row_ids: Iterable[str], *, batch_size: int = _MATERIALIZE_BATCH
+) -> Iterator[list[str]]:
     """Batch a caller-provided, already-buffered desired row set."""
 
     batch: list[str] = []
     for row_id in row_ids:
         batch.append(str(row_id))
-        if len(batch) >= _MATERIALIZE_BATCH:
+        if len(batch) >= batch_size:
             yield batch
             batch = []
     if batch:
         yield batch
 
 
+def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
+    """Soft-delete eval results. Every EvalLogger delete goes through here.
+
+    Their Error Feed memberships are retired in the same transaction, so an
+    issue never keeps a trace whose eval no longer exists. Returns the count.
+    """
+    with transaction.atomic():
+        # Eval rows first, then the issues (as clustering does): a clustering
+        # run that holds a row finishes its membership before this retires it.
+        list(results.select_for_update(of=("self",)).values_list("id", flat=True))
+        retire_eval_memberships(results)
+        return results.update(deleted=True, deleted_at=timezone.now())
+
+
 def soft_delete_live(task: EvalTask) -> int:
     """Soft-delete every live entry of the task (Delete & rerun). Returns count."""
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).update(
-        deleted=True, deleted_at=timezone.now()
+    return soft_delete_eval_results(
+        EvalLogger.objects.filter(eval_task_id=str(task.id))
     )
 
 
@@ -313,8 +383,10 @@ def claim_pending_batch(task: EvalTask, n: int) -> list[EvalLogger]:
     """Atomically claim up to ``n`` pending entries and mark them running.
 
     ``FOR UPDATE SKIP LOCKED`` lets many workers pull disjoint batches without
-    blocking each other. ``updated_at`` is stamped to "now" so the reaper can
-    measure how long an entry has been running.
+    blocking each other. ``updated_at`` is stamped to "now": it is both the
+    claim's epoch -- ``run_entry`` compare-and-sets it when a run starts, so a
+    run that is superseded while it works cannot land its result -- and, until
+    the run re-stamps it, how long the entry has been waiting for one.
     """
     now = timezone.now()
     with transaction.atomic():
@@ -343,6 +415,7 @@ def mark_terminal(
     error: bool | None = None,
     error_message: str | None = None,
     skipped_reason: str | None = None,
+    epoch: datetime | None = None,
 ) -> bool:
     """Record an entry's terminal state (status + the hash that produced it).
 
@@ -350,6 +423,10 @@ def mark_terminal(
     rerun landing while it ran. error / error_message / skipped_reason are set
     only when passed, so a result already written by the evaluator isn't
     clobbered.
+
+    ``epoch`` is the claim the caller owns; it defaults to the running-entry
+    epoch in scope (``running_entry_epoch``). A caller outside that scope that
+    read the row itself passes the stamp its own read saw.
     """
     fields: dict[str, Any] = {
         "status": status,
@@ -362,14 +439,34 @@ def mark_terminal(
         fields["error_message"] = error_message
     if skipped_reason is not None:
         fields["skipped_reason"] = skipped_reason
-    # Fence on RUNNING so a stale worker's late write no-ops after the reaper
-    # requeued the entry (and another worker re-claimed it).
-    return (
-        EvalLogger.objects.filter(id=entry.id, status=EvalEntryStatus.RUNNING).update(
-            **fields
-        )
-        > 0
-    )
+    # Fence on RUNNING *and* on the claim: after the reaper requeued the entry
+    # and another worker re-claimed it the row is RUNNING again, so RUNNING
+    # alone would let the abandoned run's write through.
+    fence: dict[str, Any] = {"id": entry.id, "status": EvalEntryStatus.RUNNING}
+    epoch = epoch if epoch is not None else _engine_entry_epoch.get()
+    if epoch is not None:
+        fence["updated_at"] = epoch
+    landed = EvalLogger.objects.filter(**fence).update(**fields) > 0
+    if landed:
+        _record_instant_answer(entry.id, entry.eval_task_id)
+    return landed
+
+
+def _record_instant_answer(entry_id, task_id) -> None:
+    """Instant eval keeps each row's answer in a narrow table of its own (see
+    ``instant_eval_answers``); copy this one over. Every other eval task's
+    entry costs no SQL here. Never fails the entry: a missed copy is caught
+    up when the run finishes."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answer
+
+    try:
+        if not task_id or not is_instant_task(task_id):
+            return
+        # A savepoint, so a failed copy can't break a surrounding transaction.
+        with transaction.atomic():
+            record_answer(entry_id)
+    except Exception:
+        logger.warning("instant_eval_answer_copy_failed", exc_info=True)
 
 
 def _resolve_entry_fks(

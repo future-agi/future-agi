@@ -1,7 +1,7 @@
-import { Box, Button, Typography, useTheme } from "@mui/material";
+import { Box, Button, Typography, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import EvalCard from "./EvalsCard";
 import PropmtCard from "./PropmtCard";
@@ -29,7 +29,6 @@ const CompareSummaryTab = ({
   isCommonColumn,
   setIsCommonColumn,
 }) => {
-  const theme = useTheme();
   const [currentTab, setCurrentTab] = useState("evals");
 
   // Use useMemo for initial state values based on isCommonColumn
@@ -85,7 +84,7 @@ const CompareSummaryTab = ({
           <Button
             startIcon={
               <Iconify
-                icon="material-symbols:compare-arrows"
+                icon="solar:transfer-horizontal-linear"
                 sx={{ color: isCompare ? "primary.main" : "text.secondary" }}
               />
             }
@@ -121,7 +120,7 @@ const CompareSummaryTab = ({
                       : "background.paper",
                   cursor: "pointer",
                   padding: "6px",
-                  borderRadius: "5px",
+                  borderRadius: "6px",
                   "&:hover": { backgroundColor: "action.selected" },
                   alignItems: "center",
                 }}
@@ -131,7 +130,7 @@ const CompareSummaryTab = ({
                   sx={{
                     color: tagForeground,
                     backgroundColor: tagBackground,
-                    borderRadius: "5px",
+                    borderRadius: "6px",
                     height: "24px",
                     width: "24px",
                     fontSize: "12px",
@@ -169,30 +168,21 @@ const CompareSummaryTab = ({
         sx={{ flex: 1, padding: "12px", height: "100%", overflowY: "hidden" }}
       >
         {!isCompare && (
-          <TabWrapper>
-            <CustomTabs
-              textColor="primary"
+          <Box sx={{ mb: 2 }}>
+            <SegmentedTabs
               value={currentTab}
               onChange={(e, value) => setCurrentTab(value)}
-              TabIndicatorProps={{
-                style: {
-                  backgroundColor: theme.palette.primary.main,
-                  opacity: 0.08,
-                  height: "100%",
-                  borderRadius: "8px",
-                },
-              }}
             >
               {tabOptions.map((tab) => (
-                <CustomTab
+                <Tab
                   key={tab.value}
                   label={tab.label}
                   value={tab.value}
                   disabled={tab.disabled}
                 />
               ))}
-            </CustomTabs>
-          </TabWrapper>
+            </SegmentedTabs>
+          </Box>
         )}
         <Box sx={{ overflow: "auto" }}>
           <ShowComponent condition={currentTab === "evals"}>

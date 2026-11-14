@@ -15,7 +15,9 @@ criteria: "You are evaluating whether the agent effectively handles customer obj
   \ Select 'always' if consistently acknowledged, addressed, and respected.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+- Sales
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

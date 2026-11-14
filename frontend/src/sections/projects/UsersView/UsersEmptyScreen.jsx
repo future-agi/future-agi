@@ -1,12 +1,8 @@
-import { Box, useTheme } from "@mui/material";
-import React, { useMemo } from "react";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import React from "react";
 import InstructionCodeCopy from "src/sections/project/NewProject/InstructionCodeCopy";
 import InstructionTitle from "src/sections/project/NewProject/InstructionTitle";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
@@ -25,16 +21,6 @@ const UsersEmptyScreen = () => {
       return response.data.result;
     },
   });
-
-  const theme = useTheme();
-
-  const tabWrapperStyles = useMemo(
-    () => ({
-      marginBottom: 0,
-      alignSelf: "flex-start",
-    }),
-    [],
-  );
 
   return (
     <Box
@@ -59,27 +45,11 @@ const UsersEmptyScreen = () => {
       />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <TabWrapper sx={tabWrapperStyles}>
-          <CustomTabs
-            textColor="primary"
-            value="JSON"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
-            <CustomTab
-              key="telemetry-JSON"
-              label="JSON"
-              value="JSON"
-              sx={{ color: "primary.dark" }}
-            />
-          </CustomTabs>
-        </TabWrapper>
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs value="JSON">
+            <Tab key="telemetry-JSON" label="JSON" value="JSON" />
+          </SegmentedTabs>
+        </Box>
 
         <InstructionCodeCopy text={metricsData} language="typescript" />
       </Box>

@@ -1,7 +1,9 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, fireEvent } from "src/utils/test-utils";
+import { createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 import CostAnalytics from "./CostAnalytics";
 
@@ -10,10 +12,6 @@ const chartSpy = vi.fn();
 
 vi.mock("./hooks/useAnalyticsCost", () => ({
   useAnalyticsCost: (...args) => mockUseAnalyticsCost(...args),
-}));
-
-vi.mock("../utils/formatters", () => ({
-  formatCost: (value) => `$${Number(value || 0).toFixed(2)}`,
 }));
 
 vi.mock("react-apexcharts", () => ({
@@ -77,5 +75,85 @@ describe("CostAnalytics", () => {
     );
 
     expect(screen.getByText("No cost data available.")).toBeInTheDocument();
+  });
+
+  it("groups cost by application when that option is picked", () => {
+    mockUseAnalyticsCost.mockReturnValue({
+      isLoading: false,
+      data: {
+        total_cost: "12",
+        breakdown: [
+          { name: "checkout", total_cost: "9" },
+          { name: "search", total_cost: "3" },
+        ],
+      },
+    });
+
+    render(
+      <CostAnalytics start="2026-01-01" end="2026-01-02" gatewayId="gw_123" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Application" }));
+
+    expect(mockUseAnalyticsCost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ groupBy: "application" }),
+    );
+    expect(screen.getByText("Cost by Application")).toBeInTheDocument();
+  });
+
+  it("draws cost by group and distribution in the purple dataMono shades", () => {
+    mockUseAnalyticsCost.mockReturnValue({
+      isLoading: false,
+      data: {
+        total_cost: "12",
+        breakdown: [
+          { name: "checkout", total_cost: "9" },
+          { name: "search", total_cost: "3" },
+        ],
+      },
+    });
+
+    render(
+      <CostAnalytics start="2026-01-01" end="2026-01-02" gatewayId="gw_123" />,
+    );
+
+    const calls = chartSpy.mock.calls.map(([props]) => props);
+    const barCall = calls.find((props) => props.type === "bar");
+    const donutCall = calls.find((props) => props.type === "donut");
+    const mono = createTheme({ palette: palette("light") }).palette.dataMono;
+
+    expect(barCall.options.colors).toEqual(mono);
+    expect(donutCall.options.colors).toEqual(mono);
+    expect(barCall.options.dataLabels.style.colors).toHaveLength(mono.length);
+  });
+
+  it("keeps the cost axis to a few short ticks so the labels never run together", () => {
+    mockUseAnalyticsCost.mockReturnValue({
+      isLoading: false,
+      data: {
+        total_cost: "0.9",
+        breakdown: [
+          { name: "checkout", total_cost: "0.8" },
+          { name: "search", total_cost: "0.1" },
+        ],
+      },
+    });
+
+    render(
+      <CostAnalytics start="2026-01-01" end="2026-01-02" gatewayId="gw_123" />,
+    );
+
+    const barCall = chartSpy.mock.calls
+      .map(([props]) => props)
+      .find((props) => props.type === "bar");
+    const { tickAmount, labels } = barCall.options.xaxis;
+
+    expect(tickAmount).toBe(5);
+    expect([0, 0.05, 0.2, 1.5, 0.0005].map(labels.formatter)).toEqual([
+      "$0.00",
+      "$0.05",
+      "$0.20",
+      "$1.50",
+      "$0.0005",
+    ]);
   });
 });

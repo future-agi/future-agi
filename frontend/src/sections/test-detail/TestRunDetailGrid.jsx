@@ -1,5 +1,6 @@
-import { Box, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   getColumnDefsSignature,
@@ -40,16 +41,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 const rowSelection = { mode: "multiRow" };
 const rowStyle = { cursor: "pointer" };
 const getRowId = ({ data }) => data.id;
-const GridNoRowsOverlay = () =>
-  NoRowsOverlay(
-    <Typography
-      typography="m3"
-      color="text.primary"
-      fontWeight="fontWeightMedium"
-    >
-      No test runs found
-    </Typography>,
-  );
+const GridNoRowsOverlay = () => NoRowsOverlay("No test runs found");
 
 const SelectionHeader = (props) => {
   const onCheckboxClick = (e) => {
@@ -141,7 +133,7 @@ const TestRunDetailGrid = () => {
       const rowId = params.data?.id || params.data?.trace_id;
       if (rowId && activeCallId && rowId === activeCallId) {
         return {
-          backgroundColor: "rgba(120, 87, 252, 0.08)",
+          backgroundColor: "var(--surface-row-active)",
           cursor: "pointer",
         };
       }
@@ -485,6 +477,8 @@ const TestRunDetailGrid = () => {
             className="test-detail-grid"
             selectionColumnDef={selectionColumnDef}
             onSelectionChanged={onRowSelectionChanged}
+            // 32px header, matching the design system table header.
+            headerHeight={32}
             rowHeight={100}
             columnDefs={finalColumnDefs}
             defaultColDef={defaultColDef}

@@ -1,14 +1,10 @@
-import { alpha, styled, Typography } from "@mui/material";
+import { Chip } from "@mui/material";
+import PropTypes from "prop-types";
 
-export const DraftBadge = styled(Typography)(({ theme }) => ({
-  backgroundColor: alpha(theme.palette.warning.main, 0.12),
-  borderRadius: "2px",
-  color: theme.palette.warning.dark,
-  paddingLeft: "6px",
-  paddingRight: "6px",
-  paddingTop: "4px",
-  paddingBottom: "3px",
-  fontSize: "11px",
-  lineHeight: "16px",
-  fontWeight: 500,
-}));
+export const DraftBadge = ({ children }) => (
+  <Chip size="small" color="warning" variant="soft" label={children} />
+);
+
+DraftBadge.propTypes = {
+  children: PropTypes.node,
+};

@@ -86,8 +86,7 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
   const renderRowMapAction = useCallback(
     (path, sx = {}) => {
       if (!vars.length) return null;
-      const label =
-        vars.length === 1 ? `Map to ${vars[0]}` : "Map to variable";
+      const label = vars.length === 1 ? `Map to ${vars[0]}` : "Map to variable";
       return (
         <CustomTooltip
           show
@@ -108,13 +107,12 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
               flexShrink: 0,
               ml: 0.5,
               mt: -0.25,
-              p: 0.25,
               color: "text.secondary",
               "&:hover": { color: "primary.main" },
               ...sx,
             }}
           >
-            <Iconify icon="mdi:arrow-right-bold-box-outline" width={16} />
+            <Iconify icon="solar:arrow-right-linear" width={16} />
           </IconButton>
         </CustomTooltip>
       );
@@ -129,12 +127,17 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
       onClose={() => setMapMenu(null)}
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       transformOrigin={{ vertical: "top", horizontal: "right" }}
-      slotProps={{ paper: { sx: { minWidth: 220, maxWidth: 320 } } }}
+      slotProps={{ paper: { sx: { minWidth: 240, maxWidth: 320 } } }}
     >
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ px: 1.5, py: 0.5, display: "block", fontWeight: "fontWeightSemiBold" }}
+        sx={{
+          px: 1.5,
+          py: 0.5,
+          display: "block",
+          fontWeight: "fontWeightSemiBold",
+        }}
       >
         Map{" "}
         <Box
@@ -159,9 +162,9 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
           >
             <ListItemIcon sx={{ minWidth: 0, mr: 0.25 }}>
               <Iconify
-                icon={isThis ? "mdi:check-circle" : "mdi:code-braces"}
+                icon={isThis ? "solar:check-circle-bold" : "solar:code-linear"}
                 width={16}
-                sx={{ color: isThis ? "success.main" : "text.secondary" }}
+                sx={{ color: isThis ? "status.success.fg" : "text.secondary" }}
               />
             </ListItemIcon>
             <Box
@@ -204,7 +207,7 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
         sx={{ py: 0.5 }}
       >
         <ListItemIcon sx={{ minWidth: 0, mr: 0.25 }}>
-          <Iconify icon="mdi:content-copy" width={15} />
+          <Iconify icon="solar:copy-linear" width={16} />
         </ListItemIcon>
         {/* eslint-disable-next-line react/prop-types */}
         <ListItemText

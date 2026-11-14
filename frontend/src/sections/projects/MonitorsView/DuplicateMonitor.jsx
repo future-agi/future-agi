@@ -46,13 +46,13 @@ const DuplicateMonitor = ({
           <Typography
             variant="m3"
             color={"text.primary"}
-            fontWeight={"fontWeightBold"}
+            fontWeight={"fontWeightSemiBold"}
           >
             Duplicate Alert
           </Typography>
           <IconButton onClick={onClose}>
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={24}
               height={24}
               color="text.primary"
@@ -65,7 +65,7 @@ const DuplicateMonitor = ({
         sx={{ paddingX: theme.spacing(2), paddingTop: theme.spacing(0.5) }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
-          {/* <Iconify icon="solar:info-circle-bold" color="text.disabled" width={18} /> */}
+          {/* <Iconify icon="solar:info-circle-bold" color="text.disabled" width={20} /> */}
           <Typography
             variant="s1"
             fontWeight={"fontWeightRegular"}

@@ -16,6 +16,7 @@ from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
     snapshot_cache_key,
 )
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 
@@ -201,7 +202,9 @@ def test_filtered_system_graph_uses_inline_raw_reader_without_snapshot(
         direct_read,
     )
     result = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=object(),
+        # The routing cost probe runs before the reader is chosen; this test is
+        # about the reader, so the probe is answered and answered cheaply.
+        analytics=AffordableScanAnalytics(),
         project_id=PROJECT_ID,
         filters=[_attribute_filter()],
         interval="day",

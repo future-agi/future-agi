@@ -22,7 +22,7 @@ const EmptyVersions = ({ activeTab }) => {
           padding: 2,
           border: "2.3px solid",
           borderColor: "divider",
-          borderRadius: "9.2px",
+          borderRadius: "8px",
           lineHeight: 0,
         }}
       >

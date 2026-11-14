@@ -7,6 +7,10 @@ Run with: pytest tfc/utils/tests/test_slack.py -v
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
+from structlog.testing import capture_logs
+
+WEBHOOK = "https://hooks.slack.test/T/B/C"
 
 
 class TestSendCriticalSlackNotification:
@@ -37,6 +41,7 @@ class TestSendCriticalSlackNotification:
         assert result is True  # Returns True but doesn't send
 
     @pytest.mark.unit
+    @override_settings(ERROR_LOGS_WEBHOOK=WEBHOOK)
     @patch("tfc.utils.slack.WebhookClient")
     @patch("tfc.utils.slack.os.getenv")
     def test_sends_notification_in_production(self, mock_getenv, mock_webhook_client):
@@ -57,6 +62,7 @@ class TestSendCriticalSlackNotification:
         assert "production" in call_args.kwargs["text"]
 
     @pytest.mark.unit
+    @override_settings(ERROR_LOGS_WEBHOOK=WEBHOOK)
     @patch("tfc.utils.slack.WebhookClient")
     @patch("tfc.utils.slack.os.getenv")
     def test_returns_false_on_failed_send(self, mock_getenv, mock_webhook_client):
@@ -73,6 +79,7 @@ class TestSendCriticalSlackNotification:
         assert result is False
 
     @pytest.mark.unit
+    @override_settings(ERROR_LOGS_WEBHOOK=WEBHOOK)
     @patch("tfc.utils.slack.WebhookClient")
     @patch("tfc.utils.slack.os.getenv")
     def test_returns_false_on_exception(self, mock_getenv, mock_webhook_client):
@@ -87,6 +94,7 @@ class TestSendCriticalSlackNotification:
         assert result is False
 
     @pytest.mark.unit
+    @override_settings(ERROR_LOGS_WEBHOOK=WEBHOOK)
     @patch("tfc.utils.slack.WebhookClient")
     @patch("tfc.utils.slack.os.getenv")
     def test_message_includes_environment(self, mock_getenv, mock_webhook_client):
@@ -102,3 +110,23 @@ class TestSendCriticalSlackNotification:
 
         call_args = mock_client_instance.send.call_args
         assert "*Environment:* staging" in call_args.kwargs["text"]
+
+    @pytest.mark.unit
+    @override_settings(ERROR_LOGS_WEBHOOK="")
+    @patch("tfc.utils.slack.WebhookClient")
+    @patch("tfc.utils.slack.os.getenv")
+    def test_unset_webhook_builds_no_client_and_logs_nothing(
+        self, mock_getenv, mock_webhook_client
+    ):
+        """A self-hosted install leaves ERROR_LOGS_WEBHOOK empty: no client,
+        no request, and nothing logged above debug."""
+        from tfc.utils.slack import send_critical_slack_notification
+
+        mock_getenv.return_value = "production"
+
+        with capture_logs() as records:
+            result = send_critical_slack_notification("Test message")
+
+        assert result is False
+        mock_webhook_client.assert_not_called()
+        assert [r for r in records if r["log_level"] != "debug"] == []

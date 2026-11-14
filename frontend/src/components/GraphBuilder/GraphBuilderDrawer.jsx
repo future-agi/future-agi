@@ -52,7 +52,7 @@ const GraphBuilderDrawer = ({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box sx={{ width: "100%", flex: 1, display: "flex" }}>

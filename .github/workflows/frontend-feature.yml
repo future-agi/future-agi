@@ -47,6 +47,9 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The design-system check diffs against origin/dev or origin/main.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,7 +61,17 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Type check
+      - name: Design system lint (changed lines)
+        run: yarn lint:ds:changed
+
+      - name: Design system opt-outs
+        run: yarn ds:optouts
+
+      # The real compiler now runs (frontend/tsconfig.json). 36 generated-contract
+      # diagnostics remain, so this stays advisory until they are resolved, as in
+      # frontend-develop.yml.
+      - name: Type check (advisory)
+        continue-on-error: true
         run: yarn type-check
 
       - name: Run unit tests

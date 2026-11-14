@@ -4,24 +4,61 @@ Agentcc Services Tests
 Tests for GatewayClient, auth_bridge, and log_ingestion services.
 """
 
+import hashlib
+import importlib
+import json
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+import structlog
+from django.db import connection
+from django.utils import timezone
+from pydantic import ValidationError
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from agentcc.models import AgentccAPIKey
+from agentcc.models import AgentccAPIKey, AgentccEmailAlert, AgentccRequestLog
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import (
     GatewayClient,
     GatewayClientError,
+    _note_missing_admin_token,
     get_gateway_client,
     resolve_gateway_internal_url,
 )
 from agentcc.services.log_ingestion import ingest_request_logs
 from agentcc.services.webhook_delivery import deliver_webhook_events
 from tfc.middleware.workspace_context import set_workspace_context
+
+
+class TestMissingAdminTokenNotice:
+    """Logged on import, so in every process that loads the client, one-off
+    commands included."""
+
+    @pytest.mark.parametrize(
+        "deployment, level, quiet",
+        [
+            ("", "debug", "warning"),
+            ("false", "debug", "warning"),
+            ("US", "warning", "debug"),
+        ],
+    )
+    def test_only_cloud_warns(self, monkeypatch, deployment, level, quiet):
+        monkeypatch.setenv("CLOUD_DEPLOYMENT", deployment)
+        with patch("agentcc.services.gateway_client.logger") as logger:
+            _note_missing_admin_token("")
+
+        getattr(logger, level).assert_called_once()
+        getattr(logger, quiet).assert_not_called()
+
+    def test_a_set_token_logs_nothing(self, monkeypatch):
+        monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")
+        with patch("agentcc.services.gateway_client.logger") as logger:
+            _note_missing_admin_token("admin-token")
+
+        assert logger.method_calls == []
 
 
 class TestGatewayClient:
@@ -43,9 +80,27 @@ class TestGatewayClient:
 
     def test_internal_url_supports_legacy_env_name(self, monkeypatch):
         monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
-        monkeypatch.setenv("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090")
+        monkeypatch.setenv("AGENTCC_INTERNAL_URL", "http://legacy-gateway:8080")
 
-        assert resolve_gateway_internal_url() == "http://agentcc-gateway:8090"
+        assert resolve_gateway_internal_url() == "http://legacy-gateway:8080"
+
+    def test_internal_url_defaults_to_the_in_network_gateway(self, monkeypatch):
+        # Inside a container, localhost:8090 is the container itself; the
+        # gateway listens on agentcc-gateway:8080 (8090 is only the port
+        # compose publishes on the host).
+        monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_GATEWAY_URL", raising=False)
+
+        assert resolve_gateway_internal_url() == "http://agentcc-gateway:8080"
+
+    def test_internal_url_honours_an_explicit_gateway_url(self, monkeypatch):
+        # Host-side tools reach the gateway on the published port.
+        monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_INTERNAL_URL", raising=False)
+        monkeypatch.setenv("AGENTCC_GATEWAY_URL", "http://localhost:8090")
+
+        assert resolve_gateway_internal_url() == "http://localhost:8090"
 
     @patch("agentcc.services.gateway_client.httpx.Client")
     def test_health_check(self, mock_client_cls):
@@ -108,6 +163,44 @@ class TestGatewayClient:
             "attempt": "2",
             "labels": '["alpha","beta"]',
         }
+
+    @patch("agentcc.services.gateway_client.httpx.Client")
+    def test_import_keys_sends_the_contract_shape(self, mock_client_cls):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"received":1,"loaded":1}'
+        mock_resp.json.return_value = {"received": 1, "loaded": 1}
+        mock_client_instance = MagicMock()
+        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+        mock_client_instance.__exit__ = MagicMock(return_value=False)
+        mock_client_instance.request.return_value = mock_resp
+        mock_client_cls.return_value = mock_client_instance
+        key = {
+            "id": "key_1",
+            "name": "restored",
+            "owner": "",
+            "key_hash": "a" * 64,
+            "key_prefix": "sk-agentcc-a...",
+            "models": [],
+            "providers": [],
+            "metadata": {"org_id": "org-1"},
+            "expires_at": None,
+        }
+
+        client = GatewayClient("http://localhost:8080", "token")
+        assert client.import_keys([key]) == {"received": 1, "loaded": 1}
+
+        request_json = mock_client_instance.request.call_args.kwargs["json"]
+        # No expiry is sent as no field at all, as the contract types it.
+        assert request_json == {
+            "keys": [{k: v for k, v in key.items() if k != "expires_at"}]
+        }
+
+        # A field outside the contract, such as the raw key, is never sent.
+        mock_client_instance.request.reset_mock()
+        with pytest.raises(ValidationError):
+            client.import_keys([{**key, "key": "sk-agentcc-raw"}])
+        mock_client_instance.request.assert_not_called()
 
     @patch("agentcc.services.gateway_client.httpx.Client")
     def test_update_key_stringifies_metadata_for_gateway(self, mock_client_cls):
@@ -258,6 +351,250 @@ class TestAuthBridge:
         assert gateway_failed is True
 
 
+class TestAuthBridgeKeyIdsAndSync:
+    """Gateway key IDs that repeat across restarts, and Sync restoring keys."""
+
+    @staticmethod
+    def _gateway_key(key_id, raw_key):
+        return {
+            "id": key_id,
+            "key": raw_key,
+            "key_prefix": raw_key[:12] + "...",
+            "name": "new-key",
+            "owner": "",
+            "status": "active",
+            "models": [],
+            "providers": [],
+        }
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_provision_key_never_overwrites_another_keys_row(
+        self, mock_get_client, organization, workspace, user
+    ):
+        older = AgentccAPIKey.objects.create(
+            gateway_key_id="key_2",
+            name="older-key",
+            organization=organization,
+            workspace=workspace,
+            key_hash="a" * 64,
+            key_prefix="sk-agentcc-a...",
+        )
+        mock_client = MagicMock()
+        # A gateway whose ID counter restarted hands out key_2 again.
+        mock_client.create_key.return_value = self._gateway_key(
+            "key_2", "sk-agentcc-b" + "0" * 47
+        )
+        mock_get_client.return_value = mock_client
+
+        with pytest.raises(auth_bridge.GatewayKeyIdCollision):
+            auth_bridge.provision_key(name="new-key", user=user)
+
+        older.refresh_from_db()
+        assert older.name == "older-key"
+        assert older.key_hash == "a" * 64
+        assert (
+            AgentccAPIKey.no_workspace_objects.filter(gateway_key_id="key_2").count()
+            == 1
+        )
+        # The key the gateway just minted is discarded, not left orphaned.
+        mock_client.revoke_key.assert_called_once_with("key_2")
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_provision_key_completes_a_row_a_racing_sync_stored(
+        self, mock_get_client, organization, workspace, user
+    ):
+        raw_key = "sk-agentcc-c" + "0" * 47
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_raced",
+            name="new-key",
+            organization=organization,
+            workspace=workspace,
+            key_prefix=raw_key[:12] + "...",
+        )
+        mock_client = MagicMock()
+        mock_client.create_key.return_value = self._gateway_key("key_raced", raw_key)
+        mock_get_client.return_value = mock_client
+
+        api_key, _ = auth_bridge.provision_key(name="new-key", user=user)
+
+        assert api_key.gateway_key_id == "key_raced"
+        assert api_key.key_hash == hashlib.sha256(raw_key.encode()).hexdigest()
+        mock_client.revoke_key.assert_not_called()
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_pushes_keys_the_gateway_lost(
+        self, mock_get_client, organization, workspace
+    ):
+        lost = AgentccAPIKey.objects.create(
+            gateway_key_id="key_lost",
+            name="lost-on-restart",
+            organization=organization,
+            workspace=workspace,
+            key_hash="d" * 64,
+            key_prefix="sk-agentcc-d...",
+            allowed_models=["mock-gw"],
+        )
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_expired",
+            name="expired",
+            organization=organization,
+            workspace=workspace,
+            key_hash="e" * 64,
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_revoked",
+            name="revoked",
+            organization=organization,
+            workspace=workspace,
+            key_hash="f" * 64,
+            status=AgentccAPIKey.REVOKED,
+        )
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_no_hash",
+            name="imported-without-hash",
+            organization=organization,
+            workspace=workspace,
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {"data": []}
+        mock_client.import_keys.return_value = {"received": 1, "loaded": 1}
+        mock_get_client.return_value = mock_client
+
+        with structlog.testing.capture_logs() as logs:
+            synced = auth_bridge.sync_keys(org=organization)
+
+        assert synced == 1
+        (unrecoverable,) = [
+            log for log in logs if log["event"] == "sync_keys_unrecoverable"
+        ]
+        assert unrecoverable["count"] == 1  # key_no_hash
+        (pushed,), _ = mock_client.import_keys.call_args
+        assert [k["id"] for k in pushed] == ["key_lost"]
+        assert pushed[0]["key_hash"] == lost.key_hash
+        assert pushed[0]["key_prefix"] == "sk-agentcc-d..."
+        assert pushed[0]["models"] == ["mock-gw"]
+        assert pushed[0]["metadata"]["org_id"] == str(organization.id)
+        # What goes over the wire must be JSON, never the raw key.
+        json.dumps(pushed)
+        assert "key" not in pushed[0]
+
+    @pytest.mark.parametrize("status_code", [404, 405])
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_still_works_with_a_gateway_that_cannot_import_keys(
+        self, mock_get_client, status_code, organization, workspace
+    ):
+        # A gateway older than POST /-/keys/sync: Sync reports the keys it
+        # could not restore instead of failing.
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_lost",
+            name="lost-on-restart",
+            organization=organization,
+            workspace=workspace,
+            key_hash="d" * 64,
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {"data": []}
+        mock_client.import_keys.side_effect = GatewayClientError(
+            f"Gateway returned {status_code}: not found", status_code=status_code
+        )
+        mock_get_client.return_value = mock_client
+
+        with structlog.testing.capture_logs() as logs:
+            synced = auth_bridge.sync_keys(org=organization)
+
+        assert synced == 0
+        (warning,) = [
+            log for log in logs if log["event"] == "sync_keys_missing_from_gateway"
+        ]
+        assert warning["log_level"] == "warning"
+        assert warning["missing"] == 1
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_fails_when_the_gateway_refuses_the_import(
+        self, mock_get_client, organization, workspace
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_lost",
+            name="lost-on-restart",
+            organization=organization,
+            workspace=workspace,
+            key_hash="d" * 64,
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {"data": []}
+        mock_client.import_keys.side_effect = GatewayClientError(
+            "Gateway returned 500: boom", status_code=500
+        )
+        mock_get_client.return_value = mock_client
+
+        with pytest.raises(GatewayClientError):
+            auth_bridge.sync_keys(org=organization)
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_revokes_on_the_gateway_what_django_revoked(
+        self, mock_get_client, organization, workspace
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key_missed_revoke",
+            name="revoked-while-gateway-down",
+            organization=organization,
+            workspace=workspace,
+            key_hash="1" * 64,
+            key_prefix="sk-agentcc-1...",
+            status=AgentccAPIKey.REVOKED,
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {
+            "data": [
+                {
+                    "id": "key_missed_revoke",
+                    "key_prefix": "sk-agentcc-1...",
+                    "status": "active",
+                    "metadata": {"org_id": str(organization.id)},
+                }
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        auth_bridge.sync_keys(org=organization)
+
+        mock_client.revoke_key.assert_called_once_with("key_missed_revoke")
+        mock_client.import_keys.assert_not_called()
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_leaves_a_row_alone_when_its_id_was_reissued(
+        self, mock_get_client, organization, workspace
+    ):
+        other_org = Organization.objects.create(name="Other Organization")
+        row = AgentccAPIKey.objects.create(
+            gateway_key_id="key_2",
+            name="other-orgs-key",
+            organization=other_org,
+            workspace=None,
+            key_hash="2" * 64,
+            key_prefix="sk-agentcc-2...",
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {
+            "data": [
+                {
+                    "id": "key_2",
+                    "key_prefix": "sk-agentcc-9...",
+                    "status": "active",
+                    "metadata": {"org_id": str(organization.id)},
+                }
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        auth_bridge.sync_keys(org=organization)
+
+        row.refresh_from_db()
+        assert row.organization_id == other_org.id
+        assert row.name == "other-orgs-key"
+
+
 @pytest.mark.integration
 class TestLogIngestion:
     """Tests for log_ingestion service."""
@@ -385,6 +722,249 @@ class TestLogIngestion:
             "guardrail.triggered",
         }
         assert mock_deliver_webhook_events.call_count == 1
+
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_resent_batch_adds_no_rows_or_webhook_events(
+        self, mock_deliver_webhook_events, organization
+    ):
+        # The gateway resends a batch whose response it did not get in time.
+        # Each resend used to add the same rows, and fire the webhooks, again.
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-resend",
+            name="resend-key",
+            organization=organization,
+        )
+        webhook = AgentccWebhook.objects.create(
+            organization=organization,
+            name="resend-hook",
+            url="https://example.com/webhook",
+            events=["request.completed"],
+            is_active=True,
+        )
+        logs = [
+            {
+                "request_id": f"resend-{i}",
+                "model": "gpt-4",
+                "provider": "openai",
+                "status_code": 200,
+                "cost": 0.01,
+                "auth_key_id": "test-key-for-resend",
+            }
+            for i in range(2)
+        ]
+
+        assert ingest_request_logs(logs) == 2
+        assert ingest_request_logs(logs) == 0
+        assert (
+            ingest_request_logs(logs + [{**logs[0], "request_id": "resend-new"}]) == 1
+        )
+
+        rows = AgentccRequestLog.no_workspace_objects.filter(organization=organization)
+        assert sorted(rows.values_list("request_id", flat=True)) == [
+            "resend-0",
+            "resend-1",
+            "resend-new",
+        ]
+        assert (
+            AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook).count()
+            == 3
+        )
+        assert mock_deliver_webhook_events.call_count == 2
+
+    def test_rows_without_a_request_id_are_all_kept(self, organization):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-blank-id",
+            name="blank-id-key",
+            organization=organization,
+        )
+        entry = {
+            "model": "gpt-4",
+            "status_code": 200,
+            "auth_key_id": "test-key-for-blank-id",
+        }
+
+        assert ingest_request_logs([entry, entry]) == 2
+        assert (
+            AgentccRequestLog.no_workspace_objects.filter(
+                organization=organization, request_id=""
+            ).count()
+            == 2
+        )
+
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_budget_refusal_raises_budget_exceeded(
+        self, mock_deliver_webhook_events, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-budget-event",
+            name="budget-event-key",
+            organization=organization,
+        )
+        webhook = AgentccWebhook.objects.create(
+            organization=organization,
+            name="budget",
+            url="https://example.com/budget",
+            events=["budget.exceeded"],
+            is_active=True,
+        )
+        refused = {
+            "model": "gpt-5.5",
+            "status_code": 429,
+            "auth_key_id": "test-key-for-budget-event",
+        }
+
+        ingest_request_logs(
+            [
+                {
+                    **refused,
+                    "request_id": "budget-refused",
+                    "error_code": "org_budget_exceeded",
+                },
+                {
+                    **refused,
+                    "request_id": "rate-limited",
+                    "error_code": "rate_limit_exceeded",
+                },
+            ]
+        )
+
+        events = AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook)
+        assert [(e.event_type, e.payload["request_id"]) for e in events] == [
+            ("budget.exceeded", "budget-refused")
+        ]
+
+    @patch("agentcc.services.email_sender.send_alert_email_activity.apply_async")
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_email_alert_starts_once_per_cooldown_off_the_request(
+        self, mock_deliver_webhook_events, mock_start, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-email-alert",
+            name="email-alert-key",
+            organization=organization,
+        )
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+        )
+        entry = {"model": "gpt-5.5", "auth_key_id": "test-key-for-email-alert"}
+        failed = {**entry, "status_code": 500, "error_message": "upstream failed"}
+
+        ingest_request_logs([{**entry, "request_id": "email-ok", "status_code": 200}])
+        assert mock_start.call_count == 0
+
+        # One send for the batch, naming the first failed request, started in
+        # the background; ingestion does not wait on the mail provider.
+        ingest_request_logs(
+            [
+                {**failed, "request_id": "email-failed-1"},
+                {**failed, "request_id": "email-failed-2"},
+            ]
+        )
+        assert mock_start.call_count == 1
+        alert_id, event_type, context = mock_start.call_args.kwargs["args"]
+        assert (alert_id, event_type) == (str(alert.id), "error.occurred")
+        assert context["request_id"] == "email-failed-1"
+        assert mock_start.call_args.kwargs["dispatch_timeout_seconds"] == 5
+        alert.refresh_from_db()
+        assert alert.last_triggered_at is not None
+
+        # The cooldown started when the alert fired, whatever the send does.
+        ingest_request_logs([{**failed, "request_id": "email-failed-3"}])
+        assert mock_start.call_count == 1
+
+        AgentccEmailAlert.no_workspace_objects.filter(id=alert.id).update(
+            last_triggered_at=timezone.now() - timedelta(minutes=6)
+        )
+        ingest_request_logs([{**failed, "request_id": "email-failed-4"}])
+        assert mock_start.call_count == 2
+
+    @patch(
+        "agentcc.services.email_sender._send_via_sendgrid",
+        return_value={"success": True},
+    )
+    def test_email_alert_activity_sends_inside_the_cooldown_it_started(
+        self, mock_send, organization
+    ):
+        from agentcc.services.email_sender import send_alert_email_activity
+
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+            last_triggered_at=timezone.now(),
+        )
+
+        # The function itself: the activity wrapper closes the test's DB connection.
+        send_alert_email_activity._original_func(
+            str(alert.id), "error.occurred", {"request_id": "email-failed-1"}
+        )
+
+        assert mock_send.call_count == 1
+        _, recipients, subject, body = mock_send.call_args.args
+        assert recipients == ["ops@example.com"]
+        assert "Error Occurred" in subject
+        assert "email-failed-1" in body
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+def test_request_log_migration_keeps_one_row_per_request(organization):
+    """Runs migration 0029's own code over duplicates saved before it existed.
+
+    Transactional, because CREATE INDEX CONCURRENTLY cannot run in a
+    transaction block.
+    """
+    migration = importlib.import_module(
+        "agentcc.migrations.0029_request_log_unique_request_id"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(migration._DROP_INDEX_SQL)
+
+    now = timezone.now()
+    kept = None
+    for minutes in (3, 2, 1):
+        row = AgentccRequestLog.no_workspace_objects.create(
+            organization=organization, request_id="dup-1", model="gpt-4"
+        )
+        AgentccRequestLog.no_workspace_objects.filter(id=row.id).update(
+            created_at=now - timedelta(minutes=minutes)
+        )
+        kept = kept or row
+    for _ in range(2):
+        AgentccRequestLog.no_workspace_objects.create(
+            organization=organization, request_id="", model="gpt-4"
+        )
+    AgentccRequestLog.no_workspace_objects.create(
+        organization=organization, request_id="single", model="gpt-4"
+    )
+
+    migration._dedupe_and_build_index(connection)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE c.relname = %s",
+            [migration._INDEX],
+        )
+        assert cursor.fetchone() == (True,)
+
+    live = AgentccRequestLog.no_workspace_objects.filter(organization=organization)
+    assert list(live.filter(request_id="dup-1").values_list("id", flat=True)) == [
+        kept.id
+    ]
+    assert live.filter(request_id="").count() == 2
+    assert live.filter(request_id="single").count() == 1
+    assert (
+        AgentccRequestLog.all_objects.filter(request_id="dup-1", deleted=True).count()
+        == 2
+    )
 
 
 @pytest.mark.integration

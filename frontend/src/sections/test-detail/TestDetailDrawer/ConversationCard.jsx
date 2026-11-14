@@ -19,16 +19,16 @@ const ColorMap = (role) => {
   switch (role) {
     case "system": {
       return {
-        borderColor: "orange.100",
-        backgroundColor: "orange.o10",
-        headerColor: "orange.500",
-        textColor: "orange.600",
+        borderColor: "status.warning.border",
+        backgroundColor: "status.warning.bg",
+        headerColor: "status.warning.fg",
+        textColor: "status.warning.fg",
       };
     }
     case "user": {
       return {
-        borderColor: "blue.100",
-        backgroundColor: "blue.o10",
+        borderColor: "status.info.border",
+        backgroundColor: "status.info.bg",
       };
     }
     case "assistant": {
@@ -39,8 +39,8 @@ const ColorMap = (role) => {
     }
     default: {
       return {
-        borderColor: "orange.100",
-        backgroundColor: "orange.o10",
+        borderColor: "status.warning.border",
+        backgroundColor: "status.warning.bg",
       };
     }
   }
@@ -130,7 +130,7 @@ const ConversationCard = ({
             sx={{
               height: 16,
               width: 16,
-              color: "pink.500",
+              color: "status.discovery.fg",
             }}
           />
         </Box>
@@ -143,7 +143,7 @@ const ConversationCard = ({
           border: "1px solid",
           borderColor: ColorMap(role)?.borderColor,
           backgroundColor: ColorMap(role)?.backgroundColor,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: 1,
           flexDirection: "column",
           gap: 1,
@@ -223,7 +223,7 @@ const ConversationCard = ({
             sx={{
               height: 16,
               width: 16,
-              color: "blue.500",
+              color: "status.info.fg",
             }}
           />
         </Box>

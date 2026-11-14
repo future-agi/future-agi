@@ -1,4 +1,4 @@
-import { alpha, Box, Divider, Skeleton, useTheme } from "@mui/material";
+import { Box, Divider, Skeleton, useTheme } from "@mui/material";
 import React from "react";
 
 const LoadingModelHover = () => {
@@ -9,8 +9,6 @@ const LoadingModelHover = () => {
         padding: "16px",
         backgroundColor: "background.paper",
         borderRadius: "8px",
-        boxShadow: (theme) =>
-          `4px 4px 16px 0px ${alpha(theme.palette.common.black, 0.1)}`,
       }}
     >
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>

@@ -100,7 +100,8 @@ const Versions = (props) => {
               padding="16px 24px"
               sx={{
                 border: "1px solid",
-                borderColor: versionIndex === index ? "#B766ED" : "divider",
+                borderColor:
+                  versionIndex === index ? "primary.main" : "divider",
                 borderRadius: "8px",
                 marginBottom: "11px",
                 "&:hover": {
@@ -120,12 +121,9 @@ const Versions = (props) => {
                 }}
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <Chip
-                    color="primary"
-                    variant="soft"
-                    label={item.templateVersion}
-                    sx={{ cursor: "pointer" }}
-                  />
+                  <Typography variant="body2" color="text.tertiary">
+                    {item.templateVersion}
+                  </Typography>
                   {item.isDraft ? (
                     <Chip color="warning" variant="soft" label="Draft" />
                   ) : null}
@@ -136,7 +134,9 @@ const Versions = (props) => {
                 <Typography
                   variant="caption"
                   fontWeight="fontWeightBold"
-                  color={variables.length ? "#5ACE6D" : "text.secondary"}
+                  color={
+                    variables.length ? "status.success.fg" : "text.secondary"
+                  }
                 >
                   {variables.length
                     ? variables.reduce((acc, item) => `${acc}{{${item}}} `, "")

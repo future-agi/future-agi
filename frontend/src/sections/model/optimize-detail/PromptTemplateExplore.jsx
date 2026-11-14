@@ -8,13 +8,13 @@ import React, { useRef, useState } from "react";
 import { useParams } from "src/routes/hooks";
 import axios, { endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
-import { LinearProgress } from "@mui/material";
 
 import DatasetHeader from "../datasets/DatasetHeader";
 import CustomizeColumnsModal from "../datasets/CustomizeColumnsModal";
 import OptimizeDetailDrawer from "../optimize/OptimizeDetailDrawer";
 
 import PromptTemplateExploreTable from "./PromptTemplateExploreTable";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const PromptTemplateExplore = ({ selectedOptimization }) => {
   const { id } = useParams();
@@ -148,7 +148,7 @@ const PromptTemplateExplore = ({ selectedOptimization }) => {
         selectedRow={selectedRow}
         columns={columns}
       />
-      {isLoading ? <LinearProgress /> : null}
+      {isLoading ? <LoadingScreen compact /> : null}
       {/* {!isLoading && !datasetData?.length && <DatasetNoData />} */}
       {!isLoading && Boolean(datasetData?.length) && (
         <PromptTemplateExploreTable

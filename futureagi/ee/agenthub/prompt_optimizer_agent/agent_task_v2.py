@@ -11,17 +11,21 @@ from tqdm import tqdm
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.model_config import ModelConfigs
 import structlog
+from model_hub.utils.optimization_scope import optimization_metrics
 
 logger = structlog.get_logger(__name__)
 
 PROMPT_OPTIMIZER_THREAD_WORKER_COUNT = 2
 
-from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.views.eval_runner import EvaluationRunner
+
 try:
-    from ee.usage.utils.usage_entries import APICallStatusChoices, APICallTypeChoices, log_api_call
+    from ee.usage.utils.usage_entries import (
+        APICallStatusChoices,
+        APICallTypeChoices,
+        log_api_call,
+    )
 except ImportError:
     APICallStatusChoices = None
     APICallTypeChoices = None
@@ -203,9 +207,8 @@ class PromptOptimizer:
         self.train_data = train_data
         self.variables = variables
         self.optimizer = optimizer
-        self.user_eval_metrics = UserEvalMetric.objects.filter(
-            id__in=optimizer.user_eval_template_ids.all()
-        ).select_related("template")
+        self.dataset = optimizer.dataset
+        self.user_eval_metrics = optimization_metrics(optimizer)
         self.client = LLM(
             model_name=model_name,
             temperature=temperature,
@@ -250,11 +253,14 @@ class PromptOptimizer:
                     source="optimization",
                     source_id=eval_metric.id,
                     source_configs=user_eval_metric_config["mapping"],
+                    organization_id=self.dataset.organization_id,
+                    workspace_id=self.dataset.workspace_id,
                 )
                 runner.eval_template = eval_template
                 # Get the evaluation class and run evaluation
                 eval_class_name = eval_config.get("eval_type_id")
                 from evaluations.engine.registry import get_eval_class, is_registered
+
                 if not is_registered(eval_class_name):
                     continue
                 eval_class = get_eval_class(eval_class_name)
@@ -274,9 +280,13 @@ class PromptOptimizer:
                 )
 
                 cols = Column.objects.filter(
-                    id__in=user_eval_metric_config["mapping"].values()
+                    id__in=user_eval_metric_config["mapping"].values(),
+                    dataset=self.dataset,
+                    dataset__organization_id=self.dataset.organization_id,
+                    dataset__workspace_id=self.dataset.workspace_id,
+                    dataset__deleted=False,
                 ).values("id", "data_type")
-                col_map = {col["id"]: col["data_type"] for col in cols}
+                col_map = {str(col["id"]): col["data_type"] for col in cols}
                 input_types = {
                     key: col_map.get(str(value))
                     if col_map.get(str(value)) in ["image", "audio"]
@@ -285,12 +295,12 @@ class PromptOptimizer:
                 }
                 config = {"mappings": run_params, "input_data_types": input_types}
                 api_call_log_row = log_api_call(
-                    organization=eval_metric.organization,
+                    organization=self.dataset.organization,
                     api_call_type=APICallTypeChoices.OPTIMISATION_EVALUATION.value,
                     source="optimization",
                     source_id=eval_metric.template.id,
                     config=config,
-                    workspace=eval_metric.workspace,
+                    workspace=self.dataset.workspace,
                 )
 
                 if not api_call_log_row:

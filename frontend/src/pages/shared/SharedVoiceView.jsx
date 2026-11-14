@@ -76,10 +76,14 @@ function extractVoiceData(resourceData) {
 /**
  * Read-only voice call view rendered by SharedView. Reuses the same
  * TranscriptView / VoiceAudioBridge / CallDetailsBar components as the
- * authenticated voice drawer so shared links feel consistent.
+ * authenticated voice drawer so shared links feel consistent. `voiceData`
+ * skips trace extraction for callers that already hold drawer-shaped data.
  */
-const SharedVoiceView = ({ resourceData }) => {
-  const data = useMemo(() => extractVoiceData(resourceData), [resourceData]);
+const SharedVoiceView = ({ resourceData, voiceData }) => {
+  const data = useMemo(
+    () => voiceData || extractVoiceData(resourceData),
+    [voiceData, resourceData],
+  );
 
   if (!data) {
     return (
@@ -143,8 +147,8 @@ const SharedVoiceView = ({ resourceData }) => {
                 fontSize: 11,
                 fontWeight: 600,
                 color: "text.secondary",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
+                textTransform: "none",
+                letterSpacing: 0,
                 mb: 0.75,
               }}
             >
@@ -153,7 +157,10 @@ const SharedVoiceView = ({ resourceData }) => {
             <VoiceAudioBridge data={data} />
           </Box>
         ) : (
-          <Alert severity="info" icon={<Iconify icon="mdi:volume-off" />}>
+          <Alert
+            severity="info"
+            icon={<Iconify icon="solar:volume-cross-linear" />}
+          >
             Audio recording is not available in this shared view.
           </Alert>
         )}
@@ -181,6 +188,7 @@ const SharedVoiceView = ({ resourceData }) => {
 
 SharedVoiceView.propTypes = {
   resourceData: PropTypes.object,
+  voiceData: PropTypes.object,
 };
 
 export default SharedVoiceView;

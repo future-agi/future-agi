@@ -122,7 +122,7 @@ describe("BulkActionsBar", () => {
           {
             id: "annotation-queue",
             label: "Add to annotation queue",
-            icon: "mdi:clipboard-list-outline",
+            icon: "solar:clipboard-list-linear",
             disabled: true,
             disabledReason: "Selected calls are still in progress.",
           },

@@ -1,4 +1,6 @@
 import { groupFlattenedMessageAttrs } from "./flattenedMessageAttrs";
+import { normalizeMessageRole } from "src/utils/message-role";
+import { serializeMessageValue } from "src/utils/message-text";
 
 /**
  * Get span attributes with backward compatibility.
@@ -113,7 +115,9 @@ function extractMessages(evalAttributes = {}, type = "input") {
 
       entries.forEach(({ property, value }) => {
         if (property === "message.role" || property === "role") {
-          tempMessages[index].role = value;
+          // Normalize before the truthiness filter so 0/false/null roles do not
+          // silently discard otherwise valid message content.
+          tempMessages[index].role = normalizeMessageRole(value);
         }
 
         if (
@@ -123,7 +127,7 @@ function extractMessages(evalAttributes = {}, type = "input") {
           let content = value;
 
           if (typeof content === "object" && content !== null) {
-            content = JSON.stringify(content, null, 2);
+            content = serializeMessageValue(content, 2);
           }
 
           // property already excludes the message index (no `.splice(1)` needed).

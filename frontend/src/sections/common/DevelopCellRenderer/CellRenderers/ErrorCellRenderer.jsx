@@ -96,7 +96,7 @@ const ErrorCellRenderer = ({
           }}
         >
           <Iconify
-            icon="mdi:lock-outline"
+            icon="solar:lock-linear"
             width={16}
             sx={{ flexShrink: 0, color: "text.primary" }}
           />
@@ -106,9 +106,7 @@ const ErrorCellRenderer = ({
             variant="text"
             onClick={handleUpgrade}
             sx={{
-              textTransform: "none",
               minWidth: 0,
-              padding: 0,
               color: "primary.main",
               textDecoration: "underline",
               whiteSpace: "nowrap",
@@ -132,7 +130,7 @@ const ErrorCellRenderer = ({
           width: "100%",
           height: "100%",
           border: "1px solid",
-          borderColor: "red.100",
+          borderColor: "status.danger.border",
           boxSizing: "border-box",
         }}
       >
@@ -174,10 +172,8 @@ const ErrorCellRenderer = ({
             <IconButton
               sx={{
                 width: "36px",
-                height: "28px",
                 border: "1px solid",
                 color: "primary.main",
-                borderRadius: 1,
               }}
               onClick={(e) => {
                 window["__reRunClick"] = true;

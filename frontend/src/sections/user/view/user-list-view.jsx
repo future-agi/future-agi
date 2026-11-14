@@ -182,7 +182,7 @@ export default function UserListView() {
 
           <Button
             variant="contained"
-            startIcon={<Iconify icon="mingcute:add-line" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             sx={{ mb: 2.5 }}
             color="secondary"
           >

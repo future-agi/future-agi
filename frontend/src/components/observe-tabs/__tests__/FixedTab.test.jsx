@@ -7,7 +7,7 @@ describe("FixedTab", () => {
   const defaultProps = {
     tabKey: "traces",
     label: "Trace",
-    icon: "mdi:link-variant",
+    icon: "solar:link-linear",
     shortcut: "1",
     isActive: false,
     onClick: vi.fn(),
@@ -42,6 +42,21 @@ describe("FixedTab", () => {
     render(<FixedTab {...defaultProps} shortcut="3" />);
     await userEvent.hover(screen.getByRole("button"));
     expect(await screen.findByText("Press 3")).toBeInTheDocument();
+  });
+
+  it("keeps Query named without offering an undefined shortcut", async () => {
+    render(
+      <FixedTab
+        {...defaultProps}
+        tabKey="query"
+        label="Query"
+        shortcut={undefined}
+      />,
+    );
+    await userEvent.hover(
+      screen.getByRole("button", { name: "Query", exact: true }),
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("does not hint the shortcut on the active tab (pressing it is a no-op)", async () => {

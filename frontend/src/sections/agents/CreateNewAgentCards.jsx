@@ -16,9 +16,9 @@ const CreateNewAgentCards = ({ title, subtitle, children }) => {
       disableGutters
       sx={{
         border: "1px solid",
-        borderColor: "background.neutral",
+        borderColor: "divider",
         backgroundColor: "background.neutral",
-        borderRadius: "4px !important",
+        borderRadius: "8px !important",
         overflow: "hidden",
         "&:before": { display: "none" },
         "&.Mui-expanded": {
@@ -29,9 +29,9 @@ const CreateNewAgentCards = ({ title, subtitle, children }) => {
       <AccordionSummary
         expandIcon={
           <Iconify
-            icon="line-md:chevron-up"
-            width={22}
-            height={22}
+            icon="solar:alt-arrow-up-linear"
+            width={20}
+            height={20}
             color="text.primary"
           />
         }

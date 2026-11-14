@@ -99,6 +99,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
       navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}?tab=data`);
       onCloseClick();
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create dataset", {
@@ -159,7 +160,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
     >
       <Box sx={{ position: "absolute", top: 10, right: 10 }}>
         <IconButton onClick={onCloseClick}>
-          <Iconify icon="mdi:close" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -185,10 +186,10 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
             height={51}
             sx={{ width: "51px", height: "51px", marginBottom: 1.5 }}
           />
-          <Typography fontWeight={700} fontSize="20px">
+          <Typography fontWeight={600} fontSize="20px">
             Experiment with Hugging Face 🤗
           </Typography>
-          <Typography fontSize="14px">
+          <Typography fontSize="12px">
             Grab a HuggingFace dataset, and start experimenting in Future AGI
           </Typography>
         </Box>
@@ -215,6 +216,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
             size="small"
             loading={isLoadingDataset}
             sx={{
+              // eslint-disable-next-line no-restricted-syntax -- ds: layout (fill row)
               height: "100%",
               backgroundColor: "action.hover",
               color: "text.primary",
@@ -228,10 +230,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
           </LoadingButton>
         </form>
         {isError && (
-          <Alert
-            sx={{ paddingY: 0, width: "70%", marginTop: 2 }}
-            severity="error"
-          >
+          <Alert sx={{ width: "70%", marginTop: 2 }} severity="error">
             {getRequestErrorMessage(loadDatasetError, "No dataset found", {
               retryAction: "loading this Hugging Face dataset",
             })}
@@ -246,8 +245,8 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
           >
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
               <Typography
-                fontWeight={700}
-                fontSize="14px"
+                fontWeight={600}
+                fontSize="12px"
                 color="text.secondary"
               >
                 Dataset Details

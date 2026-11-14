@@ -49,7 +49,7 @@ const OptimizeColumn = ({ control, allColumns, isEvaluationOpen }) => {
           sx={{
             padding: "10px",
             backgroundColor: theme.palette.background.paper,
-            borderRadius: "10px",
+            borderRadius: "8px",
             border: `2px solid ${theme.palette.divider}`,
             display: "flex",
             alignItems: "center",

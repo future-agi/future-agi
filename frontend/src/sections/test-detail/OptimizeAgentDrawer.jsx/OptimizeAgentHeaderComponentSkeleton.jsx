@@ -29,7 +29,7 @@ const OptimizeAgentHeaderComponentSkeleton = () => {
             variant="rectangular"
             width={100}
             height={32}
-            sx={{ borderRadius: 0.5 }}
+            sx={{ borderRadius: "4px" }}
           />
 
           {/* CallStatus Skeleton */}

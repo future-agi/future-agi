@@ -1,0 +1,193 @@
+{{- /*
+Gateway API routes (gatewayApi.enabled), attached to a Gateway you run
+(parentRefs): the UI, the API with OTLP/HTTP on exact paths to fi-collector,
+optionally OTLP/gRPC (GRPCRoute) and the LLM gateway; on GKE, optionally a
+HealthCheckPolicy per routed Service (gatewayApi.gke.healthChecks).
+*/ -}}
+{{- if .Values.gatewayApi.enabled }}
+{{- $g := .Values.gatewayApi -}}
+{{- $appHost := include "futureagi.gatewayApi.host" (dict "root" . "route" "app") -}}
+{{- $apiHost := include "futureagi.gatewayApi.host" (dict "root" . "route" "api") -}}
+{{- $otlpHost := include "futureagi.gatewayApi.host" (dict "root" . "route" "otlp") -}}
+{{- $collector := include "futureagi.component" (dict "root" . "component" "fi-collector") -}}
+{{- $backend := dict "name" (include "futureagi.component" (dict "root" . "component" "backend")) "port" (int .Values.backend.service.port) -}}
+{{- $otlpHttp := dict "name" $collector "port" (int .Values.fiCollector.service.httpPort) -}}
+{{- /* fi-collector's OTLP/HTTP routes; the API does not serve them. */ -}}
+{{- $otlpMatches := list (dict "path" (dict "type" "Exact" "value" "/v1/traces")) (dict "path" (dict "type" "Exact" "value" "/tracer/v1/traces")) -}}
+{{- $parentRefs := toYaml $g.parentRefs | nindent 4 -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "app") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $g.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- $parentRefs }}
+  hostnames: [{{ $appHost | quote }}]
+  rules:
+    # The UI.
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: {{ include "futureagi.component" (dict "root" . "component" "frontend") }}
+          port: {{ .Values.frontend.service.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "api") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $g.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- $parentRefs }}
+  hostnames: [{{ $apiHost | quote }}]
+  rules:
+    {{- if and $g.otlp.enabled (eq $otlpHost $apiHost) }}
+    # OTLP/HTTP, on exact paths, to fi-collector.
+    - matches: {{- toYaml $otlpMatches | nindent 8 }}
+      backendRefs:
+        - {{ toJson $otlpHttp }}
+    {{- end }}
+    # WebSockets (/ws/...): long-lived, so a timeout of their own.
+    - matches:
+        - path: {type: PathPrefix, value: /ws/}
+      backendRefs:
+        - {{ toJson $backend }}
+      {{- with $g.timeouts.websocket }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
+    # The REST API, /docs and everything else.
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - {{ toJson $backend }}
+      {{- with $g.timeouts.request }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
+{{- if and $g.otlp.enabled (ne $otlpHost $apiHost) }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "otlp") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $g.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- $parentRefs }}
+  hostnames: [{{ $otlpHost | quote }}]
+  rules:
+    # OTLP/HTTP, on exact paths, to fi-collector.
+    - matches: {{- toYaml $otlpMatches | nindent 8 }}
+      backendRefs:
+        - {{ toJson $otlpHttp }}
+{{- end }}
+{{- if $g.otlpGrpc.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "otlp-grpc") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $g.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- $parentRefs }}
+  hostnames: [{{ $g.otlpGrpc.host | quote }}]
+  rules:
+    # OTLP/gRPC trace export to fi-collector.
+    - matches:
+        - method:
+            type: Exact
+            service: opentelemetry.proto.collector.trace.v1.TraceService
+      backendRefs:
+        - name: {{ $collector }}
+          port: {{ .Values.fiCollector.service.grpcPort }}
+{{- end }}
+{{- if $g.llmGateway.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "llm-gateway") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $g.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- $parentRefs }}
+  hostnames: [{{ $g.llmGateway.host | quote }}]
+  rules:
+    # The LLM gateway (agentcc-gateway): virtual keys authenticate every call.
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: {{ include "futureagi.component" (dict "root" . "component" "agentcc-gateway") }}
+          port: {{ .Values.agentccGateway.service.port }}
+      {{- with $g.llmGateway.timeout }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
+{{- end }}
+{{- if $g.gke.healthChecks.enabled }}
+{{- /* GKE's load balancer health-checks every endpoint itself, ignoring the
+readiness probes: by default GET / on the serving port with the endpoint's IP
+as the Host. The API answers / with a redirect and fi-collector's OTLP/HTTP
+port has no /, so each Service a route uses gets its component's health
+endpoint. GKE applies a policy only to a Service a route references. */ -}}
+{{- $checks := list
+      (dict "component" "frontend" "check" (dict "requestPath" "/"))
+      (dict "component" "backend" "check" (dict "requestPath" "/health/" "host" "localhost")) -}}
+{{- if or $g.otlp.enabled $g.otlpGrpc.enabled -}}
+{{- /* The admin port serves /healthz; it is the one the readiness probe uses. */ -}}
+{{- $checks = append $checks (dict "component" "fi-collector" "check" (dict "portSpecification" "USE_FIXED_PORT" "port" 9464 "requestPath" "/healthz")) -}}
+{{- end -}}
+{{- if $g.llmGateway.enabled -}}
+{{- $checks = append $checks (dict "component" "agentcc-gateway" "check" (dict "requestPath" "/readyz")) -}}
+{{- end -}}
+{{- range $checks }}
+{{- $check := merge .check (dict "portSpecification" "USE_SERVING_PORT") }}
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" $ "component" .component) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" $ "component" "gateway-api") | nindent 4 }}
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        {{- toYaml $check | nindent 8 }}
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ include "futureagi.component" (dict "root" $ "component" .component) }}
+{{- end }}
+{{- end }}
+{{- end }}

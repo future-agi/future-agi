@@ -15,17 +15,16 @@ export default function DownloadButton({ onDownload }) {
 
   return (
     <IconButton
+      size="small"
       onClick={onDownload}
       sx={{
         p: 0,
         top: 0,
         right: 0,
         width: 1,
-        height: 1,
         zIndex: 9,
         opacity: 0,
         position: "absolute",
-        borderRadius: "unset",
         justifyContent: "center",
         bgcolor: "text.primary",
         color: "common.white",
@@ -40,7 +39,7 @@ export default function DownloadButton({ onDownload }) {
         },
       }}
     >
-      <Iconify icon="eva:arrow-circle-down-fill" width={24} />
+      <Iconify icon="solar:round-arrow-down-linear" width={24} />
     </IconButton>
   );
 }

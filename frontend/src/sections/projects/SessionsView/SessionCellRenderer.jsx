@@ -8,6 +8,8 @@ import CustomJsonViewer, {
 } from "src/components/custom-json-viewer/CustomJsonViewer";
 import { isJson } from "src/components/traceDetailDrawer/DrawerRightRenderer/getSpanData";
 import CustomTooltip from "src/components/tooltip";
+import { formatCost } from "../LLMTracing/formatters";
+import ObservedUsageValue from "../LLMTracing/Renderers/ObservedUsageValue";
 
 const SHOW_TOOLTIPS = ["first_message", "last_message"];
 
@@ -35,6 +37,23 @@ const SessionCellRenderer = (params) => {
   const colId = column?.colId;
 
   const renderValue = (fromCell) => {
+    if (
+      data?.capture_coverage?.coverage_unknown &&
+      (colId === "total_cost" || colId === "total_tokens")
+    ) {
+      return (
+        <ObservedUsageValue
+          coverage={data.capture_coverage}
+          value={
+            colId === "total_cost"
+              ? Number.isFinite(value)
+                ? formatCost(value)
+                : "Unknown"
+              : `${Number(value ?? 0).toLocaleString()} tokens`
+          }
+        />
+      );
+    }
     // session_id column — prefer user-defined name (TraceSession.name) over UUID
     if (colId === "session_id") {
       const displayValue = data?.session_name || value;
@@ -68,7 +87,7 @@ const SessionCellRenderer = (params) => {
       return (
         <Box display="flex" alignItems="center" justifyContent={"flex-end"}>
           <Iconify
-            icon="radix-icons:clock"
+            icon="solar:clock-circle-linear"
             width={14}
             marginRight="7px"
             sx={{ flexShrink: 0 }}
@@ -86,23 +105,11 @@ const SessionCellRenderer = (params) => {
       );
     }
 
-    // total_cost column
+    // Format display only; the grid keeps the numeric value for sort/filter.
     if (colId === "total_cost") {
       return (
-        <Box
-          display="flex"
-          alignItems="center"
-          justifyContent={"flex-end"}
-          gap={1}
-        >
-          <Iconify
-            icon="mage:dollar"
-            color="text.primary"
-            height={16}
-            width={16}
-            sx={{ flexShrink: 0 }}
-          />
-          {value}
+        <Box display="flex" alignItems="center" justifyContent="flex-end">
+          {formatCost(value)}
         </Box>
       );
     }

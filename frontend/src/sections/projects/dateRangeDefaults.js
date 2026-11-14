@@ -1,23 +1,20 @@
-import { endOfToday, startOfToday, startOfTomorrow, sub } from "date-fns";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "./timeWindowPresets";
 
 export const DEFAULT_OBSERVE_LIST_DATE_OPTION = "7D";
 
+// The default window is the same helper a picked preset uses, so the default
+// "Past 7D" and a picked "Past 7D" send one identical window (hour-floored
+// start, next-midnight end) and share the exact chart snapshot.
 export const getDefaultDateRange = (dateOption) => {
   if (dateOption === "Today") {
     return {
-      dateFilter: [formatDate(startOfToday()), formatDate(startOfTomorrow())],
+      dateFilter: observePresetDateFilter("Today"),
       dateOption,
     };
   }
 
-  const start =
-    dateOption === "6M"
-      ? sub(new Date(), { months: 6 })
-      : sub(new Date(), { days: 7 });
-
   return {
-    dateFilter: [formatDate(start), formatDate(endOfToday())],
+    dateFilter: observePresetDateFilter(dateOption === "6M" ? "6M" : "7D"),
     dateOption,
   };
 };

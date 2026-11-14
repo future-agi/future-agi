@@ -687,14 +687,15 @@ func TestIntegration_Timeout(t *testing.T) {
 		t.Fatal("expected timeout error")
 	}
 
-	// Should be an upstream error since the HTTP client timeout fires
-	// before the context deadline, and ctx.Err() is still nil at that point.
+	// The HTTP client timeout fires before the context deadline, so ctx.Err()
+	// is still nil at that point. It is a timeout all the same, and an upstream
+	// error here would be a 502 that an SDK retries.
 	apiErr, ok := err.(*models.APIError)
 	if !ok {
 		t.Fatalf("expected *models.APIError, got %T: %v", err, err)
 	}
-	if apiErr.Status != http.StatusBadGateway {
-		t.Errorf("Status: got %d, want %d", apiErr.Status, http.StatusBadGateway)
+	if apiErr.Status != http.StatusGatewayTimeout {
+		t.Errorf("Status: got %d, want %d", apiErr.Status, http.StatusGatewayTimeout)
 	}
 }
 

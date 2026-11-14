@@ -1,4 +1,4 @@
-import { Box, Button, Collapse, LinearProgress } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "src/routes/hooks";
 import { useMutation } from "@tanstack/react-query";
@@ -6,7 +6,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useGetProjectDetails } from "src/api/project/project-detail";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import { useComplexFilterBinding } from "src/components/filter";
 import { getRandomId } from "src/utils/utils";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
@@ -22,6 +22,7 @@ import RightSection from "./RightSection";
 import ColumnConfigureDropDown from "./ColumnDropdown/ColumnConfigureDropDown";
 import RunsList from "./RunsList";
 import ProjectBreadCrumbs from "./ProjectBreadCrumbs";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const defaultFilter = {
   column_id: "",
@@ -153,6 +154,13 @@ const ProjectDetailView = () => {
     [columns],
   );
 
+  const filterBinding = useComplexFilterBinding({
+    filters,
+    setFilters,
+    filterDefinition,
+    defaultFilter,
+  });
+
   const reversePrimaryEvalColumnIds = useMemo(() => {
     return columns.filter((c) => c?.reverseOutput).map((c) => c.id);
   }, [columns]);
@@ -176,7 +184,7 @@ const ProjectDetailView = () => {
   };
 
   if (isProjectDetailLoading) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (
@@ -212,7 +220,7 @@ const ProjectDetailView = () => {
             size="small"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "14px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "119px",
             //   height: "38px",
@@ -229,7 +237,7 @@ const ProjectDetailView = () => {
             variant="outlined"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "14px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "138px",
             //   height: "38px",
@@ -246,7 +254,7 @@ const ProjectDetailView = () => {
             size="small"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "14px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "114px",
             //   height: "38px",
@@ -289,19 +297,11 @@ const ProjectDetailView = () => {
             setOpenFilter={setOpenFilter}
             filterOpen={openFilter}
             totalFilters={validatedFilters.length}
+            filterFields={filterBinding.fields}
+            filterValue={filterBinding.value}
+            onFilterChange={filterBinding.onChange}
           />
         </Box>
-        <Collapse in={openFilter}>
-          <Box sx={{ paddingTop: "13px" }}>
-            <ComplexFilter
-              filters={filters}
-              defaultFilter={defaultFilter}
-              setFilters={setFilters}
-              filterDefinition={filterDefinition}
-              onClose={() => setOpenFilter(false)}
-            />
-          </Box>
-        </Collapse>
       </Box>
 
       <RunsList

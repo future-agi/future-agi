@@ -36,11 +36,9 @@ export const GeneratedScenarios = React.memo(({ scenarioDetail: scenario }) => {
           size="small"
           sx={{
             color: "text.primary",
-            height: 24,
             width: 24,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
             mr: 1,
           }}
           onClick={() => setExpandView(!expandView)}

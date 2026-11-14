@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Typography } from "@mui/material";
+import { Alert, Button } from "@mui/material";
 import {
   LIST_CURSOR_CONTINUATION_NOTICE,
   createListCursorPagination,
@@ -185,27 +185,22 @@ export function ExactSelectorContinuationNotice({ pending, onContinue }) {
   if (!pending) return null;
 
   return (
-    <Box
+    <Alert
+      severity="info"
       role="status"
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 1,
-        px: 1.5,
-        py: 0.75,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        bgcolor: "action.hover",
-      }}
+      action={
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={onContinue}
+        >
+          Continue search
+        </Button>
+      }
     >
-      <Typography variant="caption" color="text.secondary">
-        {LIST_CURSOR_CONTINUATION_NOTICE}
-      </Typography>
-      <Button size="small" variant="outlined" onClick={onContinue}>
-        Continue search
-      </Button>
-    </Box>
+      {LIST_CURSOR_CONTINUATION_NOTICE}
+    </Alert>
   );
 }
 

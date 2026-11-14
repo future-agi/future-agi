@@ -1,5 +1,7 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import React, { useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { Box, IconButton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { Icon } from "@iconify/react";
@@ -56,6 +58,7 @@ const InvoiceHistoryTable = ({ userData }) => {
       {
         headerName: "Amount",
         field: "amount",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         flex: 1,
         sortable: false,
         valueFormatter: (params) => {
@@ -82,12 +85,13 @@ const InvoiceHistoryTable = ({ userData }) => {
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 1,
-              paddingX: theme.spacing(1.5),
-              paddingY: theme.spacing(0.5),
             }}
           >
-            <Icon icon="prime:download" width={16} height={16} />
+            <Icon
+              icon="solar:download-minimalistic-linear"
+              width={16}
+              height={16}
+            />
           </IconButton>
         ),
       },
@@ -115,7 +119,7 @@ const InvoiceHistoryTable = ({ userData }) => {
           suppressContextMenu={true}
           serverSideInitialRowCount={5}
           animateRows={true}
-          rowHeight={50}
+          rowHeight={ROW_HEIGHT.default}
           headerHeight={50}
         />
       </Box>

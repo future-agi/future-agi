@@ -25,6 +25,8 @@ type AdaptiveStrategy struct {
 	healthMon       *HealthMonitor
 	updateInterval  time.Duration
 	stopCh          chan struct{}
+	doneCh          chan struct{}
+	stopOnce        sync.Once
 	phase           atomic.Int32 // 0=learning, 1=active
 }
 
@@ -66,6 +68,7 @@ func NewAdaptiveStrategy(cfg config.AdaptiveConfig, tracker *LatencyTracker, hea
 		healthMon:       healthMon,
 		updateInterval:  updateInterval,
 		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
 	}
 
 	go a.updateLoop()
@@ -144,12 +147,34 @@ func (a *AdaptiveStrategy) GetPhase() string {
 	return "active"
 }
 
-// Stop shuts down the background update loop.
+// inheritFrom carries learned weights for providers that still exist, and the
+// learning progress, over from the strategy a routing reload replaces.
+func (a *AdaptiveStrategy) inheritFrom(old *AdaptiveStrategy, providerIDs map[string]bool) {
+	if a == nil || old == nil {
+		return
+	}
+	weights := old.GetWeights()
+	a.mu.Lock()
+	for pid, w := range weights {
+		if providerIDs[pid] {
+			a.weights[pid] = w
+		}
+	}
+	a.mu.Unlock()
+	a.requestCount.Add(old.requestCount.Load())
+	if old.phase.Load() == 1 {
+		a.phase.Store(1)
+	}
+}
+
+// Stop waits for the background update loop to exit. Concurrent calls are safe.
 func (a *AdaptiveStrategy) Stop() {
-	close(a.stopCh)
+	a.stopOnce.Do(func() { close(a.stopCh) })
+	<-a.doneCh
 }
 
 func (a *AdaptiveStrategy) updateLoop() {
+	defer close(a.doneCh)
 	ticker := time.NewTicker(a.updateInterval)
 	defer ticker.Stop()
 	for {
@@ -175,10 +200,12 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 		return
 	}
 
+	// Latency here is successful calls only: failed calls feed the
+	// least-latency tracker, but failing fast must not count as speed.
 	// Find max latency for normalization.
 	var maxLatency float64
 	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
+		lat := h.SuccessLatencyEWMAMs
 		if lat > maxLatency {
 			maxLatency = lat
 		}
@@ -191,17 +218,19 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 	rawScores := make(map[string]float64, len(allHealth))
 	var totalRaw float64
 	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
+		lat := h.SuccessLatencyEWMAMs
 		normalizedLatency := 1.0 - (lat / maxLatency)
 		// Clamp to [0, 1].
 		normalizedLatency = math.Max(0, math.Min(1, normalizedLatency))
 
-		successRate := h.SuccessRate
+		successRate := h.RecentSuccessRate
 		if h.RequestCount == 0 {
 			successRate = 1.0 // No data = assume good.
 		}
 
-		raw := a.signalLatency*normalizedLatency + a.signalError*successRate
+		// Speed only counts for calls that succeed: a target that fails every
+		// call scores zero however fast it fails, and stays at min_weight.
+		raw := successRate * (a.signalLatency*normalizedLatency + a.signalError)
 		rawScores[h.ProviderID] = raw
 		totalRaw += raw
 	}

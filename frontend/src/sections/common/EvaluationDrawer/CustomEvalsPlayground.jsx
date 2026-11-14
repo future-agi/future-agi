@@ -210,12 +210,9 @@ const CustomEvalsPlayground = ({ open, onClose, formData }) => {
                   Test your evaluations on our playground
                 </Typography>
               </Box>
-              <IconButton
-                onClick={onClose}
-                sx={{ height: "30px", borderRadius: 0.5 }}
-              >
+              <IconButton onClick={onClose}>
                 <Iconify
-                  icon="line-md:close"
+                  icon="solar:close-linear"
                   sx={{
                     width: (theme) => theme.spacing(2),
                     height: (theme) => theme.spacing(2),

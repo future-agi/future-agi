@@ -1,0 +1,143 @@
+{
+  "_comment": "Grafana alert rules backing up the in-app 'continuous eval task FAILED' Slack alert (tracer/services/eval_tasks/failure_alert.py). Apply each rule with POST /api/v1/provisioning/alert-rules (folderUID filled in at apply time). Rows are one alert per task (per reason for the stalled rule); string columns become labels. Routed by alert_group=eval-tasks to #critical with a 6h repeat (see notification_policy_route).",
+  "rules": [
+    {
+      "uid": "eval-task-stalled",
+      "title": "Continuous eval task stalled",
+      "ruleGroup": "eval-tasks",
+      "folderUID": "__FOLDER_UID__",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "5m",
+      "labels": {
+        "alert_group": "eval-tasks",
+        "severity": "critical",
+        "kind": "stalled"
+      },
+      "annotations": {
+        "summary": "Continuous eval task stalled — {{ $labels.org }}: {{ $labels.task }}",
+        "description": "{{ $labels.reason }} for {{ $values.B.Value }} min. The task still shows as running so the in-app FAILED alert never fires. 'reconcile stopped' = its workflow has not completed a reconcile pass (continuous_cursor not advanced; healthy is ~5 min) — check Temporal workflow eval-task-{{ $labels.task_id }}. 'backlog not draining' = entries pending/running for over 60 min with nothing finishing. Org {{ $labels.org_id }}, project {{ $labels.project }}.",
+        "task_url": "https://app.futureagi.com/dashboard/tasks/{{ $labels.task_id }}"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "bfqnhijyy7htsa",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "model": {
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "editorMode": "code",
+            "rawSql": "SELECT t.id::text AS task_id, coalesce(t.name, '(unnamed)') AS task, p.name AS project, coalesce(nullif(o.name, ''), '(no name)') AS org, o.id::text AS org_id, s.reason, s.minutes::float AS minutes FROM tracer_eval_task t JOIN tracer_project p ON p.id = t.project_id JOIN accounts_organization o ON o.id = p.organization_id CROSS JOIN LATERAL (SELECT 'reconcile stopped' AS reason, round(extract(epoch FROM now() - coalesce(t.continuous_cursor, t.start_time, t.created_at)) / 60) AS minutes WHERE coalesce(t.continuous_cursor, t.start_time, t.created_at) < now() - interval '60 minutes' UNION ALL SELECT 'backlog not draining', round(extract(epoch FROM now() - min(e.created_at)) / 60) FROM tracer_eval_logger e WHERE e.eval_task_id = t.id::text AND e.deleted = false AND e.status IN ('pending', 'running') HAVING min(e.created_at) < now() - interval '60 minutes' AND NOT EXISTS (SELECT 1 FROM tracer_eval_logger c WHERE c.eval_task_id = t.id::text AND c.deleted = false AND c.status IN ('completed', 'errored', 'skipped') AND c.updated_at > now() - interval '60 minutes')) s WHERE t.run_type = 'continuous' AND t.status IN ('pending', 'running') AND t.deleted = false"
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last"
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [0]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "uid": "eval-task-still-failed",
+      "title": "Continuous eval task still failed",
+      "ruleGroup": "eval-tasks",
+      "folderUID": "__FOLDER_UID__",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "labels": {
+        "alert_group": "eval-tasks",
+        "severity": "critical",
+        "kind": "still_failed"
+      },
+      "annotations": {
+        "summary": "Continuous eval task still FAILED after {{ $values.B.Value }}h — {{ $labels.org }}: {{ $labels.task }}",
+        "description": "Failed over 6h ago and not resumed; evals for this task are still stopped. Reminds every 6h for 7 days after the failure. Org {{ $labels.org_id }}, project {{ $labels.project }}. Reason: Sentry temporal.workflow_id:eval-task-{{ $labels.task_id }}.",
+        "task_url": "https://app.futureagi.com/dashboard/tasks/{{ $labels.task_id }}"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "bfqnhijyy7htsa",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "model": {
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "editorMode": "code",
+            "rawSql": "SELECT t.id::text AS task_id, coalesce(t.name, '(unnamed)') AS task, p.name AS project, coalesce(nullif(o.name, ''), '(no name)') AS org, o.id::text AS org_id, round(extract(epoch FROM now() - t.end_time) / 3600)::float AS hours_failed FROM tracer_eval_task t JOIN tracer_project p ON p.id = t.project_id JOIN accounts_organization o ON o.id = p.organization_id WHERE t.run_type = 'continuous' AND t.status = 'failed' AND t.deleted = false AND t.end_time < now() - interval '6 hours' AND t.end_time > now() - interval '7 days'"
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last"
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [0]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "rule_group_interval_seconds": 300,
+  "notification_policy_route": {
+    "_comment": "Child route added under the root of GET/PUT /api/v1/provisioning/policies. receiver is the existing #critical contact point's name, filled in at apply time.",
+    "receiver": "__CRITICAL_CONTACT_POINT__",
+    "object_matchers": [["alert_group", "=", "eval-tasks"]],
+    "group_by": ["alertname", "task_id"],
+    "group_wait": "30s",
+    "group_interval": "5m",
+    "repeat_interval": "6h"
+  }
+}

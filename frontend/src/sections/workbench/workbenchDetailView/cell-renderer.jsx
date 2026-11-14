@@ -38,8 +38,6 @@ export const CustomCellRender = ({ value, data, column }) => {
                   sx={{
                     width: theme.spacing(3),
                     height: theme.spacing(3),
-                    bgcolor: "background.neutral",
-                    color: "pink.500",
                   }}
                 />
                 <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -69,12 +67,9 @@ export const CustomCellRender = ({ value, data, column }) => {
           {value && typeof value === "string" ? (
             <IconButton
               sx={{
-                borderRadius: theme.spacing(0.5),
                 backgroundColor: "background.paper",
                 border: "1px solid",
                 borderColor: "divider",
-                paddingY: theme.spacing(0.5),
-                paddingX: theme.spacing(1),
                 gap: theme.spacing(1),
                 display: "flex",
                 alignItems: "center",

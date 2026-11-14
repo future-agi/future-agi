@@ -2,16 +2,20 @@ import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
-  CircularProgress,
   Drawer,
   Menu,
   MenuItem,
+  Portal,
   Typography,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { useSharedIssueTrace } from "src/api/shared-links";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { modelCatalogQuery } from "src/api/model/model";
@@ -19,6 +23,7 @@ import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
+import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
@@ -57,6 +62,7 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
@@ -102,21 +108,25 @@ TraceDetailSpanFilterPanel.propTypes = {
 };
 
 const ACTION_ITEMS = [
-  { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
+  { id: "dataset", label: "Move to dataset", icon: "solar:database-linear" },
   {
     id: "workbench",
     label: "Iterate in prompt workbench",
-    icon: "mdi:pencil-box-outline",
+    icon: "solar:pen-new-square-linear",
     spanTypes: ["llm"],
   },
   // {
   //   id: "playground",
   //   label: "Iterate in agent playground",
-  //   icon: "mdi:gamepad-variant-outline",
+  //   icon: "solar:gamepad-linear",
   // },
-  { id: "tags", label: "Add Tags", icon: "mdi:tag-outline" },
-  { id: "annotate", label: "Annotate", icon: "mdi:comment-text-outline" },
-  { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
+  { id: "tags", label: "Add Tags", icon: "solar:tag-linear" },
+  { id: "annotate", label: "Annotate", icon: "solar:chat-round-line-linear" },
+  {
+    id: "queue",
+    label: "Add to annotation queue",
+    icon: "solar:list-plus-linear",
+  },
 ];
 
 function getSpan(entry) {
@@ -128,13 +138,20 @@ const TraceDetailDrawerV2 = ({
   open,
   onClose,
   projectId,
+  testExecutionId,
   onPrev,
   onNext,
   hasPrev = true,
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  keepInitialSpanVisible = false,
+  initialEvalFocus = false,
   refreshParentGrid,
+  hideOpenInNewTab = false,
+  disablePortal = false,
+  readOnly = false,
+  sharedToken = null,
 }) => {
   const navigate = useNavigate();
 
@@ -236,7 +253,9 @@ const TraceDetailDrawerV2 = ({
   // ---------------------------------------------------------------------------
   // Saved Views — auto-save per tab
   // ---------------------------------------------------------------------------
-  const { data: savedViewsData } = useGetSavedViews(projectId);
+  const { data: savedViewsData } = useGetSavedViews(
+    readOnly ? null : projectId,
+  );
   const { mutate: createSavedView } = useCreateSavedView(projectId);
   const { mutate: updateSavedView } = useUpdateSavedView(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
@@ -260,7 +279,7 @@ const TraceDetailDrawerV2 = ({
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -271,7 +290,7 @@ const TraceDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -283,7 +302,7 @@ const TraceDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -373,6 +392,7 @@ const TraceDetailDrawerV2 = ({
 
   // "Set default for everyone" — make current view project-visible
   const handleSetDefaultView = useCallback(() => {
+    if (readOnly) return;
     const onDone = {
       onSuccess: () =>
         enqueueSnackbar("View set as default for everyone", {
@@ -435,6 +455,7 @@ const TraceDetailDrawerV2 = ({
     user,
     updateSavedView,
     createSavedView,
+    readOnly,
   ]);
 
   // Create new view from current config (called from "+" button or filter save)
@@ -469,9 +490,12 @@ const TraceDetailDrawerV2 = ({
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -506,17 +530,42 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  // A shared issue's viewer may be signed out: read through the share token.
+  const ownTrace = useGetTraceDetail(open && !sharedToken ? traceId : null, {
+    projectId,
+    testExecutionId,
+  });
+  const sharedTrace = useSharedIssueTrace(
+    sharedToken,
+    open && sharedToken ? traceId : null,
+  );
+  const {
+    data: traceData,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = sharedToken ? sharedTrace : ownTrace;
+  // A failed refresh must not present cached spans or totals as current data.
+  const data = isError ? undefined : traceData;
+  const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
 
   const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
-  }, [queryClient, traceId]);
+    refetch();
+  }, [refetch]);
 
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
   const graph = data?.graph;
 
   // Apply span type filter + span filters to the tree
+  // A caller that pins the span it opened (an evaluation's source span)
+  // keeps that span in the tree whatever filters the user saved. The saved
+  // filters themselves stay as they are. Without a pin this is null, so a
+  // drawer that does not pin (Observe) keeps one spans identity when only the
+  // opened span changes, and the Agent Graph keeps its node positions.
+  const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
   const spans = useMemo(() => {
     if (!rawSpans?.length) return rawSpans;
 
@@ -559,6 +608,7 @@ const TraceDetailDrawerV2 = ({
 
     function matchesSpan(entry) {
       const span = getSpan(entry);
+      if (pinnedSpanId && span.id === pinnedSpanId) return true;
 
       // Span type filter from Display panel
       if (hasTypeFilter) {
@@ -610,7 +660,7 @@ const TraceDetailDrawerV2 = ({
     }
 
     return filterTree(rawSpans);
-  }, [rawSpans, spanFilters, spanTypeFilter]);
+  }, [rawSpans, spanFilters, spanTypeFilter, pinnedSpanId]);
 
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
@@ -641,6 +691,13 @@ const TraceDetailDrawerV2 = ({
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
+  }, []);
+
+  // Evaluation-rollup "View span" is navigation, not a tree toggle. In
+  // particular, viewing the already-selected root must keep the detail pane
+  // visible instead of clearing the selection.
+  const handleViewSpan = useCallback((spanId) => {
+    setSelectedSpanId(spanId);
   }, []);
 
   const handleAction = useCallback(
@@ -815,726 +872,801 @@ const TraceDetailDrawerV2 = ({
     activeDrawerTab === "__new_imagine__" ||
     drawerTabs.find((t) => t.id === activeDrawerTab)?.tabType === "imagine";
 
+  const covered = useDrawerCovered(open);
+  const annotateCovered = useDrawerCovered(Boolean(annotateDrawerOpen), {
+    overlay: true,
+  });
+
   return (
-    <Drawer
-      anchor="right"
-      open={open}
-      onClose={onClose}
-      variant="persistent"
-      PaperProps={{
-        sx: {
-          width: isFullscreen
-            ? `calc(100vw - ${falconOffsetPx}px)`
-            : `${drawerWidth}vw`,
-          height: "100vh",
-          position: "fixed",
-          right: `${falconOffsetPx}px`,
-          borderRadius: 0,
-          bgcolor: "background.paper",
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: isFullscreen ? "none" : "1px solid",
-          borderColor: "divider",
-          transition: "none",
-        },
-      }}
-      ModalProps={{
-        BackdropProps: { style: { backgroundColor: "transparent" } },
-      }}
-    >
-      {/* Resize handle — left edge */}
-      {!isFullscreen && (
-        <Box
-          onMouseDown={(e) => {
-            e.preventDefault();
-            const startX = e.clientX;
-            const startWidth = drawerWidth;
-            const onMove = (moveE) => {
-              const diff = startX - moveE.clientX;
-              const newWidth = startWidth + (diff / window.innerWidth) * 100;
-              setDrawerWidth(Math.min(95, Math.max(30, newWidth)));
-            };
-            const onUp = () => {
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
-              document.body.style.cursor = "";
-              document.body.style.userSelect = "";
-            };
-            document.body.style.cursor = "col-resize";
-            document.body.style.userSelect = "none";
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-          }}
-          sx={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 4,
-            cursor: "col-resize",
-            zIndex: 10,
-            "&:hover": { bgcolor: "primary.main", opacity: 0.3 },
-          }}
-        />
-      )}
-
-      {/* Header */}
-      <DrawerHeader
-        traceId={traceId}
-        projectId={projectId}
+    // A persistent drawer renders in place, not in a portal. Opened from
+    // inside another drawer (a session's View Trace), it would sit inside that
+    // drawer's panel and be hidden with it when the drawer stack covers it.
+    // A modal host can instead keep it inside its own focus/ARIA boundary.
+    <Portal disablePortal={disablePortal}>
+      <Drawer
+        anchor="right"
+        open={open}
         onClose={onClose}
-        onPrev={onPrev}
-        onNext={onNext}
-        hasPrev={hasPrev}
-        hasNext={hasNext}
-        onFullscreen={
-          initialFullscreen ? undefined : () => setIsFullscreen((prev) => !prev)
-        }
-        isFullscreen={isFullscreen}
-        onOpenNewTab={
-          initialFullscreen
-            ? undefined
-            : () => {
-                if (traceId && projectId) {
-                  window.open(
-                    `/dashboard/observe/${projectId}/trace/${traceId}`,
-                    "_blank",
-                  );
-                }
-              }
-        }
-        onDownload={() => {
-          // Download raw trace data as JSON
-          if (data) {
-            const blob = new Blob([JSON.stringify(data, null, 2)], {
-              type: "application/json",
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `trace-${traceId || "unknown"}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            enqueueSnackbar("Trace downloaded", { variant: "success" });
-          }
-        }}
-        onShare={() => setShareDialogOpen(true)}
-      />
-
-      {/* Toolbar — tab bar + filter/display/save buttons */}
-      <DrawerToolbar
-        tabs={drawerTabs}
-        activeTabId={activeDrawerTab}
-        onTabChange={handleTabChange}
-        onCloseTab={handleCloseTab}
-        onCreateTab={handleCreateView}
-        onCreateImagineTab={handleCreateImagineTab}
-        onReorderTabs={(orderedIds) => {
-          // orderedIds are the new order for imagine tabs only. Merge with the
-          // other saved views (non-imagine) so their positions are preserved.
-          const imagineIdSet = new Set(orderedIds);
-          const imaginePosById = Object.fromEntries(
-            orderedIds.map((id, i) => [id, i]),
-          );
-          const allViews = customViews;
-          const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
-          const merged = [
-            ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
-            ...orderedIds.map((id) => ({
-              id,
-              position: nonImagine.length + imaginePosById[id],
-            })),
-          ];
-          reorderSavedViews({ project_id: projectId, order: merged });
-        }}
-        onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
-        onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-        hasActiveFilter={spanFilters.length > 0}
-      />
-
-      {/* Display options popover — hidden on Imagine tab */}
-      {!isImagineActive && (
-        <TraceDisplayPanel
-          anchorEl={displayAnchorEl}
-          open={Boolean(displayAnchorEl)}
-          onClose={() => setDisplayAnchorEl(null)}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          spanTypeFilter={spanTypeFilter}
-          onSpanTypeFilterChange={setSpanTypeFilter}
-          visibleMetrics={visibleMetrics}
-          onToggleMetric={(metric) =>
-            setVisibleMetrics((prev) => ({ ...prev, [metric]: !prev[metric] }))
-          }
-          showAgentGraph={showAgentGraph}
-          onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
-          onResetView={handleResetView}
-          onSetDefaultView={handleSetDefaultView}
-        />
-      )}
-
-      {/* Span filter popover — hidden on Imagine tab */}
-      {!isImagineActive && (
-        <TraceDetailSpanFilterPanel
-          anchorEl={filterAnchorEl}
-          open={Boolean(filterAnchorEl)}
-          onClose={() => setFilterAnchorEl(null)}
-          currentFilters={spanFilters}
-          onApply={(filters) => setSpanFilters(filters || [])}
-          projectId={projectId}
-        />
-      )}
-
-      {/* Active filter chips row — hidden on Imagine tab */}
-      {!isImagineActive && spanFilters.length > 0 && (
-        <Box
-          sx={{
+        variant="persistent"
+        sx={coveredDrawerSx(covered)}
+        PaperProps={{
+          sx: {
+            width: isFullscreen
+              ? `calc(100vw - ${falconOffsetPx}px)`
+              : `${drawerWidth}vw`,
+            height: "100vh",
+            position: "fixed",
+            right: `${falconOffsetPx}px`,
+            borderRadius: 0,
+            bgcolor: "background.paper",
             display: "flex",
-            alignItems: "center",
-            px: 1.5,
-            py: 0.5,
-            borderBottom: "1px solid",
+            flexDirection: "column",
+            borderLeft: isFullscreen ? "none" : "1px solid",
             borderColor: "divider",
-            flexShrink: 0,
-            bgcolor: "background.default",
-            gap: 0.5,
-            minHeight: 32,
+            transition: "none",
+          },
+        }}
+        ModalProps={{
+          BackdropProps: { style: { backgroundColor: "transparent" } },
+        }}
+      >
+        {/* Resize handle — left edge */}
+        {!isFullscreen && (
+          <Box
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startWidth = drawerWidth;
+              const onMove = (moveE) => {
+                const diff = startX - moveE.clientX;
+                const newWidth = startWidth + (diff / window.innerWidth) * 100;
+                setDrawerWidth(Math.min(95, Math.max(30, newWidth)));
+              };
+              const onUp = () => {
+                document.removeEventListener("mousemove", onMove);
+                document.removeEventListener("mouseup", onUp);
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+              };
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+              document.addEventListener("mousemove", onMove);
+              document.addEventListener("mouseup", onUp);
+            }}
+            sx={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 4,
+              cursor: "col-resize",
+              zIndex: 10,
+              "&:hover": { bgcolor: "primary.main", opacity: 0.3 },
+            }}
+          />
+        )}
+
+        {/* Header */}
+        <DrawerHeader
+          open={open}
+          closeOnEscape={!initialFullscreen}
+          traceId={traceId}
+          projectId={projectId}
+          onClose={onClose}
+          onPrev={onPrev}
+          onNext={onNext}
+          hasPrev={hasPrev}
+          hasNext={hasNext}
+          onFullscreen={
+            initialFullscreen
+              ? undefined
+              : () => setIsFullscreen((prev) => !prev)
+          }
+          isFullscreen={isFullscreen}
+          onOpenNewTab={
+            readOnly || initialFullscreen || hideOpenInNewTab
+              ? undefined
+              : () => {
+                  if (traceId && projectId) {
+                    window.open(
+                      `/dashboard/observe/${projectId}/trace/${traceId}`,
+                      "_blank",
+                    );
+                  }
+                }
+          }
+          onDownload={() => {
+            // Download raw trace data as JSON
+            if (data) {
+              const blob = new Blob([JSON.stringify(data, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `trace-${traceId || "unknown"}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              enqueueSnackbar("Trace downloaded", { variant: "success" });
+            }
           }}
-        >
-          {/* Filter chips */}
+          onShare={readOnly ? undefined : () => setShareDialogOpen(true)}
+        />
+
+        {/* Toolbar — tab bar + filter/display/save buttons */}
+        <DrawerToolbar
+          tabs={drawerTabs}
+          activeTabId={activeDrawerTab}
+          readOnly={readOnly}
+          onTabChange={handleTabChange}
+          onCloseTab={handleCloseTab}
+          onCreateTab={handleCreateView}
+          onCreateImagineTab={handleCreateImagineTab}
+          onReorderTabs={(orderedIds) => {
+            // orderedIds are the new order for imagine tabs only. Merge with the
+            // other saved views (non-imagine) so their positions are preserved.
+            const imagineIdSet = new Set(orderedIds);
+            const imaginePosById = Object.fromEntries(
+              orderedIds.map((id, i) => [id, i]),
+            );
+            const allViews = customViews;
+            const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
+            const merged = [
+              ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
+              ...orderedIds.map((id) => ({
+                id,
+                position: nonImagine.length + imaginePosById[id],
+              })),
+            ];
+            reorderSavedViews({ project_id: projectId, order: merged });
+          }}
+          onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
+          onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+          hasActiveFilter={spanFilters.length > 0}
+          hideFilter={readOnly}
+        />
+
+        {/* Display options popover — hidden on Imagine tab */}
+        {!isImagineActive && (
+          <TraceDisplayPanel
+            anchorEl={displayAnchorEl}
+            open={Boolean(displayAnchorEl)}
+            onClose={() => setDisplayAnchorEl(null)}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            spanTypeFilter={spanTypeFilter}
+            onSpanTypeFilterChange={setSpanTypeFilter}
+            visibleMetrics={visibleMetrics}
+            onToggleMetric={(metric) =>
+              setVisibleMetrics((prev) => ({
+                ...prev,
+                [metric]: !prev[metric],
+              }))
+            }
+            showAgentGraph={showAgentGraph}
+            onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
+            onResetView={handleResetView}
+            onSetDefaultView={handleSetDefaultView}
+            hideSetDefault={readOnly}
+          />
+        )}
+
+        {/* Span filter popover — hidden on Imagine tab */}
+        {!isImagineActive && (
+          <TraceDetailSpanFilterPanel
+            anchorEl={filterAnchorEl}
+            open={Boolean(filterAnchorEl)}
+            onClose={() => setFilterAnchorEl(null)}
+            currentFilters={spanFilters}
+            onApply={(filters) => setSpanFilters(filters || [])}
+            projectId={projectId}
+          />
+        )}
+
+        {/* Active filter chips row — hidden on Imagine tab */}
+        {!isImagineActive && spanFilters.length > 0 && (
           <Box
             sx={{
               display: "flex",
               alignItems: "center",
+              px: 1.5,
+              py: 0.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+              bgcolor: "background.default",
               gap: 0.5,
-              flex: 1,
-              flexWrap: "wrap",
-              overflow: "hidden",
+              minHeight: 32,
             }}
           >
-            {spanFilters.map((f, idx) => (
+            {/* Filter chips */}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                flex: 1,
+                flexWrap: "wrap",
+                overflow: "hidden",
+              }}
+            >
+              {spanFilters.map((f, idx) => (
+                <Box
+                  key={idx}
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    px: 0.75,
+                    py: 0.25,
+                    bgcolor: "background.paper",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "4px",
+                    fontSize: 12,
+                    color: "text.primary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Iconify
+                    icon="solar:filter-linear"
+                    width={12}
+                    color="text.disabled"
+                  />
+                  <span style={{ fontWeight: 500 }}>{f.field}</span>
+                  <span style={{ color: "var(--text-secondary)" }}>
+                    {f.operator || "is"}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>
+                    {Array.isArray(f.value) ? f.value.join(", ") : f.value}
+                  </span>
+                  <Iconify
+                    icon="solar:close-linear"
+                    width={12}
+                    sx={{
+                      cursor: "pointer",
+                      color: "text.disabled",
+                      "&:hover": { color: "text.primary" },
+                    }}
+                    onClick={() => {
+                      setSpanFilters((prev) => {
+                        const next = prev.filter((_, i) => i !== idx);
+                        return next;
+                      });
+                    }}
+                  />
+                </Box>
+              ))}
+
+              {/* + button to add more filters */}
               <Box
-                key={idx}
+                onClick={(e) => setFilterAnchorEl(e.currentTarget)}
                 sx={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "4px",
-                  px: 0.75,
-                  py: 0.25,
-                  bgcolor: "background.paper",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: "4px",
-                  fontSize: 11,
-                  color: "text.primary",
-                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                  color: "text.disabled",
+                  "&:hover": {
+                    bgcolor: "action.hover",
+                    color: "text.secondary",
+                  },
                 }}
               >
-                <Iconify
-                  icon="mdi:filter-variant"
-                  width={12}
-                  color="text.disabled"
-                />
-                <span style={{ fontWeight: 500 }}>{f.field}</span>
-                <span style={{ color: "var(--text-secondary)" }}>
-                  {f.operator || "is"}
-                </span>
-                <span style={{ fontWeight: 600 }}>
-                  {Array.isArray(f.value) ? f.value.join(", ") : f.value}
-                </span>
-                <Iconify
-                  icon="mdi:close"
-                  width={12}
-                  sx={{
-                    cursor: "pointer",
-                    color: "text.disabled",
-                    "&:hover": { color: "text.primary" },
-                  }}
-                  onClick={() => {
-                    setSpanFilters((prev) => {
-                      const next = prev.filter((_, i) => i !== idx);
-                      return next;
-                    });
-                  }}
-                />
+                <Iconify icon="solar:add-linear" width={14} />
               </Box>
-            ))}
+            </Box>
 
-            {/* + button to add more filters */}
+            {/* Clear + Save */}
             <Box
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
               sx={{
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                width: 22,
-                height: 22,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "4px",
-                cursor: "pointer",
-                color: "text.disabled",
-                "&:hover": { bgcolor: "action.hover", color: "text.secondary" },
+                gap: 1,
+                flexShrink: 0,
+                ml: 1,
               }}
             >
-              <Iconify icon="mdi:plus" width={14} />
+              <Typography
+                onClick={() => setSpanFilters([])}
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Clear
+              </Typography>
+              <Typography
+                onClick={() =>
+                  enqueueSnackbar("View saved", { variant: "success" })
+                }
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Save
+              </Typography>
             </Box>
           </Box>
+        )}
 
-          {/* Clear + Save */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              flexShrink: 0,
-              ml: 1,
-            }}
-          >
-            <Typography
-              onClick={() => setSpanFilters([])}
-              sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                cursor: "pointer",
-                fontWeight: 500,
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Clear
-            </Typography>
-            <Typography
-              onClick={() =>
-                enqueueSnackbar("View saved", { variant: "success" })
-              }
-              sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                cursor: "pointer",
-                fontWeight: 500,
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Save
-            </Typography>
-          </Box>
-        </Box>
-      )}
+        {!isError && !isLoading && (
+          <CaptureCoverageNotice coverage={data?.capture_coverage} />
+        )}
 
-      {/* Main content area */}
-      <Box
-        data-drawer-content
-        sx={{
-          flex: 1,
-          display: "flex",
-          flexDirection: isImagineActive
-            ? "column"
-            : viewMode === "timeline"
+        {/* Main content area */}
+        <Box
+          data-drawer-content
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: isImagineActive
               ? "column"
-              : "row",
-          overflow: "hidden",
-        }}
-      >
-        {isImagineActive ? (
-          <ImagineTab
-            traceId={traceId}
-            projectId={projectId}
-            traceData={{ spans: rawSpans, summary, graph }}
-            readOnly={activeDrawerTab !== "__new_imagine__"}
-            savedViewId={
-              activeDrawerTab !== "__new_imagine__" ? activeDrawerTab : null
-            }
-            savedWidgets={
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config?.widgets
-            }
-            savedConversationId={
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config
-                ?.conversation_id ||
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config
-                ?.conversationId
-            }
-            onSaved={() =>
-              queryClient.invalidateQueries({
-                queryKey: ["saved-views", projectId],
-              })
-            }
-          />
-        ) : isLoading ? (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <CircularProgress size={32} />
-          </Box>
-        ) : viewMode === "timeline" ? (
-          /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */
-          <>
-            {/* Top: Timeline (full width) */}
+              : viewMode === "timeline"
+                ? "column"
+                : "row",
+            overflow: "hidden",
+          }}
+        >
+          {isError ? (
+            <Box sx={{ p: 3, width: "100%" }}>
+              <Alert
+                severity="error"
+                action={
+                  !accessDenied && (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={handleRefresh}
+                      disabled={isFetching}
+                    >
+                      {isFetching ? "Retrying…" : "Retry"}
+                    </Button>
+                  )
+                }
+              >
+                <AlertTitle>Unable to load trace</AlertTitle>
+                {error?.statusCode === 401
+                  ? "Sign in again to view this trace."
+                  : error?.statusCode === 403
+                    ? "You do not have permission to view this trace. Ask your workspace administrator for access."
+                    : error?.statusCode === 404
+                      ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
+                      : error?.statusCode === 503
+                        ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
+                        : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
+              </Alert>
+            </Box>
+          ) : isImagineActive ? (
+            <ImagineTab
+              traceId={traceId}
+              projectId={projectId}
+              traceData={{ spans: rawSpans, summary, graph }}
+              readOnly={activeDrawerTab !== "__new_imagine__"}
+              savedViewId={
+                activeDrawerTab !== "__new_imagine__" ? activeDrawerTab : null
+              }
+              savedWidgets={
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.widgets
+              }
+              savedConversationId={
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.conversation_id ||
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.conversationId
+              }
+              onSaved={() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["saved-views", projectId],
+                })
+              }
+            />
+          ) : isLoading ? (
             <Box
               sx={{
-                flex: selectedSpanData ? "0 0 55%" : 1,
-                overflow: "auto",
-                borderBottom: selectedSpanData ? "1px solid" : "none",
-                borderColor: "divider",
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
-              <SpanTreeTimeline
+              <ContentSkeleton variant="panel" />
+            </Box>
+          ) : viewMode === "timeline" ? (
+            /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */
+            <>
+              {/* Top: Timeline (full width) */}
+              <Box
+                sx={{
+                  flex: selectedSpanData ? "0 0 55%" : 1,
+                  overflow: "auto",
+                  borderBottom: selectedSpanData ? "1px solid" : "none",
+                  borderColor: "divider",
+                }}
+              >
+                <SpanTreeTimeline
+                  spans={spans}
+                  selectedSpanId={selectedSpanId}
+                  onSelectSpan={handleSelectSpan}
+                />
+              </Box>
+
+              {/* Bottom: Span detail (appears when span clicked) */}
+              {selectedSpanData && (
+                <Box
+                  sx={{
+                    flex: 1,
+                    overflow: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 0,
+                  }}
+                >
+                  <SpanDetailPane
+                    entry={selectedSpanData}
+                    allSpans={spans}
+                    traceStartTime={
+                      spans?.length ? getSpan(spans[0])?.start_time : null
+                    }
+                    isRootSpan={selectedSpanId === rootSpanId}
+                    traceTags={data?.trace?.tags || []}
+                    projectId={projectId}
+                    onClose={() => setSelectedSpanId(null)}
+                    onAction={readOnly ? undefined : handleAction}
+                    readOnly={readOnly}
+                    onSelectSpan={handleViewSpan}
+                    initialEvalFocus={initialEvalFocus}
+                    drawerOpen={open}
+                  />
+                </Box>
+              )}
+            </>
+          ) : (
+            /* ── Tree layout: left/right split ── */
+            <>
+              {/* Left Panel: Tree + Agent Graph with resizable split */}
+              <LeftPanelSplit
+                leftPanelWidth={leftPanelWidth}
+                viewMode={viewMode}
                 spans={spans}
                 selectedSpanId={selectedSpanId}
                 onSelectSpan={handleSelectSpan}
+                visibleMetrics={visibleMetrics}
+                setVisibleMetrics={setVisibleMetrics}
+                showAgentGraph={showAgentGraph}
+                onRefresh={handleRefresh}
               />
-            </Box>
 
-            {/* Bottom: Span detail (appears when span clicked) */}
-            {selectedSpanData && (
+              {/* Resizable divider with visual handle */}
+              <Box
+                onMouseDown={handleDragStart}
+                sx={{
+                  width: 8,
+                  cursor: "col-resize",
+                  bgcolor: "transparent",
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  "&:hover": { "& .divider-dots": { opacity: 1 } },
+                  "&:active": { "& .divider-dots": { opacity: 1 } },
+                  transition: "background-color 150ms",
+                }}
+              >
+                <Box
+                  className="divider-dots"
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "3px",
+                    opacity: 0.4,
+                    transition: "opacity 150ms",
+                  }}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        width: 3,
+                        height: 3,
+                        borderRadius: "50%",
+                        bgcolor: "text.disabled",
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Box>
+
+              {/* Right Panel: Span detail */}
               <Box
                 sx={{
                   flex: 1,
                   overflow: "auto",
                   display: "flex",
                   flexDirection: "column",
-                  minHeight: 0,
                 }}
               >
-                <SpanDetailPane
-                  entry={selectedSpanData}
-                  allSpans={spans}
-                  traceStartTime={
-                    spans?.length ? getSpan(spans[0])?.start_time : null
-                  }
-                  isRootSpan={selectedSpanId === rootSpanId}
-                  traceTags={data?.trace?.tags || []}
-                  projectId={projectId}
-                  onClose={() => setSelectedSpanId(null)}
-                  onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
-                  drawerOpen={open}
-                />
-              </Box>
-            )}
-          </>
-        ) : (
-          /* ── Tree layout: left/right split ── */
-          <>
-            {/* Left Panel: Tree + Agent Graph with resizable split */}
-            <LeftPanelSplit
-              leftPanelWidth={leftPanelWidth}
-              viewMode={viewMode}
-              spans={spans}
-              selectedSpanId={selectedSpanId}
-              onSelectSpan={handleSelectSpan}
-              visibleMetrics={visibleMetrics}
-              setVisibleMetrics={setVisibleMetrics}
-              showAgentGraph={showAgentGraph}
-              onRefresh={handleRefresh}
-            />
-
-            {/* Resizable divider with visual handle */}
-            <Box
-              onMouseDown={handleDragStart}
-              sx={{
-                width: 8,
-                cursor: "col-resize",
-                bgcolor: "transparent",
-                flexShrink: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                "&:hover": { "& .divider-dots": { opacity: 1 } },
-                "&:active": { "& .divider-dots": { opacity: 1 } },
-                transition: "background-color 150ms",
-              }}
-            >
-              <Box
-                className="divider-dots"
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "3px",
-                  opacity: 0.4,
-                  transition: "opacity 150ms",
-                }}
-              >
-                {[0, 1, 2, 3, 4, 5].map((i) => (
+                {selectedSpanData ? (
+                  <SpanDetailPane
+                    entry={selectedSpanData}
+                    allSpans={spans}
+                    traceStartTime={
+                      spans?.length ? getSpan(spans[0])?.start_time : null
+                    }
+                    isRootSpan={selectedSpanId === rootSpanId}
+                    traceTags={data?.trace?.tags || []}
+                    projectId={projectId}
+                    onClose={() => setSelectedSpanId(null)}
+                    onAction={readOnly ? undefined : handleAction}
+                    readOnly={readOnly}
+                    onSelectSpan={handleViewSpan}
+                    initialEvalFocus={initialEvalFocus}
+                    drawerOpen={open}
+                  />
+                ) : (
+                  /* Summary when no span selected */
                   <Box
-                    key={i}
                     sx={{
-                      width: 3,
-                      height: 3,
-                      borderRadius: "50%",
-                      bgcolor: "text.disabled",
+                      p: 3,
+                      textAlign: "center",
+                      color: "text.secondary",
+                      mt: 8,
                     }}
-                  />
-                ))}
+                  >
+                    <Iconify
+                      icon="solar:cursor-linear"
+                      width={40}
+                      sx={{ mb: 1, opacity: 0.5 }}
+                    />
+                    <Typography variant="body2" fontSize={12}>
+                      Select a span to view details
+                    </Typography>
+                    {summary && (
+                      <Box
+                        sx={{
+                          mt: 2,
+                          display: "flex",
+                          justifyContent: "center",
+                          gap: 3,
+                        }}
+                      >
+                        <Typography variant="caption">
+                          {summary.totalSpans || summary.total_spans} spans
+                        </Typography>
+                        <Typography variant="caption">
+                          {formatLatency(
+                            summary.totalDurationMs ||
+                              summary.total_duration_ms,
+                          )}
+                        </Typography>
+                        <Typography variant="caption">
+                          {formatTokenCount(summary.total_tokens)}{" "}
+                          {data?.capture_coverage
+                            ? "observed tokens"
+                            : "tokens"}
+                        </Typography>
+                        <Typography variant="caption">
+                          {data?.capture_coverage && "Observed cost: "}
+                          {formatCost(summary.total_cost)}
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
+                )}
               </Box>
-            </Box>
+            </>
+          )}
+        </Box>
 
-            {/* Right Panel: Span detail */}
-            <Box
-              sx={{
-                flex: 1,
-                overflow: "auto",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              {selectedSpanData ? (
-                <SpanDetailPane
-                  entry={selectedSpanData}
-                  allSpans={spans}
-                  traceStartTime={
-                    spans?.length ? getSpan(spans[0])?.start_time : null
-                  }
-                  isRootSpan={selectedSpanId === rootSpanId}
-                  traceTags={data?.trace?.tags || []}
-                  projectId={projectId}
-                  onClose={() => setSelectedSpanId(null)}
-                  onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
-                  drawerOpen={open}
-                />
-              ) : (
-                /* Summary when no span selected */
-                <Box
-                  sx={{
-                    p: 3,
-                    textAlign: "center",
-                    color: "text.secondary",
-                    mt: 8,
-                  }}
-                >
-                  <Iconify
-                    icon="mdi:cursor-default-click-outline"
-                    width={40}
-                    sx={{ mb: 1, opacity: 0.5 }}
-                  />
-                  <Typography variant="body2" fontSize={13}>
-                    Select a span to view details
-                  </Typography>
-                  {summary && (
-                    <Box
-                      sx={{
-                        mt: 2,
-                        display: "flex",
-                        justifyContent: "center",
-                        gap: 3,
-                      }}
-                    >
-                      <Typography variant="caption">
-                        {summary.totalSpans || summary.total_spans} spans
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatLatency(
-                          summary.totalDurationMs || summary.total_duration_ms,
-                        )}
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatTokenCount(summary.total_tokens)} tokens
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatCost(summary.total_cost)}
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </Box>
-          </>
-        )}
-      </Box>
-
-      {/* Actions context menu */}
-      <Menu
-        anchorEl={actionsAnchorEl}
-        open={Boolean(actionsAnchorEl)}
-        onClose={() => setActionsAnchorEl(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{
-          paper: {
-            sx: {
-              minWidth: 220,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-              borderRadius: "6px",
-              "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+        {/* Actions context menu */}
+        <Menu
+          anchorEl={actionsAnchorEl}
+          open={Boolean(actionsAnchorEl)}
+          onClose={() => setActionsAnchorEl(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{
+            paper: {
+              sx: {
+                minWidth: 240,
+                borderRadius: "8px",
+                "& .MuiMenuItem-root": { fontSize: 12, gap: 1, py: 0.75 },
+              },
             },
-          },
-        }}
-      >
-        {ACTION_ITEMS.filter((item) => {
-          if (!item.spanTypes) return true;
-          const span = selectedSpanData ? getSpan(selectedSpanData) : null;
-          const type = (span?.observation_type || "").toLowerCase();
-          return item.spanTypes.includes(type);
-        }).map((item) => (
-          <MenuItem
-            key={item.id}
-            onClick={(e) => handleAction(item.id, e.currentTarget)}
-            disabled={
-              (item.id === "workbench" && isCreatingDraft) ||
-              (item.id === "playground" && isCreatingGraph)
-            }
-          >
-            <Iconify icon={item.icon} width={16} />
-            {item.id === "workbench" && isCreatingDraft
-              ? "Creating prompt..."
-              : item.id === "playground" && isCreatingGraph
-                ? "Creating agent graph..."
-                : item.label}
-          </MenuItem>
-        ))}
-      </Menu>
+          }}
+        >
+          {ACTION_ITEMS.filter((item) => {
+            if (!item.spanTypes) return true;
+            const span = selectedSpanData ? getSpan(selectedSpanData) : null;
+            const type = (span?.observation_type || "").toLowerCase();
+            return item.spanTypes.includes(type);
+          }).map((item) => (
+            <MenuItem
+              key={item.id}
+              onClick={(e) => handleAction(item.id, e.currentTarget)}
+              disabled={
+                (item.id === "workbench" && isCreatingDraft) ||
+                (item.id === "playground" && isCreatingGraph)
+              }
+            >
+              <Iconify icon={item.icon} width={16} />
+              {item.id === "workbench" && isCreatingDraft
+                ? "Creating prompt..."
+                : item.id === "playground" && isCreatingGraph
+                  ? "Creating agent graph..."
+                  : item.label}
+            </MenuItem>
+          ))}
+        </Menu>
 
-      {/* Share Dialog */}
-      {traceId && (
-        <ShareDialog
-          open={shareDialogOpen}
-          onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={traceId}
+        {/* Share Dialog */}
+        {traceId && (
+          <ShareDialog
+            open={shareDialogOpen}
+            onClose={() => setShareDialogOpen(false)}
+            resourceType="trace"
+            resourceId={traceId}
+          />
+        )}
+
+        {/* Add to Annotation Queue Dialog */}
+        <AddToQueueDialog
+          anchorEl={queueAnchorEl}
+          onClose={() => setQueueAnchorEl(null)}
+          sourceType={selectedSpanId ? "observation_span" : "trace"}
+          sourceIds={
+            selectedSpanId ? [selectedSpanId] : traceId ? [traceId] : []
+          }
+          itemName={
+            selectedSpanData ? getSpan(selectedSpanData)?.name : "Trace"
+          }
         />
-      )}
 
-      {/* Add to Annotation Queue Dialog */}
-      <AddToQueueDialog
-        anchorEl={queueAnchorEl}
-        onClose={() => setQueueAnchorEl(null)}
-        sourceType={selectedSpanId ? "observation_span" : "trace"}
-        sourceIds={selectedSpanId ? [selectedSpanId] : traceId ? [traceId] : []}
-        itemName={selectedSpanData ? getSpan(selectedSpanData)?.name : "Trace"}
-      />
+        {/* Move to Dataset Drawer */}
+        <AddDataset
+          handleClose={() => setDatasetDrawerOpen(false)}
+          actionToDataset={datasetDrawerOpen}
+          spanId={selectedSpanId}
+        />
 
-      {/* Move to Dataset Drawer */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        spanId={selectedSpanId}
-      />
-
-      {/* Annotate Drawer — new sidebar UI */}
-      <Drawer
-        anchor="right"
-        open={Boolean(annotateDrawerOpen)}
-        onClose={() => setAnnotateDrawerOpen(null)}
-        variant="temporary"
-        PaperProps={{
-          sx: {
-            width: 360,
-            height: "100vh",
-            borderRadius: 0,
-            bgcolor: "background.paper",
-          },
-        }}
-        ModalProps={{
-          BackdropProps: { style: { backgroundColor: "rgba(0,0,0,0.1)" } },
-        }}
-      >
-        <AnnotationSidebarContent
-          sources={buildTraceAnnotationSources({
-            traceId,
-            spanId: annotateDrawerOpen?.spanId || rootSpanId,
-            sessionId: data?.trace?.session,
-          })}
+        {/* Annotate Drawer — new sidebar UI */}
+        <Drawer
+          anchor="right"
+          open={Boolean(annotateDrawerOpen)}
           onClose={() => setAnnotateDrawerOpen(null)}
-          onAddLabel={() => setAddLabelDrawerOpen(true)}
-          onScoresChanged={() => {
+          variant="temporary"
+          sx={coveredDrawerSx(annotateCovered)}
+          PaperProps={{
+            sx: {
+              width: 480,
+              height: "100vh",
+              borderRadius: 0,
+              bgcolor: "background.paper",
+            },
+          }}
+          ModalProps={{
+            BackdropProps: { style: { backgroundColor: "rgba(0,0,0,0.1)" } },
+          }}
+        >
+          <AnnotationSidebarContent
+            sources={buildTraceAnnotationSources({
+              traceId,
+              spanId: annotateDrawerOpen?.spanId || rootSpanId,
+              sessionId: data?.trace?.session,
+              projectId,
+            })}
+            onClose={() => setAnnotateDrawerOpen(null)}
+            onAddLabel={() => setAddLabelDrawerOpen(true)}
+            onScoresChanged={() => {
+              queryClient.invalidateQueries({
+                queryKey: ["trace-detail", traceId],
+              });
+              if (annotateDrawerOpen?.spanId) {
+                queryClient.invalidateQueries({
+                  queryKey: ["span-annotation", annotateDrawerOpen.spanId],
+                });
+              }
+              queryClient.invalidateQueries({
+                queryKey: ["annotation-queues", "for-source"],
+              });
+              // The trace grid uses AG Grid's server-side row model with its
+              // own row cache — invalidating React Query keys is not enough to
+              // refresh the annotation column shown for this trace's row.
+              // Ask the parent grid to refresh so the new annotation surfaces
+              // without a full page reload.
+              refreshParentGrid?.();
+            }}
+            showHeader
+          />
+        </Drawer>
+
+        {/* Add Label Drawer — opens from AnnotationSidebarContent "+ Add Label" */}
+        <AddLabelDrawer
+          open={addLabelDrawerOpen}
+          onClose={() => setAddLabelDrawerOpen(false)}
+          projectId={projectId}
+          onLabelsChanged={() => {
             queryClient.invalidateQueries({
               queryKey: ["trace-detail", traceId],
             });
-            if (annotateDrawerOpen?.spanId) {
-              queryClient.invalidateQueries({
-                queryKey: ["span-annotation", annotateDrawerOpen.spanId],
-              });
-            }
             queryClient.invalidateQueries({
               queryKey: ["annotation-queues", "for-source"],
             });
-            // The trace grid uses AG Grid's server-side row model with its
-            // own row cache — invalidating React Query keys is not enough to
-            // refresh the annotation column shown for this trace's row.
-            // Ask the parent grid to refresh so the new annotation surfaces
-            // without a full page reload.
-            refreshParentGrid?.();
           }}
-          showHeader
+        />
+
+        {/* Add Tags Popover */}
+        {!readOnly && (
+          <AddTagsPopover
+            anchorEl={tagsAnchorEl}
+            open={Boolean(tagsAnchorEl)}
+            onClose={() => setTagsAnchorEl(null)}
+            traceId={traceId}
+            spanId={selectedSpanId}
+            currentTags={
+              selectedSpanData
+                ? getSpan(selectedSpanData)?.tags || []
+                : data?.trace?.tags || []
+            }
+          />
+        )}
+
+        {/* Save View Popover */}
+        <SaveViewPopover
+          anchorEl={saveViewAnchor}
+          open={Boolean(saveViewAnchor)}
+          onClose={() => setSaveViewAnchor(null)}
+          onSave={handleSaveViewConfirm}
+          isLoading={isSavingView}
+          existingNames={ownViewNames}
+        />
+
+        {/* Delete tab confirmation dialog */}
+        <ConfirmDialog
+          open={Boolean(deleteTabId)}
+          onClose={() => setDeleteTabId(null)}
+          title="Delete view"
+          content={`Are you sure you want to delete "${drawerTabs.find((t) => t.id === deleteTabId)?.label || "this view"}"? This action cannot be undone.`}
+          action={
+            <Button
+              size="small"
+              variant="contained"
+              color="error"
+              onClick={() => {
+                const tabId = deleteTabId;
+                setDeleteTabId(null);
+                deleteSavedView(tabId, {
+                  onSuccess: () => {
+                    if (activeDrawerTab === tabId) setActiveDrawerTab("trace");
+                    enqueueSnackbar("View deleted", { variant: "info" });
+                  },
+                  onError: () => {
+                    enqueueSnackbar("Failed to delete view", {
+                      variant: "error",
+                    });
+                  },
+                });
+              }}
+            >
+              Delete
+            </Button>
+          }
         />
       </Drawer>
-
-      {/* Add Label Drawer — opens from AnnotationSidebarContent "+ Add Label" */}
-      <AddLabelDrawer
-        open={addLabelDrawerOpen}
-        onClose={() => setAddLabelDrawerOpen(false)}
-        projectId={projectId}
-        onLabelsChanged={() => {
-          queryClient.invalidateQueries({
-            queryKey: ["trace-detail", traceId],
-          });
-          queryClient.invalidateQueries({
-            queryKey: ["annotation-queues", "for-source"],
-          });
-        }}
-      />
-
-      {/* Add Tags Popover */}
-      <AddTagsPopover
-        anchorEl={tagsAnchorEl}
-        open={Boolean(tagsAnchorEl)}
-        onClose={() => setTagsAnchorEl(null)}
-        traceId={traceId}
-        spanId={selectedSpanId}
-        currentTags={
-          selectedSpanData
-            ? getSpan(selectedSpanData)?.tags || []
-            : data?.trace?.tags || []
-        }
-      />
-
-      {/* Save View Popover */}
-      <SaveViewPopover
-        anchorEl={saveViewAnchor}
-        open={Boolean(saveViewAnchor)}
-        onClose={() => setSaveViewAnchor(null)}
-        onSave={handleSaveViewConfirm}
-        isLoading={isSavingView}
-        existingNames={ownViewNames}
-      />
-
-      {/* Delete tab confirmation dialog */}
-      <ConfirmDialog
-        open={Boolean(deleteTabId)}
-        onClose={() => setDeleteTabId(null)}
-        title="Delete view"
-        content={`Are you sure you want to delete "${drawerTabs.find((t) => t.id === deleteTabId)?.label || "this view"}"? This action cannot be undone.`}
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={() => {
-              const tabId = deleteTabId;
-              setDeleteTabId(null);
-              deleteSavedView(tabId, {
-                onSuccess: () => {
-                  if (activeDrawerTab === tabId) setActiveDrawerTab("trace");
-                  enqueueSnackbar("View deleted", { variant: "info" });
-                },
-                onError: () => {
-                  enqueueSnackbar("Failed to delete view", {
-                    variant: "error",
-                  });
-                },
-              });
-            }}
-          >
-            Delete
-          </Button>
-        }
-      />
-    </Drawer>
+    </Portal>
   );
 };
 
@@ -1543,13 +1675,20 @@ TraceDetailDrawerV2.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   projectId: PropTypes.string,
+  testExecutionId: PropTypes.string,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  keepInitialSpanVisible: PropTypes.bool,
+  initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
+  hideOpenInNewTab: PropTypes.bool,
+  disablePortal: PropTypes.bool,
+  readOnly: PropTypes.bool,
+  sharedToken: PropTypes.string,
 };
 
 export default React.memo(TraceDetailDrawerV2);

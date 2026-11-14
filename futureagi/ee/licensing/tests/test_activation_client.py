@@ -115,6 +115,28 @@ class TestInvalidateToken:
         assert mod._cached_token is None
 
 
+class TestActivate:
+    def test_reports_the_version_deployment_telemetry_reports(self, monkeypatch):
+        """``latest`` is a placeholder tag: telemetry falls back to
+        SERVICE_VERSION, and activation must send the same version."""
+        from ee.licensing.activation_client import _activate
+
+        monkeypatch.setenv("FUTURE_AGI_VERSION", "latest")
+        monkeypatch.setenv("SERVICE_VERSION", "1.8.0")
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        state = MagicMock(instance_id="00000000-0000-0000-0000-000000000001")
+        with (
+            patch(
+                "tfc.deployment_telemetry.state.get_or_create_telemetry_state",
+                return_value=state,
+            ),
+            patch("httpx.post", return_value=MagicMock(status_code=503)) as post,
+        ):
+            assert _activate() is None
+
+        assert post.call_args.kwargs["json"]["version"] == "1.8.0"
+
+
 class _StreamResponse:
     def __init__(self, lines, status_code=200):
         self.lines = lines

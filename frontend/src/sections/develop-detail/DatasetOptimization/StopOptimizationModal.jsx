@@ -28,14 +28,14 @@ const StopOptimizationModal = ({ onSuccess }) => {
       title="Stop optimization run"
       subTitle="This will immediately stop the current optimization run. Any in-progress trials will be terminated. Do you want to proceed?"
       isValid={true}
-      modalWidth="480px"
+      modalWidth="560px"
       onSubmit={() => mutate()}
       onCancelBtn={() => setStopOptimizationId(null)}
       actionBtnTitle="Stop Optimization"
       actionBtnSx={{
-        bgcolor: "red.500",
+        bgcolor: "status.danger.solid",
         color: "common.white",
-        "&:hover": { bgcolor: "red.600" },
+        "&:hover": { bgcolor: "status.danger.solid" },
       }}
       isLoading={isPending}
     />

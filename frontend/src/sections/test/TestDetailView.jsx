@@ -1,4 +1,5 @@
-import { Box, Paper, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import TestDetailHeader from "./TestDetailHeader";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -30,19 +31,19 @@ const TestDetailView = () => {
         id: "runs",
         title: "Simulated runs",
         path: `/dashboard/simulate/test/${testId}/runs`,
-        icon: <Iconify icon="hugeicons:test-tube-01" />,
+        icon: <Iconify icon="solar:test-tube-linear" />,
       },
       {
         id: "call-logs",
         title: "Logs",
         path: `/dashboard/simulate/test/${testId}/call-logs`,
-        icon: <Iconify icon="tabler:logs" />,
+        icon: <Iconify icon="solar:list-linear" />,
       },
       {
         id: "analytics",
         title: "Analytics",
         path: `/dashboard/simulate/test/${testId}/analytics`,
-        icon: <Iconify icon="hugeicons:analytics-01" />,
+        icon: <Iconify icon="solar:chart-2-linear" />,
       },
     ],
     [testId],
@@ -126,27 +127,22 @@ const TestDetailView = () => {
         }}
       >
         {/* Header Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            borderRadius: 0,
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent header from shrinking
+            flexShrink: 0,
           }}
         >
           <TestDetailHeader />
-        </Paper>
+        </Section>
 
         {/* Tabs Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent tabs from shrinking
+            flexShrink: 0,
           }}
         >
           <TestDetailTabs
@@ -154,7 +150,7 @@ const TestDetailView = () => {
             currentTab={currentTab}
             onTabChange={handleTabChange}
           />
-        </Paper>
+        </Section>
 
         {/* Content Section - Only this area changes when switching tabs */}
         <Box

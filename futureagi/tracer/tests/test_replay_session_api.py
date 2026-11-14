@@ -1,4 +1,6 @@
+import json
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 from rest_framework import status
@@ -17,6 +19,10 @@ from tfc.constants.roles import OrganizationRoles
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
+from tracer.tests.test_replay_session_utils import (
+    _VAPI_RAW_LOG,
+    _ch_conversation_span,
+)
 
 
 REPLAY_SESSION_PATH = "/tracer/replay-session/"
@@ -103,6 +109,37 @@ def test_replay_session_create_list_retrieve_and_eval_configs(
     assert config_rows[0]["eval_template"]["required_keys"] == ["input"]
     assert config_rows[0]["available_models"] == ["gpt-4o", "gpt-4o-mini"]
     assert set(configs_payload["common_models"]) == {"gpt-4o", "gpt-4o-mini"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("customer", ["+15550100001", ["+15550100001"], 7])
+def test_replay_session_create_reads_a_voice_customer_that_is_not_an_object(
+    auth_client, observe_project, session_trace, monkeypatch, customer
+):
+    # With no phoneNumber on the call, the contact number comes from customer,
+    # which has none when it is not an object.
+    raw_log = {**_VAPI_RAW_LOG, "phoneNumber": None, "customer": customer}
+    span = _ch_conversation_span(json.dumps(raw_log))
+    reader = MagicMock()
+    reader.__enter__ = lambda s: s
+    reader.list_by_trace_ids.return_value = [span]
+    reader.list_by_trace.return_value = [span]
+    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
+
+    response = auth_client.post(
+        REPLAY_SESSION_PATH,
+        data={
+            "project_id": str(observe_project.id),
+            "replay_type": "trace",
+            "ids": [str(session_trace.id)],
+            "select_all": False,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED, response.content
+    suggestions = result(response)["suggestions"]
+    assert suggestions["original_voice_config"]["contact_number"] == ""
 
 
 @pytest.mark.django_db

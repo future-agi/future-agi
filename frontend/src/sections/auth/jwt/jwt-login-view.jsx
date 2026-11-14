@@ -292,6 +292,7 @@ export default function JwtLoginView() {
             );
             break;
 
+          case LOGIN_ERROR_CODES.SERVICE_UNAVAILABLE:
           case LOGIN_ERROR_CODES.UNEXPECTED_ERROR:
           default:
             setErrorMsg(
@@ -463,7 +464,7 @@ export default function JwtLoginView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -474,7 +475,7 @@ export default function JwtLoginView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.secondary",
           maxWidth: "440px",
           fontFamily: "Inter",
@@ -487,15 +488,15 @@ export default function JwtLoginView() {
   );
 
   const renderForm = (
-    <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+    <Stack spacing={2} sx={{ maxWidth: "440px" }}>
       <RegionSelect />
       <RHFTextField
         name="email"
         label="Email address"
         placeholder="Enter email ID"
         autoComplete="email"
-        sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-        size="small"
+        sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+        size="medium"
       />
 
       <RHFTextField
@@ -504,7 +505,7 @@ export default function JwtLoginView() {
         placeholder="Enter password"
         type={password.value ? "text" : "password"}
         autoComplete="current-password"
-        sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+        sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
         InputProps={{
           endAdornment: (
             <InputAdornment position="end">
@@ -518,18 +519,17 @@ export default function JwtLoginView() {
             </InputAdornment>
           ),
         }}
-        size="small"
+        size="medium"
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
-          sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
-          }}
         >
           {errorMsg}
         </Alert>
@@ -579,12 +579,12 @@ export default function JwtLoginView() {
       </Stack>
 
       <LoadingButton
+        size="large"
         fullWidth
         color="primary"
         type="submit"
         variant="contained"
         loading={isSubmitting}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Continue
       </LoadingButton>
@@ -629,20 +629,16 @@ export default function JwtLoginView() {
       <Stack spacing={1.5}>
         {showSocial && browserSupportsWebAuthn() && (
           <LoadingButton
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 0.5,
-              height: 44,
-              color: "text.primary",
-            }}
+            size="large"
+            variant="outlined"
+            color="inherit"
             loading={passkeyLoading}
             onClick={handlePasskeyLogin}
             startIcon={<Iconify icon="solar:key-bold" width={20} />}
           >
             <Typography
               fontWeight={"fontWeightMedium"}
-              sx={{ fontSize: "15px" }}
+              sx={{ fontSize: "12px" }}
             >
               Sign in with Passkey
             </Typography>
@@ -651,20 +647,15 @@ export default function JwtLoginView() {
         {showSocial && (
           <>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                color: "text.primary",
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("google")}
               startIcon={<Iconify icon="logos:google-icon" width={20} />}
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Continue with Google
               </Typography>
@@ -674,7 +665,7 @@ export default function JwtLoginView() {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius:0.5,
+          borderRadius:"4px",
           display: "flex",
           height: 44,
           color: "text.primary",
@@ -691,7 +682,7 @@ export default function JwtLoginView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "15px",
+            fontSize: "12px",
             marginRight: -1.5,
           }}
         >
@@ -699,13 +690,9 @@ export default function JwtLoginView() {
         </Typography>
       </Button> */}
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("github")}
               startIcon={
                 <Iconify
@@ -717,20 +704,15 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", color: "text.primary" }}
+                sx={{ fontSize: "12px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
             </Button>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-                color: "text.primary",
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={handleSsoLogin}
               startIcon={
                 <SvgColor
@@ -741,7 +723,7 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", marginRight: -1.5 }}
+                sx={{ fontSize: "12px", marginRight: -1.5 }}
               >
                 Continue with SSO/SAML
               </Typography>
@@ -751,7 +733,7 @@ export default function JwtLoginView() {
 
         {/* ✅ Added Create Account Link */}
         <Typography
-          fontSize={"15px"}
+          fontSize={"12px"}
           fontWeight={"fontWeightMedium"}
           color="text.secondary"
           sx={{ textAlign: "center" }}

@@ -53,18 +53,37 @@ def test_trace_attribute_hydration_projects_latest_requested_key_value():
         attribute_keys=["final_status", "final_status", "nested.flag"],
     )
 
-    assert "argMax(attrs_string, _version)" in sql
-    assert "argMax(attrs_number, _version)" in sql
-    assert "argMax(attrs_bool, _version)" in sql
-    assert "argMax(tuple(attributes_extra), _version).1" in sql
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in sql
+    compact = " ".join(sql.split())
+    assert (
+        "argMax(tuple(start_time, attributes_extra, attrs_string, attrs_number, attrs_bool, is_deleted), _version) AS latest_span"
+        in compact
+    )
+    for slot, alias in enumerate(
+        (
+            "latest_start_time",
+            "latest_attributes_extra",
+            "latest_attrs_string",
+            "latest_attrs_number",
+            "latest_attrs_bool",
+            "latest_is_deleted",
+        ),
+        start=1,
+    ):
+        assert f"latest_span.{slot} AS {alias}" in compact
+    assert sql.count("argMax(") == 2
     assert "WHERE latest_is_deleted = 0" in sql
-    assert "GROUP BY project_id, trace_id, id, start_time" in sql
+    assert (
+        "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in compact
+    )
     assert "GROUP BY project_id, trace_id, attribute_key" in sql
     assert "groupArray" not in sql
     assert "ARRAY JOIN %(requested_attribute_keys)s AS attribute_key" in sql
     assert "SELECT DISTINCT" not in sql
-    assert "argMax(candidate_attribute_value_json, tuple(start_time, id))" in sql
+    assert (
+        "argMax(candidate_attribute_value_json, tuple(latest_start_time, id, observation_type, service_name))"
+        in compact
+    )
     assert "attribute_value_json" in sql
     assert "JSONExtractRaw(latest_attributes_extra, attribute_key)" in sql
     assert "mapContains(latest_attrs_bool, attribute_key)" in sql
@@ -92,7 +111,10 @@ def test_more_than_5000_historical_values_collapse_to_one_latest_value_per_key()
     # one requested key. There is no fixed value-count failure ceiling.
     assert "groupArray" not in sql
     assert "arrayJoin(mapKeys" not in sql
-    assert "argMax(candidate_attribute_value_json, tuple(start_time, id))" in sql
+    assert (
+        "argMax(candidate_attribute_value_json, tuple(latest_start_time, id, observation_type, service_name))"
+        in " ".join(sql.split())
+    )
     assert "GROUP BY project_id, trace_id, attribute_key" in sql
     assert "LIMIT" not in sql
     # ARRAY JOIN must receive an Array/list. clickhouse-driver formats a
@@ -128,7 +150,10 @@ def test_org_attribute_hydration_keeps_project_in_exact_identity():
 
     assert "toString(project_id) AS project_id" in sql
     assert "project_id IN %(project_ids)s" in sql
-    assert "GROUP BY project_id, trace_id, id, start_time" in sql
+    assert (
+        "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in " ".join(sql.split())
+    )
     assert params["attr_trace_identities"] == (
         (project_a, "customer-controlled-shared-trace"),
         (project_b, "customer-controlled-shared-trace"),

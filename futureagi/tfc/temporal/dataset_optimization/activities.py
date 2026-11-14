@@ -18,6 +18,7 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import close_old_connections
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
@@ -28,6 +29,7 @@ from model_hub.utils.dataset_optimization import (
     store_single_trial,
     update_dataset_optimization_step,
 )
+from simulate.utils.llm import get_api_key_for_model
 from tfc.temporal.common.heartbeat import Heartbeater
 
 logger = structlog.get_logger(__name__)
@@ -569,15 +571,33 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     existing_desc + build_template_variable_instruction(template_vars)
                 )
 
+            optimization_model_name = (
+                run.optimizer_model.user_model_id
+                if run.optimizer_model
+                else configured_model_name or "gpt-4o"
+            )
+
+            if organization is None:
+                raise ApplicationError(
+                    "Dataset optimization requires an organization to resolve "
+                    "the API key for the optimizer model.",
+                    non_retryable=True,
+                )
+            try:
+                api_key = get_api_key_for_model(
+                    model_name=optimization_model_name,
+                    organization_id=organization.id,
+                    workspace_id=workspace.id if workspace else None,
+                )
+            except ValueError as e:
+                # No usable key for this org; fail without retries
+                raise ApplicationError(str(e), non_retryable=True) from e
+
             # Run optimization with direct evaluation (single input/output, no conversation simulation)
             result = agent.optimize_from_execution(
                 execution_data=execution_data,
                 optimizer_type=run.optimizer_algorithm,
-                optimization_model=(
-                    run.optimizer_model.user_model_id
-                    if run.optimizer_model
-                    else configured_model_name or "gpt-4o"
-                ),
+                optimization_model=optimization_model_name,
                 optimizer_config=optimizer_config,
                 use_dual_llm_sim=False,  # Not using dual LLM for dataset optimization
                 agent_optimiser_run_steps=steps,
@@ -590,6 +610,7 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 use_temporal_evaluation=False,  # Simpler for dataset optimization
                 use_direct_evaluation=True,  # Use direct evaluation for datasets (no conversation simulation)
                 execution_model=execution_model_name,  # Model to run prompts and generate outputs
+                api_key=api_key,
             )
 
             # Mark step 3 as completed

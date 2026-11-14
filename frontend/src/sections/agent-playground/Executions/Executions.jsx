@@ -1,15 +1,10 @@
 import React, { useState, useCallback, useMemo } from "react";
-import {
-  Box,
-  CircularProgress,
-  Divider,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Divider, Stack, Typography } from "@mui/material";
 import { useParams } from "react-router-dom";
 import { useGetExecutions } from "src/api/agent-playground/agent-playground";
 import ExecutionsList from "./ExecutionsList";
 import ExecutionDetailView from "./ExecutionDetailView";
+import ContentSkeleton from "src/components/content-skeleton";
 
 export default function Executions() {
   const { agentId } = useParams();
@@ -45,7 +40,7 @@ export default function Executions() {
           height: "100%",
         }}
       >
-        <CircularProgress size={28} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }

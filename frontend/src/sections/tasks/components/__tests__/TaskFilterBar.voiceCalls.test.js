@@ -556,6 +556,105 @@ describe("TaskFilterBar voice-call filter contract", () => {
 });
 
 describe("TaskFilterBar structured and mixed filter contract", () => {
+  it.each(
+    ["traces", "spans", "sessions"].flatMap((rowType) => [
+      [
+        rowType,
+        "attribute",
+        "number",
+        "between",
+        [
+          [0, 10],
+          [5, 20],
+        ],
+      ],
+      [
+        rowType,
+        "eval",
+        "number",
+        "between",
+        [
+          [0, 0.7],
+          [0.5, 1],
+        ],
+      ],
+      [
+        rowType,
+        "annotation",
+        "categorical",
+        "in",
+        [
+          ["approved", "review"],
+          ["review", "rejected"],
+        ],
+      ],
+      [
+        rowType,
+        "attribute",
+        "string",
+        "in",
+        [
+          ["001", 1],
+          ["002", 2],
+        ],
+      ],
+    ]),
+  )(
+    "preserves separate AND clauses on %s %s %s %s panel reapply",
+    (rowType, category, type, operator, values) => {
+      const colType = {
+        attribute: "SPAN_ATTRIBUTE",
+        eval: "EVAL_METRIC",
+        annotation: "ANNOTATION",
+      }[category];
+      const registryId = `${category === "attribute" ? "custom_attribute" : category}:quality`;
+      const panelRows = values.map((value) => ({
+        field: "quality",
+        registryId,
+        fieldCategory: category,
+        fieldType: type,
+        apiColType: colType,
+        operator,
+        value,
+        ...(type === "string" ? { valueTypes: ["string", "number"] } : {}),
+      }));
+      panelRows.push({
+        field: "prompt",
+        fieldCategory: "attribute",
+        fieldType: "string",
+        apiColType: "SPAN_ATTRIBUTE",
+        operator: "contains",
+        value: "long prompt ".repeat(50),
+      });
+      const formRows = convertNewToOld(panelRows, { rowType });
+      const original = JSON.stringify(formRows);
+      const expected = buildApiFilterArray(formRows);
+      expect(
+        expected.slice(0, 2).map((filter) => filter.filter_config.filter_value),
+      ).toEqual(values);
+      const actual = buildApiFilterArray(
+        convertNewToOld(convertOldToNew(formRows, { rowType }), { rowType }),
+      );
+      const request = buildTaskPreviewListParams({
+        rowType,
+        projectId: "project-and-scope",
+        apiFilters: actual,
+      });
+      expect(JSON.parse(request.filters)).toEqual(expected);
+      expect(actual.slice(0, 2).map((filter) => filter.property_id)).toEqual([
+        registryId,
+        registryId,
+      ]);
+      expect(request).toMatchObject({
+        project_id: "project-and-scope",
+        cursor_mode: true,
+        page_number: 0,
+        page_size: 1,
+      });
+      expect(JSON.stringify(formRows)).toBe(original);
+    },
+  );
+
   const mixedPanelFilters = [
     {
       field: "final_status",

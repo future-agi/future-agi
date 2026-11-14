@@ -26,9 +26,10 @@ const ProjectBreadCrumbs = ({ links, onBack }) => {
     <Box display="flex" alignItems="center" gap={theme.spacing(1)}>
       {/* <ObserveBackButton onBack={handleBack} />  */}
       <Button
+        size="small"
         startIcon={
           <Iconify
-            icon="line-md:chevron-left"
+            icon="solar:alt-arrow-left-linear"
             width={16}
             height={16}
             color={"text.primary"}
@@ -38,10 +39,6 @@ const ProjectBreadCrumbs = ({ links, onBack }) => {
         variant="outlined"
         sx={{
           color: "text.primary",
-          padding: theme.spacing(0.125, 1.5),
-          height: 30,
-          fontWeight: "fontWeightMedium",
-          borderRadius: theme.spacing(0.5),
           borderColor: "action.hover",
         }}
       >

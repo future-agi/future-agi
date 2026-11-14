@@ -1,11 +1,12 @@
 import React from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { Stack, Typography, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 
 function ActionCard({ icon, label, onClick }) {
   return (
-    <Box
+    <ButtonBase
+      component="div"
       onClick={onClick}
       sx={{
         minWidth: "150px",
@@ -15,12 +16,11 @@ function ActionCard({ icon, label, onClick }) {
         justifyContent: "center",
         gap: 1,
         p: 1.5,
-        cursor: "pointer",
         position: "relative",
         background: "background.paper",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         transition: "all 0.2s ease-in-out",
         // Gradient border using pseudo-element (works with border-radius)
         "&::before": {
@@ -76,7 +76,7 @@ function ActionCard({ icon, label, onClick }) {
       >
         {label}
       </Typography>
-    </Box>
+    </ButtonBase>
   );
 }
 

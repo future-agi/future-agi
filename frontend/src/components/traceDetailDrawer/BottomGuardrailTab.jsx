@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { Box, LinearProgress, Typography, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "src/sections/develop-detail/AccordianElements";
 import Iconify from "../iconify";
+import StatusBadge from "../status-badge/StatusBadge";
 import PropTypes from "prop-types";
 
 import "./jsonStyle.css";
@@ -13,12 +14,12 @@ import { green, pink } from "@mui/material/colors";
 import Markdown from "react-markdown";
 import { extractStringValues } from "./common";
 import { getSpanAttributes } from "./DrawerRightRenderer/getSpanData";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
-  const theme = useTheme();
   const [expandedItems, setExpandedItems] = useState({});
 
-  if (isLoading) return <LinearProgress />;
+  if (isLoading) return <LoadingScreen compact />;
 
   const handleAccordionChange = (panel) => (event, isExpanded) => {
     setExpandedItems((prev) => ({
@@ -62,24 +63,20 @@ const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
 
         // Determine rule status
         let ruleStatus = "Not Evaluated";
-        let statusColor = "text.secondary";
-        let statusBgColor = theme.palette.background.neutral;
+        let statusRole = "neutral";
         let statusIcon = null;
 
         if (isTriggered) {
           ruleStatus = "Triggered";
-          statusColor = "red.500";
-          statusBgColor = "red.o10";
-          statusIcon = "material-symbols:warning-outline-rounded";
+          statusRole = "danger";
+          statusIcon = "solar:danger-triangle-linear";
         } else if (isCompleted) {
           ruleStatus = "Passed";
-          statusColor = "green.500";
-          statusBgColor = "green.o10";
-          statusIcon = "material-symbols:check-circle-outline";
+          statusRole = "success";
+          statusIcon = "solar:check-circle-linear";
         } else if (isUncompleted) {
           ruleStatus = "Not Evaluated";
-          statusColor = "text.subtext";
-          statusBgColor = theme.palette.background.neutral;
+          statusRole = "neutral";
         }
 
         return (
@@ -145,32 +142,16 @@ const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
                     </Typography>
                   )}
                 </Box>
-                <Box
-                  sx={{
-                    height: "30px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 1,
-                    backgroundColor: statusBgColor,
-                    paddingX: 1.3,
-                    borderRadius: "5px",
-                  }}
-                >
-                  {statusIcon && (
-                    <Iconify
-                      icon={statusIcon}
-                      width={18}
-                      sx={{ color: statusColor }}
-                    />
-                  )}
-                  <Typography
-                    variant="body2"
-                    sx={{ color: statusColor, fontWeight: 400 }}
-                  >
-                    {ruleStatus}
-                  </Typography>
-                </Box>
+                <StatusBadge
+                  status={ruleStatus}
+                  label={ruleStatus}
+                  role={statusRole}
+                  icon={
+                    statusIcon ? (
+                      <Iconify icon={statusIcon} width={14} />
+                    ) : undefined
+                  }
+                />
               </Box>
             </AccordionSummary>
             <AccordionDetails>
@@ -178,7 +159,7 @@ const BottomGuardrailTab = ({ observationSpan, isLoading }) => {
                 sx={{
                   backgroundColor: "background.paper",
                   borderRadius: "8px",
-                  fontSize: "14px",
+                  fontSize: "12px",
                   whiteSpace: "pre-wrap",
                   maxHeight: "72vh",
                   overflow: "auto",

@@ -32,21 +32,15 @@ export default function HeaderActions({
           startIcon={
             <SvgColor
               src="/assets/icons/navbar/hugeicons.svg"
-              sx={{
-                width: "16px",
-                height: "16px",
-                color: "text.primary",
-              }}
+              width="16px"
+              sx={{ color: "text.primary" }}
             />
           }
           onClick={onOpenImportDatasetDrawer}
           sx={{
             color: "text.primary",
             border: "1px solid",
-            fontSize: "12px",
-            fontWeight: 400,
-            borderColor: "whiteScale.500",
-            paddingX: 3,
+            borderColor: "divider",
           }}
         >
           Import from Dataset

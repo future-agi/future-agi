@@ -1,0 +1,10 @@
+{
+  "id": "gen-vid-1793000000-AbCdEfGhIjKlMnOpQrSt",
+  "polling_url": "/api/v1/videos/gen-vid-1793000000-AbCdEfGhIjKlMnOpQrSt",
+  "status": "completed",
+  "generation_id": "gen-1793000000-synthetic",
+  "unsigned_urls": ["https://openrouter.ai/api/v1/videos/gen-vid-1793000000-AbCdEfGhIjKlMnOpQrSt/content?index=0"],
+  "urls": ["https://storage.example.invalid/signed-object?token=synthetic"],
+  "expires_at": 1793086400,
+  "usage": {"cost": 0.046116, "is_byok": false}
+}

@@ -1,0 +1,56 @@
+# Production install against datastores you run and back up yourself.
+# Replace every example host; create the Secrets first:
+#
+#   kubectl create secret generic futureagi-postgres --from-literal=password='...'
+#   kubectl create secret generic futureagi-s3 \
+#     --from-literal=access-key='...' --from-literal=secret-key='...'
+#
+#   helm install futureagi deploy/helm/futureagi \
+#     -f deploy/helm/futureagi/examples/external.yaml --timeout 20m
+postgres:
+  mode: external
+  database: futureagi
+  user: futureagi
+  existingSecret: futureagi-postgres
+  external:
+    host: postgres.example.internal
+    port: 5432
+    sslMode: require
+clickhouse:
+  mode: external
+  database: default
+  user: default
+  password: ""
+  external:
+    host: clickhouse.example.internal
+    httpPort: 8123
+    nativePort: 9000
+redis:
+  mode: external
+  external:
+    host: redis.example.internal
+    port: 6379
+temporal:
+  mode: external
+  namespace: default
+  external:
+    address: temporal-frontend.temporal.svc.cluster.local:7233
+objectStorage:
+  mode: external
+  backend: s3
+  bucket: futureagi-uploads
+  region: us-east-1
+  existingSecret: futureagi-s3
+  external:
+    endpoint: https://s3.us-east-1.amazonaws.com
+urls:
+  app: https://futureagi.example.com
+  api: https://api.futureagi.example.com
+  # Where SDKs outside the cluster send traces (their FI_BASE_URL), once
+  # fi-collector is exposed: examples/ingress.yaml routes it on the API host.
+  # otlp: https://otlp.futureagi.example.com
+backend:
+  replicas: 2
+worker:
+  allQueues:
+    replicas: 2
