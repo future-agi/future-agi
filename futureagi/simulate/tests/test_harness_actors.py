@@ -2230,3 +2230,43 @@ def test_a_draft_write_with_a_fault_mode_the_world_does_not_know_is_refused(
         drafts.record_draft(environment, _authoring(**edited), origin="chat", user=user)
     assert raised.value.code == "scenario_faults_invalid"
     assert drafts.fresh_draft(environment, "suite") is None
+
+
+def test_environment_detail_lists_declared_workers():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentWorkerSerializer,
+    )
+    from simulate.services import harness_environment
+
+    contract = {
+        "workers": [
+            {
+                "id": "order_lookup",
+                "name": "Order-lookup worker",
+                "tools": ["get_order", "list_refunds", "update_order_status"],
+                "allowed_tools": ["get_order", "list_refunds"],
+                "binding": "separate",
+                "address_env": "ORDER_LOOKUP_API_URL",
+            },
+            {"name": "no id, never shown"},
+        ]
+    }
+    with (
+        patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+        patch.object(harness_environment, "_call_actor_list", return_value=[]),
+        patch.object(harness_environment, "_stage_output", return_value=None),
+        patch.object(harness_environment, "_end_conditions", return_value={}),
+        patch.object(harness_environment, "_provenance", return_value={}),
+    ):
+        section = harness_environment._contract_section(
+            SimpleNamespace(), contract, None, None, None
+        )
+    (worker,) = section["workers"]
+    assert HarnessEnvironmentWorkerSerializer(worker).data["allowed_tools"] == [
+        "get_order",
+        "list_refunds",
+    ]
+    assert worker["id"] == "order_lookup"

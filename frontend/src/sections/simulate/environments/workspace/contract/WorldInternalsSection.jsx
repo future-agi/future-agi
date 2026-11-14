@@ -4,6 +4,7 @@ import { Box, Stack, Typography, Collapse, Tooltip } from "@mui/material";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
+import { WORKERS_COPY } from "./workers.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -17,6 +18,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 export default function WorldInternalsSection({ env }) {
   const schema = schemaRows(env);
   const tools = env?.tools || [];
+  const workers = (env?.workers || []).filter((one) => one?.id);
   const entrypoints = entrypointsByTool(env);
   const totalRows = schema.reduce((a, t) => a + (t.rows || 0), 0);
 
@@ -24,6 +26,7 @@ export default function WorldInternalsSection({ env }) {
     <Stack spacing={2} sx={{ mb: 2 }}>
       {schema.length > 0 && <SchemaCard schema={schema} totalRows={totalRows} />}
       {tools.length > 0 && <ToolsCard tools={tools} entrypoints={entrypoints} />}
+      {workers.length > 0 && <WorkersCard workers={workers} />}
     </Stack>
   );
 }
@@ -176,3 +179,73 @@ function ToolsCard({ tools, entrypoints }) {
   );
 }
 ToolsCard.propTypes = { tools: PropTypes.array, entrypoints: PropTypes.object };
+
+/* ── workers ────────────────────────────────────────────────────────── */
+
+const CHIP_SX = {
+  px: 0.75,
+  height: 18,
+  borderRadius: "4px",
+  color: "text.secondary",
+  bgcolor: "action.selected",
+  typography: "s3",
+  fontWeight: 500,
+  fontFamily: MONO,
+  lineHeight: "18px",
+  whiteSpace: "nowrap",
+};
+
+// Allowed tools are shown only when narrower than what the worker's code holds.
+function narrower(worker) {
+  const tools = worker.tools || [];
+  const allowed = worker.allowed_tools || [];
+  return allowed.length > 0 && tools.some((tool) => !allowed.includes(tool));
+}
+
+function WorkersCard({ workers }) {
+  return (
+    <SectionCard
+      title={WORKERS_COPY.title}
+      subtitle={WORKERS_COPY.subtitle}
+      action={
+        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          {WORKERS_COPY.count(workers.length)}
+        </Typography>
+      }
+    >
+      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />} data-testid="contract-workers">
+        {workers.map((worker) => (
+          <Stack key={worker.id} spacing={0.5} sx={{ px: 1.5, py: 1 }} data-testid="contract-worker">
+            <Stack direction="row" alignItems="center" spacing={1.5}>
+              <Iconify icon="solar:users-group-rounded-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
+              <Typography sx={{ typography: "s1", fontWeight: 500, minWidth: 180 }}>{worker.name || worker.id}</Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
+                {[WORKERS_COPY.binding[worker.binding || "shared"], worker.process ? WORKERS_COPY.ownProcess : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Typography>
+            </Stack>
+            {(worker.tools || []).length > 0 && (
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ pl: 3.5 }}>
+                {worker.tools.map((tool) => (
+                  <Box key={tool} component="span" sx={CHIP_SX}>
+                    {tool}
+                  </Box>
+                ))}
+              </Stack>
+            )}
+            {narrower(worker) && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle", pl: 3.5 }}>
+                {WORKERS_COPY.mayUse(worker.allowed_tools)}
+              </Typography>
+            )}
+          </Stack>
+        ))}
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", px: 1.5, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
+        {WORKERS_COPY.footer}
+      </Typography>
+    </SectionCard>
+  );
+}
+WorkersCard.propTypes = { workers: PropTypes.array };

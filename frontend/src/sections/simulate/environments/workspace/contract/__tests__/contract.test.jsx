@@ -157,3 +157,45 @@ describe("RlContractPanel", () => {
     });
   });
 });
+
+describe("Workers card", () => {
+  const workers = [
+    {
+      id: "order_lookup",
+      name: "Order-lookup worker",
+      tools: ["get_order", "list_refunds", "update_order_status"],
+      allowed_tools: ["get_order", "list_refunds"],
+      binding: "separate",
+      address_env: "ORDER_LOOKUP_API_URL",
+    },
+    {
+      id: "refund",
+      name: "Refund worker",
+      tools: ["list_refunds", "issue_refund"],
+      allowed_tools: [],
+      binding: "shared",
+    },
+  ];
+
+  it("lists each declared worker with its channel and allowed tools", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    const rows = screen.getAllByTestId("contract-worker");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Order-lookup worker");
+    expect(rows[0]).toHaveTextContent("Own channel");
+    expect(rows[0]).toHaveTextContent("May use: get_order, list_refunds");
+    expect(rows[1]).toHaveTextContent("Shared channel");
+    // A worker that may use everything its code holds shows no narrower list.
+    expect(rows[1]).not.toHaveTextContent("May use:");
+    expect(
+      screen.getByText(
+        "Declared by the app's source. A run shows which of them actually took part.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("hides the workers card when the contract declares none", () => {
+    renderPanel();
+    expect(screen.queryByTestId("contract-workers")).toBeNull();
+  });
+});

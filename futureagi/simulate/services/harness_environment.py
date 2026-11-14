@@ -462,6 +462,8 @@ _CONTRACT_FIELDS = (
     "runtime_dependencies",
     "implementation",
     "tool_entrypoints",
+    # The workers the app's source declares (id, name, tools, allowed tools, binding, address variable, process).
+    "workers",
     "data_store",
     "open_questions",
     "amendments",
@@ -856,6 +858,11 @@ def _contract_section(
     if not contract:
         return None
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    section["workers"] = [
+        one
+        for one in contract.get("workers") or []
+        if isinstance(one, dict) and one.get("id")
+    ]
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
     section["call_actors"] = _call_actor_list(

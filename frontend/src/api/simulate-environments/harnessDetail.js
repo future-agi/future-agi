@@ -154,6 +154,8 @@ export function harnessDetailToEnvironment(detail) {
     // from source. Empty for provider agents, which have neither.
     dataSchema: contract?.data_schema || null,
     toolEntrypoints: contract?.tool_entrypoints || null,
+    // The workers the app's source declares; a run shows which took part.
+    workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,
