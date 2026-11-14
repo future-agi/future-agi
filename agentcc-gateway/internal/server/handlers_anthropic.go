@@ -978,10 +978,10 @@ func translatedStreamChatCompletion(ctx context.Context, provider providers.Prov
 // ended, as the gateway timeout it is when ctx reached its deadline. When the
 // client left instead, nobody is reading, and err is returned as it is.
 func deadlineAsTimeout(ctx context.Context, err error) error {
-	if apiErr := streamEndError(ctx, err); apiErr != nil {
-		return apiErr
+	if ctx.Err() == nil || errors.Is(ctx.Err(), context.Canceled) {
+		return err
 	}
-	return err
+	return models.ErrGatewayTimeout("request timed out before the stream started")
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.

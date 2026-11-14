@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
@@ -223,4 +227,27 @@ func keyRestrictedGateway(t *testing.T, upstreamURL string) string {
 	ts := httptest.NewServer(srv.httpServer.Handler)
 	t.Cleanup(ts.Close)
 	return ts.URL
+}
+
+func TestDeadlineAsTimeout(t *testing.T) {
+	live := context.Background()
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	left, leave := context.WithCancel(context.Background())
+	leave()
+
+	upstream := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream broke")
+
+	if got := deadlineAsTimeout(live, upstream); got != upstream {
+		t.Errorf("live context: got %v, want the error as it was", got)
+	}
+	if got := deadlineAsTimeout(left, context.Canceled); !errors.Is(got, context.Canceled) {
+		t.Errorf("client left: got %v, want context.Canceled as it was", got)
+	}
+	for _, err := range []error{context.DeadlineExceeded, upstream} {
+		var apiErr *models.APIError
+		if got := deadlineAsTimeout(expired, err); !errors.As(got, &apiErr) || apiErr.Type != models.ErrTypeGatewayTimeout || apiErr.Status != http.StatusGatewayTimeout {
+			t.Errorf("deadline passed, err %v: got %v, want the gateway timeout", err, got)
+		}
+	}
 }
