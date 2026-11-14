@@ -195,6 +195,18 @@ CORS_ORIGIN_ALLOW_ALL = CORS_ALLOW_ALL_ORIGINS
 CORS_ALLOWED_ORIGIN_REGEXES = _split_env("CORS_ALLOWED_ORIGIN_REGEXES")
 CORS_ORIGIN_REGEX_WHITELIST = CORS_ALLOWED_ORIGIN_REGEXES  # legacy alias
 
+# Addresses or networks of the reverse proxies in front of the API (e.g. the
+# ingress controller's pod network), comma-separated. The MCP OAuth request
+# limits key on the client address these proxies forward in X-Forwarded-For;
+# requests from any other peer are keyed on the peer address.
+MCP_OAUTH_TRUSTED_PROXIES = _split_env("MCP_OAUTH_TRUSTED_PROXIES")
+# How many proxies add to X-Forwarded-For, the one connecting to the API
+# included: 1 reads only the last entry, the client that proxy saw. 0 (unset)
+# skips every trusted proxy entry up to the nearest address that is not one.
+MCP_OAUTH_TRUSTED_PROXY_HOPS = _bounded_env_int(
+    "MCP_OAUTH_TRUSTED_PROXY_HOPS", 0, minimum=0, maximum=16
+)
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 

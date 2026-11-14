@@ -34,3 +34,8 @@ ingress:
     host: api.futureagi.example.com
   otlp:
     enabled: true
+  # The MCP OAuth request limits count each client by the address Traefik
+  # saw when the request comes from k3s's pod network, where Traefik runs.
+  # Other pods are in it too: see the README ("Client addresses behind the
+  # Ingress or Gateway") for keeping them from reaching the API directly.
+  trustedProxies: "10.42.0.0/16"
