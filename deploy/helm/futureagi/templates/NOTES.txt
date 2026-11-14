@@ -6,6 +6,12 @@
 {{- $appUrl := include "futureagi.url.app" . -}}
 {{- $apiUrl := include "futureagi.url.api" . -}}
 {{- $otlpUrl := include "futureagi.url.otlp" . -}}
+{{- /* An HTTPS-only frontend Service has only its https port. Without
+urls.app the API trusts the origins of localhost:3000 (APP_URL), both schemes. */ -}}
+{{- $uiHttps := not $v.frontend.tls.httpEnabled -}}
+{{- $uiTlsPort := int $v.frontend.tls.servicePort -}}
+{{- /* A browser's Origin leaves out the default port, so the URL does too. */ -}}
+{{- $uiLocal := ternary (printf "https://localhost%s" (ternary "" (printf ":%d" $uiTlsPort) (eq $uiTlsPort 443))) "http://localhost:3000" $uiHttps -}}
 {{- $tag := $v.backend.image.tag | default $v.image.tag | default .Chart.AppVersion | toString -}}
 {{- $bundled := list -}}
 {{- $labels := dict "postgres" "PostgreSQL" "clickhouse" "ClickHouse" "redis" "Redis" "temporal" "Temporal" "objectStorage" "object storage" -}}
@@ -42,11 +48,19 @@ WARNING  Bundled datastores run as single replicas with no backups, for evaluati
 {{- end }}
 {{- else if eq $v.frontend.service.type "LoadBalancer" }}
 
-   http://localhost:3000 (LoadBalancer Services, as in examples/local.yaml;
+   {{ $uiLocal }} (LoadBalancer Services, as in examples/local.yaml;
    on a cluster whose load balancers are not on localhost, set urls.* to them)
+{{- if and $uiHttps (ne $uiTlsPort 3000) }}
+   The API accepts browser requests from https://localhost:3000 only: set urls.app
+   to {{ $uiLocal }}, or frontend.tls.servicePort to 3000.
+{{- end }}
 {{- else }}
 
+{{- if $uiHttps }}
+   kubectl -n {{ $ns }} port-forward svc/{{ $frontend }} 3000:{{ $v.frontend.tls.servicePort }}
+{{- else }}
    kubectl -n {{ $ns }} port-forward svc/{{ $frontend }} 3000:{{ $v.frontend.service.port }}
+{{- end }}
    kubectl -n {{ $ns }} port-forward svc/{{ $backend }} 8000:{{ $v.backend.service.port }}
 {{- if not $otlpUrl }}
    kubectl -n {{ $ns }} port-forward svc/{{ $collector }} 4318:{{ $v.fiCollector.service.httpPort }}   # traces
@@ -55,7 +69,10 @@ WARNING  Bundled datastores run as single replicas with no backups, for evaluati
    kubectl -n {{ $ns }} port-forward svc/{{ include "futureagi.component" (dict "root" . "component" "minio") }} {{ dig "bundled" "service" "downloadPort" 9005 $v.objectStorage }}:9000   # file downloads
 {{- end }}
 
-   then open http://localhost:3000 (the UI calls the API on localhost:8000).
+   then open {{ ternary "https" "http" $uiHttps }}://localhost:3000 (the UI calls the API on localhost:8000).
+{{- if $uiHttps }}
+   The dashboard certificate does not name localhost: expect a browser warning.
+{{- end }}
    For access from other machines set urls.app and urls.api, or gatewayApi.*
    (examples/gateway-api.yaml), or ingress.*.
 {{- end }}

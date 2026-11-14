@@ -680,6 +680,125 @@ on the backend and collector Services.
 laptop cluster. `fiCollector.service.type=LoadBalancer` is the simplest way
 to take OTLP/gRPC from outside without a Gateway.
 
+### Native HTTPS (no proxy)
+
+The gateway and dashboard can serve HTTPS directly on separate ports. Supply
+**two** `kubernetes.io/tls` Secrets (full chain in `tls.crt`, matching private
+key in `tls.key`), for example from cert-manager. The gateway certificate
+must cover its in-cluster Service names because the API and workers call it:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: futureagi-gateway
+  namespace: futureagi
+spec:
+  secretName: gateway-tls
+  issuerRef:
+    name: your-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - futureagi-agentcc-gateway
+    - futureagi-agentcc-gateway.futureagi
+    - futureagi-agentcc-gateway.futureagi.svc
+    - futureagi-agentcc-gateway.futureagi.svc.cluster.local
+    - gateway.example.com
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: futureagi-dashboard
+  namespace: futureagi
+spec:
+  secretName: frontend-tls
+  issuerRef:
+    name: your-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - futureagi-frontend
+    - futureagi-frontend.futureagi
+    - futureagi-frontend.futureagi.svc
+    - futureagi-frontend.futureagi.svc.cluster.local
+    - app.example.com
+```
+
+Replace `futureagi` with your release name and namespace, and use a trusted
+issuer or distribute the gateway CA through `global.caBundle`. Configure the
+Service addresses in your DNS (or set the Service types to `LoadBalancer`):
+
+```yaml
+agentccGateway:
+  tls:
+    enabled: true
+    existingSecret: gateway-tls
+    # port: 8443, servicePort: 8443, certKey: tls.crt, keyKey: tls.key
+    # minVersion: "1.2", reloadInterval: 30s
+    httpEnabled: true
+frontend:
+  tls:
+    enabled: true
+    existingSecret: frontend-tls
+    # port: 8443, servicePort: 443, certKey: tls.crt, keyKey: tls.key
+    # reloadInterval: 30 (seconds)
+    httpEnabled: true
+urls:
+  app: https://app.example.com
+  api: https://api.example.com
+  gateway: https://gateway.example.com
+config:
+  # Only while frontend.tls.httpEnabled is true, for users still on HTTP.
+  extraCsrfOrigins: http://app.example.com
+```
+
+Start with **both** listeners enabled; move clients to HTTPS and verify the
+SPA's `/config.js` points to `urls.api` over HTTPS. Set `urls.app` to the
+HTTPS dashboard URL: the API allows browser calls (CORS and CSRF) from that
+one origin, and the chart refuses frontend TLS with a non-local `http://`
+`urls.app`. While users still open the HTTP listener, add its origin to
+`config.extraCsrfOrigins` (for example `extraCsrfOrigins: http://app.example.com`),
+and remove it when HTTP goes off.
+
+Then set `agentccGateway.tls.httpEnabled: false` and
+`frontend.tls.httpEnabled: false`, and provide `global.caBundle.secret` (or
+`.configMap`) for the backend and worker pods. The bundle **replaces** their
+trust store (it becomes `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`), so it must
+hold the public roots as well as the gateway CA; a bundle with only the
+gateway CA breaks every public HTTPS call from those pods (LLM providers,
+webhooks, object storage, the license check). Build it from the system
+bundle, for example
+`cat /etc/ssl/certs/ca-certificates.crt gateway-ca.pem > ca.crt`, and see
+**Custom CA** under [Enterprise](#enterprise). With gateway HTTP disabled their internal
+`AGENTCC_INTERNAL_URL` / `AGENTCC_GATEWAY_INTERNAL_URL` switch to the HTTPS
+Service port. The chart refuses HTTP-only Ingress or Gateway API routes after
+you disable the listener they target; remove those routes or keep HTTP on.
+`helm test` probes the active listeners (its TLS smoke checks skip identity
+verification; application clients must trust the CA).
+
+Mounted Secret contents update without restarting the pods. The gateway
+polls every 30s by default, and the frontend polls every 30 seconds; new
+connections get the rotated chain while in-flight requests stay connected,
+and a bad renewal preserves the last good certificate. Both services refuse
+an expired certificate: at startup they exit with the file named, and on
+rotation they log it and keep serving the previous one. Kubernetes kubelet Secret
+propagation may add about 60-90 seconds on top of the poll interval; measure
+from the time files change *inside the pod*, not merely when cert-manager
+updates the Secret. Do not configure stakater Reloader to watch these TLS
+Secrets: it restarts pods on changes, defeating zero-restart hot reload.
+Keep `reloader.enabled: false` (its default auto-watch annotation includes
+mounted TLS Secrets), or explicitly exclude those Secrets in your Reloader
+configuration. The chart does not checksum the TLS Secret (the frontend
+ConfigMap checksum is unrelated to certificate rotation). The frontend nginx key needs to be
+readable by uid/fsGroup 101.
+
+`urls.gateway` sets `AGENTCC_GATEWAY_PUBLIC_URL` on the API and workers so
+the dashboard shows a reachable HTTPS gateway rather than localhost. The
+browser also calls the API directly: `urls.api` must resolve to HTTPS for any
+non-local HTTPS dashboard or requests become mixed content (the chart rejects
+such a setup). **The API itself must be served over HTTPS by the operator**,
+for example through a separate existing proxy. Native backend TLS and an API
+reverse proxy in nginx are out of scope pending an owner decision.
+
 ### OTLP
 
 | From | OTLP/gRPC | OTLP/HTTP |
@@ -1185,6 +1304,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `image.digests` | `{}` | Digests (`sha256:...`) of the release's images, by component: backend (also the workers and the bootstrap job), frontend, fiCollector, agentccGateway, serving, codeExecutor. Empty in git; the published chart carries the digests of its own release. A component's own `image.digest` wins. |
 | `urls.app` | `""` | Public URL of the UI, e.g. `https://futureagi.example.com` [FRONTEND_URL, APP_URL, EXTRA_CSRF_ORIGINS]. Invite and password-reset links and app emails point here, with its scheme. Empty: derived from `ingress.app.host` with `ingress.enabled`, else from `gatewayApi.app.host` with `gatewayApi.enabled` (https unless `gatewayApi.tls` is false), else `http://localhost:3000`. |
 | `urls.api` | `""` | Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`. |
+| `urls.gateway` | `""` | [AGENTCC_GATEWAY_PUBLIC_URL] Public HTTPS base URL shown in the dashboard's gateway configuration, e.g. `https://gateway.example.com`. Empty: the backend's default URL (http://localhost:8090). |
 | `urls.otlp` | `""` | [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes). |
 | `urls.objects` | `""` | Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host` with `ingress.enabled`, else the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>` (9005). |
 | `config.envType` | `"production"` | [ENV_TYPE] `production`: JSON logs, DEBUG off, refuses published default secrets. `local`: colored console logs. |
@@ -1443,6 +1563,14 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `frontend.image.pullPolicy` | `""` | Pull policy. Empty: `image.pullPolicy`. |
 | `frontend.replicas` | `1` | Replicas when autoscaling is off. |
 | `frontend.helpLink` | `""` | [VITE_HELP_LINK] where the sidebar Help entry points. Empty: the community Discord. |
+| `frontend.tls.enabled` | `false` | Serve native HTTPS on the dashboard [FRONTEND_TLS_ENABLED]. Requires existingSecret and an HTTPS API URL (except localhost). |
+| `frontend.tls.existingSecret` | `""` | Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload. |
+| `frontend.tls.certKey` | `"tls.crt"` | Certificate-chain key in the Secret [FRONTEND_TLS_CERT_FILE]. |
+| `frontend.tls.keyKey` | `"tls.key"` | Private-key key in the Secret [FRONTEND_TLS_KEY_FILE]. |
+| `frontend.tls.port` | `8443` | Dashboard HTTPS container port [FRONTEND_TLS_PORT]. |
+| `frontend.tls.servicePort` | `443` | Dashboard HTTPS Service port. |
+| `frontend.tls.httpEnabled` | `true` | Keep HTTP on port 8080 during migration [FRONTEND_HTTP_ENABLED]; requires enabled=true when false. |
+| `frontend.tls.reloadInterval` | `30` | Certificate polling interval in seconds [FRONTEND_TLS_RELOAD_INTERVAL]; keep at most 60 for timely rotation. |
 | `frontend.service.type` | `"ClusterIP"` | Service type of the UI. |
 | `frontend.service.port` | `80` | Service port of the UI. |
 | `frontend.service.annotations` | `{}` | Service annotations. |
@@ -1510,6 +1638,15 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `agentccGateway.preStopSleepSeconds` | `10` | Seconds each gateway pod waits before it stops (preStop, the kubelet's sleep action: Kubernetes 1.30 or newer, skipped on older clusters), so Services stop sending it requests first. 0: none. |
 | `agentccGateway.terminationGracePeriodSeconds` | `45` | Seconds a stopping gateway gets. Keep it at least the preStop sleep + `config.server.shutdown_timeout` (30 s, for in-flight streams) + 5 s (the gateway then sends its buffered request logs): 10 + 30 + 5 = 45. With `config.otel.exporter: otlp`, add up to 15 s for the exporter's last flush. |
 | `agentccGateway.existingConfigMap` | `""` | Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`. |
+| `agentccGateway.tls.enabled` | `false` | Serve native HTTPS on the gateway [AGENTCC_TLS_ENABLED]. Requires existingSecret. |
+| `agentccGateway.tls.existingSecret` | `""` | Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload. |
+| `agentccGateway.tls.certKey` | `"tls.crt"` | Certificate-chain key in the Secret [AGENTCC_TLS_CERT_FILE]. |
+| `agentccGateway.tls.keyKey` | `"tls.key"` | Private-key key in the Secret [AGENTCC_TLS_KEY_FILE]. |
+| `agentccGateway.tls.port` | `8443` | Gateway HTTPS container port [AGENTCC_TLS_PORT]. |
+| `agentccGateway.tls.servicePort` | `8443` | Gateway HTTPS Service port. |
+| `agentccGateway.tls.httpEnabled` | `true` | Keep HTTP on the configured server port during migration [AGENTCC_HTTP_ENABLED]; requires enabled=true when false. |
+| `agentccGateway.tls.minVersion` | `"1.2"` | Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3. |
+| `agentccGateway.tls.reloadInterval` | `"30s"` | Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 1m, as the gateway requires. |
 | `agentccGateway.config` | see values.yaml | Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too. |
 | `agentccGateway.controlPlaneSync` | `true` | Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys. |
 | `agentccGateway.allowPrivateProviderURLs` | `false` | Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL. |

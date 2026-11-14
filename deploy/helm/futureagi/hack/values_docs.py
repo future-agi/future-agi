@@ -86,6 +86,16 @@ RULES: list[tuple[str, dict]] = [
     ("*port", PORT),
     ("*Port", PORT),
     ("*.service.port", PORT),
+    ("agentccGateway.tls.minVersion", {"enum": ["1.2", "1.3"]}),
+    ("frontend.tls.reloadInterval", {"type": "integer", "minimum": 1, "maximum": 60}),
+    # A Go duration (time.ParseDuration); validate.yaml checks the range.
+    (
+        "agentccGateway.tls.reloadInterval",
+        {
+            "type": "string",
+            "pattern": "^([+]?(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+)?$",
+        },
+    ),
     ("bootstrap.ttlSecondsAfterFinished", {"type": ["integer", "string"]}),
     ("*Seconds", {"type": "integer", "minimum": 1}),
     ("*.extraEnv", SCALAR_MAP),

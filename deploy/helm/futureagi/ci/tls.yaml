@@ -1,0 +1,16 @@
+# Synthetic TLS Secret names for render checks; create real certificates before install.
+agentccGateway:
+  tls:
+    enabled: true
+    existingSecret: gateway-tls
+frontend:
+  tls:
+    enabled: true
+    existingSecret: frontend-tls
+urls:
+  gateway: https://gateway.example.com
+  api: https://api.example.com
+  app: https://app.example.com
+config:
+  # Both listeners on: users still on the HTTP one keep calling the API.
+  extraCsrfOrigins: http://app.example.com

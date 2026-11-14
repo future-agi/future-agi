@@ -6,6 +6,15 @@
 {{- if $apiUrl }}{{ $_ := set $env "VITE_HOST_API" $apiUrl }}{{ end -}}
 {{- with $f.helpLink }}{{ $_ := set $env "VITE_HELP_LINK" . }}{{ end -}}
 {{- $env = mergeOverwrite $env (include "futureagi.env.platform" (dict "root" . "kind" "frontend") | fromYaml) ($f.extraEnv | default dict) -}}
+{{- if $f.tls.enabled -}}
+{{- $_ := set $env "FRONTEND_HTTP_ENABLED" (toString $f.tls.httpEnabled) -}}
+{{- $_ := set $env "FRONTEND_HTTP_PORT" "8080" -}}
+{{- $_ := set $env "FRONTEND_TLS_ENABLED" "true" -}}
+{{- $_ := set $env "FRONTEND_TLS_PORT" (toString $f.tls.port) -}}
+{{- $_ := set $env "FRONTEND_TLS_CERT_FILE" "/var/run/secrets/futureagi/tls/tls.crt" -}}
+{{- $_ := set $env "FRONTEND_TLS_KEY_FILE" "/var/run/secrets/futureagi/tls/tls.key" -}}
+{{- $_ := set $env "FRONTEND_TLS_RELOAD_INTERVAL" (toString $f.tls.reloadInterval) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,9 +62,16 @@ spec:
           # The image's entrypoint writes /config.js from the VITE_* variables, then runs nginx.
           args: ["nginx", "-c", "/etc/nginx/futureagi/nginx.conf", "-g", "daemon off;"]
           ports:
+            {{- if $f.tls.httpEnabled }}
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- end }}
+            {{- if $f.tls.enabled }}
+            - name: https
+              containerPort: {{ $f.tls.port }}
+              protocol: TCP
+            {{- end }}
           env:
             {{- range $name := keys $env | sortAlpha }}
             - name: {{ $name }}
@@ -64,13 +80,19 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              port: http
+              port: {{ ternary "http" "https" $f.tls.httpEnabled }}
+              {{- if not $f.tls.httpEnabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /
-              port: http
+              port: {{ ternary "http" "https" $f.tls.httpEnabled }}
+              {{- if not $f.tls.httpEnabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
@@ -86,6 +108,11 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /var/cache/nginx
+            {{- if $f.tls.enabled }}
+            - name: tls
+              mountPath: /var/run/secrets/futureagi/tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -96,3 +123,13 @@ spec:
         - name: cache
           emptyDir:
             sizeLimit: 256Mi
+        {{- if $f.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ $f.tls.existingSecret }}
+            items:
+              - key: {{ $f.tls.certKey }}
+                path: tls.crt
+              - key: {{ $f.tls.keyKey }}
+                path: tls.key
+        {{- end }}

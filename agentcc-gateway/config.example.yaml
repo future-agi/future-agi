@@ -17,6 +17,22 @@ server:
   # only to a response this ceiling does not govern. Unset, it becomes
   # write_timeout. Read at startup, like the rest of this block.
   max_request_timeout: 300s
+  # Native HTTPS, with no proxy in front. Both listeners can run at once on
+  # their own ports; turn http_enabled off once every caller uses HTTPS.
+  # cert_file is PEM, the leaf then any intermediates (all served); both
+  # files are re-read every reload_interval and a changed pair is served
+  # from the next connection on, with no restart. A pair that does not load
+  # is logged and the previous certificate kept. Env: AGENTCC_HTTP_ENABLED,
+  # AGENTCC_TLS_ENABLED, AGENTCC_TLS_PORT, AGENTCC_TLS_CERT_FILE,
+  # AGENTCC_TLS_KEY_FILE, AGENTCC_TLS_MIN_VERSION, AGENTCC_TLS_RELOAD_INTERVAL.
+  # http_enabled: true
+  # tls:
+  #   enabled: true
+  #   port: 8443
+  #   cert_file: /var/run/secrets/futureagi/tls/tls.crt
+  #   key_file: /var/run/secrets/futureagi/tls/tls.key
+  #   min_version: "1.2"     # or "1.3"
+  #   reload_interval: 30s   # above 0, at most 1m
 
 providers:
   openai:

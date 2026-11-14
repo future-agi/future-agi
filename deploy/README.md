@@ -424,6 +424,93 @@ Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need 
 
 On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead (`helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z`, signed and published with every release): it covers the Gateway API and Ingress, TLS, external datastores, secrets, upgrades and backups.
 
+## Native HTTPS for the gateway and dashboard (Compose)
+
+The Distributed `agentcc-gateway` and `frontend` images can serve HTTPS
+without a proxy. Keep their existing HTTP ports during migration, then turn
+HTTP off after clients move. The dashboard still calls the **API separately**:
+serve the API over HTTPS yourself and set `VITE_HOST_API=https://api.example.com`
+and `AGENTCC_GATEWAY_PUBLIC_URL=https://gateway.example.com` on the backend,
+`serving` and every worker service. Native backend TLS and an API proxy inside
+nginx are not supplied.
+
+Create a **local override** alongside the root Distributed Compose file
+(do not change that file). Mount each certificate **directory**, not individual
+files: replacing a file atomically or kubelet swapping Secret symlinks will
+not update a single-file bind mount. Put a full chain in `tls.crt` and the
+matching key in `tls.key`; protect the private key, but keep it readable by
+the user each image reads it as: the gateway runs as uid and gid 65532
+(`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
+and the frontend's nginx master reads its key as root before it starts the
+workers. For example:
+
+```yaml
+# docker-compose.native-tls.yml, next to docker-compose.distributed.yml
+x-gateway-urls: &gateway-urls
+  environment:
+    AGENTCC_GATEWAY_PUBLIC_URL: https://gateway.example.com
+services:
+  agentcc-gateway:
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./certs/gateway:/run/futureagi-tls:ro
+    environment:
+      AGENTCC_HTTP_ENABLED: "true"
+      AGENTCC_TLS_ENABLED: "true"
+      AGENTCC_TLS_PORT: "8443"
+      AGENTCC_TLS_CERT_FILE: /run/futureagi-tls/tls.crt
+      AGENTCC_TLS_KEY_FILE: /run/futureagi-tls/tls.key
+      AGENTCC_TLS_MIN_VERSION: "1.2"
+      AGENTCC_TLS_RELOAD_INTERVAL: 30s
+  frontend:
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs/dashboard:/run/futureagi-tls:ro
+    environment:
+      FRONTEND_HTTP_ENABLED: "true"
+      FRONTEND_HTTP_PORT: "80"
+      FRONTEND_TLS_ENABLED: "true"
+      FRONTEND_TLS_PORT: "443"
+      FRONTEND_TLS_CERT_FILE: /run/futureagi-tls/tls.crt
+      FRONTEND_TLS_KEY_FILE: /run/futureagi-tls/tls.key
+      FRONTEND_TLS_RELOAD_INTERVAL: "30"
+      VITE_HOST_API: https://api.example.com
+  # Every service of docker-compose.distributed.yml that calls the gateway.
+  backend: *gateway-urls
+  serving: *gateway-urls
+  worker: *gateway-urls
+  worker-default: *gateway-urls
+  worker-tasks-s: *gateway-urls
+  worker-tasks-l: *gateway-urls
+  worker-tasks-xl: *gateway-urls
+  worker-sql-workbench: *gateway-urls
+  worker-exact-aggregation: *gateway-urls
+  worker-trace-ingestion: *gateway-urls
+  worker-agent-compass: *gateway-urls
+  worker-simulation-runner: *gateway-urls
+```
+
+Run `docker compose -f docker-compose.distributed.yml -f docker-compose.native-tls.yml up -d`
+from the repository root. The existing Compose ports still publish HTTP; to
+remove them later, use a dedicated override that replaces the `ports` list
+(`!override` requires Docker Compose v2.24.4 or newer), set the two
+`*_HTTP_ENABLED` variables to `false`, and add `AGENTCC_INTERNAL_URL` and
+`AGENTCC_GATEWAY_INTERNAL_URL` set to `https://agentcc-gateway:8443` to the
+`x-gateway-urls` environment, so every service above calls the gateway over
+HTTPS (they all set the HTTP URLs through `x-backend-env`). Mount a CA bundle directory and set
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to the bundle file for in-cluster
+trust; it replaces the image's trust store, so include the public roots
+(e.g. append the issuing CA to the system bundle) when the backend also
+calls public providers;
+the gateway certificate needs the `agentcc-gateway` DNS name. For an HTTPS-only
+gateway set `HEALTHCHECK_URL=https://127.0.0.1:8443/healthz` in the override;
+the frontend image healthcheck selects HTTPS automatically. Both services
+refuse an expired certificate at startup, retain their last good certificate
+on a bad or expired renewal and poll for replacements (every 30s by default);
+confirm rotation with no container restart.
+
 ## Reverse proxy + TLS
 
 ### Caddy

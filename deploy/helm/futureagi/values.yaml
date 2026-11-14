@@ -79,6 +79,8 @@ urls:
   app: ""
   # -- Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`.
   api: ""
+  # -- [AGENTCC_GATEWAY_PUBLIC_URL] Public HTTPS base URL shown in the dashboard's gateway configuration, e.g. `https://gateway.example.com`. Empty: the backend's default URL (http://localhost:8090).
+  gateway: ""
   # -- [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes).
   otlp: ""
   # -- Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host` with `ingress.enabled`, else the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>` (9005).
@@ -722,6 +724,23 @@ frontend:
   replicas: 1
   # -- [VITE_HELP_LINK] where the sidebar Help entry points. Empty: the community Discord.
   helpLink: ""
+  tls:
+    # -- Serve native HTTPS on the dashboard [FRONTEND_TLS_ENABLED]. Requires existingSecret and an HTTPS API URL (except localhost).
+    enabled: false
+    # -- Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload.
+    existingSecret: ""
+    # -- Certificate-chain key in the Secret [FRONTEND_TLS_CERT_FILE].
+    certKey: tls.crt
+    # -- Private-key key in the Secret [FRONTEND_TLS_KEY_FILE].
+    keyKey: tls.key
+    # -- Dashboard HTTPS container port [FRONTEND_TLS_PORT].
+    port: 8443
+    # -- Dashboard HTTPS Service port.
+    servicePort: 443
+    # -- Keep HTTP on port 8080 during migration [FRONTEND_HTTP_ENABLED]; requires enabled=true when false.
+    httpEnabled: true
+    # -- Certificate polling interval in seconds [FRONTEND_TLS_RELOAD_INTERVAL]; keep at most 60 for timely rotation.
+    reloadInterval: 30
   service:
     # -- Service type of the UI.
     type: ClusterIP
@@ -872,6 +891,25 @@ agentccGateway:
   terminationGracePeriodSeconds: 45
   # -- Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`.
   existingConfigMap: ""
+  tls:
+    # -- Serve native HTTPS on the gateway [AGENTCC_TLS_ENABLED]. Requires existingSecret.
+    enabled: false
+    # -- Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload.
+    existingSecret: ""
+    # -- Certificate-chain key in the Secret [AGENTCC_TLS_CERT_FILE].
+    certKey: tls.crt
+    # -- Private-key key in the Secret [AGENTCC_TLS_KEY_FILE].
+    keyKey: tls.key
+    # -- Gateway HTTPS container port [AGENTCC_TLS_PORT].
+    port: 8443
+    # -- Gateway HTTPS Service port.
+    servicePort: 8443
+    # -- Keep HTTP on the configured server port during migration [AGENTCC_HTTP_ENABLED]; requires enabled=true when false.
+    httpEnabled: true
+    # -- Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3.
+    minVersion: "1.2"
+    # -- Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 1m, as the gateway requires.
+    reloadInterval: 30s
   # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too.
   config:
     server:

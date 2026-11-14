@@ -326,6 +326,12 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     text = "The UI's address, as `host[:port]` (`app.example.com`) or a full URL (`https://app.example.com`). Invite, verification and password-reset links, the links in app emails and the SSO redirects back to the UI are built from it. A scheme you write is kept. Without one, links use `http://` for `localhost` and loopback addresses, and otherwise `https://`, or `http://` while `ENV_TYPE` is `local` or `test`. So write the full URL when that guess is wrong: `https://...` for a UI behind TLS with the default `ENV_TYPE=local`, `http://...` for a plain-HTTP host with `ENV_TYPE=production`. Wrong: invite and reset links open the wrong address."
 
     [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_PUBLIC_URL"]
+    default = "unset (gateway page shows `http://localhost:8090`); Helm: `urls.gateway`"
+    setups = ["S", "D", "H"]
+    text = "Public URL shown in the dashboard's gateway configuration. Set it to the externally reachable `https://` URL when gateway TLS is on; otherwise copied base URLs point to localhost or cause mixed content. Helm passes `urls.gateway` to the API and worker pods."
+
+    [[part.section.row]]
     keys = ["MINIO_URL"]
     default = "`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
     setups = ["S", "D", "H"]
@@ -1833,6 +1839,90 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`false`; Helm: `agentccGateway.allowPrivateProviderURLs`"
     setups = ["S", "D", "H"]
     text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_HTTP_ENABLED"]
+    default = "`true`; Helm: `agentccGateway.tls.httpEnabled`"
+    setups = ["D", "H"]
+    text = "Keep the gateway HTTP listener on; set false only after enabling TLS and migrating all callers. The gateway refuses startup if neither listener is enabled, or if the value is not `true` or `false`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_ENABLED"]
+    default = "`false`; Helm: `agentccGateway.tls.enabled`"
+    setups = ["D", "H"]
+    text = "Enable the native HTTPS listener. A missing, invalid or expired certificate or private key, or a value other than `true` or `false`, fails startup rather than falling back to HTTP."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_PORT"]
+    default = "`8443`; Helm: `agentccGateway.tls.port`"
+    setups = ["D", "H"]
+    text = "Gateway HTTPS container port, distinct from the HTTP listener while both are on; Helm exposes it at `agentccGateway.tls.servicePort`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_CERT_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.crt`"
+    setups = ["D", "H"]
+    text = "Full-chain certificate path. Mount the certificate directory rather than individual files so Kubernetes Secret rotation and atomic file replacement work."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_KEY_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.key`"
+    setups = ["D", "H"]
+    text = "Matching private-key file path. Protect access to the key; the gateway refuses startup on a missing or mismatched key."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_MIN_VERSION"]
+    default = "`1.2`; Helm: `agentccGateway.tls.minVersion`"
+    setups = ["D", "H"]
+    text = "Minimum accepted TLS protocol version: `1.2` or `1.3`. Older TLS versions are refused."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_RELOAD_INTERVAL"]
+    default = "`30s`; Helm: `agentccGateway.tls.reloadInterval`"
+    setups = ["D", "H"]
+    text = "Go duration for polling certificate content, greater than zero and at most 60s. Bad rotations keep the last good certificate in use."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_HTTP_ENABLED"]
+    default = "`true`; Helm: `frontend.tls.httpEnabled`"
+    setups = ["D", "H"]
+    text = "Keep the dashboard HTTP listener on during migration; disabling HTTP without enabling TLS fails startup."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_HTTP_PORT"]
+    default = "`80`; Helm: `8080` when native HTTPS is enabled"
+    setups = ["D", "H"]
+    text = "Dashboard HTTP port in the container. Helm's unprivileged nginx configuration listens on 8080."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_ENABLED"]
+    default = "`false`; Helm: `frontend.tls.enabled`"
+    setups = ["D", "H"]
+    text = "Serve the dashboard over HTTPS. A missing certificate or key, or an expired or unreadable certificate, fails startup rather than falling back to HTTP."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_PORT"]
+    default = "`443`; Helm: `frontend.tls.port` (8443 by default)"
+    setups = ["D", "H"]
+    text = "Dashboard HTTPS container port. Helm exposes it on `frontend.tls.servicePort` (443 by default)."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_CERT_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.crt`"
+    setups = ["D", "H"]
+    text = "Full-chain certificate path. Mount the directory, not individual files, so atomic certificate rotation is visible."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_KEY_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.key`"
+    setups = ["D", "H"]
+    text = "Matching private key file path, readable by nginx (Helm uid and fsGroup 101)."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_RELOAD_INTERVAL"]
+    default = "`30` seconds; Helm: `frontend.tls.reloadInterval`"
+    setups = ["D", "H"]
+    text = "Seconds between certificate content checks. On change nginx reloads without dropping active connections; an expired certificate is not loaded, and a bad pair keeps the previous certificate in use."
 
     [[part.section.row]]
     keys = ["AGENTCC_SYNC_INTERVAL"]
