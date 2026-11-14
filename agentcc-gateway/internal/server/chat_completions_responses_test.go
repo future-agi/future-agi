@@ -508,3 +508,25 @@ func TestChatCompletionsOverResponsesCostsAndLogsLikeChat(t *testing.T) {
 		})
 	}
 }
+
+// On the Responses route the stream opens at response.created, before the
+// model has reasoned. That chunk goes to the caller at once, but the provider's
+// routing latency is measured to the first output, not to the acknowledgement.
+func TestResponsesRouteLatencyIsTimeToFirstOutput(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	upstream.mu.Lock()
+	upstream.responsesThinks = 400 * time.Millisecond
+	upstream.mu.Unlock()
+
+	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", true, ""), nil)
+	checkToolStream(t, w)
+	checkHits(t, upstream, 0, 1)
+
+	health := srv.handlers.healthMonitor.GetHealth("openai")
+	if health.RequestCount != 1 {
+		t.Fatalf("latency samples = %d, want 1", health.RequestCount)
+	}
+	if health.LatencyEWMAMs < 350 {
+		t.Errorf("routing latency = %d ms, want the ~400 ms to the first output, not the acknowledgement", health.LatencyEWMAMs)
+	}
+}

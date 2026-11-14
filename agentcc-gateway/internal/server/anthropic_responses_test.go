@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -35,6 +36,9 @@ type openAIUpstream struct {
 	bodies map[string][]byte // the last request body per path
 	// failResponses answers /v1/responses with a 503, as an outage would.
 	failResponses bool
+	// responsesThinks holds a /v1/responses stream this long after
+	// response.created, as a model reasoning before its first output.
+	responsesThinks time.Duration
 }
 
 func (u *openAIUpstream) count(path string) int {
@@ -58,6 +62,7 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	u.bodies[r.URL.Path] = raw
 	failResponses := u.failResponses
+	thinks := u.responsesThinks
 	u.mu.Unlock()
 
 	var req struct {
@@ -130,6 +135,10 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			json.Unmarshal([]byte(data), &ev)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
+			if ev.Type == "response.created" && thinks > 0 {
+				w.(http.Flusher).Flush()
+				time.Sleep(thinks)
+			}
 		}
 	default:
 		http.NotFound(w, r)

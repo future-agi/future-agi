@@ -283,11 +283,13 @@ type responsesFunctionTool struct {
 }
 
 // toResponsesRequest translates a chat request into a Responses API request.
-// stop has no Responses equivalent and is not sent; neither are n, seed,
-// presence/frequency penalties, logit_bias, logprobs, modalities, audio or
-// other unknown fields. A tool, tool choice, tool call or content part the
-// Responses API cannot be sent in chat shape is refused with a 400 rather than
-// forwarded or dropped.
+// The Responses API has no stop, seed, presence/frequency penalties or
+// logit_bias, and returns logprobs in another shape: a caller's own chat
+// request that sets one is refused with a 400 naming it, and a translated
+// request (/v1/messages, GenAI) is sent without it and the drop logged, as n
+// is. Modalities, audio and other unknown fields are not sent. A tool, tool
+// choice, tool call or content part the Responses API cannot be sent in chat
+// shape is refused with a 400 rather than forwarded or dropped.
 func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
 	// Word the remedy for the route the caller used: only a caller's own chat
 	// request can set reasoning_effort.
@@ -337,6 +339,14 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
 	}
 
+	if params := chatOnlyParams(req); len(params) > 0 {
+		if req.TranslatedFrom == "" {
+			return nil, unsupportedOverResponses(strings.Join(params, ", "))
+		}
+		slog.Info("responses route drops chat-only parameters",
+			"parameters", params, "translated_from", req.TranslatedFrom, "model", req.Model)
+	}
+
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
 	out.SafetyIdentifier = req.Extra["safety_identifier"]
 	out.Metadata = req.Extra["metadata"]
@@ -365,6 +375,53 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 		out.Text = &responsesText{Format: format, Verbosity: verbosity}
 	}
 	return out, nil
+}
+
+// chatOnlyParams names the chat parameters set on req that the Responses API
+// cannot carry. A value that changes nothing (a zero penalty, logprobs false,
+// an empty stop or logit_bias) is not counted.
+func chatOnlyParams(req *models.ChatCompletionRequest) []string {
+	var params []string
+	if stopSet(req.Stop) {
+		params = append(params, "stop")
+	}
+	if req.Seed != nil {
+		params = append(params, "seed")
+	}
+	if req.Logprobs != nil && *req.Logprobs {
+		params = append(params, "logprobs")
+	}
+	if req.TopLogprobs != nil && *req.TopLogprobs > 0 {
+		params = append(params, "top_logprobs")
+	}
+	if req.FrequencyPenalty != nil && *req.FrequencyPenalty != 0 {
+		params = append(params, "frequency_penalty")
+	}
+	if req.PresencePenalty != nil && *req.PresencePenalty != 0 {
+		params = append(params, "presence_penalty")
+	}
+	if len(req.LogitBias) > 0 {
+		params = append(params, "logit_bias")
+	}
+	return params
+}
+
+// stopSet reports whether a chat stop value names at least one sequence.
+func stopSet(raw json.RawMessage) bool {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one != ""
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		for _, s := range many {
+			if s != "" {
+				return true
+			}
+		}
+		return false
+	}
+	return len(raw) > 0 && string(raw) != "null"
 }
 
 // unsupportedOverResponses is the 400 for a request that must go over the
@@ -891,7 +948,11 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 				c.model = ev.Response.Model
 			}
 		}
-		return []models.StreamChunk{c.chunk(models.Delta{Role: "assistant"}, nil)}, nil
+		// Sent at once so the caller sees the stream open, but it is only the
+		// acknowledgement: reasoning comes before the first output.
+		ack := c.chunk(models.Delta{Role: "assistant"}, nil)
+		ack.Acknowledgement = true
+		return []models.StreamChunk{ack}, nil
 
 	case "response.output_text.delta", "response.refusal.delta":
 		delta := ev.Delta

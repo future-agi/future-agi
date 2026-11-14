@@ -1599,6 +1599,10 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Time to the serving attempt's first chunk: the routing latency signal,
 	// as before per-attempt sampling, rather than the whole stream's length.
 	var firstChunkLatency time.Duration
+	// When the serving attempt's first chunk is only an acknowledgement, the
+	// routing latency is taken at the next chunk, counted from servingStart.
+	var servingStart time.Time
+	var awaitingOutput bool
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
@@ -1627,6 +1631,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return err
 		}
 		firstChunkLatency = time.Since(start)
+		servingStart = start
+		awaitingOutput = chunk.Acknowledgement
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
@@ -1876,6 +1882,10 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				}
 				sseWriter.WriteDone()
 				return
+			}
+			if awaitingOutput && !chunk.Acknowledgement {
+				firstChunkLatency = time.Since(servingStart)
+				awaitingOutput = false
 			}
 			if streamID == "" && chunk.ID != "" {
 				streamID = chunk.ID

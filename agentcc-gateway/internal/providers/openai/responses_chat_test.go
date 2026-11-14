@@ -37,7 +37,6 @@ func toolTurnRequest(model string) *models.ChatCompletionRequest {
 		}}},
 		ToolChoice: json.RawMessage(`{"type":"function","function":{"name":"get_weather"}}`),
 		MaxTokens:  &maxTokens,
-		Stop:       json.RawMessage(`["\n\nHuman:"]`),
 	}
 }
 
