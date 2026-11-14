@@ -149,6 +149,7 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 			)
 			if cb.onStateChange != nil {
 				cb.onStateChange(cb.providerID, false)
+				cb.readmitAfterCooldown()
 			}
 		}
 	case StateHalfOpen:
@@ -160,6 +161,7 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 		)
 		if cb.onStateChange != nil {
 			cb.onStateChange(cb.providerID, false)
+			cb.readmitAfterCooldown()
 		}
 	}
 }
@@ -169,6 +171,13 @@ func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return cb.state
+}
+
+// readmitAfterCooldown puts the provider back into routing once the cooldown has passed. While
+// the circuit is open the router skips the provider, so no request would otherwise reach Allow
+// to move the circuit to half-open; Allow and the half-open probes decide from there.
+func (cb *CircuitBreaker) readmitAfterCooldown() {
+	time.AfterFunc(cb.cfg.Cooldown, func() { cb.onStateChange(cb.providerID, true) })
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.
@@ -190,14 +199,17 @@ type CircuitBreakerRegistry struct {
 	breakers map[string]*CircuitBreaker
 	cfg      config.CircuitBreakerConfig
 	onChange func(string, bool)
+	// Share org state across global and per-request failover configurations.
+	orgBreakers *ScopedCircuitBreakerRegistry
 }
 
 // NewCircuitBreakerRegistry creates a registry of circuit breakers.
 func NewCircuitBreakerRegistry(cfg config.CircuitBreakerConfig, onChange func(string, bool)) *CircuitBreakerRegistry {
 	return &CircuitBreakerRegistry{
-		breakers: make(map[string]*CircuitBreaker),
-		cfg:      cfg,
-		onChange: onChange,
+		breakers:    make(map[string]*CircuitBreaker),
+		cfg:         cfg,
+		onChange:    onChange,
+		orgBreakers: NewScopedCircuitBreakerRegistry(cfg),
 	}
 }
 

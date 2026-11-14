@@ -8,12 +8,13 @@ export function checkbox(theme) {
       styleOverrides: {
         root: {
           padding: theme.spacing(1),
-          color: lightMode
-            ? theme.palette.black?.o20
-            : theme.palette.border?.bright,
+          // Design system: unchecked border.strong; checked control.checked
+          // (purple in light, white in dark, like the main button).
+          color: theme.palette.border.strong,
+          "& .MuiSvgIcon-root": { fontSize: 18 },
 
           "&.Mui-checked, &.MuiCheckbox-indeterminate": {
-            color: theme.palette.purple?.[300],
+            color: theme.palette.control.checked,
             ...(!lightMode && {
               "& path[stroke]": { stroke: theme.palette.background.paper },
             }),

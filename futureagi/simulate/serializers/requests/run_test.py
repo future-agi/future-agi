@@ -26,14 +26,36 @@ class RunTestFilterSerializer(StrictInputSerializer):
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
     simulation_type = serializers.ChoiceField(
-        choices=RunTest.SourceTypes.choices,
+        choices=[("", ""), *RunTest.SourceTypes.choices],
         required=False,
         allow_blank=True,
         default="",
     )
     prompt_template_id = serializers.UUIDField(required=False, allow_null=True)
-    page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1)
+    page = serializers.IntegerField(
+        required=False, default=1, min_value=1, max_value=100
+    )
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    summary = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Return the bounded list-card representation instead of the full "
+            "nested run-test detail payload."
+        ),
+    )
+
+
+class PromptSimulationListQuerySerializer(StrictInputSerializer):
+    """Validates GET prompt-template simulation list query parameters."""
+
+    version_id = serializers.UUIDField(required=False)
+    page = serializers.IntegerField(
+        required=False, default=1, min_value=1, max_value=100
+    )
+    limit = serializers.IntegerField(
+        required=False, default=10, min_value=1, max_value=100
+    )
 
 
 class CreateRunTestSerializer(StrictInputSerializer):

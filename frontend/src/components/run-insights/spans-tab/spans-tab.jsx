@@ -1,9 +1,10 @@
-import { Box, Collapse } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 
@@ -16,15 +17,29 @@ import {
   getSpanListColumnDefs,
 } from "../traces-tab/common";
 import { useDebounce } from "src/hooks/use-debounce";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import {
+  ComplexFilterPanel,
+  inventoryToCatalogProps,
+} from "src/components/filter";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
-import { useQuery } from "@tanstack/react-query";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
+import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
+import { parsePrototypeSpanListResponse } from "src/api/project/telemetry-list-contract";
+import { getSpanPhysicalRowId } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
+import { useCursorAttributeInventory } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readRunInsightListPage } from "../run_insight_list_read";
+import {
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+} from "src/config/runtime_limits";
+
+const FILTER_CATEGORY_LABELS = { attribute: "Attributes" };
 
 const defaultFilter = {
   column_id: "",
@@ -35,32 +50,14 @@ const defaultFilter = {
   },
 };
 
-const normalizeColumnConfig = (column = {}) => ({
-  ...column,
-  isVisible: column.isVisible ?? column.is_visible,
-  groupBy: column.groupBy ?? column.group_by,
-  outputType: column.outputType ?? column.output_type,
-  reverseOutput: column.reverseOutput ?? column.reverse_output,
-  annotationLabelType:
-    column.annotationLabelType ?? column.annotation_label_type,
-  choicesMap: column.choicesMap ?? column.choices_map,
-  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
-  sourceField: column.sourceField ?? column.source_field,
-  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
-});
-
-const normalizeSpanListPayload = (payload = {}) => {
-  const metadata = payload.metadata || {};
+const normalizeSpanListPayload = (payload) => {
+  const normalized = parsePrototypeSpanListResponse(payload);
+  const metadata = normalized.metadata;
+  const totalState = getListTotalState(metadata);
 
   return {
-    columnConfig: (
-      payload.columnConfig ||
-      payload.column_config ||
-      payload.config ||
-      []
-    ).map(normalizeColumnConfig),
-    table: payload.table || [],
-    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+    ...normalized,
+    ...totalState,
   };
 };
 
@@ -79,6 +76,7 @@ const SpanTab = React.forwardRef(
     const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.borderless);
     const { projectId, runId } = useParams();
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
+    const [readError, setReadError] = useState(null);
 
     const [statusBar] = useState({
       statusPanels: [
@@ -96,56 +94,26 @@ const SpanTab = React.forwardRef(
     const [filters, setFilters] = useState([
       { ...defaultFilter, id: getRandomId() },
     ]);
-
-    const { data: evalAttributes } = useQuery({
-      queryKey: ["eval-attributes", projectId],
-      queryFn: () =>
-        axios.get(endpoints.project.getEvalAttributeList(), {
-          params: {
-            filters: JSON.stringify({ project_id: projectId }),
-          },
-        }),
-      select: (data) => data.data?.result,
-    });
-
-    const [filterDefinition, setFilterDefinition] = useState(() => {
-      return generateSpanFilterDefinition(columns, evalAttributes, filters);
-    });
-
-    // Memoized helper for preserving attribute definitions
-    const preserveAttributeDefinitions = useMemo(() => {
-      return (prevDefinition, newBaseDefinition) => {
-        const attributionIndex = prevDefinition?.findIndex(
-          (item) => item?.propertyName === "Attribute",
-        );
-
-        if (prevDefinition?.[attributionIndex]?.dependents?.length > 0) {
-          // Already has the Attribute block — preserve it
-          const copy = [...newBaseDefinition];
-          const copyAttributionIndex = copy?.findIndex(
-            (item) => item?.propertyName === "Attribute",
-          );
-          if (copyAttributionIndex >= 0) {
-            copy[copyAttributionIndex] = prevDefinition[attributionIndex];
-          }
-          return copy;
-        } else {
-          // Generate fresh with attributes
-          return newBaseDefinition;
-        }
-      };
-    }, []);
-
-    useEffect(() => {
-      setFilterDefinition((prevDefinition) => {
-        const newBaseDefinition = generateSpanFilterDefinition(
-          columns,
-          evalAttributes,
-          filters,
-        );
-        return preserveAttributeDefinitions(prevDefinition, newBaseDefinition);
+    const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+    const preservedAttributeKeys = useMemo(
+      () =>
+        filters.flatMap((filter) =>
+          filter?._meta?.parentProperty === "Attribute" && filter?.column_id
+            ? [filter.column_id]
+            : [],
+        ),
+      [filters],
+    );
+    const { attributes: evalAttributes, inventoryControlProps } =
+      useCursorAttributeInventory({
+        projectId,
+        discoveryMode: "filter",
+        preservedKeys: preservedAttributeKeys,
       });
-    }, [columns, evalAttributes, filters, preserveAttributeDefinitions]);
+    const filterDefinition = useMemo(
+      () => generateSpanFilterDefinition(columns, evalAttributes, filters),
+      [columns, evalAttributes, filters],
+    );
 
     const reversePrimaryEvalColumnIds = useMemo(() => {
       return columns.filter((c) => c?.reverseOutput).map((c) => c.id);
@@ -157,16 +125,13 @@ const SpanTab = React.forwardRef(
       getFilterExtraProperties,
     );
 
-    const debouncedValidatedFilters = useDebounce(validatedFilters, 500);
+    const debouncedValidatedFilters = useDebounce(
+      validatedFilters,
+      FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+    );
 
     useEffect(() => {
-      const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filter_config?.filter_value &&
-        Array.isArray(f.filter_config.filter_value)
-          ? f.filter_config.filter_value.length > 0
-          : f.filter_config.filter_value !== "",
-      );
-      setIsFilterApplied(hasActiveFilter);
+      setIsFilterApplied(debouncedValidatedFilters?.length || 0);
       trackEvent(Events.filterApplied);
     }, [debouncedValidatedFilters, setIsFilterApplied]);
 
@@ -285,40 +250,46 @@ const SpanTab = React.forwardRef(
           try {
             const { request } = params;
 
-            // request has startRow and endRow get next page number and each page has 10 rows
-            const pageNumber = Math.floor(request.startRow / 10);
-
-            const results = await axios.get(
-              endpoints.project.getSpanList(),
-
-              {
-                params: {
-                  filters: JSON.stringify(debouncedValidatedFilters),
-                  project_version_id: runId,
-                  page_number: pageNumber,
-                  page_size: 10,
-                },
-              },
+            const pageNumber = Math.floor(
+              request.startRow / INTERACTIVE_TABLE_PAGE_SIZE,
             );
-            const res = normalizeSpanListPayload(results?.data?.result);
+
+            const results = await readRunInsightListPage(
+              ({ signal, timeout }) =>
+                readQuery(endpoints.project.getSpanList(), {
+                  signal,
+                  timeout,
+                  params: {
+                    filters: JSON.stringify(debouncedValidatedFilters),
+                    project_version_id: runId,
+                    page_number: pageNumber,
+                    page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                  },
+                }),
+            );
+            const res = normalizeSpanListPayload(results.data);
             const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res.totalRows;
-            params.success({
-              rowData: res.table,
-              totalRows: res.totalRows,
-            });
-          } catch (error) {
+            params.api.totalRowCount = res.totalRowCount;
+            params.api.totalRowCountLowerBound = res.totalRowCountLowerBound;
+            params.api.totalRowCountIsLowerBound =
+              res.totalRowCountIsLowerBound;
+            const successPayload = { rowData: res.table };
+            if (!res.totalRowCountIsLowerBound) {
+              successPayload.totalRows = res.totalRows;
+            }
+            setReadError(null);
+            params.success(successPayload);
+          } catch {
+            setReadError(QUERY_FAILED_RETRY_MESSAGE);
             params.fail();
           }
         },
-        getRowId: ({ data }) => {
-          return data.rowId;
-        },
+        getRowId: ({ data }) => getSpanPhysicalRowId(data),
       }),
       [debouncedValidatedFilters, runId, setColumns],
     );
@@ -329,17 +300,24 @@ const SpanTab = React.forwardRef(
 
     return (
       <>
-        <Collapse in={filterOpen}>
-          <Box sx={{ paddingX: "12px", paddingTop: "16px" }}>
-            <ComplexFilter
-              filters={filters}
-              defaultFilter={defaultFilter}
-              setFilters={setFilters}
-              filterDefinition={filterDefinition}
-              onClose={() => setFilterOpen(false)}
-            />
-          </Box>
-        </Collapse>
+        <Box ref={setFilterAnchorEl} sx={{ height: 0 }} />
+        <ComplexFilterPanel
+          anchorEl={filterAnchorEl}
+          open={Boolean(filterOpen && filterAnchorEl)}
+          onClose={() => setFilterOpen(false)}
+          filters={filters}
+          setFilters={setFilters}
+          filterDefinition={filterDefinition}
+          defaultFilter={defaultFilter}
+          projectId={projectId}
+          // Values come from the traces vocabulary; custom attributes are read from
+          // the span attribute inventory, as the old filter did.
+          source="traces"
+          attributeSource="spans"
+          freeSoloValues
+          categoryLabels={FILTER_CATEGORY_LABELS}
+          {...inventoryToCatalogProps(inventoryControlProps)}
+        />
         <Box
           className="ag-theme-quartz"
           style={{
@@ -359,6 +337,33 @@ const SpanTab = React.forwardRef(
             className="ag-theme-quartz custom-grid"
             style={{ height: "100%", overflowX: "auto" }}
           >
+            {readError && (
+              <Box
+                role="alert"
+                sx={{
+                  px: 1.5,
+                  py: 0.75,
+                  color: "warning.main",
+                  bgcolor: "warning.lighter",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                {readError}
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setReadError(null);
+                    gridApiRef?.current?.api?.refreshServerSide({
+                      purge: false,
+                    });
+                  }}
+                >
+                  Retry
+                </Button>
+              </Box>
+            )}
             <AgGridReact
               ref={gridApiRef}
               className="clean-data-table"
@@ -366,12 +371,12 @@ const SpanTab = React.forwardRef(
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               pagination={false}
-              cacheBlockSize={10}
+              cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
               maxBlocksInCache={10}
               suppressRowClickSelection={true}
               rowModelType="serverSide"
               suppressServerSideFullWidthLoadingRow={true}
-              serverSideInitialRowCount={10}
+              serverSideInitialRowCount={INTERACTIVE_TABLE_PAGE_SIZE}
               serverSideDatasource={dataSource}
               onRowClicked={(event) => {
                 setTraceDetailDrawerOpen({
@@ -381,9 +386,7 @@ const SpanTab = React.forwardRef(
                   fromSpansView: true,
                 });
               }}
-              getRowId={({ data }) => {
-                return data.span_id;
-              }}
+              getRowId={({ data }) => getSpanPhysicalRowId(data)}
               statusBar={statusBar}
             />
           </Box>

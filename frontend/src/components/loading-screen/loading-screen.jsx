@@ -1,17 +1,12 @@
-import React, { useMemo } from "react";
+import React from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
 import { useLocation } from "react-router";
 import { alpha, useTheme } from "@mui/material/styles";
 
 import LoadingTemplate from "../../sections/workbench/LoadingTemplate";
-import {
-  RocketMascot,
-  LOADING_MESSAGES,
-  pickRandom,
-} from "../rocket-mascot";
+import Loader from "./loader";
 
 // ----------------------------------------------------------------------
 
@@ -23,89 +18,23 @@ export default function LoadingScreen({
   ...other
 }) {
   const location = useLocation();
-  const theme = useTheme();
-
-  const message = useMemo(
-    () => messageOverride || pickRandom(LOADING_MESSAGES),
-    [messageOverride],
-  );
 
   if (location?.state?.fromOption === "use-template") {
     return <LoadingTemplate sx={{ mt: "46px" }} />;
   }
 
-  const baseSx = {
-    px: 5,
-    width: 1,
-    flexGrow: 1,
-    minHeight: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    ...sx,
-  };
-
-  if (compact) {
-    return (
-      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
-        <OrbitDots />
-      </Box>
-    );
-  }
-
-  if (variant === "orbit") {
-    return (
-      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
-        <OrbitLoader />
-        <Box sx={{ textAlign: "center", maxWidth: 420, mt: 1 }}>
-          <Typography
-            variant="subtitle1"
-            color="text.primary"
-            letterSpacing="0.02em"
-          >
-            Standing by
-          </Typography>
-          <Typography
-            variant="caption"
-            fontFamily="IBM Plex Mono, ui-monospace, monospace"
-            color={alpha(theme.palette.text.secondary, 0.8)}
-            mt={0.5}
-            sx={{
-              "&::before": { content: '"// "', color: "text.disabled" },
-            }}
-          >
-            {message}
-          </Typography>
-        </Box>
-      </Box>
-    );
-  }
-
-  // Default: rocket mascot
+  // Design system: a page or panel that is loading shows the simple loader.
+  // A skeleton is only used where it copies the real layout, and that is
+  // written by the screen itself. `variant` is kept for callers; every
+  // variant renders the same loader.
   return (
-    <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
-      <RocketMascot variant="launching" size={140} />
-      <Box sx={{ textAlign: "center", maxWidth: 420 }}>
-        <Typography
-          variant="m2"
-          fontWeight="fontWeightSemiBold"
-          color="text.primary"
-          lineHeight={1.3}
-        >
-          Preparing for liftoff
-        </Typography>
-        <Typography
-          variant="body2"
-          fontStyle="italic"
-          color="text.secondary"
-          mt={0.5}
-        >
-          {message}
-        </Typography>
-      </Box>
-    </Box>
+    <Loader
+      label={messageOverride || "Loading"}
+      minHeight={compact ? 120 : "60vh"}
+      data-variant={variant}
+      sx={sx}
+      {...other}
+    />
   );
 }
 

@@ -11,7 +11,13 @@ import Iconify from "../iconify";
 
 const LoomDialog = ({ open, onClose, title, loomUrl }) => {
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+    >
       <DialogTitle sx={{ padding: 2 }}>{title}</DialogTitle>
       <IconButton
         onClick={onClose}
@@ -22,7 +28,7 @@ const LoomDialog = ({ open, onClose, title, loomUrl }) => {
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <DialogContent sx={{ padding: 2, paddingTop: 0 }}>
         <Box

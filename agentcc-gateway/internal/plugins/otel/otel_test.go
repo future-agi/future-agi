@@ -567,6 +567,7 @@ func TestPlugin_SpanKindPerEndpoint(t *testing.T) {
 		{"translation", "llm"},
 		{"ocr", "llm"},
 		{"video", "llm"},
+		{"decision", "evaluator"},
 	}
 
 	for _, e := range endpoints {

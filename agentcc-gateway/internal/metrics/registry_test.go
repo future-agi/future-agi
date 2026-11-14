@@ -238,3 +238,18 @@ func TestFormatLabels(t *testing.T) {
 		t.Fatalf("nil labels should be empty")
 	}
 }
+
+func TestFormatLabels_EscapesValues(t *testing.T) {
+	out := formatLabels(map[string]string{"model": "a\\b\"c\nd"})
+	want := `model="a\\b\"c\nd"`
+	if out != want {
+		t.Fatalf("formatLabels = %q, want %q", out, want)
+	}
+
+	r := NewRegistry()
+	r.CounterInc("m", "help", map[string]string{"model": "x\"y\nz"})
+	rendered := r.Render()
+	if !strings.Contains(rendered, `m{model="x\"y\nz"} 1`) {
+		t.Fatalf("rendered output not escaped: %q", rendered)
+	}
+}

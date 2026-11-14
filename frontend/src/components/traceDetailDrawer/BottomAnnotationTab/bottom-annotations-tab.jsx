@@ -1,5 +1,6 @@
 import { Box, Button, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useMemo, useRef } from "react";
 import Iconify from "src/components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -116,9 +117,7 @@ const BottomAnnotationsTab = ({
           variant="outlined"
           color="primary"
           size="small"
-          startIcon={
-            <Iconify icon="mingcute:add-line" width={16} height={16} />
-          }
+          startIcon={<Iconify icon="solar:add-linear" width={16} height={16} />}
           onClick={() => setAddLabelDrawerOpen(true)}
         >
           Add Label
@@ -212,7 +211,7 @@ const BottomAnnotationsTab = ({
       </ShowComponent>
       {spanNotes?.length > 0 && (
         <>
-          <Typography variant="s1" fontWeight="fontWeightBold">
+          <Typography variant="s1" fontWeight="fontWeightSemiBold">
             Span Notes
           </Typography>
           <Box

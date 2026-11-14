@@ -23,6 +23,7 @@ from typing import Literal
 import structlog
 
 from tfc.capabilities.registry import PAID_FEATURES
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
@@ -50,7 +51,7 @@ def _detect_mode() -> DeploymentModeType:
     from django.conf import settings
 
     cloud_deployment = getattr(settings, "CLOUD_DEPLOYMENT", "")
-    if cloud_deployment in ("US", "EU", "DEV"):
+    if is_cloud_env(cloud_deployment):
         cloud_secret = getattr(settings, "CLOUD_DEPLOYMENT_SECRET", "")
         if _validate_cloud_secret(cloud_secret):
             return "cloud"
