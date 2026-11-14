@@ -14,6 +14,12 @@ port_holder() {
   elif command -v ss >/dev/null 2>&1; then
     out=$(ss -ltn 2>/dev/null)
     [[ -n "$out" ]] && awk -v p=":$port\$" '$4 ~ p {print $0; exit}' <<<"$out"
+  elif command -v netstat >/dev/null 2>&1; then
+    # Windows (MSYS2 / Git Bash) has neither lsof nor ss. The state column
+    # is localized, so identify TCP listeners by their zero foreign port.
+    # Anchor both ports so :3000 cannot match :30001 (nor :0 match :80).
+    out=$(netstat -ano 2>/dev/null)
+    [[ -n "$out" ]] && awk -v p=":$port\$" '$1 == "TCP" && $2 ~ p && $3 ~ /:0$/ {print $0; exit}' <<<"$out"
   fi
   set -eE
   return 0
