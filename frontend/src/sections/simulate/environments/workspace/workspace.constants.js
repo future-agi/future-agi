@@ -182,6 +182,7 @@ export const WORKSPACE_COPY = {
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
   title: "Versions",
+  savedWithoutCheck: "Saved without a check",
   subtitle:
     "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {

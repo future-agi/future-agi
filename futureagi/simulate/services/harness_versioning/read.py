@@ -201,6 +201,8 @@ def _piece_item(
         "discardable": None,
         "release_checks": None,
         "candidate_state": _candidate_state(version, candidate_states or {}),
+        # Saved while the check was unavailable on our side.
+        "saved_without_check": bool((version.documents or {}).get("uncertified")),
     }
 
 
@@ -512,6 +514,7 @@ def _agent_item(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
         "candidate_state": None,
+        "saved_without_check": False,
     }
 
 
