@@ -2102,11 +2102,55 @@ def compile_trace_filter_plans(
     return plans
 
 
+def _root_trace_name_plan(item: dict[str, Any], *, index: int) -> LatestFilterPredicate:
+    """A trace-name leaf a grouped reader tests on its live root rows.
+
+    Session membership asks whether one of the session's traces is named as
+    requested, and a trace is named by its root (``TRACE_NAME_SQL``). After
+    039 a child row has no name of its own, so only the latest-live root may
+    satisfy the comparison: otherwise every child would satisfy a negated or
+    a null comparison. The grouped reducer then requires one such root.
+    """
+
+    plan = _column_plan(
+        item,
+        index=index,
+        column=TRACE_NAME_SQL,
+        value_type="text",
+        nullable=False,
+        scope="span",
+    )
+    root_alias = f"latest_trace_name_root_{index}"
+    root_row = "(parent_span_id IS NULL OR parent_span_id = '')"
+    return replace(
+        plan,
+        aggregates=(
+            *plan.aggregates,
+            f"argMax({root_row}, _peerdb_version) AS {root_alias}",
+        ),
+        predicate=f"({root_alias} AND ({plan.predicate}))",
+        seed_predicate=f"({root_row} AND ({plan.seed_predicate}))",
+        raw_witness_predicate=(
+            None
+            if plan.raw_witness_predicate is None
+            else f"({root_row} AND ({plan.raw_witness_predicate}))"
+        ),
+    )
+
+
 def compile_span_filter_plans(
     filters: list[dict[str, Any]],
     *,
     group_attribute_nulls: bool = False,
+    root_trace_name_plans: bool = False,
 ) -> list[LatestFilterPredicate]:
+    """Compile span-grain latest-state plans.
+
+    ``root_trace_name_plans`` is for grouped readers (sessions) that match a
+    group when one of its rows does: a trace-name leaf then becomes a plan on
+    the group's live root rows. Span readers leave it off; their trace-name
+    leaf keeps every span of a matching root and is a residual.
+    """
     plans: list[LatestFilterPredicate] = []
     for item in filters:
         key, config = _parts(item)
@@ -2135,6 +2179,8 @@ def compile_span_filter_plans(
                     plan, post_final_scalar_seed_predicate=plan.seed_predicate
                 )
             plans.append(plan)
+        elif key == "trace_name" and root_trace_name_plans:
+            plans.append(_root_trace_name_plan(item, index=index))
         elif key in _SPAN_COLUMNS:
             column, value_type, nullable = _SPAN_COLUMNS[key]
             plans.append(
@@ -2215,8 +2261,13 @@ def partition_span_filter_plans(
     filters: list[dict[str, Any]],
     *,
     group_attribute_nulls: bool = False,
+    root_trace_name_plans: bool = False,
 ) -> tuple[list[LatestFilterPredicate], list[dict[str, Any]]]:
-    """Span equivalent of :func:`partition_trace_filter_plans`."""
+    """Span equivalent of :func:`partition_trace_filter_plans`.
+
+    With ``root_trace_name_plans`` (grouped readers such as sessions) a
+    trace-name leaf is a supported root-row plan, not a residual.
+    """
 
     supported: list[dict[str, Any]] = []
     residual: list[dict[str, Any]] = []
@@ -2226,6 +2277,7 @@ def partition_span_filter_plans(
             supported.append(item)
         elif (
             key == "trace_name"
+            and not root_trace_name_plans
             and str(config.get("col_type") or config.get("colType") or "").upper()
             != "SPAN_ATTRIBUTE"
         ):
@@ -2239,12 +2291,14 @@ def partition_span_filter_plans(
             compile_span_filter_plans(
                 [item],
                 group_attribute_nulls=group_attribute_nulls,
+                root_trace_name_plans=root_trace_name_plans,
             )
             supported.append(item)
     return (
         compile_span_filter_plans(
             supported,
             group_attribute_nulls=group_attribute_nulls,
+            root_trace_name_plans=root_trace_name_plans,
         ),
         residual,
     )
