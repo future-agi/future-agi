@@ -154,9 +154,10 @@ reconcile as an operator. Do not assume unattended updates preserve legacy
 tags without this step; notify/download modes do not apply a release.
 
 For a **non-production Distributed** install (`./bin/install --distributed`),
-use `backend` instead of Standalone's `app`. The installer sets
-`COMPOSE_FILE` in `.env` to `docker-compose.distributed.yml`, plus the
-installer's override file (docker-compose.override.yml) when it wrote one. From the
+use `backend` instead of Standalone's `app`. The installer records
+`COMPOSE_FILE=docker-compose.distributed.yml:docker-compose.override.yml`
+in `.env` when an installer override exists, and only the distributed file
+otherwise. From the
 repository root, with no conflicting `COMPOSE_FILE` in the shell, plain
 `docker compose` uses that same file set (not the production overlay).
 After staging with `./bin/update apply --stage`, review any schema
