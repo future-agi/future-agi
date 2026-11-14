@@ -75,6 +75,18 @@ func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
 // only: it cannot know what an alias resolves to. A "~typesafe/jev-latest" call
 // answered as "typesafe/jev-1.14-20261015" is charged an override on
 // "decision:jev-1.14.0", while the listing shows jev-latest's price.
+//
+// Known limitation (an owner decision, pinned by
+// TestDecisionPricingTwoShortNameOverridesFollowTheAnswersForm): with
+// operator overrides on two short names of one model, the charge depends on
+// the form of the answer. With A on "decision:jev-1.13" and B on
+// "decision:jev-1.13.0", a call sent as "typesafe/jev-1.13" is charged A when
+// the answer is dated ("typesafe/jev-1.13-20260917": its last segment is not
+// an exact key, and "jev-1.13" is) and B when it is undated
+// ("typesafe/jev-1.13.0": its last segment is). The rule today: an override on
+// the resolved version wins over a sent name's short-name override when the
+// answer is undated. The listing shows A. The alias pair "jev-latest" and
+// "jev-1.14.0" behaves the same way.
 func (db *ModelDB) DecisionPricingAny(names ...string) (*PricingInfo, bool) {
 	exact := slices.Clone(names)
 	var normalized []string

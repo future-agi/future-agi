@@ -272,3 +272,45 @@ func TestDecisionPricingAnyTriesFullNamesBeforeLastSegments(t *testing.T) {
 		t.Errorf("generic override only: %+v, want 0.3", pricing)
 	}
 }
+
+// Pins a known limitation for the owner (see DecisionPricingAny): with
+// overrides on two short names of one model, the charge follows the form of
+// the answer. Changing this must be a deliberate decision.
+func TestDecisionPricingTwoShortNameOverridesFollowTheAnswersForm(t *testing.T) {
+	a, b, latest, v14 := 0.5/1_000_000, 0.6/1_000_000, 0.3/1_000_000, 0.4/1_000_000
+	override := func(price *float64) ModelOverride {
+		return ModelOverride{Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: price}}
+	}
+	db := New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-1.13":   override(&a),
+		DecisionKeyPrefix + "jev-1.13.0": override(&b),
+		DecisionKeyPrefix + "jev-latest": override(&latest),
+		DecisionKeyPrefix + "jev-1.14.0": override(&v14),
+	})
+	price := func(names ...string) float64 {
+		t.Helper()
+		pricing, ok := db.DecisionPricingAny(names...)
+		if !ok {
+			t.Fatalf("%v unpriced", names)
+		}
+		return pricing.InputPerMTok()
+	}
+	for _, tt := range []struct {
+		name  string
+		names []string
+		want  float64
+	}{
+		// The charge: resolved, upstream, provider-qualified.
+		{"dated answer", []string{"typesafe/jev-1.13-20260917", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"}, 0.5},
+		{"undated answer", []string{"typesafe/jev-1.13.0", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"}, 0.6},
+		// The listing: upstream, then the listed id.
+		{"listing", []string{"typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"}, 0.5},
+		{"alias, dated answer", []string{"typesafe/jev-1.14-20261015", "~typesafe/jev-latest", "openrouter/~typesafe/jev-latest"}, 0.3},
+		{"alias, undated answer", []string{"typesafe/jev-1.14.0", "~typesafe/jev-latest", "openrouter/~typesafe/jev-latest"}, 0.4},
+		{"alias listing", []string{"~typesafe/jev-latest", "openrouter/~typesafe/jev-latest"}, 0.3},
+	} {
+		if got := price(tt.names...); math.Abs(got-tt.want) > 1e-9 {
+			t.Errorf("%s: %g/Mtok, want %g", tt.name, got, tt.want)
+		}
+	}
+}
