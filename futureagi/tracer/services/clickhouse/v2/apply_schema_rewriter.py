@@ -203,13 +203,11 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
 #
 # A dictionary declared with `SOURCE(CLICKHOUSE(TABLE '...'))` and no USER reads
 # its local source as user `default` with an EMPTY password. When the server's
-# users have passwords, dictionary lookups fail with AUTHENTICATION_FAILED.
-# Before 039, spans.trace_name also evaluates dictGetOrDefault('trace_dict', ...)
-# on insert, so installations still applying 015 need these credentials. After
-# 039, other dictionaries still need credentials for their readers. The
-# packaged DDL stays credential-free (its text is hashed for drift detection
-# and compared against live metadata); every path that executes it injects
-# the credentials it connects with, at apply time.
+# users have passwords, every dictGet then fails with AUTHENTICATION_FAILED;
+# spans.trace_name evaluates dictGetOrDefault('trace_dict', ...) on insert, so
+# every span insert fails. The packaged DDL stays credential-free (its text is
+# hashed for drift detection and compared against live metadata); every path
+# that executes it injects the credentials it connects with, at apply time.
 #
 # ClickHouse shows a source password as '[HIDDEN]', so a rotated password
 # would be invisible in the live DDL. The injection therefore also sets the
