@@ -1,0 +1,128 @@
+"""Validate scenarios: prove every case of a pair on demand, and read where it got to."""
+
+import uuid
+from unittest.mock import patch
+
+import pytest
+from django.utils import timezone
+
+from simulate.models import HostedHarnessJob
+from simulate.services.harness_versioning import validation
+from simulate.tests.test_harness_affected_scenarios import _suite, _ten
+from simulate.tests.test_harness_readiness import _environment
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    readiness_on as readiness_on,
+)
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
+)
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
+)
+from simulate.tests.test_harness_versioning_assembly import _row
+
+pytestmark = pytest.mark.django_db
+BASE = "/simulate/api/harness-environments"
+
+
+def _post(client, environment, body=None):
+    return client.post(
+        f"{BASE}/{environment.id}/scenarios/validate/", body or {}, format="json"
+    )
+
+
+def _get(client, environment, job_id):
+    return client.get(
+        f"{BASE}/{environment.id}/scenarios/validate/", {"job_id": str(job_id)}
+    )
+
+
+@pytest.fixture
+def certified(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "va-certified")
+    _suite(environment, _ten())
+    return environment
+
+
+def test_a_prove_job_starts_and_a_live_one_is_reported(auth_client, certified):
+    first = _post(auth_client, certified)
+    again = _post(auth_client, certified)
+
+    assert first.status_code == 202, first.content
+    assert first.json()["state"] == "validating"
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.json()["job_id"])
+    assert job.payload["metadata"]["scenario_proving"] == "only"
+    assert (again.status_code, again.json()["job_id"]) == (202, first.json()["job_id"])
+
+
+def test_ready_only_with_if_fresh_after_the_last_change(auth_client, certified):
+    started = _post(auth_client, certified).json()
+    HostedHarnessJob.no_workspace_objects.filter(id=started["job_id"]).update(
+        state=HostedHarnessJob.State.COMPLETED, updated_at=timezone.now()
+    )
+
+    fresh = _post(auth_client, certified, {"if_fresh": True})
+    anew = _post(auth_client, certified)
+
+    assert (fresh.status_code, fresh.json()["state"]) == (200, "ready")
+    assert anew.status_code == 202 and anew.json()["job_id"] != started["job_id"]
+
+
+def test_unavailable_check_is_reported(auth_client, certified):
+    bundle = _row(certified)
+    with patch.object(
+        validation,
+        "start_validation",
+        return_value=validation.Validation(
+            validation.CHECK_UNAVAILABLE, bundle, "prove"
+        ),
+    ):
+        response = _post(auth_client, certified)
+    assert (response.status_code, response.json()["state"]) == (200, "unavailable")
+    assert response.json()["message"]
+
+
+def test_refusals(auth_client, certified, settings):
+    foreign = _post(auth_client, certified, {"suite_version_id": str(uuid.uuid4())})
+    assert (foreign.status_code, foreign.json()["error"]) == (400, "versions_invalid")
+
+    with patch.object(validation, "can_validate", return_value=False):
+        cannot = _post(auth_client, certified)
+    assert (cannot.status_code, cannot.json()["error"]) == (422, "cannot_validate")
+
+    settings.HARNESS_VERSIONING_ENABLED = False
+    disabled = _post(auth_client, certified)
+    assert (disabled.status_code, disabled.json()["error"]) == (
+        404,
+        "versioning_disabled",
+    )
+
+
+def test_status_reads_validating_finished_and_failed(
+    auth_client, certified, user, workspace, storage
+):
+    started = _post(auth_client, certified).json()
+    job_id = started["job_id"]
+    assert _get(auth_client, certified, job_id).json()["state"] == "validating"
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+    job.payload["metadata"]["scenario_proofs_recorded"] = True
+    HostedHarnessJob.no_workspace_objects.filter(id=job_id).update(
+        state=HostedHarnessJob.State.COMPLETED, payload=job.payload
+    )
+    finished = _get(auth_client, certified, job_id).json()
+    assert (finished["state"], finished["proofs_recorded"], finished["message"]) == (
+        "finished",
+        True,
+        None,
+    )
+
+    HostedHarnessJob.no_workspace_objects.filter(id=job_id).update(
+        state=HostedHarnessJob.State.FAILED,
+        failure={"code": "authoring_runtime_validation_failed"},
+    )
+    failed = _get(auth_client, certified, job_id).json()
+    assert failed["state"] == "failed" and failed["message"]
+
+    other = _environment(user, workspace, storage, "va-other")
+    assert _get(auth_client, other, job_id).status_code == 404

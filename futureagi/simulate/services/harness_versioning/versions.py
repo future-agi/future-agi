@@ -81,6 +81,9 @@ MEMBER_FIELDS = (
     "starts_with",
     "faults",
     "limits",
+    # Where each requirement comes from, and the wrong behaviours its checks must fail: read by the lifecycle.
+    "sources",
+    "negative_controls",
 )
 
 
@@ -500,7 +503,15 @@ def _proved_at(proof: Mapping[str, Any]) -> datetime | None:
 
 # Fields a scenario only has when it uses them; empty is the same as absent, so a member stored before they were kept
 # compares equal to the same scenario now.
-OPTIONAL_MEMBER_FIELDS = ("pre_run", "history", "starts_with", "faults", "limits")
+OPTIONAL_MEMBER_FIELDS = (
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
+    "sources",
+    "negative_controls",
+)
 
 
 def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
