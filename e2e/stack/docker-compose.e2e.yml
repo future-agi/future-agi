@@ -13,7 +13,23 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  # A live process is not namespace readiness; the one-shot must not race it.
+  peerdb-temporal:
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "namespace",
+          "describe",
+          "--namespace",
+          "default",
+          "--address",
+          "peerdb-temporal:7233",
+        ]
   backend:
+    networks: [default, link-public]
     depends_on:
       mock-google:
         condition: service_healthy
@@ -39,6 +55,7 @@ services:
       BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
@@ -55,32 +72,76 @@ services:
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
   worker:
+    # Async code evals use the same isolated executor as the playground.
+    networks: [default, link-public]
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+  # Keep explicit queue workers connected too when a profile selects them.
+  # Their base YAML anchor is expanded before this overlay is merged.
+  worker-default:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-s:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-l:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-xl:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-exact-aggregation:
+    networks: [default, link-public]
     restart: "no"
     volumes: !reset []
     environment:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
       sql-workbench-bootstrap:
         condition: service_completed_successfully
+  worker-trace-ingestion:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-agent-compass:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-simulation-runner:
+    networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-sql-workbench:
+    networks: [default, link-public]
     restart: "no"
     volumes: !reset []
     environment:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
@@ -94,6 +155,8 @@ services:
     cpus: 0.5
     environment:
       FUTURE_AGI_E2E_FIXTURE: sql-workbench
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       CH_HOST: clickhouse
@@ -115,6 +178,8 @@ services:
       # Root compose never passes the flag to peerdb-init, so the setup script
       # attempts the retired tracer_observation_span mirror.
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   mock-llm:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
@@ -131,12 +196,78 @@ services:
     ports:
       - "127.0.0.1:28081:8080"
     restart: "no"
+  # Literal values, not ${...} defaults: a value exported in the caller's shell
+  # takes precedence over the env file, and these services must keep sending
+  # telemetry registration to loopback. The services above set the same pair.
+  postgres-schema-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  clickhouse-native-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  clickhouse-cdc-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  peerdb-temporal-init:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  serving:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+
+  # Dedicated executor selection/fallback policy reuses the executor harness.
+  # Its only networks are internal: no default route to real destinations.
+  code-executor:
+    networks: [link-public, link-private]
+    extra_hosts:
+      - "allowed.example:11.23.0.10"
+      - "worker-allowed.example:11.23.0.11"
+      - "denied.example:11.23.0.10"
+      - "private.example:172.30.91.10"
+    restart: "no"
+  link-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28082:80"
+    networks:
+      # Host-only readout port needs a non-internal bridge. This listener never
+      # makes outbound requests; the executor stays on internal networks only.
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.10
+      link-private:
+        ipv4_address: 172.30.91.10
+    restart: "no"
+
+  # A separate journal keeps asynchronous harness traffic out of the browser
+  # flow's full-journal assertion when Playwright runs the files in parallel.
+  link-worker-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28083:80"
+    networks:
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.11
+    restart: "no"
 
   mock-google:
     image: futureagi/future-agi:${E2E_GOOGLE_IMAGE_TAG:-latest}
     entrypoint: ["python"]
     command: ["/srv/server.py"]
     environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
     volumes:
       - ./e2e/stack/mock-google/server.py:/srv/server.py:ro
@@ -149,5 +280,17 @@ services:
       timeout: 3s
       retries: 30
     restart: "no"
+
+networks:
+  link-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.23.0.0/24
+  link-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.91.0/24
 volumes:
   google-fixture-tls:
