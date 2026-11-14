@@ -1789,15 +1789,10 @@ def _affordable_raw_graph_seed(
     return seed_candidate, seed_probe_count
 
 
-def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
-    """Resolve tag leaves before handing a raw graph to the Temporal worker.
-
-    Otherwise a deterministic 400 discovered only by the worker becomes a
-    failed-refresh pending envelope, which a browser cannot distinguish from
-    a retryable read failure. No non-tag filters or graph SQL run here.
-    """
+def _scheduled_graph_tag_leaves(
+    identity: dict[str, Any],
+) -> list[tuple[int, str, dict[str, Any]]]:
     from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
-        EffectiveTagGraphCompiler,
         is_effective_tag_leaf,
     )
 
@@ -1815,6 +1810,84 @@ def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
             )
         ):
             leaves.append((index, column_id, config))
+    return leaves
+
+
+def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None:
+    """Bind a Users graph's Tag leaves as its worker will, before scheduling it.
+
+    The Users selector (the Users system graph and user-context eval and
+    annotation graphs) binds each Tag leaf as a window scan over the snapshot
+    window with the window overlay. A Tag over the overlay budget there fails
+    the worker the same way on every attempt, which the poll can only report
+    as a retryable 503. Binding the same relations here first makes it the
+    400 the interactive read gives. Only overlay and liveness reads run; no
+    graph SQL does.
+    """
+    from tracer.services.clickhouse.exact_graph_reads import (
+        _snapshot_window,
+        _user_aggregate_source_sql,
+    )
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GRAPH_TAG_OVERLAY_READ_MS,
+        GraphTagFilterTooBroadError,
+    )
+    from tracer.services.clickhouse.v2.effective_tags import (
+        EffectiveTagRelation,
+        prepare_effective_tag_params,
+    )
+    from tracer.services.entity_tags import TagReadUnavailable
+
+    if not _scheduled_graph_tag_leaves(identity):
+        return
+    filters = list(identity.get("filters") or [])
+    start, end, empty = _snapshot_window(filters)
+    if empty:
+        return
+    _sql, params, _needs_eval = _user_aggregate_source_sql(
+        project_id=str(identity["project_id"]),
+        filters=filters,
+        start_date=start,
+        end_date=end,
+        include_trace_ids=False,
+        all_snapshot_users=True,
+    )
+    if not any(isinstance(value, EffectiveTagRelation) for value in params.values()):
+        return
+
+    def execute(query, query_params, *, timeout_ms, settings=None, **_caps):
+        return analytics.execute_ch_query(
+            query, query_params, timeout_ms=timeout_ms, settings=settings
+        )
+
+    try:
+        prepare_effective_tag_params(
+            execute,
+            {**params, "start_date": start, "end_date": end},
+            deadline=ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS),
+            allow_window_scan=True,
+            window_overlay=True,
+        )
+    except TagReadUnavailable as exc:
+        if exc.code == "tag_overlay_budget_exceeded":
+            # Deterministic for this project and filter: retrying the same
+            # graph, here or in the worker, can never succeed.
+            raise GraphTagFilterTooBroadError() from exc
+        raise BoundedGraphReadError("query_failed", retryable=True) from exc
+
+
+def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
+    """Resolve tag leaves before handing a raw graph to the Temporal worker.
+
+    Otherwise a deterministic 400 discovered only by the worker becomes a
+    failed-refresh pending envelope, which a browser cannot distinguish from
+    a retryable read failure. No non-tag filters or graph SQL run here.
+    """
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        EffectiveTagGraphCompiler,
+    )
+
+    leaves = _scheduled_graph_tag_leaves(identity)
     if not leaves:
         return
     start, end = BaseQueryBuilder.parse_time_range(identity["filters"], strict=True)
@@ -1839,6 +1912,7 @@ def _schedule_unaffordable_graph_read(
     workspace_id: str | None,
     namespace: str = "observe-system-graph",
     fits_wall: Any = raw_graph_scan_fits_wall,
+    analytics: Any = None,
 ) -> dict[str, Any]:
     """Hand a read the interactive wall cannot run to the background lane.
 
@@ -1878,7 +1952,15 @@ def _schedule_unaffordable_graph_read(
     )
     # Even when no background lane can run the raw scan, a deterministic
     # tag-filter 400 takes precedence over a retryable scan-cost response.
-    if namespace in {
+    # The Users selector binds its Tag leaves over the snapshot window, so
+    # its graphs get the same binding the worker will do.
+    user_selector = namespace == "observe-user-system-graph" or (
+        namespace in {"observe-eval-graph", "observe-annotation-graph"}
+        and identity.get("aggregation_context") == "user"
+    )
+    if user_selector and analytics is not None:
+        _preflight_user_graph_tags(identity, analytics)
+    elif namespace in {
         "observe-system-graph",
         "observe-eval-graph",
         "observe-annotation-graph",
@@ -2537,6 +2619,7 @@ def fetch_user_system_metric_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-user-system-graph",
             fits_wall=user_graph_scan_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_user_system_graph(
@@ -2919,6 +3002,7 @@ def fetch_eval_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-eval-graph",
             fits_wall=raw_log_membership_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_eval_graph(
@@ -3294,6 +3378,7 @@ def fetch_annotation_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-annotation-graph",
             fits_wall=raw_log_membership_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_annotation_graph(

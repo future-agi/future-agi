@@ -23,6 +23,7 @@ from tracer.services.clickhouse.query_builders.agent_graph import (
     AgentGraphQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
     compile_exact_graph_row_predicates,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -1785,3 +1786,56 @@ def test_users_graph_unavailable_tag_source_stays_retryable(stores, monkeypatch)
         stores, monkeypatch, failure=TagReadUnavailable("tag_source_unavailable")
     )
     assert response.status_code == 503, response.data
+
+
+def _scheduled_users_graph(stores, monkeypatch, *metric_filters):
+    """Run the Users system graph as the largest tenants do: the cost gate
+    says the window is unaffordable, so the read is handed to the worker.
+    Returns the scheduling calls (the cache-only probe is not one)."""
+    tagged_project(stores)
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_affordable_user_graph_read",
+        lambda **_kwargs: graph_dispatch._GraphReadUnaffordable(None),
+    )
+    scheduled = []
+
+    def read_or_refresh(**kwargs):
+        if kwargs.get("schedule_on_miss") is False:
+            return None
+        scheduled.append(kwargs)
+        return {"query_status": "pending", "query_refreshing": True}
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", read_or_refresh)
+    analytics = SimpleNamespace(
+        execute_ch_query=lambda sql, params=None, **kwargs: (
+            stores.analytics.execute_ch_query(sql, params, **kwargs)
+        ),
+    )
+    graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=filters(*metric_filters),
+        interval="hour",
+        metric_id="active_users",
+        organization_id="org-1",
+        workspace_id=None,
+    )
+    return scheduled
+
+
+def test_scheduled_users_graph_too_broad_tag_filter_is_a_request_error(
+    stores, monkeypatch
+):
+    """A Users graph the cost gate hands to the worker binds its Tag leaves
+    as the worker will before scheduling: live matching assignments over the
+    overlay budget are the inline read's 400, never a worker failure that
+    every later poll reports as a 503 asking to retry."""
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    with pytest.raises(GraphTagFilterTooBroadError):
+        _scheduled_users_graph(stores, monkeypatch, leaf("tag", "wanted"))
+
+
+def test_scheduled_users_graph_within_the_tag_budget_is_scheduled(stores, monkeypatch):
+    scheduled = _scheduled_users_graph(stores, monkeypatch, leaf("tag", "wanted"))
+    assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
