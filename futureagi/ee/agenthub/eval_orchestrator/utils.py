@@ -20,6 +20,7 @@ logger = structlog.get_logger(__name__)
 # Input summary builders (for Scout)
 # ---------------------------------------------------------------------------
 
+
 def build_input_summary(scope: str, source_id: str) -> str:
     """
     Build a lightweight input summary for the Scout.
@@ -46,7 +47,9 @@ def build_input_summary(scope: str, source_id: str) -> str:
         else:
             return f"Unknown scope: {scope} (id={source_id})"
     except Exception as e:
-        logger.error("build_input_summary failed", scope=scope, source_id=source_id, error=str(e))
+        logger.error(
+            "build_input_summary failed", scope=scope, source_id=source_id, error=str(e)
+        )
         return f"[Summary unavailable for {scope} id={source_id}: {e}]"
 
 
@@ -71,7 +74,9 @@ def _summarise_trace(trace_id: str) -> str:
     from tracer.models.observation_span import ObservationSpan
 
     trace = Trace.objects.get(id=trace_id)
-    spans = ObservationSpan.objects.filter(trace_id=trace_id).order_by("start_time", "created_at")
+    spans = ObservationSpan.objects.filter(trace_id=trace_id).order_by(
+        "start_time", "created_at"
+    )
     outline = build_trace_outline(trace, spans)
     return f"TRACE: {trace.name or trace_id}\n{outline}"
 
@@ -82,7 +87,9 @@ def _summarise_session(session_id: str) -> str:
     from tracer.models.observation_span import ObservationSpan
 
     session = TraceSession.objects.get(id=session_id)
-    traces = Trace.objects.filter(session_id=session_id).prefetch_related("observation_spans")
+    traces = Trace.objects.filter(session_id=session_id).prefetch_related(
+        "observation_spans"
+    )
     lines = [
         f"SESSION: {getattr(session, 'name', None) or session_id}",
         f"Trace count: {traces.count()}",
@@ -132,6 +139,7 @@ def _summarise_cell(cell_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Trace outline builder (structure only — no input/output content)
 # ---------------------------------------------------------------------------
+
 
 def build_trace_outline(trace: Any, spans: Any) -> str:
     """
@@ -199,6 +207,7 @@ def build_trace_outline(trace: Any, spans: Any) -> str:
 # Full span serializer (for Orchestrator's inspect_data detail depth)
 # ---------------------------------------------------------------------------
 
+
 def serialize_span_full(span: Any) -> dict:
     """Return a full content dict for a span — used in inspect_data(depth='detail')."""
     return {
@@ -218,6 +227,7 @@ def serialize_span_full(span: Any) -> dict:
 # ---------------------------------------------------------------------------
 # Resource gatherer (for Scout + Orchestrator tool list builder)
 # ---------------------------------------------------------------------------
+
 
 def gather_available_resources(
     organization_id: str,
@@ -250,23 +260,29 @@ def gather_available_resources(
     if kb_id:
         try:
             from model_hub.models.develop_dataset import KnowledgeBaseFile  # type: ignore
+
             kb = KnowledgeBaseFile.objects.get(id=kb_id)
-            resources["knowledge_bases"].append({
-                "id": str(kb.id),
-                "name": getattr(kb, "name", str(kb.id)),
-                "description": getattr(kb, "description", ""),
-            })
+            resources["knowledge_bases"].append(
+                {
+                    "id": str(kb.id),
+                    "name": getattr(kb, "name", str(kb.id)),
+                    "description": getattr(kb, "description", ""),
+                }
+            )
         except Exception:
-            resources["knowledge_bases"].append({
-                "id": str(kb_id),
-                "name": "Knowledge Base",
-                "description": "",
-            })
+            resources["knowledge_bases"].append(
+                {
+                    "id": str(kb_id),
+                    "name": "Knowledge Base",
+                    "description": "",
+                }
+            )
 
     # Feedback examples count
     if eval_template_id:
         try:
             from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+
             em = EmbeddingManager()
             try:
                 count = em.get_feedback_count(
@@ -300,19 +316,23 @@ def gather_available_resources(
                 # If enabled list is set, only include enabled tools
                 if enabled and tool_name not in enabled:
                     continue
-                mcp_tools.append({
-                    "name": tool_name,
-                    "description": tool_schema.get("description", ""),
-                })
+                mcp_tools.append(
+                    {
+                        "name": tool_name,
+                        "description": tool_schema.get("description", ""),
+                    }
+                )
         resources["mcp_tools"] = mcp_tools
     except Exception as e:
         logger.debug("Could not fetch MCP tools", error=str(e))
 
     return resources
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _truncate(value: Any, max_chars: int) -> str:
     """Convert value to string and truncate to max_chars."""

@@ -81,11 +81,12 @@ def _insight_run(project, *, status="running", deleted=False):
 
 
 def _delete(project):
-    with mock.patch(
-        "tracer.services.project_deletion.publish_project_invalidation"
-    ), mock.patch(
-        "tfc.temporal.eval_tasks.client.signal_pause_eval_task_workflow"
-    ) as pause:
+    with (
+        mock.patch("tracer.services.project_deletion.publish_project_invalidation"),
+        mock.patch(
+            "tfc.temporal.eval_tasks.client.signal_pause_eval_task_workflow"
+        ) as pause,
+    ):
         soft_delete_projects(project.__class__.objects.filter(id=project.id), "observe")
     return pause
 
@@ -109,11 +110,12 @@ def test_an_active_instant_run_is_paused_after_commit(
     finished, _ = _instant_run(observe_project, status=EvalTaskStatus.COMPLETED)
     cancelled, _ = _instant_run(observe_project, cancelled=True)
 
-    with mock.patch(
-        "tracer.services.project_deletion.publish_project_invalidation"
-    ), mock.patch(
-        "tfc.temporal.eval_tasks.client.signal_pause_eval_task_workflow"
-    ) as pause:
+    with (
+        mock.patch("tracer.services.project_deletion.publish_project_invalidation"),
+        mock.patch(
+            "tfc.temporal.eval_tasks.client.signal_pause_eval_task_workflow"
+        ) as pause,
+    ):
         # The signal is sent once the delete commits, inside the patch.
         with django_capture_on_commit_callbacks(execute=True):
             soft_delete_projects(

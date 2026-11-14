@@ -1,4 +1,3 @@
-
 from dataclasses import asdict
 
 from ..fi_utils.fi_interfaces import FiFilters
@@ -46,7 +45,9 @@ class TextLoader(BaseLoader):
                 "text": raw_instance[self.col_text],
             }
             if self.col_expected_text in raw_instance:
-                processed_instance["expected_text"] = raw_instance[self.col_expected_text]
+                processed_instance["expected_text"] = raw_instance[
+                    self.col_expected_text
+                ]
             # removing keys with None values
             processed_instance = {
                 k: v for k, v in processed_instance.items() if v is not None

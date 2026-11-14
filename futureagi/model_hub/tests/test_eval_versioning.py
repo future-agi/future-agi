@@ -225,9 +225,7 @@ class TestVersionSnapshotColumns:
         assert v.error_localizer_enabled is True
         assert v.eval_tags == ["safety", "quality"]
 
-    def test_explicit_override_wins(
-        self, user_template, user, organization, workspace
-    ):
+    def test_explicit_override_wins(self, user_template, user, organization, workspace):
         user_template.pass_threshold = 0.9
         user_template.save()
 
@@ -440,15 +438,11 @@ def _versions_create_url(template_id):
 
 
 def _set_default_url(template_id, version_id):
-    return (
-        f"/model-hub/eval-templates/{template_id}/versions/{version_id}/set-default/"
-    )
+    return f"/model-hub/eval-templates/{template_id}/versions/{version_id}/set-default/"
 
 
 def _restore_url(template_id, version_id):
-    return (
-        f"/model-hub/eval-templates/{template_id}/versions/{version_id}/restore/"
-    )
+    return f"/model-hub/eval-templates/{template_id}/versions/{version_id}/restore/"
 
 
 def _detail_url(template_id):
@@ -553,12 +547,8 @@ class TestDraftPublishLifecycle:
         # it from config (post C1 fix).
         assert v1.prompt_messages == payload["messages"]
 
-    def test_keystroke_update_during_draft_does_not_create_version(
-        self, auth_client
-    ):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+    def test_keystroke_update_during_draft_does_not_create_version(self, auth_client):
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         for chunk in ["E", "Ev", "Evaluate {{x}}"]:
             r = auth_client.put(
@@ -573,9 +563,7 @@ class TestDraftPublishLifecycle:
         )
 
     def test_publish_creates_v1_from_current_live_state(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         messages = [
             {"role": "system", "content": "System rule"},
@@ -605,9 +593,7 @@ class TestDraftPublishLifecycle:
         assert template.visible_ui is True
 
     def test_republish_is_idempotent(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         auth_client.put(
             _update_url(template_id),
@@ -622,9 +608,7 @@ class TestDraftPublishLifecycle:
         )
 
     def test_post_publish_keystrokes_do_not_create_new_versions(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         auth_client.put(
             _update_url(template_id),
@@ -656,9 +640,7 @@ class TestDraftPublishLifecycle:
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestVersionsCreateCapturesLiveState:
-    def test_captures_messages_from_live_config(
-        self, auth_client, user_template
-    ):
+    def test_captures_messages_from_live_config(self, auth_client, user_template):
         messages = [{"role": "system", "content": "Live prompt"}]
         user_template.config = {"messages": messages, "output": "Pass/Fail"}
         user_template.save()
@@ -685,9 +667,7 @@ class TestVersionsCreateCapturesLiveState:
         assert version.criteria == "live criteria text"
         assert version.model == "turing_flash"
 
-    def test_request_overrides_win_over_live_state(
-        self, auth_client, user_template
-    ):
+    def test_request_overrides_win_over_live_state(self, auth_client, user_template):
         user_template.criteria = "old"
         user_template.save()
         response = auth_client.post(
@@ -699,9 +679,7 @@ class TestVersionsCreateCapturesLiveState:
         assert version.criteria == "new override"
         assert version.model == "turing_small"
 
-    def test_fe_null_choice_scores_does_not_strip_pass_fail_choices(
-        self, auth_client
-    ):
+    def test_fe_null_choice_scores_does_not_strip_pass_fail_choices(self, auth_client):
         """The FE sends `choice_scores: null` on every /update/ for
         pass_fail evals (no custom scores). The BE must NOT treat that
         as "wipe choices" — pass_fail choices ["Passed", "Failed"] are
@@ -757,9 +735,7 @@ class TestVersionsCreateCapturesLiveState:
                 else {"instructions": "judge {{x}}"},
                 format="json",
             )
-            auth_client.put(
-                _update_url(template_id), {"publish": True}, format="json"
-            )
+            auth_client.put(_update_url(template_id), {"publish": True}, format="json")
             v1 = EvalTemplateVersion.objects.get(eval_template_id=template_id)
             assert "few_shot_examples" in v1.config_snapshot, (
                 f"{eval_type} V1 missing few_shot_examples key in config_snapshot"
@@ -909,9 +885,7 @@ class TestSetDefaultVersion:
         v2.eval_tags = ["restored-tag"]
         v2.save(update_fields=["pass_threshold", "eval_tags"])
 
-        auth_client.put(
-            _set_default_url(user_template.id, v2.id), {}, format="json"
-        )
+        auth_client.put(_set_default_url(user_template.id, v2.id), {}, format="json")
         user_template.refresh_from_db()
         assert user_template.pass_threshold == 0.91
         assert user_template.eval_tags == ["restored-tag"]
@@ -920,9 +894,7 @@ class TestSetDefaultVersion:
         self, auth_client, user_template, user, organization
     ):
         v1, v2 = self._make_two_versions(user_template, user, organization)
-        auth_client.put(
-            _set_default_url(user_template.id, v2.id), {}, format="json"
-        )
+        auth_client.put(_set_default_url(user_template.id, v2.id), {}, format="json")
         assert (
             EvalTemplateVersion.objects.filter(
                 eval_template=user_template, is_default=True
@@ -988,9 +960,7 @@ class TestRestoreVersion:
         mirror = EvalTemplateVersion.objects.get(id=mirror_id)
         assert mirror.version_number == 3
         assert mirror.criteria == "v1 criteria"
-        assert mirror.prompt_messages == [
-            {"role": "system", "content": "v1 prompt"}
-        ]
+        assert mirror.prompt_messages == [{"role": "system", "content": "v1 prompt"}]
 
     def test_restore_promotes_mirror_to_default_and_demotes_others(
         self, auth_client, user_template, user, organization
@@ -999,9 +969,7 @@ class TestRestoreVersion:
         response = auth_client.post(
             _restore_url(user_template.id, v1.id), {}, format="json"
         )
-        mirror = EvalTemplateVersion.objects.get(
-            id=response.data["result"]["id"]
-        )
+        mirror = EvalTemplateVersion.objects.get(id=response.data["result"]["id"])
         v1.refresh_from_db()
         v2.refresh_from_db()
         assert mirror.is_default is True
@@ -1017,10 +985,9 @@ class TestRestoreVersion:
         auth_client.post(_restore_url(user_template.id, v1.id), {}, format="json")
         user_template.refresh_from_db()
         assert user_template.criteria == "v1 criteria"
-        assert (
-            user_template.config.get("messages")
-            == [{"role": "system", "content": "v1 prompt"}]
-        )
+        assert user_template.config.get("messages") == [
+            {"role": "system", "content": "v1 prompt"}
+        ]
 
     def test_restore_keeps_exactly_one_default(
         self, auth_client, user_template, user, organization
@@ -1044,18 +1011,14 @@ class TestRestoreVersion:
 @pytest.mark.django_db
 class TestVersionListAcrossLifecycle:
     def test_list_empty_for_draft(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         response = auth_client.get(_versions_url(template_id))
         assert response.status_code == 200
         assert response.data["result"]["total"] == 0
 
     def test_list_has_v1_after_publish(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         auth_client.put(
             _update_url(template_id),
@@ -1069,9 +1032,7 @@ class TestVersionListAcrossLifecycle:
         assert response.data["result"]["versions"][0]["is_default"] is True
 
     def test_list_after_save_as_new_version(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         auth_client.put(
             _update_url(template_id),
@@ -1093,9 +1054,7 @@ class TestVersionListAcrossLifecycle:
 @pytest.mark.django_db
 class TestDetailViewVersionNumber:
     def test_draft_detail_shows_v1_placeholder(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         response = auth_client.get(_detail_url(template_id))
         assert response.status_code == 200, response.data
@@ -1111,9 +1070,7 @@ class TestDetailViewVersionNumber:
         )
 
     def test_published_detail_shows_default_version_number(self, auth_client):
-        create = auth_client.post(
-            _CREATE_V2_URL, _draft_payload("llm"), format="json"
-        )
+        create = auth_client.post(_CREATE_V2_URL, _draft_payload("llm"), format="json")
         template_id = create.data["result"]["id"]
         auth_client.put(
             _update_url(template_id),
@@ -1133,8 +1090,7 @@ class TestDetailViewVersionNumber:
             eval_template_id=template_id, is_default=True
         )
         assert (
-            response.data["result"]["current_version"]
-            == f"V{default.version_number}"
+            response.data["result"]["current_version"] == f"V{default.version_number}"
         )
 
 
@@ -1195,9 +1151,7 @@ class TestLLMFieldsRoundTrip:
             _update_url(template_id),
             {
                 "messages": messages_v2,
-                "few_shot_examples": [
-                    {"input": "p", "output": "q", "score": "Failed"}
-                ],
+                "few_shot_examples": [{"input": "p", "output": "q", "score": "Failed"}],
                 "check_internet": False,
                 "instructions": "Different {{response}}",
             },
@@ -1536,9 +1490,7 @@ class TestVersionListResponseExposesColumnFields:
         assert cs.get("pass_threshold") == 0.8
         assert cs.get("error_localizer_enabled") is True
 
-    def test_publish_lazy_v1_config_snapshot_carries_scoring_fields(
-        self, auth_client
-    ):
+    def test_publish_lazy_v1_config_snapshot_carries_scoring_fields(self, auth_client):
         """Same as above but for the draft → publish path (V1 created
         lazily by /update/?publish=true)."""
         create = auth_client.post(
@@ -1639,6 +1591,7 @@ class TestEvalTypeColumnAlignmentAfterRestore:
 # Unit: maybe_pin_new_version service (TH-5173 / PR #772)
 # =============================================================================
 
+
 @pytest.mark.unit
 @pytest.mark.django_db
 class TestMaybePinNewVersion:
@@ -1655,6 +1608,7 @@ class TestMaybePinNewVersion:
     def _make_uem(self, organization, workspace, user, template, config=None):
         from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.models.develop_dataset import Dataset
+
         ds = Dataset.no_workspace_objects.create(
             name="test-ds",
             organization=organization,
@@ -1684,8 +1638,11 @@ class TestMaybePinNewVersion:
             }
         }
         maybe_pin_new_version(
-            uem, request_data, user=user,
-            organization=organization, workspace=workspace,
+            uem,
+            request_data,
+            user=user,
+            organization=organization,
+            workspace=workspace,
         )
 
         assert uem.pinned_version is not None
@@ -1702,8 +1659,11 @@ class TestMaybePinNewVersion:
         before = uem.pinned_version
 
         maybe_pin_new_version(
-            uem, {"run": True},  # no "config" key
-            user=user, organization=organization, workspace=workspace,
+            uem,
+            {"run": True},  # no "config" key
+            user=user,
+            organization=organization,
+            workspace=workspace,
         )
 
         assert uem.pinned_version == before  # unchanged
@@ -1748,9 +1708,10 @@ class TestMaybePinNewVersion:
         uem.save()
 
         assert uem.pinned_version_id == v1.id
-        assert EvalTemplateVersion.objects.filter(
-            eval_template=user_template
-        ).count() == version_count_before, "Explicit version switch must not create a new version"
+        assert (
+            EvalTemplateVersion.objects.filter(eval_template=user_template).count()
+            == version_count_before
+        ), "Explicit version switch must not create a new version"
 
     def test_same_version_id_still_runs_maybe_pin(
         self, organization, workspace, user, user_template
@@ -1782,8 +1743,11 @@ class TestMaybePinNewVersion:
         # View logic: version_switched = (v1.id != eval_metric.pinned_version_id) = False
         # So maybe_pin_new_version runs. It should create a new version.
         maybe_pin_new_version(
-            uem, request_data, user=user,
-            organization=organization, workspace=workspace,
+            uem,
+            request_data,
+            user=user,
+            organization=organization,
+            workspace=workspace,
         )
 
         assert uem.pinned_version_id != v1.id, "Config change must create a new version"
@@ -1804,7 +1768,9 @@ class TestMaybePinNewVersion:
         # User explicitly clears the prompt to ""
         config = {"rule_prompt": "", "eval_type_id": "AgentEvaluator"}
         result_config, _ = prepare_eval_config(
-            user_template, config, model="turing_large",
+            user_template,
+            config,
+            model="turing_large",
             organization_id=str(organization.id),
         )
 
@@ -1831,8 +1797,11 @@ class TestMaybePinNewVersion:
         }
         # Simulate the view: first pin, then save config
         maybe_pin_new_version(
-            uem, request_data, user=user,
-            organization=organization, workspace=workspace,
+            uem,
+            request_data,
+            user=user,
+            organization=organization,
+            workspace=workspace,
         )
         # Simulate eval_metric.config = normalize_eval_runtime_config(...)
         uem.config = request_data["config"]
@@ -1902,25 +1871,41 @@ class TestMaybePinNewVersion:
         uem = self._make_uem(organization, workspace, user, user_template)
 
         # Create v1 with a specific rule_prompt
-        v1_request = {"config": {"config": {"rule_prompt": "v1 prompt"}, "run_config": {}}}
-        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+        v1_request = {
+            "config": {"config": {"rule_prompt": "v1 prompt"}, "run_config": {}}
+        }
+        maybe_pin_new_version(
+            uem, v1_request, user=user, organization=organization, workspace=workspace
+        )
         uem.save()
         v1 = uem.pinned_version
 
         # Create v2 with a different prompt
-        v2_request = {"config": {"config": {"rule_prompt": "v2 prompt"}, "run_config": {}}}
-        maybe_pin_new_version(uem, v2_request, user=user, organization=organization, workspace=workspace)
+        v2_request = {
+            "config": {"config": {"rule_prompt": "v2 prompt"}, "run_config": {}}
+        }
+        maybe_pin_new_version(
+            uem, v2_request, user=user, organization=organization, workspace=workspace
+        )
         uem.save()
         assert uem.pinned_version_id != v1.id
 
         # Simulate "switch back to v1 with no changes": set v1 as baseline, send v1's config
         uem.pinned_version = v1
-        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+        maybe_pin_new_version(
+            uem, v1_request, user=user, organization=organization, workspace=workspace
+        )
 
         # Dedup should fire — snap matches v1 → still pinned to v1
-        assert uem.pinned_version_id == v1.id, "Switching back to v1 with same config should keep v1 pinned"
-        version_count = EvalTemplateVersion.objects.filter(eval_template=user_template).count()
-        assert version_count == 2, f"No new version should be created, found {version_count}"
+        assert uem.pinned_version_id == v1.id, (
+            "Switching back to v1 with same config should keep v1 pinned"
+        )
+        version_count = EvalTemplateVersion.objects.filter(
+            eval_template=user_template
+        ).count()
+        assert version_count == 2, (
+            f"No new version should be created, found {version_count}"
+        )
 
     def test_runner_map_fields_uses_pinned_snapshot_required_keys(
         self, organization, workspace, user, user_template

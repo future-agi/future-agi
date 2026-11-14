@@ -6,6 +6,7 @@ in high-concurrency scenarios.
 
 Uses httpx for async HTTP operations (already available in the project).
 """
+
 from typing import Optional
 
 import httpx
@@ -54,10 +55,7 @@ def _rehost_object_key_base(
     # while still preventing an omitted value from masquerading as Vapi data.
     project_segment = str(project_id) if project_id else "unknown-project"
     provider_segment = str(provider).lower() if provider else "unknown-provider"
-    return (
-        f"call-recordings/{project_segment}/{provider_segment}/"
-        f"{call_id}/{url_type}"
-    )
+    return f"call-recordings/{project_segment}/{provider_segment}/{call_id}/{url_type}"
 
 
 def _rehost_object_key(object_key_base: str, extension: str) -> str:
@@ -141,7 +139,9 @@ async def download_audio_from_url_async(
     """
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    if VapiRecordingService.is_authenticated_download(provider, api_key, call_id, artifact_type):
+    if VapiRecordingService.is_authenticated_download(
+        provider, api_key, call_id, artifact_type
+    ):
         return await VapiRecordingService.download_artifact_async(
             call_id=call_id,
             artifact_type=artifact_type,
@@ -229,9 +229,7 @@ async def _convert_audio_url_to_s3_async_with_size(
     if _is_fagi_storage_url(audio_url):
         return audio_url, 0
 
-    object_key_base = _rehost_object_key_base(
-        call_id, url_type, project_id, provider
-    )
+    object_key_base = _rehost_object_key_base(call_id, url_type, project_id, provider)
     existing = _existing_rehosted_audio(object_key_base)
     if existing:
         return existing
@@ -398,9 +396,7 @@ def convert_audio_url_to_s3_sync(
     if _is_fagi_storage_url(audio_url):
         return audio_url, 0
 
-    object_key_base = _rehost_object_key_base(
-        call_id, url_type, project_id, provider
-    )
+    object_key_base = _rehost_object_key_base(call_id, url_type, project_id, provider)
     existing = _existing_rehosted_audio(object_key_base)
     if existing:
         return existing
@@ -414,9 +410,7 @@ def convert_audio_url_to_s3_sync(
             )
         else:
             # Unauthenticated sync download via requests with size guard
-            response = requests.get(
-                audio_url, stream=True, timeout=DOWNLOAD_TIMEOUT
-            )
+            response = requests.get(audio_url, stream=True, timeout=DOWNLOAD_TIMEOUT)
             response.raise_for_status()
 
             chunks = []
