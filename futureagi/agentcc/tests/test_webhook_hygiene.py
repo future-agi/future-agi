@@ -80,10 +80,17 @@ class TestDeletingAWebhook:
         response = auth_client.delete(f"/agentcc/webhooks/{webhook.id}/")
 
         assert response.status_code == 200
-        assert _statuses(webhook) == ["cancelled"] * 4 + ["delivered"]
-        assert not EVENTS.filter(
-            webhook=webhook, status__in=["pending", "failed", "dead_letter"]
-        ).exists()
+        # The pending events are cancelled at once; the failed and
+        # dead-lettered history waits for the maintenance run, so a delete
+        # never walks a long history inside the request.
+        assert _statuses(webhook) == [
+            "cancelled",
+            "cancelled",
+            "dead_letter",
+            "delivered",
+            "failed",
+        ]
+        assert not EVENTS.filter(webhook=webhook, status="pending").exists()
         assert EVENTS.get(pk=delivered.pk).status == "delivered"
         cancelled = EVENTS.filter(webhook=webhook, status="cancelled").first()
         assert cancelled.last_error == "Webhook deleted"
@@ -94,6 +101,9 @@ class TestDeletingAWebhook:
 
         response = auth_client.post(f"/agentcc/webhook-events/{cancelled.id}/retry/")
         assert response.status_code == 400
+
+        assert webhook_hygiene.cancel_orphaned_events() == 2
+        assert _statuses(webhook) == ["cancelled"] * 4 + ["delivered"]
 
     def test_an_event_ingest_creates_after_the_delete_is_cancelled_not_dead_lettered(
         self, organization
@@ -108,15 +118,22 @@ class TestDeletingAWebhook:
         assert event.status == "cancelled"
         assert event.next_retry_at is None
 
-    def test_an_inactive_webhooks_events_are_dead_lettered(self, organization):
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_an_inactive_webhooks_events_stay_pending(
+        self, mock_session, _mock_url_check, organization
+    ):
+        http = _session(200)
+        mock_session.return_value = http
         webhook = _webhook(organization, is_active=False)
         event = _event(webhook)
 
         deliver_webhook(webhook.pk)
 
         event.refresh_from_db()
-        assert event.status == "dead_letter"
-        assert event.next_retry_at is None
+        assert event.status == "pending"
+        assert event.attempts == 0
+        assert http.post.call_count == 0
 
     def test_events_of_webhooks_deleted_before_this_release_are_cancelled(
         self, organization
@@ -209,7 +226,10 @@ class TestPendingCap:
 @pytest.mark.integration
 @pytest.mark.api
 class TestAutoDisable:
-    @override_settings(AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3)
+    @override_settings(
+        AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3,
+        AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=0,
+    )
     @patch(URL_CHECK)
     @patch(SESSION)
     def test_a_webhook_answering_500_is_disabled_after_n_failures(
@@ -220,9 +240,8 @@ class TestAutoDisable:
         for _ in range(5):
             _event(webhook)
 
-        for _ in range(3):
-            deliver_webhook(webhook.pk)
-            # The failed event backs off; the next run tries the next one.
+        # One run: three failed attempts in a row stop it.
+        deliver_webhook(webhook.pk)
 
         webhook.refresh_from_db()
         assert webhook.is_active is False
@@ -230,27 +249,104 @@ class TestAutoDisable:
         assert "3 consecutive" in webhook.disabled_reason
         assert webhook.disabled_at is not None
         assert webhook.consecutive_failures == 3
-        assert not EVENTS.filter(webhook=webhook, status="pending").exists()
-        assert EVENTS.filter(webhook=webhook, status="dead_letter").count() == 5
+
+    @override_settings(
+        AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3,
+        AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=0,
+    )
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_disabling_keeps_its_pending_events_for_when_it_is_enabled(
+        self, mock_session, _mock_url_check, auth_client, user
+    ):
+        mock_session.return_value = _session(500)
+        webhook = _webhook(user.organization)
+        events = [_event(webhook) for _ in range(5)]
+
+        deliver_webhook(webhook.pk)
+
+        webhook.refresh_from_db()
+        assert webhook.is_active is False
+        assert _statuses(webhook) == ["pending"] * 5
+        assert not EVENTS.filter(webhook=webhook, status="dead_letter").exists()
+
+        # Fixed and turned back on: the next run delivers every one of them.
+        http = _session(200)
+        mock_session.return_value = http
+        response = auth_client.patch(
+            f"/agentcc/webhooks/{webhook.id}/", {"is_active": True}, format="json"
+        )
+        assert response.status_code == 200, response.json()
+        EVENTS.filter(webhook=webhook).update(next_retry_at=None)  # backoff over
+        deliver_webhook(webhook.pk)
+
+        assert _statuses(webhook) == ["delivered"] * 5
+        assert http.post.call_count == len(events)
+
+    @override_settings(
+        AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3,
+        AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=60,
+    )
+    def test_failures_must_also_span_the_minimum_time(self, organization):
+        webhook = _webhook(organization)
+
+        for _ in range(10):
+            assert not webhook_hygiene.record_delivery_result(
+                webhook.pk, False, "HTTP 503"
+            )
+        webhook.refresh_from_db()
+        assert webhook.is_active is True
+        assert webhook.consecutive_failures == 10
+        started = webhook.failing_since
+        assert started is not None
+
+        # The streak keeps its start; once it is an hour old the next
+        # failure disables the webhook.
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            failing_since=timezone.now() - timedelta(minutes=61)
+        )
+        assert webhook_hygiene.record_delivery_result(webhook.pk, False, "HTTP 503")
+        webhook.refresh_from_db()
+        assert webhook.is_active is False
+        assert "over 60+ minutes" in webhook.disabled_reason
+
+    @override_settings(
+        AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3,
+        AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=60,
+    )
+    def test_a_long_streak_of_few_failures_does_not_disable(self, organization):
+        webhook = _webhook(organization)
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            consecutive_failures=1,
+            failing_since=timezone.now() - timedelta(hours=3),
+        )
+
+        assert not webhook_hygiene.record_delivery_result(webhook.pk, False, "x")
+
+        webhook.refresh_from_db()
+        assert webhook.is_active is True
+        assert webhook.consecutive_failures == 2
 
     @override_settings(AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3)
     @patch(URL_CHECK)
     @patch(SESSION)
     def test_a_success_resets_the_streak(self, mock_session, _mock_url_check, user):
         webhook = _webhook(user.organization)
-        for _ in range(3):
+        for _ in range(2):
             _event(webhook)
         mock_session.return_value = _session(500)
         deliver_webhook(webhook.pk)
-        deliver_webhook(webhook.pk)
         webhook.refresh_from_db()
         assert webhook.consecutive_failures == 2
+        assert webhook.failing_since is not None
 
+        _event(webhook)
         mock_session.return_value = _session(200)
         deliver_webhook(webhook.pk)
 
         webhook.refresh_from_db()
         assert webhook.consecutive_failures == 0
+        assert webhook.failing_since is None
         assert webhook.is_active is True
 
     @override_settings(AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3)
@@ -276,6 +372,8 @@ class TestAutoDisable:
             consecutive_failures=100,
             disabled_reason="Disabled after 100 consecutive failed deliveries",
             disabled_at=timezone.now(),
+            failing_since=timezone.now() - timedelta(hours=2),
+            next_delivery_at=timezone.now() + timedelta(minutes=5),
         )
 
         response = auth_client.patch(
@@ -290,6 +388,36 @@ class TestAutoDisable:
         webhook.refresh_from_db()
         assert (webhook.consecutive_failures, webhook.disabled_reason) == (0, "")
         assert webhook.disabled_at is None
+        assert webhook.failing_since is None
+        assert webhook.next_delivery_at is None
+
+    def test_an_edit_does_not_write_back_counters_a_run_changed(
+        self, auth_client, user
+    ):
+        from agentcc.views.webhook_outbound import AgentccWebhookViewSet
+
+        webhook = _webhook(user.organization)
+        stale = AgentccWebhook.all_objects.get(pk=webhook.pk)
+        # A delivery run fails and drops events while the edit is in flight.
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            consecutive_failures=7,
+            dropped_events_total=9,
+            failing_since=timezone.now(),
+        )
+
+        with patch.object(AgentccWebhookViewSet, "get_object", return_value=stale):
+            response = auth_client.patch(
+                f"/agentcc/webhooks/{webhook.id}/",
+                {"description": "edited"},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        webhook.refresh_from_db()
+        assert webhook.description == "edited"
+        assert webhook.consecutive_failures == 7
+        assert webhook.dropped_events_total == 9
+        assert webhook.failing_since is not None
 
     def test_the_health_fields_are_read_only(self, auth_client, user):
         webhook = _webhook(user.organization)
@@ -335,7 +463,9 @@ class TestAutoDisable:
 
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
-@override_settings(AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3)
+@override_settings(
+    AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3, AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=0
+)
 def test_two_workers_failing_at_once_disable_the_webhook_once(organization):
     webhook = _webhook(organization, consecutive_failures=1)
     barrier = threading.Barrier(2)
@@ -529,3 +659,142 @@ def test_purge_rechecks_each_batch_before_deleting(organization):
 
     assert counts == {"terminal": 0}
     assert EVENTS.get(pk=old.pk).status == "pending"
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+@override_settings(AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK=5)
+def test_two_callers_capping_one_webhook_drop_only_the_excess(organization):
+    webhook = _webhook(organization)
+    for i in range(10):
+        _event(webhook, age=timedelta(minutes=60 - i))
+    barrier = threading.Barrier(2)
+    results = []
+
+    def cap():
+        try:
+            barrier.wait()
+            results.append(webhook_hygiene.enforce_pending_cap([webhook.pk]))
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=cap) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert EVENTS.filter(webhook=webhook, status="pending").count() == 5
+    assert EVENTS.filter(webhook=webhook, status="dropped").count() == 5
+    webhook.refresh_from_db()
+    assert webhook.dropped_events_total == 5
+    assert sum(r.get(webhook.pk, 0) for r in results) == 5
+
+
+@pytest.mark.integration
+class TestEventsBeingSent:
+    """The cap and the age expiry leave an event a run is sending to the run."""
+
+    @override_settings(AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK=1)
+    def test_the_cap_drops_the_oldest_event_not_in_flight(self, organization):
+        from agentcc.services.webhook_delivery import _claim
+
+        webhook = _webhook(organization)
+        sending = _event(webhook, age=timedelta(minutes=10))
+        newer = _event(webhook, age=timedelta(minutes=5))
+        assert _claim(sending.pk, timezone.now())
+
+        dropped = webhook_hygiene.enforce_pending_cap([webhook.pk])
+
+        assert dropped == {webhook.pk: 1}
+        assert EVENTS.get(pk=sending.pk).status == "pending"
+        assert EVENTS.get(pk=newer.pk).status == "dropped"
+
+    @override_settings(AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS=1)
+    def test_expiry_waits_for_the_attempt_to_be_recorded(self, organization):
+        from agentcc.services.webhook_delivery import _claim, _record_attempt
+
+        webhook = _webhook(organization)
+        event = _event(webhook)
+        # Claimed while still within its age, then the age passes mid-send.
+        assert _claim(event.pk, timezone.now())
+        EVENTS.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(hours=2)
+        )
+
+        assert webhook_hygiene.expire_pending_events() == 0
+        assert EVENTS.get(pk=event.pk).status == "pending"
+
+        _record_attempt(EVENTS.get(pk=event.pk), 500, "HTTP 500")
+        assert webhook_hygiene.expire_pending_events() == 1
+        assert EVENTS.get(pk=event.pk).status == "expired"
+
+    def test_a_backing_off_event_is_not_in_flight(self, organization):
+        from agentcc.services.webhook_delivery import _claim, _record_attempt
+
+        webhook = _webhook(organization)
+        event = _event(webhook)
+        assert _claim(event.pk, timezone.now())
+        _record_attempt(EVENTS.get(pk=event.pk), 503, "HTTP 503")
+
+        in_flight = EVENTS.filter(webhook_hygiene.in_flight(timezone.now()))
+        assert not in_flight.filter(pk=event.pk).exists()
+        assert EVENTS.get(pk=event.pk).next_retry_at > timezone.now()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestWebhookHeaders:
+    @pytest.mark.parametrize("headers", ["abc", [1], {"X-Bad": {"a": 1}}])
+    @patch("agentcc.serializers.webhook.ensure_public_http_url")
+    def test_headers_must_be_an_object_of_text_values(
+        self, _mock_url_check, auth_client, user, headers
+    ):
+        response = auth_client.post(
+            "/agentcc/webhooks/",
+            {
+                "name": "with-headers",
+                "url": "https://hooks.example.com/x",
+                "events": ["request.completed"],
+                "headers": headers,
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400, response.content
+        assert response.json()["details"].keys() == {"headers"}
+
+    @patch("agentcc.serializers.webhook.ensure_public_http_url")
+    def test_a_number_value_is_stored_as_text(self, _mock_url_check, auth_client, user):
+        response = auth_client.post(
+            "/agentcc/webhooks/",
+            {
+                "name": "numeric-header",
+                "url": "https://hooks.example.com/x",
+                "events": ["request.completed"],
+                "headers": {"X-Tenant": 42},
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        assert AgentccWebhook.objects.get(name="numeric-header").headers == {
+            "X-Tenant": "42"
+        }
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_stored_headers_that_are_not_an_object_do_not_break_delivery(
+        self, mock_session, _mock_url_check, organization
+    ):
+        http = _session(200)
+        mock_session.return_value = http
+        webhook = _webhook(organization)
+        # Saved before the serializer checked them.
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(headers=["x"])
+        event = _event(webhook)
+
+        result = deliver_webhook(webhook.pk)
+
+        assert result["delivered"] == 1
+        assert EVENTS.get(pk=event.pk).status == "delivered"

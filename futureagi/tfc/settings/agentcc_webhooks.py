@@ -33,3 +33,14 @@ AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK = _integer(
 AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES = _integer(
     "AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES", 100, 0
 )
+# ...and only once its failures have gone on this many minutes, so a short
+# receiver outage never disables it. 0: the count alone decides.
+AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES = _integer(
+    "AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES", 60, 0
+)
+# Webhook delivery runs in flight at once, across all webhooks. They share the
+# worker's default queue with evals, experiments and alert emails, so a few
+# slow receivers must not take all of its slots. 0: no limit.
+AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES = _integer(
+    "AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES", 3, 0
+)

@@ -9,7 +9,9 @@ event table bounded:
 - a webhook holds at most AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK pending
   events, the oldest dropped first and counted on the webhook;
 - a webhook that fails AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES deliveries in
-  a row is disabled, with the reason shown on the dashboard;
+  a row, over at least AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES, is disabled,
+  with the reason shown on the dashboard; its pending events stay pending, so
+  re-enabling it resumes delivery, and they expire by the age limit;
 - ``purge_webhook_events`` deletes history an operator no longer needs.
 
 Every bulk change runs in batches of at most ``BATCH_SIZE`` primary keys, each
@@ -24,7 +26,8 @@ from datetime import timedelta
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import DateTimeField, F, Q, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
@@ -55,6 +58,21 @@ TERMINAL_STATUSES = (
 def _events():
     """Every event row, soft-deleted or not, of any webhook."""
     return AgentccWebhookEvent.all_objects
+
+
+def in_flight(now):
+    """Pending events a delivery run has claimed and not yet recorded.
+
+    The run's claim moves ``next_retry_at`` ahead and stamps ``updated_at``;
+    recording the attempt stamps ``last_attempt_at`` and ``updated_at`` with
+    the same instant. So a claim not yet recorded is a pending event with a
+    future ``next_retry_at`` whose last attempt, if any, is older than its
+    last update. The pending cap and the age expiry leave these to the run,
+    so an event being sent is never also counted as dropped.
+    """
+    return Q(status=AgentccWebhookEvent.PENDING, next_retry_at__gt=now) & (
+        Q(last_attempt_at__isnull=True) | Q(last_attempt_at__lt=F("updated_at"))
+    )
 
 
 def _batched_update(queryset, budget_ends=None, **values):
@@ -92,10 +110,14 @@ def _count_drops(per_webhook, now):
         )
 
 
-def cancel_events_for_webhook(webhook_id):
-    """Cancel a deleted webhook's undelivered events. Returns the count."""
+def cancel_events_for_webhook(webhook_id, statuses=UNDELIVERED_STATUSES):
+    """Cancel a deleted webhook's undelivered events. Returns the count.
+
+    ``statuses`` narrows it, e.g. to the pending events alone, which the
+    pending cap bounds; ``cancel_orphaned_events`` gets the rest later.
+    """
     count, _ = _batched_update(
-        _events().filter(webhook_id=webhook_id, status__in=UNDELIVERED_STATUSES),
+        _events().filter(webhook_id=webhook_id, status__in=statuses),
         status=AgentccWebhookEvent.CANCELLED,
         next_retry_at=None,
         last_error="Webhook deleted",
@@ -139,25 +161,41 @@ def record_delivery_result(webhook_id, ok, error=""):
     """Track a webhook's failure streak after one delivery attempt.
 
     A success resets the streak. A failure extends it, and the failure that
-    reaches AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES disables the webhook. Each
+    reaches AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES, once the streak has gone
+    on for AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES, disables the webhook. Each
     step is one conditional UPDATE, so of two workers that fail at once only
-    one disables it. Returns True when this call disabled the webhook.
+    one disables it. The webhook's pending events are left pending: they go
+    out once it is re-enabled, or expire by the age limit. Returns True when
+    this call disabled the webhook.
     """
     webhooks = AgentccWebhook.all_objects.filter(pk=webhook_id)
     if ok:
-        webhooks.filter(consecutive_failures__gt=0).update(consecutive_failures=0)
+        webhooks.filter(
+            Q(consecutive_failures__gt=0) | Q(failing_since__isnull=False)
+        ).update(consecutive_failures=0, failing_since=None)
         return False
 
-    webhooks.update(consecutive_failures=F("consecutive_failures") + 1)
+    now = timezone.now()
+    webhooks.update(
+        consecutive_failures=F("consecutive_failures") + 1,
+        failing_since=Coalesce(
+            F("failing_since"), Value(now, output_field=DateTimeField())
+        ),
+    )
     limit = settings.AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES
     if limit <= 0:
         return False
-    now = timezone.now()
+    minutes = settings.AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES
+    due = webhooks.filter(is_active=True, consecutive_failures__gte=limit)
+    span = ""
+    if minutes > 0:
+        due = due.filter(failing_since__lte=now - timedelta(minutes=minutes))
+        span = f" over {minutes}+ minutes"
     reason = (
-        f"Disabled after {limit} consecutive failed deliveries; "
+        f"Disabled after {limit} consecutive failed deliveries{span}; "
         f"last error: {(error or 'unknown')[:200]}"
     )
-    disabled = webhooks.filter(is_active=True, consecutive_failures__gte=limit).update(
+    disabled = due.update(
         is_active=False,
         disabled_at=now,
         disabled_reason=reason,
@@ -166,22 +204,18 @@ def record_delivery_result(webhook_id, ok, error=""):
     if not disabled:
         return False
 
-    # The user can Retry these once they have fixed and re-enabled it.
-    moved, _ = _batched_update(
-        _events().filter(
-            webhook_id=webhook_id,
-            status=AgentccWebhookEvent.PENDING,
-            deleted=False,
-        ),
-        status=AgentccWebhookEvent.DEAD_LETTER,
-        next_retry_at=None,
-        last_error=reason,
-    )
     logger.warning(
         "agentcc_webhook_auto_disabled",
         webhook_id=str(webhook_id),
         consecutive_failures=limit,
-        pending_moved_to_dead_letter=moved,
+        failing_for_minutes_at_least=minutes,
+        pending_kept=_events()
+        .filter(
+            webhook_id=webhook_id,
+            status=AgentccWebhookEvent.PENDING,
+            deleted=False,
+        )
+        .count(),
         last_error=(error or "")[:200],
     )
     return True
@@ -189,6 +223,11 @@ def record_delivery_result(webhook_id, ok, error=""):
 
 def enforce_pending_cap(webhook_ids, budget_ends=None):
     """Drop each webhook's oldest pending events above the per-webhook cap.
+
+    An event a delivery run is sending is not dropped (see ``in_flight``).
+    Each batch locks the webhook's row and counts again under that lock, so
+    concurrent callers for one webhook (two ingests, the maintenance run)
+    together drop only the excess, not each its own copy of it.
 
     Returns the number dropped, per webhook id.
     """
@@ -203,12 +242,23 @@ def enforce_pending_cap(webhook_ids, budget_ends=None):
             status=AgentccWebhookEvent.PENDING,
             deleted=False,
         )
-        excess = pending.count() - cap
+        if pending.count() <= cap:
+            continue  # the common case: no lock taken
         total = 0
-        while excess > 0 and (budget_ends is None or time.monotonic() < budget_ends):
+        while budget_ends is None or time.monotonic() < budget_ends:
             with transaction.atomic():
+                # Serializes the callers for this webhook.
+                locked = list(
+                    AgentccWebhook.all_objects.select_for_update()
+                    .filter(pk=webhook_id)
+                    .values_list("pk", flat=True)
+                )
+                excess = pending.count() - cap if locked else 0
+                if excess <= 0:
+                    break
                 ids = list(
-                    pending.select_for_update(skip_locked=True)
+                    pending.exclude(in_flight(now))
+                    .select_for_update(skip_locked=True)
                     .order_by("created_at", "pk")
                     .values_list("pk", flat=True)[: min(excess, BATCH_SIZE)]
                 )
@@ -221,7 +271,6 @@ def enforce_pending_cap(webhook_ids, budget_ends=None):
                     updated_at=now,
                 )
             total += count
-            excess -= count
         if total:
             _count_drops({webhook_id: total}, now)
             dropped[webhook_id] = total
@@ -260,11 +309,13 @@ def expire_pending_events(budget_ends=None):
         return 0
     now = timezone.now()
     count, per_webhook = _batched_update(
-        _events().filter(
+        _events()
+        .filter(
             status=AgentccWebhookEvent.PENDING,
             deleted=False,
             created_at__lt=now - timedelta(hours=hours),
-        ),
+        )
+        .exclude(in_flight(now)),
         budget_ends=budget_ends,
         status=AgentccWebhookEvent.EXPIRED,
         next_retry_at=None,
