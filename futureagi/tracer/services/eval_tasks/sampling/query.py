@@ -842,8 +842,10 @@ def stream_query(
     )
     from tracer.services.entity_tags import TagReadUnavailable
     from tracer.services.eval_tasks.sampling.errors import (
+        DETERMINISTIC_TAG_READ_CODES,
         SamplingReadPressure,
         SamplingStatementTooLarge,
+        SamplingTagFilterTooBroad,
         classify_read_error,
     )
 
@@ -889,6 +891,7 @@ def stream_query(
                     params,
                     deadline=deadline,
                     allow_window_scan=True,
+                    window_overlay=True,
                 )
                 timeout_ms = deadline.remaining_ms()
             with client.execute_read_block_stream(
@@ -900,9 +903,15 @@ def stream_query(
             ) as blocks:
                 yield from blocks
     except TagReadUnavailable as exc:
+        if exc.code in DETERMINISTIC_TAG_READ_CODES:
+            # The same window and filter can never fit: fail fast (400 in a
+            # preview, a terminal task error in the worker).
+            raise SamplingTagFilterTooBroad(
+                "Too many traces and spans in this window carry the filtered "
+                "tag. Narrow the window or the Tag filter."
+            ) from exc
         raise SamplingReadPressure(
-            "Sampling tag filters are unavailable or exceeded their read budget. "
-            "Narrow the window and retry."
+            "Sampling tag filters are temporarily unavailable. Retry shortly."
         ) from exc
     except Exception as exc:
         typed = classify_read_error(exc, policy=policy, proof=proof)

@@ -987,13 +987,16 @@ def prepare_effective_tag_params(
     *,
     deadline: ReadDeadline,
     allow_window_scan: bool = False,
+    window_overlay: bool = False,
 ) -> dict[str, Any]:
     """Bind each tag leaf's scope and human-scale overlay before execution.
 
     Non-tag queries return the original dictionary and perform no reads.
     Source and curated tags need no preparation: the compiled SQL evaluates
-    them in place. ``execute`` is accepted for executor parity; only the
-    PostgreSQL assignment overlay is read here.
+    them in place. ``execute`` reads curated suppressions and, with
+    ``window_overlay``, the liveness of a window scan's assignments: then only
+    assignments live in the window count against the overlay budget, as for
+    graph leaves, instead of every assignment the project ever saved.
     """
     pending = {
         key: value
@@ -1028,11 +1031,15 @@ def prepare_effective_tag_params(
         bound.update(scope)
         cache_key = (request.project_ids, request.values)
         if cache_key not in cache:
+            windowed = window_overlay and trace_ids is None
             overlay = read_tag_overlay(
                 project_ids=request.project_ids,
                 trace_ids=trace_ids,
                 values=request.values,
                 deadline=deadline,
+                window_start=start if windowed else None,
+                window_end=end if windowed else None,
+                execute=execute if windowed else None,
             )
             if overlay.unmatched_trace_assignments:
                 # A window scan: bind only the suppressions that matter.
