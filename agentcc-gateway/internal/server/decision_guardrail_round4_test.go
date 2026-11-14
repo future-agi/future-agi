@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -138,5 +139,27 @@ func TestDecisionGuardrailCapIsTheDecisionBodyLimit(t *testing.T) {
 	}
 	if len(c.inputs) != 1 {
 		t.Fatalf("guardrail ran on a refused body: %d inputs", len(c.inputs))
+	}
+}
+
+// Near the 32 MiB decision limit, a body of '<' and '&' yields content within
+// the cap, and costs a small multiple of its size, not six times it.
+func TestDecisionGuardrailHTMLCharactersNearTheLimitStayBounded(t *testing.T) {
+	head, tail := `{"model":"typesafe/jev-latest","state":"`, `","questions":{}}`
+	state := strings.Repeat("<&", (maxDecisionBodyBytes-len(head)-len(tail)-64)/2)
+	body := []byte(head + state + tail)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	content, apiErr := decisionGuardrailContent(body, maxDecisionBodyBytes)
+	runtime.ReadMemStats(&after)
+	if apiErr != nil {
+		t.Fatalf("a %d-byte body under the limit: %v", len(body), apiErr)
+	}
+	if int64(len(content)) > maxDecisionBodyBytes {
+		t.Fatalf("content is %d bytes, over the %d-byte cap", len(content), maxDecisionBodyBytes)
+	}
+	if got, limit := after.TotalAlloc-before.TotalAlloc, uint64(4*len(body)); got > limit {
+		t.Errorf("allocated %d bytes for a %d-byte body, want <= %d", got, len(body), limit)
 	}
 }
