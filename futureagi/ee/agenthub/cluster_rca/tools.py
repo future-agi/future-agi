@@ -105,7 +105,8 @@ CLUSTER_RCA_TOOLS = [
             "description": (
                 "Full-text search across entities (kevinified text, span attributes, "
                 "error messages, scanner briefs). Returns "
-                "{items: [{id, snippet, ...}], total_count, has_more}. " + FILTER_DSL_NOTE
+                "{items: [{id, snippet, ...}], total_count, has_more}. "
+                + FILTER_DSL_NOTE
             ),
             "parameters": {
                 "type": "object",

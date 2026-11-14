@@ -266,9 +266,7 @@ class TestSimulatorAgentListHappyPath:
         assert len(body["results"]) == 5
         assert body["count"] >= 15
 
-    def test_list_response_body_key_shape(
-        self, auth_client, organization, workspace
-    ):
+    def test_list_response_body_key_shape(self, auth_client, organization, workspace):
         agent = SimulatorAgent.objects.create(
             name="Shape Agent",
             prompt="Prompt.",
@@ -282,9 +280,7 @@ class TestSimulatorAgentListHappyPath:
         response = auth_client.get("/simulate/simulator-agents/?search=Shape&limit=50")
 
         assert response.status_code == status.HTTP_200_OK, response.content
-        row = next(
-            r for r in response.json()["results"] if r["id"] == str(agent.id)
-        )
+        row = next(r for r in response.json()["results"] if r["id"] == str(agent.id))
         assert set(row.keys()) == EXPECTED_SIMULATOR_AGENT_KEYS
         uuid.UUID(row["id"])
         assert row["name"] == "Shape Agent"
@@ -331,12 +327,8 @@ class TestSimulatorAgentListHappyPath:
 @pytest.mark.integration
 @pytest.mark.api
 class TestSimulatorAgentDetailView:
-    def test_get_detail_returns_expected_body_shape(
-        self, auth_client, simulator_agent
-    ):
-        response = auth_client.get(
-            f"/simulate/simulator-agents/{simulator_agent.id}/"
-        )
+    def test_get_detail_returns_expected_body_shape(self, auth_client, simulator_agent):
+        response = auth_client.get(f"/simulate/simulator-agents/{simulator_agent.id}/")
 
         assert response.status_code == status.HTTP_200_OK, response.content
         body = response.json()
@@ -350,18 +342,12 @@ class TestSimulatorAgentDetailView:
         assert body["deleted"] is False
 
     def test_get_detail_not_found_returns_404(self, auth_client):
-        response = auth_client.get(
-            f"/simulate/simulator-agents/{uuid.uuid4()}/"
-        )
+        response = auth_client.get(f"/simulate/simulator-agents/{uuid.uuid4()}/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_get_detail_unauthenticated_returns_401(
-        self, api_client, simulator_agent
-    ):
-        response = api_client.get(
-            f"/simulate/simulator-agents/{simulator_agent.id}/"
-        )
+    def test_get_detail_unauthenticated_returns_401(self, api_client, simulator_agent):
+        response = api_client.get(f"/simulate/simulator-agents/{simulator_agent.id}/")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -369,9 +355,7 @@ class TestSimulatorAgentDetailView:
 @pytest.mark.integration
 @pytest.mark.api
 class TestSimulatorAgentDeleteView:
-    def test_delete_already_deleted_returns_404(
-        self, auth_client, simulator_agent
-    ):
+    def test_delete_already_deleted_returns_404(self, auth_client, simulator_agent):
         first = auth_client.delete(
             f"/simulate/simulator-agents/{simulator_agent.id}/delete/"
         )

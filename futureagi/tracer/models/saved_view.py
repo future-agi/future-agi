@@ -93,6 +93,4 @@ class SavedView(BaseModel):
         qs = cls.objects.filter(created_by=created_by, deleted=False)
         if project is not None:
             return qs.filter(project=project)
-        return qs.filter(
-            project__isnull=True, workspace=workspace, tab_type=tab_type
-        )
+        return qs.filter(project__isnull=True, workspace=workspace, tab_type=tab_type)

@@ -267,10 +267,10 @@ class TestMixed:
         # Each handler contributes its own clause; the combined Q should
         # reference all four underlying mechanisms.
         rep = repr(q)
-        assert "span_attributes" in rep       # SPAN_ATTRIBUTE
-        assert "row_avg_cost" in rep          # SYSTEM_METRIC (cost)
-        assert "__score__gt" in rep           # EVAL_METRIC (per-eval score)
-        assert "Exists" in rep                # ANNOTATION (annotator) Exists
+        assert "span_attributes" in rep  # SPAN_ATTRIBUTE
+        assert "row_avg_cost" in rep  # SYSTEM_METRIC (cost)
+        assert "__score__gt" in rep  # EVAL_METRIC (per-eval score)
+        assert "Exists" in rep  # ANNOTATION (annotator) Exists
 
 
 # ---------------------------------------------------------------------------
@@ -364,15 +364,18 @@ class TestRowTypeDispatch:
                 },
             },
         ]
-        with mock.patch.object(
-            FilterEngine,
-            "get_filter_conditions_for_voice_call_annotations",
-            return_value=(Q(), {}),
-        ) as anno_mock, mock.patch.object(
-            FilterEngine,
-            "get_filter_conditions_for_has_annotation",
-            return_value=Q(),
-        ) as has_anno_mock:
+        with (
+            mock.patch.object(
+                FilterEngine,
+                "get_filter_conditions_for_voice_call_annotations",
+                return_value=(Q(), {}),
+            ) as anno_mock,
+            mock.patch.object(
+                FilterEngine,
+                "get_filter_conditions_for_has_annotation",
+                return_value=Q(),
+            ) as has_anno_mock,
+        ):
             parsing_evaltask_filters(_wrap(items), row_type=row_type)
 
         expected_source_q = annotation_source_q_for_row_type(row_type)

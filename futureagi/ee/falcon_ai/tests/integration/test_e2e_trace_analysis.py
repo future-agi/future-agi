@@ -110,9 +110,9 @@ def main():
     project_id = "a5b0c2b1-aa2a-49c1-b896-2fba4a9121b9"
     message = f"Analyze all traces in project {project_id} for errors."
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  E2E: {message}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     result, collector = run_falcon(ctx, user, workspace, message)
 
@@ -158,7 +158,7 @@ def main():
     print(
         f"  Input: {result.get('input_tokens')}, Output: {result.get('output_tokens')}"
     )
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
 if __name__ == "__main__":

@@ -92,7 +92,10 @@ class ChauffeurAgent:
         except Exception as e:
             logger.error(f"Chauffeur reader failed for span {span_id}: {str(e)}")
             # Fallback: return truncated content
-            return content[:2000] + "\n... [Chauffeur summary failed, showing truncated content]"
+            return (
+                content[:2000]
+                + "\n... [Chauffeur summary failed, showing truncated content]"
+            )
 
     def _parse_response(self, response: str) -> dict:
         """Parse the Chauffeur's JSON response for sub-flows."""
@@ -132,12 +135,14 @@ class ChauffeurAgent:
             # Backward compat: convert old format to new
             sub_flows = []
             for group in parsed["span_groups"]:
-                sub_flows.append({
-                    "name": group.get("signal", "unnamed group"),
-                    "spans": group.get("spans", []),
-                    "summary": group.get("signal", ""),
-                    "flags": [],
-                })
+                sub_flows.append(
+                    {
+                        "name": group.get("signal", "unnamed group"),
+                        "spans": group.get("spans", []),
+                        "summary": group.get("signal", ""),
+                        "flags": [],
+                    }
+                )
             return {"sub_flows": sub_flows, "trace_overview": ""}
 
         logger.warning("Chauffeur response missing sub_flows key")

@@ -130,7 +130,9 @@ class TraceInputData:
             from ee.agenthub.trace_scanner.compress import kevinify
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.trace_scanner.compress", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.trace_scanner.compress", exc_info=True
+                )
             return None
 
         return kevinify(self.input_text)

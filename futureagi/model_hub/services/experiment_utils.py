@@ -42,9 +42,7 @@ def maybe_complete_experiment_after_eval_stop(experiment_id) -> bool:
             if isinstance(experiment_id, uuid.UUID)
             else uuid.UUID(str(experiment_id))
         )
-        experiment = ExperimentsTable.objects.filter(
-            id=exp_uuid, deleted=False
-        ).first()
+        experiment = ExperimentsTable.objects.filter(id=exp_uuid, deleted=False).first()
         if not experiment or experiment.status != StatusType.RUNNING.value:
             return False
 
