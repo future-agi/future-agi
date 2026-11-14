@@ -3008,7 +3008,7 @@ def fetch_eval_chart_series_ch(
             # Running and not complete: poll through the normal read, which
             # re-enqueues a dispatch claim the worker left terminal. Still no
             # preflight: this re-runs the graph already scheduled.
-            return _read_or_refresh_exact_graph(
+            polled: list[dict[str, Any]] = _read_or_refresh_exact_graph(
                 namespace="observe-eval-chart-series",
                 identity=identity,
                 refresh=False,
@@ -3016,10 +3016,11 @@ def fetch_eval_chart_series_ch(
                 organization_id=organization_id,
                 workspace_id=workspace_id,
             )
+            return polled
     # This read schedules the worker: a too-broad Tag filter is a 400 now, not
     # a failed refresh that every later poll reports as retryable.
     _preflight_scheduled_graph_tags(identity)
-    return _read_or_refresh_exact_graph(
+    scheduled: list[dict[str, Any]] = _read_or_refresh_exact_graph(
         namespace="observe-eval-chart-series",
         identity=identity,
         refresh=bool(refresh),
@@ -3027,6 +3028,7 @@ def fetch_eval_chart_series_ch(
         organization_id=organization_id,
         workspace_id=workspace_id,
     )
+    return scheduled
 
 
 def annotation_output_type(

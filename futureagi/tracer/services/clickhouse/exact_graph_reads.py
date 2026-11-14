@@ -4059,10 +4059,11 @@ def _user_membership_parts(
                 derived = re.compile(r"%\(" + re.escape(name) + r"_([a-z_]+)\)s")
                 if not derived.search(predicate):
                     continue
-                predicate = derived.sub(
-                    lambda match, new=new_name: f"%({new}_{match.group(1)})s",
-                    predicate,
-                )
+
+                def renamed(match: re.Match[str], new: str = new_name) -> str:
+                    return f"%({new}_{match.group(1)})s"
+
+                predicate = derived.sub(renamed, predicate)
                 params[new_name] = value
                 continue
             placeholder = f"%({name})s"

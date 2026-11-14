@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 
@@ -51,7 +52,15 @@ def reset_v2_query_client() -> None:
         _client = None
 
 
-class EffectiveTagBindingMixin:
+if TYPE_CHECKING:
+    # The mixin always precedes an AnalyticsQueryService in a class's bases;
+    # type it against that service. At run time its base stays ``object``.
+    _TagBindingBase = AnalyticsQueryService
+else:
+    _TagBindingBase = object
+
+
+class EffectiveTagBindingMixin(_TagBindingBase):
     """Bind effective-tag relations before a read is sent to ClickHouse.
 
     A compiled Tag leaf carries an unbound ``EffectiveTagRelation`` in its
