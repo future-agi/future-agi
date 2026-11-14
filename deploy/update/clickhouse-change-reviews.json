@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "changes": [
+    {
+      "path": "futureagi/tracer/sql_workbench/provision.py",
+      "before_sha256": null,
+      "after_sha256": "0b7f67e150af8c176fd78ba917dcc521dc3791142e35bea9dc4768435682f71f",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces",
+          "clickhouse:trace_sessions",
+          "clickhouse:end_users",
+          "clickhouse:tracer_eval_logger",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:model_hub_score",
+          "clickhouse:derived_metrics",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits"
+        ],
+        "mitigation": "Operator-invoked provisioning only (management command prints DDL; nothing runs on deploy, migrate or update). Statements create a read-only definer/principal, a per-principal view database, SELECT grants and RESTRICTIVE row policies; no ALTER/DROP/INSERT on existing tables, no data rewrite. Rollback: DROP the created users, row policies and view database.",
+        "review": "https://github.com/future-agi/future-agi/pull/3577#discussion_r4537373859",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    }
+  ]
+}

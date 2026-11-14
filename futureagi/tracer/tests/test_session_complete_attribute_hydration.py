@@ -18,7 +18,6 @@ engine = session_fixture.engine
 
 @pytest.mark.parametrize("days", [7, 30, 365])
 def test_all_session_root_attributes_beyond_old_500_row_cutoff(engine, days):
-    engine.execute("ALTER TABLE spans ADD COLUMN attributes_extra String DEFAULT '{}'")
     session_id = str(UUID(int=100))
     engine.execute(
         """INSERT INTO spans (project_id, observation_type, service_name, start_time,
@@ -41,7 +40,8 @@ def test_all_session_root_attributes_beyond_old_500_row_cutoff(engine, days):
     engine.insert(100, id="outside", start_time=START + timedelta(days=days),
                   attrs_string={"outside_window": "excluded"})
     subject = builder(days=days)
-    rows = engine.execute(*subject.build_span_attributes_query([session_id]))
+    hydrated = engine.execute(*subject.build_page_hydration_query([session_id]))
+    rows = type(subject).expand_page_attribute_rows(hydrated)
     assert len(rows) == 501
     assert {row["session_id"] for row in rows} == {session_id}
     assert {key for row in rows for key in row["attrs_string"]} == {

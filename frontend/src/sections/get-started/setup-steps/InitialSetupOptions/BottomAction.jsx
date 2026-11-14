@@ -18,7 +18,7 @@ const BottomAction = ({ currentLabel, setCurrentLabel }) => {
         break;
       case "RunFirstExperiment":
         option.buttonText = "Go to experiments";
-        option.buttonAction = () => navigate("/dashboard/prototype");
+        option.buttonAction = () => navigate("/dashboard/develop");
         break;
       case "inviteTeamMembers":
         option.buttonText = "Complete the setup";
@@ -48,7 +48,7 @@ const BottomAction = ({ currentLabel, setCurrentLabel }) => {
           color="primary"
           variant="contained"
           onClick={currentAction.buttonAction}
-          sx={{ minWidth: "120px", height: "38px", padding: "8px 24px" }}
+          sx={{ minWidth: "120px" }}
         >
           {currentAction?.buttonText}
         </Button>

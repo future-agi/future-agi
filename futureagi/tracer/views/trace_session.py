@@ -60,10 +60,12 @@ from tracer.models.observation_span import (
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.selectors.session_candidate_slice import read_candidate_slice_page
 from tracer.selectors.trace_filter_reads import (
     PAGE_DEPTH_EXCEEDED_CODE,
     PAGE_DEPTH_EXCEEDED_MESSAGE,
     BoundedFilterPage,
+    bounded_filter_floor_order,
     bounded_numbered_page_depth_exceeded,
     numbered_page_depth_exceeded,
     read_bounded_filter_page,
@@ -101,6 +103,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     enforce_exact_graph_data_contract,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    with_metric_statistic,
+)
 from tracer.services.clickhouse.list_cursor import (
     ListCursor,
     ListCursorError,
@@ -111,13 +116,19 @@ from tracer.services.clickhouse.list_cursor import (
     exact_total_explicitly_required,
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
+    pin_filter_seed_witness_slack,
+    read_filter_seed_witness_slack,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
     non_terminal_eval_marker,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
+)
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -138,6 +149,7 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -179,6 +191,10 @@ SESSION_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_FILTER_VALUE_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page stops acquiring rows here and publishes the rows found so far
+# plus a resumable checkpoint. Numbered pages cannot resume, so they keep the
+# query timeout above; hydration and the value picker stay under the request wall.
+SESSION_LIST_PAGE_WALL_MS = settings.SESSION_LIST_PAGE_WALL_MS
 SESSION_LIST_FILTER_MAX_CANDIDATES = settings.SESSION_LIST_FILTER_MAX_CANDIDATES
 SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS = settings.SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS
 SESSION_LIST_FILTER_MAX_QUERIES = settings.SESSION_LIST_FILTER_MAX_QUERIES
@@ -191,7 +207,6 @@ SESSION_LIST_READ_SETTINGS = {
     "timeout_overflow_mode": "throw",
 }
 SESSION_LIST_RESULT_BYTES = settings.SESSION_LIST_MAX_RESULT_BYTES
-SESSION_LIST_ATTRIBUTE_RESULT_ROWS = settings.SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS
 SESSION_GRAPH_RETRYABLE_ERROR_CODES = {
     "deadline_exceeded",
     "read_budget_exceeded",
@@ -250,6 +265,7 @@ def _read_session_filter_page(
     *,
     cursor_state: ListCursor | None = None,
     cursor_enabled: bool = False,
+    page_wall: bool = True,
 ) -> BoundedFilterPage:
     return read_bounded_filter_page(
         builder=builder,
@@ -258,7 +274,16 @@ def _read_session_filter_page(
         key_field="session_id",
         page_number=builder.page_number,
         page_size=builder.page_size,
-        deadline_ms=deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
+        # Only a cursor page can stop early and still resume exactly, so only
+        # a cursor page runs its acquisition at the page wall. An export is
+        # cursor-capable but it is not a page: it keeps filling its bounded
+        # page under the request budget rather than stopping at the wall a
+        # reader would resume from.
+        deadline_ms=deadline.remaining_ms(
+            SESSION_LIST_PAGE_WALL_MS
+            if (cursor_enabled and page_wall)
+            else SESSION_LIST_QUERY_TIMEOUT_MS
+        ),
         max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
         max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
         max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
@@ -282,6 +307,11 @@ def _read_session_filter_page(
         if cursor_state is not None
         else None,
         bounded_continuation=cursor_enabled,
+        # A resumed cursor otherwise restarts the widening schedule at the
+        # shared five-minute default and re-climbs it on every request, which
+        # is what makes the depth of a filtered walk move between runs.
+        carry_continuation_slice_width=cursor_enabled,
+        retry_wide_read_budget=builder.should_retry_filter_wide_read_budget(),
     )
 
 
@@ -297,6 +327,10 @@ class SessionPageSelection:
     bounded_page: BoundedFilterPage | None
     candidate_cursor: bool
     candidate_cursor_has_more: bool
+    # A candidate page read from a narrowed scan cannot see sessions whose
+    # every root lies below its floor, so its count is a proven prefix - the
+    # same contract the bounded filter route publishes - not a window total.
+    candidate_total_is_lower_bound: bool
     cursor_enabled: bool
     cursor_state: ListCursor | None
     cursor_scope: dict
@@ -355,6 +389,7 @@ class SessionPageSelection:
             window_start=start,
             window_end=end,
             seen_rows=seen,
+            witness_slack_hours=read_filter_seed_witness_slack(self.builder),
             **boundary,
         )
         return seen, token, True
@@ -448,8 +483,32 @@ def _bounded_session_graph_request(view_method):
 
 
 def _session_list_cursor_order_for_partial_page(*, rows, bounded_page, cursor_state):
-    """Return a stable public order tuple, including checkpoint-only pages."""
+    """Return a stable public order tuple, including checkpoint-only pages.
 
+    The next hop reads this tuple as an exclusive upper bound: everything at or
+    above it is already published. A page that FILLED its prefix and left
+    matches over says so with its last row and drops its scan checkpoint, so
+    the walk re-descends from that rank. A page that stopped at its wall says
+    so with the floor the selector proves - not with its last row, whose rank
+    can sit far below the scan position on a route that ranks a session by its
+    oldest root, and not with the scan checkpoint, which is in seed order.
+    """
+
+    # Guarded for a missing page as the other two are, though this route's only
+    # call site passes one: the trap is the order of the tests, not the caller.
+    if bounded_page is not None and bounded_page.has_more and rows:
+        last = rows[-1]
+        return (
+            last.get("start_time"),
+            str(last.get("session_id") or ""),
+        )
+    floor = (
+        bounded_page.continuation_published_order_floor
+        if bounded_page is not None
+        else None
+    )
+    if floor is not None:
+        return bounded_filter_floor_order(floor, lowest_components=1)
     if rows:
         last = rows[-1]
         return (
@@ -458,6 +517,13 @@ def _session_list_cursor_order_for_partial_page(*, rows, bounded_page, cursor_st
         )
     if cursor_state is not None:
         return tuple(cursor_state.order)
+    if bounded_page is None:
+        raise RuntimeError("session continuation has no stable order boundary")
+    # A checkpoint the reader could not name in result order, on a first page:
+    # fall back to the scan position, which is what this route published before
+    # the floor existed. It is in seed order, so it is an approximation, and it
+    # is reached only when a page has no rows, no incoming cursor and a keyset
+    # whose token is not the one the list publishes.
     if bounded_page.continuation_before_start_time is not None:
         return (
             bounded_page.continuation_before_start_time,
@@ -660,10 +726,17 @@ def _resolve_ch_session_fields(request, trace_session_id):
     the session is unknown or out of scope — callers map that to "not found"
     so the CH fallback enforces the same tenant gate as the PG queryset.
     """
+    from tracer.models.trace_session import TraceSessionOverlay
     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
         resolve_session_fields,
     )
 
+    if (
+        TraceSessionOverlay._base_manager.using("default")
+        .filter(trace_session_id=trace_session_id, deleted=True)
+        .exists()
+    ):
+        return None
     # Workspace-scoped lookup — the project is discovered from the resolved
     # fields below, so there's no single project_id to scope the read by here.
     session_fields = resolve_session_fields([trace_session_id]).get(
@@ -738,41 +811,103 @@ def _resolve_end_user_ids_for_user_id(
 
 
 def _soft_delete_trace_session_tree(trace_sessions):
-    now = timezone.now()
-    sessions = list(trace_sessions)
-    if not sessions:
+    """Delete sessions and their same-project descendants in one transaction."""
+    from django.db.models import Q
+
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    # Keep the request's project mapping before reading fresh database rows.
+    authorized = {session.pk: session.project_id for session in trace_sessions}
+    if not authorized:
         return
 
-    session_ids = [session.id for session in sessions]
-    trace_ids = list(
-        Trace.no_workspace_objects.filter(
-            session_id__in=session_ids,
-            deleted=False,
-        ).values_list("id", flat=True)
-    )
+    with transaction.atomic():
+        # Match project deletion and analysis writers' project-first lock order.
+        list(
+            Project._base_manager.select_for_update(no_key=True)
+            .filter(pk__in=set(authorized.values()))
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
+        sessions = list(
+            TraceSession.no_workspace_objects.select_for_update()
+            .filter(pk__in=authorized)
+            .order_by("pk")
+        )
+        if {session.pk: session.project_id for session in sessions} != authorized:
+            raise ValidationError("Session ownership changed; refresh and retry.")
 
-    if trace_ids:
-        ObservationSpan.no_workspace_objects.filter(
-            trace_id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
-        EvalLogger.no_workspace_objects.filter(
-            trace_id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
-        Trace.no_workspace_objects.filter(
-            id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        by_project = defaultdict(list)
+        for session in sessions:
+            by_project[session.project_id].append(session.pk)
+        now = timezone.now()
+        for project_id in sorted(by_project, key=str):
+            session_ids = by_project[project_id]
+            traces = Trace.no_workspace_objects.filter(
+                session_id__in=session_ids,
+                project_id=project_id,
+            )
+            trace_ids = list(
+                traces.select_for_update().order_by("pk").values_list("pk", flat=True)
+            )
+            spans = ObservationSpan.no_workspace_objects.filter(
+                trace_id__in=trace_ids,
+                project_id=project_id,
+                trace__project_id=project_id,
+                trace__session_id__in=session_ids,
+            )
+            # Lock children before writing so their parent cannot change
+            # between the project check and update.
+            span_ids = list(
+                spans.select_for_update(of=("self",))
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            spans.filter(pk__in=span_ids).update(deleted=True, deleted_at=now)
 
-    EvalLogger.no_workspace_objects.filter(
-        trace_session_id__in=session_ids,
-        deleted=False,
-    ).update(deleted=True, deleted_at=now)
-    TraceSession.no_workspace_objects.filter(
-        id__in=session_ids,
-        deleted=False,
-    ).update(deleted=True, deleted_at=now)
+            config_scope = Q(custom_eval_config__isnull=True) | Q(
+                custom_eval_config__project_id=project_id,
+            )
+            # Span references may exist only in ClickHouse. A PostgreSQL span
+            # from another project, even when deleted, is not an absent span.
+            pg_span = ObservationSpan._base_manager.filter(
+                pk=OuterRef("observation_span_id")
+            )
+            owned_span = pg_span.filter(
+                project_id=project_id, trace_id=OuterRef("trace_id")
+            )
+            soft_delete_eval_results(
+                EvalLogger.no_workspace_objects.filter(
+                    config_scope,
+                    ~Exists(pg_span) | Exists(owned_span),
+                    trace_id__in=trace_ids,
+                    trace__project_id=project_id,
+                    trace__session_id__in=session_ids,
+                    trace_session__isnull=True,
+                ).order_by("pk")
+            )
+            traces.filter(pk__in=trace_ids).update(deleted=True, deleted_at=now)
+            soft_delete_eval_results(
+                EvalLogger.no_workspace_objects.filter(
+                    config_scope,
+                    trace_session_id__in=session_ids,
+                    trace_session__project_id=project_id,
+                    trace__isnull=True,
+                    observation_span__isnull=True,
+                ).order_by("pk")
+            )
+            TraceSession.no_workspace_objects.filter(
+                pk__in=session_ids,
+                project_id=project_id,
+            ).update(deleted=True, deleted_at=now)
+            project_trace_ids = Trace._base_manager.filter(
+                project_id=project_id, session_id__in=session_ids
+            ).values_list("id", flat=True)
+            retire_analysis_sources(
+                project_id=project_id,
+                trace_ids=project_trace_ids,
+                session_ids=session_ids,
+            )
 
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
@@ -840,14 +975,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         """
         from tracer.models.trace_session import TraceSessionOverlay
 
-        TraceSessionOverlay.objects.update_or_create(
-            trace_session_id=trace_session_id,
-            defaults={
-                "project_id": project_id,
-                "bookmarked": bookmarked,
-                "display_name": display_name,
-            },
-        )
+        with transaction.atomic():
+            overlay, _ = TraceSessionOverlay._base_manager.select_for_update(
+                of=("self",)
+            ).get_or_create(
+                trace_session_id=trace_session_id, defaults={"project_id": project_id}
+            )
+            if overlay.deleted:
+                raise Http404("Trace session not found")
+            overlay.bookmarked = bookmarked
+            overlay.display_name = display_name
+            overlay.save(update_fields=["bookmarked", "display_name", "updated_at"])
 
     def perform_update(self, serializer):
         """Persist a TraceSession update AND mirror the UI overlay (slice 2b).
@@ -968,7 +1106,36 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         project_id = session_fields["project_id"]
 
-        TraceSessionOverlay.objects.filter(trace_session_id=trace_session_id).delete()
+        from tracer.services.analysis_retention import retire_analysis_sources
+
+        # Commit the local marker and analysis cleanup together before publishing
+        # the ClickHouse marker. Keep any existing overlay in its original project.
+        with transaction.atomic():
+            list(
+                Project._base_manager.select_for_update(no_key=True)
+                .filter(pk=project_id)
+                .values_list("pk", flat=True)
+            )
+            overlay, _ = TraceSessionOverlay._base_manager.select_for_update(
+                of=("self",)
+            ).get_or_create(
+                trace_session_id=trace_session_id, defaults={"project_id": project_id}
+            )
+            if str(overlay.project_id) != str(project_id):
+                raise ValidationError("Session ownership changed; refresh and retry.")
+            now = timezone.now()
+            TraceSessionOverlay._base_manager.filter(
+                pk=overlay.pk, project_id=project_id
+            ).update(
+                deleted=True,
+                deleted_at=now,
+                display_name=None,
+                bookmarked=False,
+                updated_at=now,
+            )
+            retire_analysis_sources(
+                project_id=project_id, session_ids=[trace_session_id]
+            )
 
         # Mark as deleted in the CH trace_sessions RMT: INSERT a row with
         # is_deleted=1 and a newer version so FINAL picks it up.
@@ -999,7 +1166,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 trace_session_id=str(trace_session_id),
                 error=str(e)[:200],
             )
-
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
     def perform_destroy(self, instance):
@@ -1013,7 +1179,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             400: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=True, methods=["get", "post"], url_path="query")
+    @action(
+        detail=True, methods=["get", "post"], url_path="query", pagination_class=None
+    )
     def retrieve_query(self, request, *args, **kwargs):
         """Read the same authorized detail without putting filters in the URL."""
         return self.retrieve(request, *args, **kwargs)
@@ -1113,6 +1281,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         agg = agg_result.data[0] if agg_result.data else {}
+        capture = capture_coverage_from_counts(
+            source_summary_present=bool(agg.get("source_summary_present")),
+            request_count=int(agg.get("observed_request_count", 0)),
+        )
+        capture_fields = {"capture_coverage": capture} if capture is not None else {}
         session_start = agg.get("session_start")
         session_end = agg.get("session_end")
         duration = 0
@@ -1146,7 +1319,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         session_metadata = {
             "session_id": str(trace_session_id),
             "duration": duration,
-            "total_cost": agg.get("total_cost", 0) or 0,
+            "total_cost": agg.get("total_cost", 0),
             "total_traces": agg.get("total_traces", 0),
             "start_time": format_datetime_to_iso(session_start),
             "end_time": format_datetime_to_iso(session_end),
@@ -1180,6 +1353,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(
                 {
                     "session_metadata": session_metadata,
+                    **capture_fields,
                     "response": [],
                     "next": False,
                 }
@@ -1307,6 +1481,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(
             {
                 "session_metadata": session_metadata,
+                **capture_fields,
                 "response": response,
                 "next": has_next,
             }
@@ -1700,6 +1875,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     error_type=type(exc).__name__,
                 )
                 graph = degraded_graph_response(metric_id, exc)
+                if metric_type == "SYSTEM_METRIC":
+                    # The dispatcher stamps every envelope it returns; this one
+                    # is built here, so it names its statistic here.
+                    graph = with_metric_statistic(graph, "session", metric_id)
 
             graph.update(
                 graph_query_evidence(
@@ -1791,7 +1970,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_sessions(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.
@@ -1811,6 +1990,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     page_number=0,
                     page_size=BOUNDED_SESSION_EXPORT_PAGE_SIZE,
                     cursor_mode=True,
+                    # Rule B's wall bounds an interactive page, not a
+                    # download. The users export already opts out this way.
+                    page_wall=False,
                 )
             validated_data["filters"] = bind_request_my_annotations_principal(
                 request,
@@ -2970,6 +3152,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids_by_project=annotation_label_ids_by_project,
             bounded_internal_scan=cursor_enabled,
         )
+        # Pin before any route or seed decision reads the slack, so every
+        # statement of this hop uses the value the pagination started with.
+        pin_filter_seed_witness_slack(builder, cursor_state)
         prefer_bounded = builder.prefers_bounded_filter_page() is True
         candidate_cursor = bool(
             cursor_enabled
@@ -3027,39 +3212,54 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         candidate_total_count: int | None = None
+        candidate_total_is_lower_bound = False
         if candidate_first:
             if candidate_cursor:
-                before_start_time = (
-                    cursor_state.order[0] if cursor_state is not None else None
+                # The candidate statement replays latest state across whatever
+                # window it is given, and on a high-volume tenant a month-long
+                # window does not return inside the request wall. The reader
+                # below issues the SAME statement over the newest slice whose
+                # rows fit a budget, then proves the page exact against full
+                # state before publishing it, widening to the whole window when
+                # it cannot. See ``selectors.session_candidate_slice``.
+                slice_page = read_candidate_slice_page(
+                    builder=builder,
+                    analytics=analytics,
+                    deadline=read_deadline,
+                    read_settings=_page_read_settings,
+                    query_timeout_ms=SESSION_LIST_QUERY_TIMEOUT_MS,
+                    before_start_time=(
+                        cursor_state.order[0] if cursor_state is not None else None
+                    ),
+                    before_session_id=(
+                        str(cursor_state.order[1]) if cursor_state is not None else None
+                    ),
                 )
-                before_session_id = (
-                    str(cursor_state.order[1]) if cursor_state is not None else None
-                )
-                page_query, page_params = builder.build_candidate_cursor_page_query(
-                    before_start_time=before_start_time,
-                    before_session_id=before_session_id,
-                )
-            else:
-                page_query, page_params = builder.build_candidate_page_query()
-            page_result = analytics.execute_ch_query(
-                page_query,
-                page_params,
-                timeout_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
-                settings=_page_read_settings(page_size + 1),
-            )
-            candidate_rows = list(page_result.data or [])
-            page_candidates = candidate_rows[:page_size]
-            if candidate_cursor:
-                candidate_cursor_has_more = len(candidate_rows) > page_size
+                page_candidates = slice_page.rows
+                candidate_cursor_has_more = slice_page.has_more
                 prior_seen_rows = (
                     cursor_state.seen_rows if cursor_state is not None else 0
                 )
-                candidate_total_count = prior_seen_rows + (
-                    int(candidate_rows[0].get("remaining_count", 0) or 0)
-                    if candidate_rows
-                    else 0
+                # A narrowed scan cannot see sessions whose every root is below
+                # its floor, so this total is the proven prefix, exactly as on
+                # the bounded filter route: rows already published plus the
+                # candidates the reader verified against the whole window, not
+                # the slice's own count. Re-running the legacy full-window
+                # count would reintroduce the timeout this path removes.
+                candidate_total_count = prior_seen_rows + slice_page.remaining_count
+                candidate_total_is_lower_bound = slice_page.slice_start is not None
+            else:
+                page_query, page_params = builder.build_candidate_page_query()
+                page_result = analytics.execute_ch_query(
+                    page_query,
+                    page_params,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SESSION_LIST_QUERY_TIMEOUT_MS
+                    ),
+                    settings=_page_read_settings(page_size + 1),
                 )
-            elif page_candidates:
+                page_candidates = list(page_result.data or [])[:page_size]
+            if not candidate_cursor and page_candidates:
                 candidate_total_count = int(
                     page_candidates[0].get("total_count", 0) or 0
                 )
@@ -3070,6 +3270,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 read_deadline,
                 cursor_state=cursor_state,
                 cursor_enabled=cursor_enabled,
+                page_wall=bool(validated_data.get("page_wall", True)),
             )
             if not bounded_page.complete:
                 if bounded_page.error_code == PAGE_DEPTH_EXCEEDED_CODE:
@@ -3145,6 +3346,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             bounded_page=bounded_page,
             candidate_cursor=candidate_cursor,
             candidate_cursor_has_more=candidate_cursor_has_more,
+            candidate_total_is_lower_bound=candidate_total_is_lower_bound,
             cursor_enabled=cursor_enabled,
             cursor_state=cursor_state,
             cursor_scope=cursor_scope,
@@ -3202,18 +3404,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # independent and candidate-scoped. Run those reads concurrently under
         # the one request wall deadline: endpoint time is selector + slowest
         # enrichment, never selector plus independent per-query allowances.
-        metrics_query = ""
-        metrics_params: dict = {}
-        content_query = ""
-        content_params: dict = {}
-        attrs_query = ""
-        attrs_params: dict = {}
+        hydration_query = ""
+        hydration_params: dict = {}
         if candidate_ids:
-            metrics_query, metrics_params = builder.build_page_metrics_query(
-                candidate_ids
-            )
-            content_query, content_params = builder.build_content_query(candidate_ids)
-            attrs_query, attrs_params = builder.build_span_attributes_query(
+            hydration_query, hydration_params = builder.build_page_hydration_query(
                 candidate_ids
             )
 
@@ -3239,24 +3433,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, tuple] = {}
-        if metrics_query:
-            tasks["metrics"] = (
+        if hydration_query:
+            tasks["hydration"] = (
                 _execute_page_query,
-                (metrics_query, metrics_params, max(1, len(candidate_ids))),
-            )
-        if content_query:
-            tasks["content"] = (
-                _execute_page_query,
-                (content_query, content_params, max(1, len(candidate_ids))),
-            )
-        if attrs_query:
-            tasks["attributes"] = (
-                _execute_page_query,
-                (
-                    attrs_query,
-                    attrs_params,
-                    SESSION_LIST_ATTRIBUTE_RESULT_ROWS,
-                ),
+                (hydration_query, hydration_params, max(1, len(candidate_ids))),
             )
         if count_query:
             tasks["count"] = (
@@ -3345,11 +3525,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-        metrics_result = completed.get("metrics")
-        metrics_by_id = {
-            str(row.get("session_id", "")): row
-            for row in (metrics_result.data if metrics_result is not None else [])
-        }
+        hydration_result = completed.get("hydration")
+        hydration_rows = list(
+            hydration_result.data if hydration_result is not None else []
+        )
+        metrics_by_id = {str(row.get("session_id", "")): row for row in hydration_rows}
         # Preserve the candidate selector's deterministic order rather than
         # depending on GROUP BY output order from the hydration query.
         actual_data = [
@@ -3367,16 +3547,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         session_ids_page = [str(row.get("session_id", "")) for row in actual_data]
-        content_result = completed.get("content")
-        content_map = {
-            str(row.get("session_id", "")): row
-            for row in (content_result.data if content_result is not None else [])
-        }
-        for row in actual_data:
-            session_id = str(row.get("session_id", ""))
-            content = content_map.get(session_id, {})
-            row["first_message"] = content.get("first_message", "")
-            row["last_message"] = content.get("last_message", "")
 
         if candidate_total_count is not None:
             total_count = candidate_total_count
@@ -3424,8 +3594,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         }
         name_map = completed.get("names") or {}
         end_user_map = completed.get("end_users") or {}
-        attr_result = completed.get("attributes")
-        attr_result_data = attr_result.data if attr_result is not None else []
+        attr_result_data = builder.expand_page_attribute_rows(hydration_rows)
         for entry in formatted:
             session_id = str(entry.get("session_id", ""))
             entry_project_id = project_id_by_session.get(session_id, "")
@@ -3503,12 +3672,25 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         cursor_seen_rows, next_cursor, cursor_has_more = selection.cursor(total_count)
 
+        # Candidate order can come from the insert-only session rollup; every
+        # returned row is still replayed through finite latest state, but that
+        # ordering source cannot retract historical versions, so a page built
+        # on it is inexact however complete the read was.  This qualifies the
+        # page, not the pagination mode, so it applies to both branches below.
+        candidate_seed_is_sampled = getattr(
+            builder, "filter_candidate_seed_is_sampled", None
+        )
+        ordering_source_exact = not (
+            callable(candidate_seed_is_sampled) and candidate_seed_is_sampled()
+        )
+
         metadata = {"total_rows": total_count}
         if candidate_cursor:
+            narrowed = selection.candidate_total_is_lower_bound
             metadata.update(
                 {
-                    "total_rows_exact": total_count,
-                    "total_rows_is_lower_bound": False,
+                    **({} if narrowed else {"total_rows_exact": total_count}),
+                    "total_rows_is_lower_bound": narrowed,
                     "has_more": cursor_has_more,
                     "next_cursor": next_cursor,
                     "next_cursor_fingerprint": (
@@ -3517,13 +3699,23 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_complete": True,
                     "query_status": "complete",
                     "query_error_code": None,
+                    **list_page_exactness(
+                        complete=True,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
         elif bounded_page is not None:
             # The selector proves page membership and whether another page
             # exists, but it may stop once that ordered prefix is proved.  Its
             # count is therefore a lower bound, not an exact full-window count.
-            public_chunk_complete = bounded_page.complete or cursor_has_more
+            # A page the reader did not finish is not made complete by the
+            # fact that it can be resumed. Carrying a cursor is what lets the
+            # caller continue; it is not evidence that this chunk is whole.
+            # Rule B makes a wall-stopped page the normal case on this route,
+            # so publishing it as complete would tell every caller that a
+            # short page is the whole answer.
+            public_chunk_complete = bounded_page.complete
             metadata.update(
                 {
                     "total_rows_is_lower_bound": True,
@@ -3537,28 +3729,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_error_code": (
                         None if public_chunk_complete else bounded_page.error_code
                     ),
+                    **list_page_exactness(
+                        complete=public_chunk_complete,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
-            candidate_seed_is_sampled = getattr(
-                builder, "filter_candidate_seed_is_sampled", None
-            )
-            if callable(candidate_seed_is_sampled) and candidate_seed_is_sampled():
-                # Candidate order came from the insert-only session rollup;
-                # every returned row was still replayed through finite latest
-                # state, but the full ordering source cannot retract historical
-                # versions. Expose that distinction instead of labelling the
-                # fast page exact.
-                metadata.update(
-                    {
-                        "query_complete": public_chunk_complete,
-                        "query_status": (
-                            "complete" if public_chunk_complete else bounded_page.status
-                        ),
-                        "query_exact": False,
-                        "query_provenance": "spans_per_session_candidate",
-                        "ordering_exact": False,
-                    }
-                )
+        # Provenance names the source of an inexact page, so it belongs only
+        # where a page contract was published at all.
+        if not ordering_source_exact and (candidate_cursor or bounded_page is not None):
+            metadata["query_provenance"] = "spans_per_session_candidate"
         if not candidate_cursor:
             metadata.update(
                 cursor_page_metadata(

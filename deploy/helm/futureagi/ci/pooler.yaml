@@ -1,0 +1,15 @@
+# CI only: Django through a pooler and a read replica, over
+# examples/external.yaml. The bootstrap job still connects directly
+# (hack/rendered_checks.py).
+postgres:
+  pooler:
+    enabled: true
+    host: pgbouncer.db.svc
+    port: 6432
+  readReplica:
+    enabled: true
+    host: pgbouncer-read.db.svc
+    port: 6432
+    optIn:
+      - Dashboard
+      - feature:dashboard_render

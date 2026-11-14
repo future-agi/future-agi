@@ -28,7 +28,8 @@ const HeadingAndSubHeading = ({
           color: "text.primary",
         }}
       >
-        {heading} {required && <Typography color={"red.500"}>*</Typography>}
+        {heading}{" "}
+        {required && <Typography color={"status.danger.fg"}>*</Typography>}
       </Typography>
       <Typography
         sx={{

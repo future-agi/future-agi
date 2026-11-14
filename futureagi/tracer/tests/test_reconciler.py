@@ -26,6 +26,7 @@ from tracer.services.eval_tasks.reconciler import (
     _continuous_requires_full_reclassification,
     _evals_revision,
     _requeue_and_drop,
+    _task_revision,
     reconcile,
 )
 from tracer.tests._ch_seed import seed_ch_spans
@@ -208,6 +209,65 @@ class TestCreateAndIdempotency:
 
 @pytest.mark.integration
 @pytest.mark.django_db
+class TestLastRun:
+    def test_creating_pass_stamps_last_run(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        assert task.last_run is None
+        t0 = timezone.now()
+
+        assert reconcile(task).created == 3
+
+        task.refresh_from_db()
+        assert t0 <= task.last_run <= timezone.now()
+
+    def test_no_op_pass_leaves_last_run_unchanged(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        old = timezone.now() - timedelta(days=1)
+        EvalTask.objects.filter(id=task.id).update(last_run=old)
+
+        assert reconcile(task).created == 0
+
+        task.refresh_from_db()
+        assert task.last_run == old
+
+    def test_requeue_only_pass_stamps_last_run(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        old = timezone.now() - timedelta(days=1)
+        EvalTask.objects.filter(id=task.id).update(last_run=old)
+        # Edit the eval -> hash changes -> completed entries are requeued.
+        custom_eval_config.config = {"threshold": 0.9}
+        custom_eval_config.save()
+        t0 = timezone.now()
+
+        result = reconcile(task)
+
+        assert (result.created, result.requeued) == (0, 3)
+        task.refresh_from_db()
+        assert t0 <= task.last_run <= timezone.now()
+
+    def test_last_run_bump_does_not_change_revision(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        task.refresh_from_db()
+        revision = _task_revision(task)
+
+        reconcile(task)
+
+        task.refresh_from_db()
+        assert task.last_run is not None
+        assert _task_revision(task) == revision
+        # A follow-up pass sees the stamped row and must not trip the fence.
+        reconcile(task)
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
 class TestEvalChanges:
     def test_add_eval_creates_new_pairs(
         self, project, eval_template, custom_eval_config
@@ -320,6 +380,30 @@ class TestEvalChanges:
         result = reconcile(task)
         assert result.requeued == 4
         assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
+
+    def test_requeue_clears_the_previous_runs_error_message(
+        self, project, custom_eval_config
+    ):
+        """A requeue already cleared ``error`` and ``skipped_reason`` but kept
+        ``error_message``, so a pending entry carried a message from a run that
+        no longer exists. That residue is what made requeued production rows
+        readable as fresh inserts, and it is what a user sees on a row that has
+        not run yet."""
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _live(task).update(
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            error_message="Error during evaluation: boom",
+            config_hash="stale-hash",
+        )
+
+        assert reconcile(task).requeued == 4
+
+        pending = _live(task, status=EvalEntryStatus.PENDING)
+        assert pending.count() == 4
+        assert list(pending.values_list("error_message", flat=True)) == [None] * 4
 
     def test_skipped_entry_requeued_when_its_row_changed_in_delta_pass(
         self, project, custom_eval_config

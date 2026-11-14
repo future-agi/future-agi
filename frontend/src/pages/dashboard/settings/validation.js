@@ -118,13 +118,24 @@ const vertexJSONValidation = z
     }
   });
 
+// 0 is a real price: self-hosted and local models cost nothing per token.
+// An empty field reaches the schema as "" (or NaN), so the type error is the
+// "required" case.
+const tokenCostValidation = (label) =>
+  z
+    .number({
+      required_error: `${label} is required`,
+      invalid_type_error: `${label} is required`,
+    })
+    .min(0, `${label} cannot be negative`);
+
 export const customModelValidation = (currentTab) =>
   z
     .object({
       modelProvider: z.string().min(1, "Model provider is required"),
       modelName: z.string().min(1, "Model name is required"),
-      inputTokenCost: z.number().min(0.00001, "Input token cost is required"),
-      outputTokenCost: z.number().min(0.00001, "Output token cost is required"),
+      inputTokenCost: tokenCostValidation("Input token cost"),
+      outputTokenCost: tokenCostValidation("Output token cost"),
       key: z.string().optional(),
       apiBaseUrl: z.string().optional(),
       awsAccessKeyId: z.string().optional(),

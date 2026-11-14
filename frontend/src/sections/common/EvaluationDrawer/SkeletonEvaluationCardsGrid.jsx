@@ -1,5 +1,6 @@
 import React from "react";
-import { Skeleton, Grid, Box, Paper } from "@mui/material";
+import { Skeleton, Grid, Box } from "@mui/material";
+import Section from "src/components/section";
 
 const SkeletonEvaluationCardsGrid = () => {
   const skeletonArray = Array.from({ length: 12 });
@@ -9,11 +10,10 @@ const SkeletonEvaluationCardsGrid = () => {
       <Grid container spacing={2}>
         {skeletonArray.map((_, index) => (
           <Grid item xs={12} sm={6} md={4} key={index}>
-            <Paper
-              elevation={3}
+            <Section
+              variant="panel"
               sx={{
                 height: "114px",
-                borderRadius: "4px",
                 padding: "12px 16px",
                 display: "flex",
                 flexDirection: "column",
@@ -29,7 +29,7 @@ const SkeletonEvaluationCardsGrid = () => {
                 <Skeleton variant="rounded" width={80} height={24} />
                 <Skeleton variant="rounded" width={80} height={24} />
               </Box>
-            </Paper>
+            </Section>
           </Grid>
         ))}
       </Grid>

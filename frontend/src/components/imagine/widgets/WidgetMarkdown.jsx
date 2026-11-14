@@ -18,11 +18,10 @@ function escapeHtml(s) {
 
 export default function WidgetMarkdown({ config }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const content = config.content || "";
 
-  const codeBg = isDark ? "#2d2d2d" : "#f5f5f5";
-  const inlineBg = isDark ? "#3a3a3a" : "#f0f0f0";
+  const codeBg = theme.palette.background.neutral;
+  const inlineBg = theme.palette.action.selected;
 
   const html = escapeHtml(content)
     .replace(
@@ -36,7 +35,7 @@ export default function WidgetMarkdown({ config }) {
     // Headers
     .replace(
       /^### (.+)$/gm,
-      '<h4 style="margin:8px 0 4px;font-size:13px;font-weight:600;">$1</h4>',
+      '<h4 style="margin:8px 0 4px;font-size:12px;font-weight:600;">$1</h4>',
     )
     .replace(
       /^## (.+)$/gm,
@@ -52,7 +51,7 @@ export default function WidgetMarkdown({ config }) {
     // Unordered lists
     .replace(
       /^- (.+)$/gm,
-      '<li style="margin-left:16px;font-size:13px;">$1</li>',
+      '<li style="margin-left:16px;font-size:12px;">$1</li>',
     )
     // Line breaks
     .replace(/\n\n/g, "<br/><br/>")
@@ -65,7 +64,7 @@ export default function WidgetMarkdown({ config }) {
         overflow: "auto",
         px: 1.5,
         py: 1,
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: 1.6,
         color: "text.primary",
         "& pre": { bgcolor: "action.hover" },

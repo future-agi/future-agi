@@ -9,9 +9,8 @@ These functions take explicit parameters instead of reading from `self`.
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
-
 logger = structlog.get_logger(__name__)
+_DEFAULT_MODEL = object()
 
 
 # Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
@@ -25,6 +24,27 @@ logger = structlog.get_logger(__name__)
 # dataset runner), not on the evaluator instance — kept out of both
 # allow-lists.
 _RUNTIME_ALLOWED_KEYS = {
+    "JevEvaluator": {
+        "pass_threshold",
+        "reverse_output",
+        "choice_scores",
+        "output_type",
+        "choices",
+        "jev_mapping",
+        # Keep unsupported binding settings visible to typed validation instead
+        # of silently dropping them on SDK/worker entry points.
+        "multi_choice",
+        "agent_mode",
+        "check_internet",
+        "knowledge_base_id",
+        "knowledge_bases",
+        "tools",
+        "data_injection",
+        "messages",
+        "few_shot_examples",
+        "ground_truth_few_shot",
+        "input_data_types",
+    },
     "AgentEvaluator": {
         "model",
         "agent_mode",
@@ -150,7 +170,10 @@ def resolve_pass_threshold(
     """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
     if isinstance(runtime_config, dict):
         run_config = runtime_config.get("run_config") or {}
-        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+        if (
+            isinstance(run_config, dict)
+            and run_config.get("pass_threshold") is not None
+        ):
             return float(run_config["pass_threshold"])
         if runtime_config.get("pass_threshold") is not None:
             return float(runtime_config["pass_threshold"])
@@ -300,8 +323,10 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
@@ -344,11 +369,15 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
-        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
-            "system_prompt"
+        config["system_prompt"] = (
+            config["system_prompt"]
+            if "system_prompt" in config
+            else eval_template.config.get("system_prompt")
         )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -365,7 +394,12 @@ def prepare_eval_config(
 
             config["few_shot_examples"] = expand_static_few_shot_examples(
                 eval_template.config.get("few_shot_examples"),
-                organization=eval_template.organization,
+                organization=organization_id or eval_template.organization,
+                workspace_id=(
+                    workspace_id
+                    if organization_id is not None or workspace_id is not None
+                    else getattr(eval_template, "workspace_id", None)
+                ),
             )
 
         # Resolve model
@@ -417,11 +451,155 @@ def prepare_eval_config(
     return config, criteria_override
 
 
+def _get_typesafe_api_key(organization_id, workspace_id=None):
+    """The org's TypeSafe key from Settings -> AI Providers. Jev is bring your
+    own key only, so a missing key fails like any other provider's."""
+    from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+    from model_hub.models.choices import LiteLlmModelProvider
+
+    return LiteLLMModelManager("jev").get_provider_api_key(
+        organization_id, LiteLlmModelProvider.TYPESAFE.value, workspace_id
+    )
+
+
+def _get_decision_api_key(model, organization_id, workspace_id):
+    from agentic_eval.core_evals.run_prompt.litellm_models import (
+        LiteLLMModelManager,
+        MissingProviderKeyError,
+    )
+
+    from ee.decisions.errors import DecisionGatewayError
+    from ee.jev.client import JevGatewayError
+    from evaluations.decision_models import get_decision_model
+
+    provider = get_decision_model(model).connection
+    try:
+        return LiteLLMModelManager(model).get_provider_api_key(
+            organization_id, provider, workspace_id
+        )
+    except MissingProviderKeyError:
+        raise DecisionGatewayError(
+            provider, JevGatewayError("JEV_KEY_MISSING")
+        ) from None
+
+
+def prepare_jev_config(
+    eval_template,
+    config,
+    effective_model,
+    resolved_version,
+    runtime_config,
+    api_key=None,
+):
+    """Build an effective typed config. The org's TypeSafe key is added only
+    after the mapping validates, so no frame that can raise JevMappingError
+    holds it; callers that can, hand it to JevEvaluator directly."""
+    from copy import deepcopy
+
+    from ee.jev.mapping import validate_jev_mapping
+
+    effective = deepcopy(eval_template.config or {})
+    if resolved_version:
+        effective.update(deepcopy(resolved_version.config_snapshot or {}))
+    effective.update(config)
+    effective, _ = apply_version_overrides(effective, resolved_version)
+    effective.pop("api_key", None)
+    from evaluations.decision_models import get_decision_model
+
+    effective["model"] = effective_model
+    spec = get_decision_model(effective_model)
+    effective["provider"] = spec.connection if spec else "typesafe"
+    effective["output_type"] = effective.get(
+        "output_type", effective.get("output", "Pass/Fail")
+    )
+    effective["choice_scores"] = (
+        getattr(resolved_version, "choice_scores", None)
+        if resolved_version
+        else eval_template.choice_scores
+    )
+    effective["choices"] = (
+        effective.get("choices")
+        or list(effective["choice_scores"] or {})
+        or eval_template.choices
+    )
+    effective["multi_choice"] = bool(
+        effective.get("multi_choice") or getattr(eval_template, "multi_choice", False)
+    )
+    effective["pass_threshold"] = resolve_pass_threshold(
+        eval_template, runtime_config, resolved_version
+    )
+    for key, value in ((runtime_config or {}).get("run_config") or {}).items():
+        if key in _RUNTIME_ALLOWED_KEYS["JevEvaluator"] and value is not None:
+            effective[key] = value
+    mapping = validate_jev_mapping(
+        eval_template,
+        output=effective["output_type"],
+        choice_scores=effective["choice_scores"],
+        multi_choice=effective["multi_choice"],
+        config=effective,
+    )
+    effective["jev_mapping"] = mapping.to_dict()
+    for key in ("organization_id", "workspace_id", "user_id"):
+        effective.pop(key, None)
+    if api_key is not None:
+        effective["api_key"] = api_key
+    return effective
+
+
+def reject_jev_without_code():
+    """Refuse a Jev run in a build without Jev's code (ee/ stripped) with a
+    clear error, instead of failing on the import."""
+    from tfc.ee_gates import JEV_UNAVAILABLE_MESSAGE, jev_available
+
+    if jev_available():
+        return
+    from tfc.capabilities.errors import CapabilityDenied
+    from tfc.licensing.types import DenialReason
+
+    raise CapabilityDenied(
+        feature_id="jev_models",
+        reason_code=DenialReason.EE_CODE_UNAVAILABLE.value,
+        detail=JEV_UNAVAILABLE_MESSAGE,
+    )
+
+
+def reject_unknown_jev_model(model):
+    """Raise JEV_MODEL_UNKNOWN for a jev-* ID that is not a supported Jev model."""
+    from evaluations.decision_models import get_decision_model
+    from tfc.ee_gates import is_jev_model
+
+    if isinstance(model, str) and model.lower().startswith("decision/"):
+        if get_decision_model(model) is None:
+            reject_jev_without_code()
+            from ee.decisions.errors import DecisionMappingError
+
+            raise DecisionMappingError(
+                "DECISION_MODEL_UNKNOWN",
+                "model",
+                "Select a supported decision model and connection.",
+            )
+        return
+    if (
+        isinstance(model, str)
+        and model.lower().startswith("jev-")
+        and not is_jev_model(model)
+    ):
+        reject_jev_without_code()
+        from ee.jev.mapping import JevMappingError
+
+        raise JevMappingError(
+            "JEV_MODEL_UNKNOWN",
+            "model",
+            f"Model {model!r} is not a supported Jev evaluator model. Supported: "
+            "jev-1.13.0, jev-1.14.0, jev-latest.",
+        )
+
+
 def create_eval_instance(
     eval_class,
     eval_template,
     config=None,
-    model="turing_large",
+    model=_DEFAULT_MODEL,
     kb_id=None,
     runtime_config=None,
     organization_id=None,
@@ -462,6 +640,89 @@ def create_eval_instance(
 
     resolved_version = resolve_version(eval_template, version_number, org)
 
+    from tfc.ee_gates import is_jev_model
+
+    template_model = (eval_template.config or {}).get("model")
+    version_model = getattr(resolved_version, "model", None)
+    binding = runtime_config or {}
+    binding_model = (binding.get("run_config") or {}).get("model") or binding.get(
+        "model"
+    )
+    supplied_model = None if model is _DEFAULT_MODEL else model
+    effective_model = binding_model or supplied_model or version_model or template_model
+    # An unsupported jev-* ID fails closed before any chat, Turing or BYOK logic:
+    # the direct engine path (SDK and other callers) never reaches the view-level
+    # validate_jev_binding guard, so the rejection has to live here (R-06).
+    from evaluations.decision_models import (
+        has_decision_prefix,
+        is_decision_model,
+        uses_jev_billing,
+    )
+
+    reject_unknown_jev_model(effective_model)
+    if is_decision_model(effective_model):
+        from tfc.capabilities import service as capability_service
+
+        reject_jev_without_code()
+        if uses_jev_billing(effective_model):
+            capability_service.check_or_raise(
+                "jev_models", org_id=str(org.id) if org is not None else organization_id
+            )
+        if is_jev_model(effective_model):
+            from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+
+            evaluator_class = JevEvaluator
+        else:
+            from ee.decisions.evaluator import DecisionEvaluator
+
+            evaluator_class = DecisionEvaluator
+
+        if kb_id:
+            config = {**config, "knowledge_base_id": str(kb_id)}
+        org_id = organization_id or (
+            str(eval_template.organization.id) if eval_template.organization else None
+        )
+        ws_id = workspace_id or (
+            str(eval_template.workspace.id)
+            if getattr(eval_template, "workspace", None)
+            else None
+        )
+        # Validated first; the key is looked up only then and goes straight
+        # to the evaluator.
+        try:
+            jev_config = prepare_jev_config(
+                eval_template,
+                config,
+                effective_model,
+                resolved_version,
+                runtime_config,
+            )
+        except ValueError as exc:
+            from ee.jev.mapping import JevMappingError
+
+            if isinstance(exc, JevMappingError) and not is_jev_model(effective_model):
+                from ee.decisions.errors import mapping_error
+
+                raise mapping_error(exc) from None
+            raise
+        if is_jev_model(effective_model):
+            return evaluator_class(
+                **jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)
+            ), None
+        return evaluator_class(
+            **jev_config,
+            api_key=_get_decision_api_key(effective_model, org_id, ws_id),
+        ), None
+
+    jev_selection = any(
+        has_decision_prefix(value)
+        for value in (template_model, version_model, effective_model)
+    )
+    if jev_selection:
+        model = effective_model
+    elif model is _DEFAULT_MODEL:
+        model = "turing_large"
+
     # Prepare config based on eval type
     config, criteria = prepare_eval_config(
         eval_template=eval_template,
@@ -475,6 +736,8 @@ def create_eval_instance(
 
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
+    if jev_selection:
+        config["model"] = effective_model
 
     from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
 

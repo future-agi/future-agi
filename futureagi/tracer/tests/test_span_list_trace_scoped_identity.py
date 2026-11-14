@@ -177,6 +177,8 @@ def test_non_observe_complete_empty_bounded_page_is_success(monkeypatch):
             "query_count": 2,
             "query_rows_returned": 0,
             "query_result_payload_bytes": 0,
+            "query_exact": True,
+            "ordering_exact": True,
         },
         "table": [],
     }

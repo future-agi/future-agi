@@ -8,10 +8,12 @@ Tests cover:
 - Agent run with mocked LLM
 """
 
+import json
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
+from asgiref.sync import sync_to_async
 
 from ee.falcon_ai.agent import AgentLoop
 from ee.falcon_ai.modes import CORE_TOOLS
@@ -76,9 +78,7 @@ class TestCompletionCard:
         card = agent._build_completion_card("create_experiment", "OK")
         assert card["title"] == "Experiment created"
 
-    def test_deep_link_uses_entity_id_from_result(
-        self, falcon_context, conversation
-    ):
+    def test_deep_link_uses_entity_id_from_result(self, falcon_context, conversation):
         """When result_text carries a UUID in backticks, deep-link to detail."""
         agent = AgentLoop(falcon_context, conversation)
         result_text = (
@@ -256,3 +256,148 @@ class TestAgentRun:
     async def test_max_iterations_constant(self):
         """MAX_ITERATIONS should be a reasonable limit."""
         assert AgentLoop.MAX_ITERATIONS == 200
+
+
+def _model_that_calls_when_offered(tool_name, arguments, offered_tool_names):
+    async def stream(messages, tools=None):
+        names = {t["function"]["name"] for t in tools or []}
+        offered_tool_names.append(names)
+        if len(offered_tool_names) == 1 and tool_name in names:
+            call = {
+                "index": 0,
+                "id": "call_1",
+                "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+            }
+            yield {
+                "choices": [
+                    {"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}
+                ],
+                "model": "test-model",
+            }
+            return
+        yield {
+            "choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}],
+            "model": "test-model",
+        }
+
+    return stream
+
+
+def _events(send_callback, event_type):
+    return [
+        c[0][0] for c in send_callback.call_args_list if c[0][0]["type"] == event_type
+    ]
+
+
+RENDER_ALL = {
+    "action": "replace_all",
+    "widgets": [{"type": "metric_card", "title": "Runs", "config": {"value": 5}}],
+}
+DASHBOARD_ASK = "Can you build a dashboard for my auto-sc project?"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestDashboardRequestFromFalcon:
+    @pytest.mark.asyncio
+    async def test_general_chat_is_not_offered_the_imagine_canvas(
+        self, falcon_context, conversation
+    ):
+        agent = AgentLoop(falcon_context, conversation)
+        offered = []
+        agent.llm_client.stream_completion = _model_that_calls_when_offered(
+            "render_widget", RENDER_ALL, offered
+        )
+        send_callback = AsyncMock()
+
+        result = await agent.run(
+            DASHBOARD_ASK, [], send_callback, context_page="general"
+        )
+
+        assert agent.mode == "general"
+        assert "render_widget" not in offered[0]
+        assert _events(send_callback, "widget_render") == []
+        assert "render_widget" not in [tc["tool_name"] for tc in result["tool_calls"]]
+
+    @pytest.mark.asyncio
+    async def test_imagine_chat_still_renders_widgets_on_its_canvas(
+        self, falcon_context, conversation
+    ):
+        agent = AgentLoop(falcon_context, conversation)
+        offered = []
+        agent.llm_client.stream_completion = _model_that_calls_when_offered(
+            "render_widget", RENDER_ALL, offered
+        )
+        send_callback = AsyncMock()
+
+        result = await agent.run(
+            DASHBOARD_ASK, [], send_callback, context_page="imagine"
+        )
+
+        assert agent.mode == "imagine"
+        [event] = _events(send_callback, "widget_render")
+        assert event["data"]["widgets"][0]["title"] == "Runs"
+        assert [tc["tool_name"] for tc in result["tool_calls"]] == ["render_widget"]
+
+    @pytest.mark.asyncio
+    async def test_general_chat_dashboard_is_saved_and_listed_on_dashboards(
+        self, falcon_context, conversation, auth_client
+    ):
+        agent = AgentLoop(falcon_context, conversation)
+        offered = []
+        agent.llm_client.stream_completion = _model_that_calls_when_offered(
+            "create_dashboard", {"name": "SC Generation"}, offered
+        )
+
+        result = await agent.run(DASHBOARD_ASK, [], AsyncMock(), context_page="general")
+
+        [call] = result["tool_calls"]
+        assert (call["tool_name"], call["status"]) == ("create_dashboard", "completed")
+        listed = await sync_to_async(auth_client.get)("/tracer/dashboard/")
+        [dashboard] = [
+            d for d in listed.json()["result"] if d["name"] == "SC Generation"
+        ]
+        assert result["completion_card"]["action_path"] == (
+            f"/dashboard/dashboards/{dashboard['id']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_blank_dashboard_name_saves_nothing_and_claims_nothing(
+        self, falcon_context, conversation, auth_client
+    ):
+        agent = AgentLoop(falcon_context, conversation)
+        agent.llm_client.stream_completion = _model_that_calls_when_offered(
+            "create_dashboard", {"name": "   "}, []
+        )
+
+        result = await agent.run(DASHBOARD_ASK, [], AsyncMock(), context_page="general")
+
+        [call] = result["tool_calls"]
+        assert (call["tool_name"], call["status"]) == ("create_dashboard", "error")
+        assert result["completion_card"] is None
+        listed = await sync_to_async(auth_client.get)("/tracer/dashboard/")
+        assert listed.json()["result"] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "ask",
+        [
+            "Create a dashboard for my dataset",
+            "Create a dashboard for my data",
+            "Create a dashboard of my costs",
+            "Create a dashboard for my evaluation results",
+        ],
+    )
+    async def test_dashboard_ask_naming_another_domain_still_saves_it(
+        self, falcon_context, conversation, ask
+    ):
+        agent = AgentLoop(falcon_context, conversation)
+        offered = []
+        agent.llm_client.stream_completion = _model_that_calls_when_offered(
+            "create_dashboard", {"name": "Domain Ask"}, offered
+        )
+
+        result = await agent.run(ask, [], AsyncMock(), context_page="general")
+
+        assert "create_dashboard" in offered[0]
+        [call] = result["tool_calls"]
+        assert (call["tool_name"], call["status"]) == ("create_dashboard", "completed")

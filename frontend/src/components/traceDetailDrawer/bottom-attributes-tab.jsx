@@ -1,11 +1,5 @@
 import React from "react";
-import {
-  Box,
-  Divider,
-  IconButton,
-  LinearProgress,
-  Typography,
-} from "@mui/material";
+import { Box, Divider, IconButton, Typography } from "@mui/material";
 import {
   Accordion,
   AccordionDetails,
@@ -18,9 +12,10 @@ import { enqueueSnackbar } from "notistack";
 import CustomJsonViewer from "../custom-json-viewer/CustomJsonViewer";
 
 import "./jsonStyle.css";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
-  if (isLoading) return <LinearProgress />;
+  if (isLoading) return <LoadingScreen compact />;
   if (!observationSpan) {
     return (
       <Box
@@ -44,7 +39,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
       <AccordionSummary
         sx={{
           fontSize: "16px",
-          fontWeight: "bold",
+          fontWeight: "600",
           color: "grey",
         }}
       >
@@ -63,7 +58,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
             zIndex: 1,
           }}
         >
-          <Iconify icon="tabler:copy" color="grey" width={18} />
+          <Iconify icon="solar:copy-linear" color="grey" width={20} />
         </IconButton>
         All Attributes
       </AccordionSummary>
@@ -72,7 +67,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
         <Box
           sx={{
             backgroundColor: "background.paper",
-            fontSize: "14px",
+            fontSize: "12px",
             whiteSpace: "pre-wrap",
             maxHeight: "72vh",
             overflow: "auto",

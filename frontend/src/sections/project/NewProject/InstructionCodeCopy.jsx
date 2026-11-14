@@ -1,7 +1,7 @@
 import { Box, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import SyntaxHighlighter from "src/utils/snippet-syntax-highlighter";
 import Iconify from "src/components/iconify";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "src/components/snackbar";
@@ -21,7 +21,7 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
         sx={{ position: "absolute", right: "2px", top: "8px", zIndex: 1 }}
         onClick={onCopyClick}
       >
-        <Iconify icon="basil:copy-outline" sx={{ color: "text.disabled" }} />
+        <Iconify icon="solar:copy-linear" sx={{ color: "text.disabled" }} />
       </IconButton>
       <SyntaxHighlighter
         useInlineStyles={false}
@@ -54,7 +54,9 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
             background: "transparent",
           },
         }}
-        language={language}
+        language={
+          language === "python" || language === "typescript" ? language : "text"
+        }
       >
         {text}
       </SyntaxHighlighter>

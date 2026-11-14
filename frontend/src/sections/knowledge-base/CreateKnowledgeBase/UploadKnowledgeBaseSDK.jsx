@@ -1,14 +1,10 @@
-import { Box, useTheme } from "@mui/material";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { ShowComponent } from "src/components/show";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 
 const editorOptions = {
   selectOnLineNumbers: true,
@@ -29,8 +25,6 @@ const tabOptions = [
 ];
 
 const UploadKnowledgeBaseSDK = ({ pythonCode }) => {
-  const theme = useTheme();
-
   const defaultValues = {
     name: "",
     Pcode: pythonCode,
@@ -54,30 +48,21 @@ const UploadKnowledgeBaseSDK = ({ pythonCode }) => {
 
   return (
     <Box>
-      <TabWrapper>
-        <CustomTabs
-          textColor="primary"
+      <Box sx={{ mb: 1.5 }}>
+        <SegmentedTabs
           value={currentTab}
           onChange={(e, value) => setCurrentTab(value)}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-              opacity: 0.08,
-              height: "100%",
-              borderRadius: "8px",
-            },
-          }}
         >
           {tabOptions.map((tab) => (
-            <CustomTab
+            <Tab
               key={tab.value}
               label={tab.label}
               value={tab.value}
               disabled={tab.disabled}
             />
           ))}
-        </CustomTabs>
-      </TabWrapper>
+        </SegmentedTabs>
+      </Box>
       <Box
         bgcolor="background.neutral"
         borderRadius="8px"
