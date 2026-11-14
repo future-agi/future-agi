@@ -68,7 +68,11 @@ const PROVIDER_PRESETS = {
     baseUrl: "https://openrouter.ai/api/v1",
     apiFormat: "openai",
     keyPlaceholder: "Enter your OpenRouter API key",
-    supportedFormats: ["openai", SYSTEMONE_API_FORMAT],
+    // The OpenAI format serves OpenRouter's chat models and its Jev decision
+    // models. System One is not offered: with this preset's /api/v1 base URL
+    // it would post to /api/v1/api/alpha/decisions. A provider saved as
+    // System One before keeps its format when edited.
+    supportedFormats: ["openai"],
   },
   anthropic: {
     label: "Anthropic",
@@ -1198,8 +1202,12 @@ const AddProviderDialog = ({
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
             const visibleFormats = currentPreset?.supportedFormats?.length
-              ? API_FORMATS.filter((f) =>
-                  currentPreset.supportedFormats.includes(f),
+              ? API_FORMATS.filter(
+                  (f) =>
+                    currentPreset.supportedFormats.includes(f) ||
+                    // A saved provider keeps showing the format it has.
+                    (isEditMode &&
+                      f === normalizeApiFormat(provider?.config?.api_format)),
                 )
               : API_FORMATS;
             const isFiltered = visibleFormats.length < API_FORMATS.length;

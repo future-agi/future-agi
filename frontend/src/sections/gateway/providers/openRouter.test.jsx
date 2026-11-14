@@ -77,6 +77,28 @@ describe("OpenRouter provider configuration", () => {
     });
   });
 
+  it("offers OpenRouter only on its chat format, which serves decisions too", async () => {
+    fetchMutate.mockClear();
+    fetchMutate.mockImplementation((_vars, opts) =>
+      setTimeout(() => opts.onSuccess?.({ models: ["openai/gpt-4o"] }), 0),
+    );
+    renderDialog();
+    await pickProvider("OpenRouter");
+    const format = screen.getByRole("combobox", { name: /^API Format/ });
+    // System One with the /api/v1 base URL would post to
+    // /api/v1/api/alpha/decisions, so the preset does not offer it.
+    expect(format.textContent).toBe("openai");
+    expect(format.getAttribute("aria-disabled")).toBe("true");
+    await setModel("openai/gpt-4o");
+    await userEvent.type(screen.getByLabelText(/^API Key/), "synthetic-key");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate.mock.calls.at(-1)[0].config).toMatchObject({
+      base_url: "https://openrouter.ai/api/v1",
+      api_format: "openai",
+    });
+  });
+
   it("starts OpenRouter on its chat format after a System One preset", async () => {
     renderDialog();
     await pickProvider("TypeSafe");
