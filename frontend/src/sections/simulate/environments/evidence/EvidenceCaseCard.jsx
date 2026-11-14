@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import StatusBadge from "src/components/status-badge";
+import { RouterLink } from "src/routes/components";
 import {
   CASE_ROLE,
   EVIDENCE_COPY,
@@ -69,6 +70,35 @@ function Turn({ turn }) {
 
 Turn.propTypes = { turn: PropTypes.object.isRequired };
 
+// Where a case came from, under its title: the Observe session or call, with a
+// way to open it while Observe still keeps it.
+function Origin({ item, kind, observeHref }) {
+  if (!item.source_id || !kind) return null;
+  return (
+    <Typography
+      noWrap
+      component="div"
+      sx={{ typography: "s3", color: "text.tertiary" }}
+    >
+      {EVIDENCE_COPY.observeSource(kind, item.source_id)}
+      {observeHref && item.source_available ? (
+        <>
+          {" · "}
+          <Link component={RouterLink} href={observeHref} underline="hover">
+            {EVIDENCE_COPY.openInObserve}
+          </Link>
+        </>
+      ) : null}
+    </Typography>
+  );
+}
+
+Origin.propTypes = {
+  item: PropTypes.object.isRequired,
+  kind: PropTypes.string,
+  observeHref: PropTypes.string,
+};
+
 // One imported case: what its source holds and lacks, what became of it, and —
 // while it waits — what the person wants its new scenario to be. A simulated
 // source (a Simulator project's) says so; production sources are regression evidence.
@@ -76,6 +106,7 @@ export default function EvidenceCaseCard({
   item,
   kind,
   simulated,
+  observeHref,
   shows,
   onShowsChange,
 }) {
@@ -98,18 +129,16 @@ export default function EvidenceCaseCard({
       data-testid={`evidence-case-${item.id}`}
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Typography
-          noWrap
-          sx={{
-            typography: "s1",
-            fontWeight: 500,
-            color: "text.primary",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {caseTitle(item, kind)}
-        </Typography>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            component="h3"
+            noWrap
+            sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}
+          >
+            {caseTitle(item, kind)}
+          </Typography>
+          <Origin item={item} kind={kind} observeHref={observeHref} />
+        </Box>
         {simulated ? (
           <StatusBadge
             role="neutral"
@@ -209,6 +238,7 @@ EvidenceCaseCard.propTypes = {
   item: PropTypes.object.isRequired,
   kind: PropTypes.oneOf(["session", "call"]),
   simulated: PropTypes.bool,
+  observeHref: PropTypes.string,
   shows: PropTypes.string,
   onShowsChange: PropTypes.func,
 };

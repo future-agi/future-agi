@@ -99,6 +99,10 @@ export const EVIDENCE_COPY = {
     `${kind[0].toUpperCase()}${kind.slice(1)} with no recorded conversation`,
   provenanceUnavailable:
     "Provenance unavailable: Observe no longer keeps this source.",
+  // The source's id, short, as Observe lists it: "Session 3f2a91c0".
+  observeSource: (kind, id) =>
+    `${kind[0].toUpperCase()}${kind.slice(1)} ${String(id).slice(0, 8)}`,
+  openInObserve: "Open in Observe",
   changed: "The source changed since it was imported.",
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,
