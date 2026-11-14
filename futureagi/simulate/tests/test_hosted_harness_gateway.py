@@ -33,10 +33,15 @@ from simulate.models import (
 )
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
+from simulate.services import harness_usage
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
-from simulate.services.harness_usage import harness_consumption, record_harness_usage
+from simulate.services.harness_usage import (
+    harness_consumption,
+    record_harness_usage,
+    replay_harness_usage,
+)
 from simulate.services.hosted_harness import (
     PLATFORM_FAILURE_DOMAINS,
     HostedHarnessError,
@@ -85,6 +90,7 @@ from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from tfc.ee_loader import has_ee
 
 
 @pytest.fixture(autouse=True)
@@ -3394,13 +3400,10 @@ def test_a_result_that_lands_before_cleanup_is_not_run_again(organization):
     assert job.failure["code"] == "sandbox_unreachable"
 
 
-@pytest.mark.django_db
-@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
-@pytest.mark.parametrize("code", sorted(_LOSSES))
-def test_a_call_with_a_result_is_charged_once_across_a_retry(
-    organization, monkeypatch, code
-):
-    first = _delivered_run(organization, f"run-loss-charged-once-{code}", receipts=0)
+def _retried_after_a_loss(organization, monkeypatch, name: str, code: str):
+    """A two-call Run whose first attempt ran one call (100 tokens) before ``code``
+    ended it, and whose retry ran what it was sent (10 tokens per call)."""
+    first = _delivered_run(organization, name, receipts=0)
     _run_calls(first, {"scenario-1:0": 100})
     gateway = _lost_by(monkeypatch, code)
     assert gateway.reconcile_completed(first).state == (
@@ -3421,9 +3424,60 @@ def test_a_call_with_a_result_is_charged_once_across_a_retry(
     job = gateway.reconcile_completed(second)
 
     assert job.state == HostedHarnessJob.State.COMPLETED
+    return first, second, job
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_call_with_a_result_is_charged_once_across_a_retry(
+    organization, monkeypatch, code
+):
+    *_, job = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-charged-once-{code}", code
+    )
+
     # The billed events are built from the same records: the first call's 100 tokens
     # once, the second call's 10.
     assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@pytest.mark.skipif(not has_ee("ee.usage"), reason="emits ee usage events")
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retried_run_bills_each_call_under_one_event_id_on_every_replay(
+    organization, monkeypatch, code
+):
+    from ee.usage.services import emitter
+
+    first, second, _ = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-billing-identity-{code}", code
+    )
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+
+    replays = []
+    for _ in range(2):
+        events.clear()
+        replay_harness_usage(first)
+        replay_harness_usage(second)
+        replays.append(
+            sorted(
+                (event.properties["scenario_key"], event.amount, event.event_id)
+                for event in events
+                if event.event_type == "text_call"
+            )
+        )
+
+    # Billing deduplicates on the event id. Each call is billed once, under the id of
+    # the attempt that ran it, and a replay sends the same ids again.
+    assert [(key, amount) for key, amount, _ in replays[0]] == [
+        ("scenario-1:0", 100),
+        ("scenario-2:0", 10),
+    ]
+    assert replays[1] == replays[0]
 
 
 @pytest.mark.django_db
