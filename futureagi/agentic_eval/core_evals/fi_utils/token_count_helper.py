@@ -381,7 +381,11 @@ def calculate_total_cost(
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
     - TTS: Character-based pricing (input characters)
-    - STT: Time-based pricing (audio seconds/minutes)
+    - Per-1k-character: explicit input/output character counts for each priced side
+    - STT: Time-based pricing (input_per_minute or per_minute_audio)
+
+    Missing character counts and unsupported/placeholder rates use a labelled
+    estimate. Token counts are never converted to character counts.
 
     Args:
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
