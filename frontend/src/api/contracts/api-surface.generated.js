@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1139,
+  endpointCount: 1141,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1131,6 +1131,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
       "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
       "/tracer/eval-task/pause_eval_task/": ["post"],
+      "/tracer/eval-task/sampling_audit/": ["get"],
+      "/tracer/eval-task/sampling_preview/": ["post"],
       "/tracer/eval-task/unpause_eval_task/": ["post"],
       "/tracer/eval-task/update_eval_task/": ["patch"],
       "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
@@ -2491,6 +2493,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
   "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
   "/tracer/eval-task/pause_eval_task/": ["post"],
+  "/tracer/eval-task/sampling_audit/": ["get"],
+  "/tracer/eval-task/sampling_preview/": ["post"],
   "/tracer/eval-task/unpause_eval_task/": ["post"],
   "/tracer/eval-task/update_eval_task/": ["patch"],
   "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
