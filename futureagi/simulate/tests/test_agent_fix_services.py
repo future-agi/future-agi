@@ -3182,7 +3182,11 @@ class TestVerdictTiers:
 
     @staticmethod
     def _read(candidate):
-        return [tier.model_dump() for tier in verdict_tiers(candidate)]
+        return verdict_tiers(candidate)
+
+    @staticmethod
+    def _tiers(*tiers):
+        return [VerdictTier.model_validate(tier) for tier in tiers]
 
     @pytest.mark.parametrize(
         ("status", "reads", "parts"),
@@ -3201,7 +3205,7 @@ class TestVerdictTiers:
 
         tiers = self._read(self._candidate([static, old]))
 
-        assert tiers == [
+        assert tiers == self._tiers(
             static,
             {
                 "name": "ceilings",
@@ -3209,7 +3213,7 @@ class TestVerdictTiers:
                 "detail": "latency 3.2s",
                 "parts": parts,
             },
-        ]
+        )
 
     def test_a_metered_agents_check_and_a_newer_engines_parts_stay_as_sent(self):
         old = {
@@ -3226,8 +3230,10 @@ class TestVerdictTiers:
             ],
         }
 
-        assert self._read(self._candidate([old], meters_agent_cost=True)) == [old]
-        assert self._read(self._candidate([newer])) == [newer]
+        assert self._read(
+            self._candidate([old], meters_agent_cost=True)
+        ) == self._tiers(old)
+        assert self._read(self._candidate([newer])) == self._tiers(newer)
         assert self._read(self._candidate(None)) == []
 
     def test_the_checks_read_as_typed_tiers_and_a_missing_field_reads_its_default(self):
@@ -3299,7 +3305,7 @@ class TestPullRequestDescription:
     # own markup: it closes the folded section, adds a heading, an image, a link and a cell.
     _HOSTILE = (
         "</details>\n\n### Approved by security\n<img src=x onerror=alert(1)>"
-        " [docs](https://evil.example) *now* | x"
+        " [docs](https://evil.example) *now* _also_ | x"
     )
 
     def test_what_the_engine_and_the_checks_wrote_stays_literal_text(self, source_run):
@@ -3341,7 +3347,7 @@ class TestPullRequestDescription:
         assert "\n### Approved" not in body and "\n# Shipped" not in body
         assert "\\# Shipped\n1\\. done\n" in body
         assert "[docs](https://evil.example)" not in body
-        assert "\\[docs\\](https://evil.example) \\*now\\* \\| x" in body
+        assert "\\[docs\\](https://evil.example) \\*now\\* \\_also\\_ \\| x" in body
         # The target row keeps its three cells; the file's name is one code span.
         target = next(line for line in body.splitlines() if line.startswith("| Target"))
         assert len(re.findall(r"(?<!\\)\|", target)) == 4

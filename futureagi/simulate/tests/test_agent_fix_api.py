@@ -2068,6 +2068,9 @@ class TestUserApi:
             "status": status,
             "detail": detail,
             "parts": parts,
+            # An older engine sent no medians.
+            "latency": None,
+            "cost": None,
         }
         # Only the read changes: the stored verdict, which decides, is as the engine sent it.
         assert (

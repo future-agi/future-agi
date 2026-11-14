@@ -273,14 +273,15 @@ def _cell(text: Any) -> str:
 
 
 # What GitHub Markdown reads as inline syntax; HTML's own characters become entities.
-_INLINE_SYNTAX = re.compile(r"([\\`*_\[\]|~])")
+# An underscore inside a word never starts emphasis, so only one at a word's edge counts.
+_INLINE_SYNTAX = re.compile(r"[\\`*\[\]|~]|_(?![^\W_])|(?<![^\W_])_")
 
 
 def _text(value: Any) -> str:
     """Words the engine, a check or a person wrote, as literal Markdown on one line: never
     a tag, a link, emphasis or a table cell, and never the end of the page's own markup."""
     flat = html.escape(" ".join(str(value).split()), quote=False)
-    return _INLINE_SYNTAX.sub(r"\\\1", flat)
+    return _INLINE_SYNTAX.sub(lambda found: f"\\{found[0]}", flat)
 
 
 def _line(value: Any) -> str:
