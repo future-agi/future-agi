@@ -14,6 +14,7 @@ import structlog
 from django.utils import timezone
 
 from simulate.models.agent_definition import AgentDefinition, ProviderCredentials
+from simulate.services.agent_definition import resolve_api_key_for_version
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
@@ -93,6 +94,10 @@ class RetellPage:
     consumed: int
     indices: tuple[int, ...]
     drops: tuple[tuple[int, int], ...]
+
+
+class VapiConfigurationError(ValueError):
+    """Vapi cannot be polled; messages never contain credentials or provider values."""
 
 
 class RetellConfigurationError(Exception):
@@ -281,6 +286,38 @@ class ObservabilityService:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
     @staticmethod
+    def _resolve_vapi_key(provider: ObservabilityProvider) -> tuple[str, str]:
+        """Use the active version's credential, as Vapi recording downloads do.
+
+        The raw legacy column is only for agents with no versions. A missing or
+        unreadable versioned credential must not silently resurrect a stale key.
+        Configuration failures propagate so the poller retains its watermark.
+        """
+        agent = ObservabilityService._get_agent_definition(provider)
+        if agent is None:
+            raise VapiConfigurationError("Vapi observability needs a linked agent")
+        version = agent.active_version or agent.latest_version
+        try:
+            key = (
+                resolve_api_key_for_version(version)
+                if version is not None
+                else agent.api_key
+            )
+        except ValueError as exc:
+            raise VapiConfigurationError(
+                "Vapi credential could not be decrypted"
+            ) from exc
+        if not key:
+            raise VapiConfigurationError(
+                "Vapi API key is not configured for this agent"
+            )
+        if not agent.assistant_id:
+            raise VapiConfigurationError(
+                "Vapi assistant id is not configured for this agent"
+            )
+        return key, agent.assistant_id
+
+    @staticmethod
     def _fetch_vapi_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
@@ -294,15 +331,13 @@ class ObservabilityService:
         batch returns fewer results than the limit or after VAPI_MAX_PAGES.
 
         Returns:
-            List of logs, or empty list if API key is missing.
-        """
-        agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "VAPI")
-        if not api_key:
-            return []
+            List of logs (empty only after a successful empty response).
 
+        Raises:
+            VapiConfigurationError: No linked agent, API key, or assistant id.
+        """
+        api_key, assistant_id = ObservabilityService._resolve_vapi_key(provider)
         headers = {"Authorization": f"Bearer {api_key}"}
-        assistant_id = getattr(agent, "assistant_id", None)
         all_logs: list[dict] = []
         current_start = start_time
 
