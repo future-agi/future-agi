@@ -50,6 +50,14 @@ export default function RequestLogRetentionCard() {
   const [debouncedDays, setDebouncedDays] = useState(null);
   const savedDays = data?.retention_days;
   const keepForeverRequired = data?.keep_forever_required;
+  const lastRun = data?.last_run;
+  const runInProgress =
+    lastRun?.started_at &&
+    (!lastRun.finished_at ||
+      new Date(lastRun.started_at) > new Date(lastRun.finished_at));
+  const runCutShort =
+    runInProgress &&
+    Date.now() - new Date(lastRun.started_at).getTime() >= 65 * 60 * 1000;
 
   useEffect(() => {
     if (savedDays === undefined) return;
@@ -209,6 +217,11 @@ export default function RequestLogRetentionCard() {
               <Typography variant="s1">
                 <CleanupTime value={data.next_run_at} />
               </Typography>
+              <Typography variant="s3" color="text.secondary">
+                Each run keeps the current period of every budget, and by
+                default the whole current calendar month (UTC) for the
+                gateway&apos;s own budgets.
+              </Typography>
             </Box>
             <Box>
               <Typography variant="s3" color="text.secondary" component="div">
@@ -237,19 +250,36 @@ export default function RequestLogRetentionCard() {
               <Typography variant="s3" color="text.secondary" component="div">
                 Last run
               </Typography>
-              {data.last_run?.started_at || data.last_run?.finished_at ? (
+              {lastRun?.started_at || lastRun?.finished_at ? (
                 <Stack spacing={0.5}>
-                  <Typography variant="s1">
-                    {data.last_run.finished_at ? (
-                      <CleanupTime value={data.last_run.finished_at} />
-                    ) : (
-                      "In progress"
-                    )}{" "}
-                    · {(data.last_run.deleted_rows ?? 0).toLocaleString()} rows
-                    deleted
-                  </Typography>
-                  {data.last_run.error && (
-                    <Alert severity="error">{data.last_run.error}</Alert>
+                  {runInProgress ? (
+                    <>
+                      <Typography
+                        variant="s1"
+                        color={runCutShort ? "status.warning.fg" : undefined}
+                      >
+                        {runCutShort ? "Did not finish" : "In progress"} ·
+                        started <CleanupTime value={lastRun.started_at} />
+                      </Typography>
+                      {lastRun.finished_at && (
+                        <Typography variant="s3" color="text.secondary">
+                          Previous run:{" "}
+                          <CleanupTime value={lastRun.finished_at} />
+                          {" · "}
+                          {(lastRun.deleted_rows ?? 0).toLocaleString()} rows
+                          deleted
+                        </Typography>
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="s1">
+                      <CleanupTime value={lastRun.finished_at} /> ·{" "}
+                      {(lastRun.deleted_rows ?? 0).toLocaleString()} rows
+                      deleted
+                    </Typography>
+                  )}
+                  {lastRun.error && (
+                    <Alert severity="error">{lastRun.error}</Alert>
                   )}
                 </Stack>
               ) : (

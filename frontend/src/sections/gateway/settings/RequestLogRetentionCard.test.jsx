@@ -148,6 +148,9 @@ describe("RequestLogRetentionCard", () => {
     expect(await screen.findByText(/about 10,000\+ rows/i)).toBeInTheDocument();
     expect(screen.getByText(/27 rows deleted/i)).toBeInTheDocument();
     expect(screen.getByText(/next cleanup/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/In progress|Previous run:/),
+    ).not.toBeInTheDocument();
   });
 
   it("previews the row estimate for unsaved valid days", async () => {
@@ -205,7 +208,7 @@ describe("RequestLogRetentionCard", () => {
     mockGet.mockResolvedValue({
       data: response({
         last_run: {
-          started_at: "2026-11-14T03:00:00Z",
+          started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
           finished_at: null,
           deleted_rows: 0,
           error: "",
@@ -213,6 +216,75 @@ describe("RequestLogRetentionCard", () => {
       }),
     });
     renderCard();
-    expect(await screen.findByText(/In progress/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/In progress · started/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a newer running cleanup above the previous finished run", async () => {
+    mockGet.mockResolvedValue({
+      data: response({
+        last_run: {
+          started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          finished_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          deleted_rows: 27,
+          error: "",
+        },
+      }),
+    });
+    renderCard();
+    expect(
+      await screen.findByText(/In progress · started/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Previous run: .* · 27 rows deleted/),
+    ).toBeInTheDocument();
+  });
+
+  it("marks an unfinished cleanup from two hours ago as cut short", async () => {
+    mockGet.mockResolvedValue({
+      data: response({
+        last_run: {
+          started_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+          finished_at: null,
+          deleted_rows: 0,
+          error: "",
+        },
+      }),
+    });
+    renderCard();
+    expect(
+      await screen.findByText(/Did not finish · started/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/In progress/)).not.toBeInTheDocument();
+  });
+
+  it("shows the previous run when the new cleanup did not finish", async () => {
+    mockGet.mockResolvedValue({
+      data: response({
+        last_run: {
+          started_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+          finished_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+          deleted_rows: 42,
+          error: "",
+        },
+      }),
+    });
+    renderCard();
+    expect(
+      await screen.findByText(/Did not finish · started/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Previous run: .* · 42 rows deleted/),
+    ).toBeInTheDocument();
+  });
+
+  it("explains which budget periods cleanup keeps", async () => {
+    renderCard();
+    expect(
+      await screen.findByText(
+        "Each run keeps the current period of every budget, and by default the whole current calendar month (UTC) for the gateway's own budgets.",
+      ),
+    ).toBeInTheDocument();
   });
 });
