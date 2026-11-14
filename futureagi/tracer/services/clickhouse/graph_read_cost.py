@@ -213,6 +213,7 @@ def estimate_raw_graph_scan_rows(
     scan_start: datetime,
     scan_end: datetime,
     timeout_ms: int,
+    root_only: bool = False,
 ) -> int | None:
     """Estimate the physical spans one filtered graph statement would read.
 
@@ -247,6 +248,11 @@ def estimate_raw_graph_scan_rows(
     the statement returns. Measured at
     ``DASHBOARD_TRACE_READ_MAX_THREADS`` workers on the reference tenant it
     costs 27 ms of server time at thirty days and 90 ms at twelve months.
+
+    ``root_only`` is the date-only trace Traffic exception: its statement reads
+    only trace_id/start_time from live roots and can use proj_root_spans. Cost
+    that same column set and predicate with projections enabled, rather than
+    refusing a small root read based on every child span in the project.
     """
 
     estimate = _explain_raw_graph_scan(
@@ -255,6 +261,7 @@ def estimate_raw_graph_scan_rows(
         scan_start=scan_start,
         scan_end=scan_end,
         timeout_ms=timeout_ms,
+        root_only=root_only,
     )
     if estimate is None:
         return None
@@ -300,20 +307,26 @@ def _explain_raw_graph_scan(
     scan_start: datetime,
     scan_end: datetime,
     timeout_ms: int,
+    root_only: bool = False,
 ) -> tuple[Any, Any] | None:
     """Issue the raw-scan cost probe; ``None`` when it cannot answer."""
 
     probe_settings = {
         "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
-        "optimize_use_projections": 0,
+        "optimize_use_projections": int(root_only),
     }
-    query = """
+    root_predicate = (
+        "AND is_deleted = 0 AND (parent_span_id IS NULL OR parent_span_id = '')"
+        if root_only else ""
+    )
+    query = f"""
         EXPLAIN ESTIMATE
-        SELECT count()
+        SELECT {"trace_id, start_time" if root_only else "count()"}
         FROM spans
         WHERE project_id = toUUID(%(graph_cost_project_id)s)
           AND start_time >= %(graph_cost_scan_start)s
           AND start_time < %(graph_cost_scan_end)s
+          {root_predicate}
     """
     params = {
         "graph_cost_project_id": str(project_id),
