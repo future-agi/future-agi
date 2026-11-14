@@ -347,8 +347,9 @@ func (s *decisionTextScan) more() bool {
 	return true // the first member
 }
 
-// open consumes an opening delimiter and reports whether the container has
-// members (it consumes the closing delimiter of an empty one).
+// open consumes an opening delimiter, which next has just returned, and
+// reports whether the container has members (it consumes the closing
+// delimiter of an empty one).
 func (s *decisionTextScan) open() bool {
 	s.i++
 	if c := s.next(); c == '}' || c == ']' {
@@ -395,6 +396,8 @@ func (s *decisionTextScan) key() []byte {
 }
 
 func (s *decisionTextScan) read() error {
+	// JSON allows whitespace before the object; open expects its '{'.
+	s.next()
 	if !s.open() {
 		return nil
 	}
