@@ -69,6 +69,7 @@ from simulate.services.harness_versioning.review_items import index_in_step
 from simulate.services.harness_versioning.review_saved import name_saved, record_sources
 from simulate.services.harness_versioning.versions import (
     SEALED_MANIFEST,
+    _carried_proofs,
     _default_runtime,
     _member_content,
     _Pair,
@@ -81,6 +82,7 @@ from simulate.services.harness_versioning.versions import (
     next_number,
     note_revision,
     pair_archive,
+    record_proofs,
     require_not_busy,
     retired_keys,
     set_defaults,
@@ -740,10 +742,58 @@ def actor_ids(environment_files: Mapping[str, bytes]) -> set[str]:
     }
 
 
+def archived_folder_files(environment: HostedHarnessJob, key: str) -> dict[str, bytes]:
+    """The files of a case's scenario folder from the newest saved suite version that has
+    it, so a restored case comes back with its setup and checks, not only its document."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.hosted_harness_gateway import (
+        _archive_parts,
+        _document_tokens,
+        _scenario_token,
+    )
+
+    token = _scenario_token(key)
+    versions = HarnessSuiteVersion._base_manager.filter(
+        job_id=environment.id,
+        deleted=False,
+        members__scenario_key=key,
+    ).order_by("-version_number")
+    for version in versions[:5]:
+        files = piece_files(environment, "suite", version)
+        for path, data in files.items():
+            parts = _archive_parts(path)
+            if (
+                len(parts) != 3
+                or parts[0] != "scenarios"
+                or parts[2] != "scenario.json"
+            ):
+                continue
+            try:
+                document = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if token in _document_tokens(parts[1], document):
+                prefix = ("scenarios", parts[1])
+                return {
+                    name: body
+                    for name, body in files.items()
+                    if _archive_parts(name)[:2] == prefix
+                }
+    return {}
+
+
 def write_suite_edit(
-    environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
+    environment: HostedHarnessJob,
+    suite: list[dict[str, Any]],
+    *,
+    user: Any,
+    restored_files: Mapping[str, bytes] | None = None,
 ) -> DraftWrite | None:
-    """A Scenarios-tab edit, written into the suite draft on top of the unsaved changes."""
+    """A Scenarios-tab edit, written into the suite draft on top of the unsaved changes.
+
+    ``restored_files`` puts a restored case's folder back before the rewrite, which keeps a
+    folder only for a scenario the suite names.
+    """
     from simulate.services.hosted_harness_gateway import (
         AuthoringArchiveKept,
         _rewritten_authoring_archive,
@@ -778,6 +828,8 @@ def write_suite_edit(
         )
         for doc in suite
     ]
+    if restored_files:
+        sides["suite"] = {**restored_files, **sides["suite"]}
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )
@@ -1132,10 +1184,13 @@ def activate_drafts(
     suite, suite_created = result.get("suite", (None, False))
     if suite_created:
         # Paired while the old suite is still the default, as a recorded save pairs.
-        add_members(
-            suite,
-            member_rows(locked, (suite.documents or {}).get("scenarios") or []),
-        )
+        paired = member_rows(locked, (suite.documents or {}).get("scenarios") or [])
+        add_members(suite, paired)
+        # A Save proves nothing new: its unchanged cases keep their proofs on this version,
+        # and an edited case has none until it is validated (section 4.10).
+        carried = _carried_proofs(targets["environment"], paired)
+        if carried:
+            record_proofs(suite, targets["environment"], carried, locked)
     moved = {
         piece
         for piece in DRAFT_PIECES

@@ -11,6 +11,7 @@ from simulate.models import (
 from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 from simulate.services.harness_versioning.versions import _carried_proofs
 from simulate.tests.test_harness_amend_archive import NAMES, _key
+from simulate.tests.test_harness_scenario_archive_api import _save
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -18,7 +19,6 @@ from simulate.tests.test_harness_versioning_drafts import _amend
 from simulate.tests.test_harness_versioning_drafts import (  # noqa: F401 - fixture
     versioning_on as versioning_on,
 )
-from simulate.tests.test_harness_versioning_record import _save_drafts
 from simulate.tests.test_harness_versioning_rollback import _built
 
 pytestmark = pytest.mark.django_db
@@ -119,7 +119,7 @@ def test_manual_save_carries_unchanged_proofs(user, workspace, storage, auth_cli
         "a new description of what it tests",
     )
 
-    _save_drafts(environment, user=user)
+    _save(environment, user)
 
     views = scenario_lifecycle(
         environment,

@@ -318,7 +318,10 @@ def restore_scenario(
     """Put an archived case back into the suite draft under its own key; it reads Draft until saved."""
     from simulate.services.harness_scenario_lifecycle import in_draft_view
     from simulate.services.harness_versioning import read as version_reads
-    from simulate.services.harness_versioning.drafts import write_suite_edit
+    from simulate.services.harness_versioning.drafts import (
+        archived_folder_files,
+        write_suite_edit,
+    )
     from simulate.services.harness_versioning.versions import lock_environment
 
     version_reads.require_versioning()
@@ -347,7 +350,12 @@ def restore_scenario(
                 "updated_at",
             ]
         )
-        write_suite_edit(locked, [*_suite_now(locked), content], user=user)
+        write_suite_edit(
+            locked,
+            [*_suite_now(locked), content],
+            user=user,
+            restored_files=archived_folder_files(locked, row.scenario_key),
+        )
     logger.info(
         "harness_scenario_restored",
         environment_id=str(environment.id),
