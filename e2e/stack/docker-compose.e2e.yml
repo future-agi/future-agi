@@ -60,7 +60,9 @@ services:
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
       # gateway.e2e.yaml defines no budgets, so Request Logs retention need
-      # not keep the current month and week for them (GW-E2E-008 purges 3-day-old rows).
+      # not keep the current month and week for them (GW-E2E-008 purges
+      # 3-day-old rows). Both E2E stacks set it: here the backend and worker,
+      # in docker-compose.standalone-e2e.yml the app.
       AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS: "true"
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # The app and worker must share one key to decrypt OAuth credentials.
