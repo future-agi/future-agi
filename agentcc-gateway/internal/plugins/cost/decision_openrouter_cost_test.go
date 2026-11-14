@@ -72,6 +72,12 @@ func TestCostPlugin_DecisionOpenRouterJevFullNameOverride(t *testing.T) {
 		{"provider-qualified name", "openrouter/typesafe/jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
 		{"jev-latest answered as dated jev-1.14", "jev-latest", "openrouter/~typesafe/jev-latest", "~typesafe/jev-latest", "typesafe/jev-1.14-20261015"},
 		{"short name", "jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		// An override on the version a jev-latest call resolves to beats the
+		// bundled jev-latest price of the alias it was sent as.
+		{"resolved version under jev-latest", "jev-1.14.0", "openrouter/~typesafe/jev-latest", "~typesafe/jev-latest", "typesafe/jev-1.14-20261015"},
+		// An override on the full name beats the bundled price of an exact
+		// resolved name.
+		{"provider-qualified name, exact resolved", "openrouter/typesafe/jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13.0"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			db := modeldb.New(modeldb.BundledModels, map[string]modeldb.ModelOverride{

@@ -84,6 +84,7 @@ func TestDecisionOpenRouterJevOverrideListingMatchesCharge(t *testing.T) {
 		{"provider-qualified name", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
 		{"jev-latest answered as dated jev-1.14", "jev-latest", "~typesafe/jev-latest", "typesafe/jev-1.14-20261015"},
 		{"short name", "jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		{"provider-qualified name, exact resolved", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13.0"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
