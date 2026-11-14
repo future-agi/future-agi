@@ -15,9 +15,12 @@ import {
   useContextCampaignAvailability, useCreateContextCampaign,
 } from 'src/api/skills/context-campaigns';
 import CapabilityNotice from 'src/sections/skills/components/CapabilityNotice';
+import { skillsRouteSx } from 'src/sections/skills/components/routeGutter';
+import { useSkillsAccess } from 'src/sections/skills/utils/access';
 import IdentityChip from 'src/sections/skills/components/IdentityChip';
 import ContextCampaignList from 'src/sections/skills/contexts/ContextCampaignList';
 import ContextCampaignReview from 'src/sections/skills/contexts/ContextCampaignReview';
+import RolloutsOffNotice from 'src/sections/skills/contexts/RolloutsOffNotice';
 
 function CreateInventory({ inventory, submission, onSubmission, onClose, onCreated }) {
   const [name, setName] = useState(submission?.name || '');
@@ -41,6 +44,7 @@ CreateInventory.propTypes = { inventory: PropTypes.object.isRequired, submission
 function CampaignRoute() {
   const { campaignId } = useParams();
   const access = useSkillV11Scope();
+  const role = useSkillsAccess();
   const location = useLocation();
   const [creating, setCreating] = useState(false);
   const availability = useContextCampaignAvailability();
@@ -61,7 +65,7 @@ function CampaignRoute() {
   const rollback = usePreviewContextCampaignRollback(campaignId);
   const back = (id) => navigate(`/dashboard/skills/contexts/rollouts/${id}`);
   if (!campaignId) return <>
-    <ContextCampaignList query={list} availability={availability} enabled={availability.data?.enabled === true} state={state} onOpen={back} page={page} onPageChange={setPage} onCreate={inventory ? () => setCreating(true) : undefined} />
+    <ContextCampaignList access={role} query={list} availability={availability} enabled={availability.data?.enabled === true} state={state} onOpen={back} page={page} onPageChange={setPage} onCreate={inventory ? () => setCreating(true) : undefined} />
     {creating && inventory && availability.data?.enabled === true && !availability.isError && <CreateInventory inventory={inventory} submission={location.state?.campaignSubmission}
       onSubmission={(input) => navigate(location.pathname, { replace: true, state: { ...location.state, campaignSubmission: input } })}
       onClose={() => setCreating(false)} onCreated={back} />}
@@ -70,7 +74,7 @@ function CampaignRoute() {
   if (['denied', 'forbidden'].includes(state) || detail.error?.statusCode === 403 || targets.error?.statusCode === 403) return <CapabilityNotice title="Rollout access" description="You don't have access to repository rollouts. Ask a workspace admin." />;
   if (state === 'error' || detail.isError || targets.isError) return <ErrorState title="Couldn't load rollouts." onRetry={() => { detail.refetch(); targets.refetch(); }} />;
   if (!detail.data || !targets.data) return <Alert severity="info">Select an authenticated workspace to inspect this rollout.</Alert>;
-  return <ContextCampaignReview campaign={detail.data} targets={targets.data.results}
+  return <ContextCampaignReview access={role} campaign={detail.data} targets={targets.data.results}
     onAuthorize={authorize.mutateAsync} onStatus={status.mutateAsync} onRollback={rollback.mutateAsync}
     pending={authorize.isPending || status.isPending || rollback.isPending}
     selectedTarget={selectedTarget} onSelectTarget={selectTarget} observations={observations} rollback={rollback.data} />;
@@ -78,10 +82,11 @@ function CampaignRoute() {
 
 export default function ContextCampaignPage() {
   const access = useSkillV11Scope();
-  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={{ minWidth: 0, px: { xs: 2, md: 3 }, py: 1.5 }}>
+  const role = useSkillsAccess();
+  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={skillsRouteSx}>
     {campaignsContractReady() ? <CampaignRoute key={access.identity} /> : <>
       <PageHeader title="Repository rollouts" description="Fixed repository plans with separate delivery observations." />
-      <CapabilityNotice title="Repository rollouts are off" description="New repository changes can't be started. Rollouts are turned on in your deployment settings. Ask a workspace admin to check the setting; existing records stay readable." details="SKILLS_CONTEXT_CAMPAIGNS_ENABLED is a deployment environment setting, not a workspace toggle." />
+      <RolloutsOffNotice access={role} />
     </>}
   </Stack></>;
 }

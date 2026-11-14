@@ -66,7 +66,7 @@ const stateNames = {
   mixed_sessions: "Mixed sessions",
   old_thread_pinned: "Old thread retained",
   stale_observation: "Stale observation",
-  unknown: "Runtime loading not observed",
+  unknown: "No report from this app yet",
   quarantined: "Quarantined",
 };
 const reasonNames = {
@@ -87,7 +87,7 @@ function Cohort({ cohort, numbers, asOf, active = false }) {
       <Stack spacing={1.5}>
         <Typography variant="s3" color="text.secondary">As of <When value={asOf} fallback="Time not reported" />. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
         {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} consumers still need delivery verification.</Alert>}
-        {!cohort.length && <EmptyState title="No declared consumers" description="No runtime delivery can be verified until consumers are registered and report it." />}
+        {!cohort.length && <EmptyState title="No apps connected yet" description="An app can only confirm what it received once it is connected and reports back." />}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery cohort">
             <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
@@ -140,6 +140,7 @@ function Cohort({ cohort, numbers, asOf, active = false }) {
                         <StatusBadge
                           key={state}
                           status={state}
+                          role={state === 'unknown' ? 'neutral' : undefined}
                           label={stateNames[state] ?? humanizeCode(state)}
                         />
                       ))}
@@ -181,12 +182,16 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                 hover
                 selected={chosen === row.id}
                 aria-current={chosen === row.id ? "true" : undefined}
-                sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}
+                sx={(theme) => ({
+                  height: { xs: 'auto', sm: ROW_HEIGHT.default },
+                  // Below sm each release is a labelled card: version, then labelled values, then its action.
+                  [theme.breakpoints.down('sm')]: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', rowGap: 1, py: 1.5, px: 1, borderBottom: `1px solid ${theme.palette.divider}`, '& > td': { p: 0, border: 0 } },
+                })}
               >
                 <TableCell>
                   <Typography variant="s1">v{row.number}</Typography>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={mobileLabel('Eligibility')}>
                   <Stack spacing={0.5} alignItems="flex-start">
                     {row.eligible ? (
                       <StatusBadge status="completed" label="Eligible" />
@@ -213,7 +218,7 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                     )}
                   </Stack>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={mobileLabel('Linked skills')}>
                   <Typography variant="s1">
                     {row.children.length} linked skill{row.children.length === 1 ? "" : "s"}
                   </Typography>
@@ -246,7 +251,7 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
       </TableContainer>
   );
   // Inside the release review the table needs no section of its own.
-  return bare ? table : <Section title="Choose a recovery release">{table}</Section>;
+  return bare ? table : <Section title="Choose a version to roll back to">{table}</Section>;
 }
 Candidates.propTypes = {
   candidates: PropTypes.array.isRequired,
@@ -287,13 +292,14 @@ function ClosureReview({ candidate, production, closure }) {
     <Section title={`What changes: everything in v${candidate.number} against production v${production?.number ?? '?'}`}>
       <Stack spacing={1.5}>
         {/* Conclusion first: the readable consequence, then the files people read, then machine records. */}
-        <Typography variant="m3" role="status">
-          {links.length ? linkSentence(links) : `Roll back to v${candidate.number}`} · {changedCount} file{changedCount === 1 ? '' : 's'}
+        <Typography variant="s1" role="status">
+          {links.length ? linkSentence(links) : `Roll back to v${candidate.number}`} · {changedCount} file{changedCount === 1 ? '' : 's'} differ{changedCount === 1 ? 's' : ''}
         </Typography>
         <Typography variant="s3" color="text.secondary">
           {counts.unchanged ?? 0} file{counts.unchanged === 1 ? ' stays' : 's stay'} the same.
           {counts.added > 0 && ` ${counts.added} added.`}
           {counts.removed > 0 && ` ${counts.removed} removed.`}
+          {descriptor && ` ${DESCRIPTOR_PATH} is the context settings file; it is generated from the linked skill versions, so it changes with them.`}
           {candidate.children.length > 0 && ` The rollback restores the linked-skill versions locked in context v${candidate.number}; it doesn't fetch newer skill versions.`}
           {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are kept.`}
         </Typography>
@@ -310,7 +316,7 @@ function ClosureReview({ candidate, production, closure }) {
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={`${row.status}:${row.path}`} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
-                  <TableCell aria-label={row.path} sx={{ overflowWrap: "anywhere" }}>{row.path}</TableCell>
+                  <TableCell aria-label={row.path} sx={{ overflowWrap: "anywhere" }}>{row.path}{row.path === DESCRIPTOR_PATH && <Typography component="div" variant="s3" color="text.secondary">Context settings (generated)</Typography>}</TableCell>
                   <TableCell>
                     <StatusBadge status={changeStatus[row.status]} label={changeNames[row.status]} />
                   </TableCell>
@@ -441,7 +447,7 @@ function RollbackRequest({
         {packet && (
           <Stack spacing={1}>
             {!submit.data && <Typography variant="s1" role="status">Rollback request ready. Choose who reviews it.</Typography>}
-            {submit.data ? <Typography variant="s1">Requested from {reviewerName}</Typography> : <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The server checks review authority on submit." />}
+            {submit.data ? <Typography variant="s1">Requested from {reviewerName}</Typography> : <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The reviewer's access is checked when you submit." />}
             {!submit.data && <Button color="primary"
               sx={{ alignSelf: 'flex-start' }}
               variant="contained"
@@ -581,6 +587,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
           />
         )}
         </Stack></Section><Section title="Restore the reviewed repository version"><Stack spacing={1.5}>
+        <Typography variant="s3" color="text.secondary">One command reads the lock from the commit you reviewed, checks it and applies it while nothing else is changing the folder. Local files outside the managed paths are kept.</Typography>
         <TextField
           size="small"
           label="Last reviewed commit"
@@ -599,14 +606,14 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
             } catch { setCopyStatus("Couldn't copy. Select the commands below."); }
           }}><Iconify icon="solar:copy-linear" width={16} /></IconButton></span></Tooltip>} />
         {copyStatus && <Typography role="status" variant="s3">{copyStatus}</Typography>}
-        </Stack></Section><Section title="Review application threads">
+        </Stack></Section><Section title="Check apps that are mid-conversation">
         <Stack component="ul" spacing={1} sx={{ m: 0, pl: 2.5 }}>
           <Typography component="li" variant="s1">Resume paused threads from their original saved state.</Typography>
           <Typography component="li" variant="s1">Check completed actions before continuing. Never run them twice.</Typography>
           <Typography component="li" variant="s1">If access or a thread link is lost, review a new thread and close the old one.</Typography>
           <Typography component="li" variant="s1">Review every thread in one plan. If anything changes, review it again.</Typography>
         </Stack>
-        <TechnicalDetails title="Thread recovery checks">
+        <TechnicalDetails title="Mid-conversation checks">
           <Typography variant="s3">Resume only under the original session and checkpoint. Reconcile persisted business receipts before the next model call. Threads with expired authority or lost mappings are not recovered; a clean thread needs explicit review and the abandoned thread must be closed. Plan every registered thread once and apply exactly the reviewed plan. A different plan digest or a thread that moved after review is refused.</Typography>
         </TechnicalDetails></Section>
       </Stack>
@@ -690,10 +697,11 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     <Typography variant="m3"><Skeleton width="28%" sx={{ bgcolor: 'action.selected' }} /></Typography>
     <ContentSkeleton variant="panel" rows={2} sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />
   </Stack>;
-  if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description="This context has more than 100 releases or consumers, which recovery can't review completely here. Use the CLI restore for contexts this large." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
+  if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="This context is too large to review here. Use the CLI restore." description="Rollback reviews every version and every connected app, and this context has more than 100 of them." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
   if (previewState === 'denied' || query.error?.statusCode === 403) return <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />;
   if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
-  if (previewState === 'empty') return <EmptyState title="Nothing to roll back to yet" description="v1 is the only released version, so there's nothing to roll back to yet." />;
+  // The preview names the version the header shows, not a fixed one.
+  if (previewState === 'empty') return <EmptyState title="Nothing to roll back to yet" description={`${liveProduction ? `v${liveProduction.number}` : 'This version'} is the only released version, so there's nothing to roll back to yet.`} />;
   if (previewState === 'error' || query.error || !data)
     return (
       <ErrorState
@@ -731,7 +739,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
       {!candidate?.isProduction && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: awaiting ? 'minmax(0, 1fr)' : 'minmax(0, 3fr) minmax(300px, 2fr)' }, gap: 3, alignItems: 'start' }}>
       {!awaiting && <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-        <Section title={candidate ? `Recovery release: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a recovery release'}>
+        <Section title={candidate ? `Roll back to: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a version to roll back to'}>
           {suggestion && <Typography variant="s3" color="text.secondary">v{suggestion.number} is the newest eligible release before v{suggestion.failing}. Review it below or choose another.</Typography>}
           {/* The excluded alternatives stay visible: the closure acknowledgment covers them, and a closed disclosure would add a gesture to every recovery. */}
           <Candidates bare candidates={data.candidates} chosen={chosen} onChoose={setChosen} />

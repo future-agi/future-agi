@@ -28,7 +28,7 @@ it('hides empty-consumer filters and makes registration the primary without chan
 it('explains where the build manifest comes from without changing production', () => {
   render(<ContextTargetRegistration contextId="ctx" canRegister />);
   fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
-  expect(screen.getByText(/This is the runtime manifest from your app build/)).toBeVisible();
+  expect(screen.getByText(/It is the manifest your app reports on startup/)).toBeVisible();
   expect(screen.getByText(/Connecting doesn't change production/)).toBeVisible();
   expect(screen.getByRole('link', { name: 'Runtime setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/reviewed-releases');
   expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();

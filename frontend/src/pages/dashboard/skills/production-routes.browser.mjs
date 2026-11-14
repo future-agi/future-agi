@@ -112,7 +112,7 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `context-${theme}-${width}.png`) });
       await page.getByRole('tab', { name: 'Consumers', exact: true }).click();
-      await page.getByText('No declared consumers').waitFor();
+      await page.getByText('No apps connected yet').waitFor();
       await page.screenshot({ path: path.join(output, `consumers-${theme}-${width}.png`) });
       await page.getByRole('tab', { name: 'Reviews', exact: true }).click();
       await page.getByText('No assigned reviews').waitFor();
@@ -151,5 +151,6 @@ try {
     }
   }
   assert.deepEqual(errors, []);
+  // eslint-disable-next-line no-console -- the script's result line
   console.log(JSON.stringify({ captures: 24, reviewExecutions: 8, staleReviewChecks: 8, themes: ['light', 'dark'], widths: [1280, 390], errors, transport: 'synthetic', output }));
 } finally { await browser?.close(); await server.close(); }

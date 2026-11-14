@@ -270,7 +270,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(retired.status === 404, 'The refund child source must be retired');
         await expect(authorPage.getByText('Source retired:', { exact: false }).first()).toBeVisible();
         // The view preselects the newest eligible release older than the failing one and says why; choosing another is still one click.
-        await expect(authorPage.getByText('Recovery release: v1 (suggested)', { exact: false }).first()).toBeVisible();
+        await expect(authorPage.getByText('Roll back to: v1 (suggested)', { exact: false }).first()).toBeVisible();
         await expect(authorPage.getByRole('button', { name: 'Choose v1', exact: true })).toBeEnabled();
         const closure = await readCompleteClosure(read, input.contextId, 1, signal);
         const production = await readCompleteClosure(read, input.contextId, 3, signal);
@@ -591,7 +591,7 @@ export async function createDriver({ jobId, runId, registration }) {
         for (const [key, binding] of Object.entries(input.bindings)) {
           const row = table.getByRole('row').filter({ hasText: binding.name });
           const states = cohort[key].states;
-          await expect(row.getByText(states.includes('matches_target') ? 'Matches target' : 'Runtime loading not observed', { exact: true })).toBeVisible();
+          await expect(row.getByText(states.includes('matches_target') ? 'Matches target' : 'No report from this app yet', { exact: true })).toBeVisible();
           if (!states.includes('matches_target')) await expect(row.getByText('Matches target', { exact: true })).toHaveCount(0);
           const sessions = await sessionRows(binding.id);
           const receipts = await pgRows('SELECT stage, session_id::text, version_id::text FROM model_hub_hubskillcontextreceipt WHERE binding_id=$1 ORDER BY created_at', [binding.id]);

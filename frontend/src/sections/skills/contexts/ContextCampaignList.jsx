@@ -10,8 +10,9 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import RolloutInstructions from './RolloutInstructions';
 import TechnicalDetails from '../components/TechnicalDetails';
 import CapabilityNotice from '../components/CapabilityNotice';
+import RolloutsOffNotice from './RolloutsOffNotice';
 
-export default function ContextCampaignList({ query, availability, enabled = false, state, onOpen, page, onPageChange, onCreate }) {
+export default function ContextCampaignList({ query, availability, enabled = false, state, onOpen, page, onPageChange, onCreate, access }) {
   const data = query.data;
   const off = state === 'off' || !enabled;
   const loading = state === 'loading' || availability?.isLoading;
@@ -24,7 +25,7 @@ export default function ContextCampaignList({ query, availability, enabled = fal
       : denied ? <CapabilityNotice title="Rollout access" description="You don't have access to repository rollouts. Ask a workspace admin." />
         : failed ? <ErrorState detail="Nothing was changed. Existing rollouts are unaffected." title="Couldn't load rollouts." onRetry={availability?.refetch || query.refetch} />
         : <>
-          {off && <Stack spacing={1}><CapabilityNotice title="Repository rollouts are off" description="New repository changes can't be started. Existing rollout records stay readable. Rollouts are turned on in your deployment settings. Ask a workspace admin to check the setting." details="Set SKILLS_CONTEXT_CAMPAIGNS_ENABLED in the deployment environment. This is not a workspace toggle; a qualified local executor is still required." /><Button sx={{ alignSelf: 'flex-start' }} href="/dashboard/skills/contexts" variant="outlined" color="inherit">Back to agent contexts</Button></Stack>}
+          {off && <Stack spacing={1}><RolloutsOffNotice access={access} /><Button sx={{ alignSelf: 'flex-start' }} href="/dashboard/skills/contexts" variant="outlined" color="inherit">Back to agent contexts</Button></Stack>}
           {query.isFetching && data && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
           {query.isLoading && !data ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={5} label="Loading repository rollouts" />
             : query.isError ? <ErrorState detail="Nothing was changed. Existing rollouts are unaffected." title="Couldn't load rollouts." onRetry={query.refetch} />
@@ -48,4 +49,5 @@ ContextCampaignList.propTypes = {
   query: PropTypes.object.isRequired, availability: PropTypes.object, enabled: PropTypes.bool, state: PropTypes.string,
   onOpen: PropTypes.func.isRequired, page: PropTypes.number.isRequired,
   onPageChange: PropTypes.func.isRequired, onCreate: PropTypes.func,
+  access: PropTypes.shape({ ready: PropTypes.bool, canAdmin: PropTypes.bool }),
 };

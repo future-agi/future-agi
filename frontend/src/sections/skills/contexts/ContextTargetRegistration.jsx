@@ -73,7 +73,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
     manifest !== null &&
     !create.isPending && canRegister;
   const actionReason = !canRegister ? 'Ask a workspace admin for permission to connect an app.'
-    : !manifest ? 'Choose the runtime manifest JSON file from your app build.'
+    : !manifest ? 'Choose the app manifest (JSON) file from your app build.'
       : !name.trim() ? 'Enter a target name.'
         : !/^[a-z0-9][a-z0-9-]{0,39}$/.test(label) ? 'Use a label with lowercase letters, numbers or hyphens, starting with a letter or number.'
           : create.isPending ? 'Connecting the app…' : '';
@@ -105,7 +105,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
         onClose={() => {
           if (!create.isPending) setOpen(false);
         }}
-        title="Connect an app"
+        title="Register application target"
         subTitle="Connect your app using the configuration from its build. Connecting doesn't change production."
         actionBtnTitle="Register target"
         actionBtnProps={reasonProps(`${reasonId}-submit`, actionReason)}
@@ -164,6 +164,8 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
             <MenuItem value="new_thread">New threads only</MenuItem>
             <MenuItem value="manual">Manual</MenuItem>
           </TextField>
+          <Stack spacing={0.5} role="group" aria-labelledby={`${reasonId}-manifest`}>
+          <Typography id={`${reasonId}-manifest`} variant="s1" sx={{ fontWeight: 500, color: "text.primary" }}>App manifest (JSON)</Typography>
           <Stack direction="row" spacing={1} alignItems="center">
             <Button variant="outlined" onClick={() => file.current?.click()}>
               Choose runtime manifest
@@ -180,7 +182,8 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
               onChange={(event) => readManifest(event.target.files?.[0])}
             />
           </Stack>
-          <Typography variant="s3" color="text.secondary">This is the runtime manifest from your app build. <Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
+          <Typography variant="s3" color="text.secondary">Choose the JSON file your app build produces. It is the manifest your app reports on startup. <Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
+          </Stack>
           {manifest &&
             SUMMARY.map(([key, title]) => (
               <IdentityValue

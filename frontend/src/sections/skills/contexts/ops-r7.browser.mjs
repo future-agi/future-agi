@@ -133,7 +133,7 @@ try {
       await page.screenshot({ path: path.join(output, name), animations: 'disabled' }); captures.push(name);
       if (screen === 'recovery-verify') {
         const threadName = `recovery-threads${theme === 'dark' ? '-dark' : ''}.png`;
-        await page.getByText('Review application threads', { exact: true }).evaluate((heading) => heading.scrollIntoView({ block: 'start' }));
+        await page.getByText('Check apps that are mid-conversation', { exact: true }).evaluate((heading) => heading.scrollIntoView({ block: 'start' }));
         await page.screenshot({ path: path.join(output, threadName), animations: 'disabled' }); captures.push(threadName);
       }
       if (screen === 'consumers-drawer') {

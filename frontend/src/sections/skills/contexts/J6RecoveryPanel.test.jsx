@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import J6RecoveryPanel from "./J6RecoveryPanel";
 
@@ -318,7 +318,13 @@ it("leads the rollback review with its consequence and keeps the descriptor byte
   };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  expect(screen.getByText("refund-policy v2 → v1 · 2 files")).toBeVisible();
+  expect(screen.getByText("refund-policy v2 → v1 · 2 files differ")).toBeVisible();
+  // The generated settings file is tagged so it is not read as the change being rolled back.
+  const files = screen.getByRole("table", { name: "Recovery closure files" });
+  expect(within(files).getByText("Context settings (generated)")).toBeVisible();
+  expect(within(files).getAllByText("Context settings (generated)")).toHaveLength(1);
+  expect(within(files).getByRole("cell", { name: ".futureagi/context.json", exact: true })).toBeVisible();
+  expect(screen.getByText(/is the context settings file; it is generated from the linked skill versions/)).toBeVisible();
   expect(screen.getAllByText("Earlier version")[0]).toBeVisible();
   expect(screen.queryByText("Lower-number rollback")).toBeNull();
   const readable = screen.getByLabelText("skills/refund-policy/policy.md change from production");
@@ -415,4 +421,64 @@ it('keeps verification reachable after reloading a completed rollback with newer
   expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
   expect(screen.queryByText(/only released version/)).toBeNull();
   expect(screen.getByRole('list', { name: 'Recovery progress' }).lastChild).toHaveAttribute('aria-current', 'step');
+});
+
+it('names the version to roll back to in plain words and keeps the review-release sentence', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Roll back to: v1 (suggested)')).toBeVisible();
+  expect(screen.queryByText(/Recovery release/)).toBeNull();
+  expect(screen.getByText(/Reviewed against release revision 7\./)).toBeVisible();
+  expect(screen.getByRole('table', { name: 'Recovery releases' })).toBeVisible();
+});
+
+it('uses plain words for the application steps, the CLI and the reviewer check', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, lastReleaserId: 'u3', candidates: suggestedCandidates };
+  reviewers = [{ id: 'u3', name: 'Releaser' }];
+  previewState = { data: { fingerprint: 'fp', packet: { p: 1 } } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
+  expect(screen.getByText(/The reviewer's access is checked when you submit\./)).toBeVisible();
+  expect(screen.queryByText(/review authority/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  expect(screen.getByText('Check apps that are mid-conversation')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Mid-conversation checks' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('Review application threads')).toBeNull();
+  expect(screen.getByText(/One command reads the lock from the commit you reviewed/)).toBeVisible();
+});
+
+it('says "no report from this app yet" without the warning tone', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('No report from this app yet')).toBeVisible();
+  expect(screen.queryByText('Runtime loading not observed')).toBeNull();
+});
+
+it('builds the empty-state sentence from the production version the header shows', () => {
+  window.history.replaceState({}, '', '?state=empty');
+  try {
+    recovery = { cohort: [], releaseRevision: 2, candidates: [{ ...rollbackCandidate, id: 'v2-id', number: 2, isProduction: true, eligible: false }] };
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    expect(screen.getByText("v2 is the only released version, so there's nothing to roll back to yet.")).toBeVisible();
+    expect(screen.queryByText(/^v1 is the only released version/)).toBeNull();
+  } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('explains an over-limit context in plain words and still points at the CLI restore', () => {
+  window.history.replaceState({}, '', '?state=inventory-limit');
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    expect(screen.getByRole('heading', { name: 'This context is too large to review here. Use the CLI restore.' })).toBeVisible();
+    expect(screen.queryByText('Recovery needs a complete inventory')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open CLI restore instructions' })).toHaveAttribute('href', '?tab=use');
+  } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('keeps the four release columns the phone card is built from', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  const table = screen.getByRole('table', { name: 'Recovery releases' });
+  const cells = within(table).getAllByRole('row')[2].querySelectorAll('td');
+  expect(cells).toHaveLength(4);
+  expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Release', 'Eligibility', 'Linked skills', 'Choose']);
 });
