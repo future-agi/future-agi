@@ -1,4 +1,5 @@
 import json
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -232,12 +233,14 @@ def _compute_cost(entry):
     # The gateway recorded what the provider itself said the request cost.
     # That is the cost even when it is 0 (free tiers exist), so it is never
     # re-priced from the catalogue below.
-    if metadata.get("cost_source") == "provider_reported" and isinstance(
-        gateway_cost, (int, float)
+    if (
+        metadata.get("cost_source") == "provider_reported"
+        and isinstance(gateway_cost, (int, float))
+        and not isinstance(gateway_cost, bool)
+        and math.isfinite(gateway_cost)
+        and gateway_cost >= 0
     ):
-        reported = Decimal(str(gateway_cost))
-        if not isinstance(gateway_cost, bool) and reported.is_finite() and reported >= 0:
-            return gateway_cost
+        return gateway_cost
 
     try:
         if gateway_cost and Decimal(str(gateway_cost)) > 0:
@@ -391,7 +394,9 @@ def _ingest_org_logs(org, logs):
             )
 
     if objects:
-        AgentccRequestLog.no_workspace_objects.bulk_create(objects, ignore_conflicts=True)
+        AgentccRequestLog.no_workspace_objects.bulk_create(
+            objects, ignore_conflicts=True
+        )
         # The gateway resends a batch whose response it did not get in time, so a
         # batch can hold rows saved already. The unique request ID skips those;
         # only the rows saved now go on to webhooks and metering.
