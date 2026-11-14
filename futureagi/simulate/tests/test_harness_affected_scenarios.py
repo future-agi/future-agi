@@ -262,7 +262,7 @@ class TestBuckets:
                 }
             ],
         }
-        proofs = {key: PROVED for key in REFUND_KEYS + LOOKUP_KEYS}
+        proofs = dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED)
         proofs[LOOKUP_KEYS[0]] = kept
         proofs[LOOKUP_KEYS[1]] = leaked
         self._proofs(environment, proofs)
@@ -337,11 +337,13 @@ class TestBuckets:
         chosen = _select(environment)["selection"]
 
         counts = {bucket: chosen[bucket] for bucket in selection.BUCKETS}
-        assert counts == {"blocked": 4, "stale": 1, "untested": 1, "eligible": 4}
+        # A case with no proof on the pair is held back as not validated (section 4.9), no
+        # longer sent as stale.
+        assert counts == {"blocked": 5, "stale": 0, "untested": 1, "eligible": 4}
         assert sum(counts.values()) == chosen["requested"] == 10
         assert chosen["lists"]["untested"]["keys"] == [LOOKUP_KEYS[-1]]
         # Blocked and not proved here: the first match wins.
-        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS + [LOOKUP_KEYS[0]]
         assert chosen["grading"]["not_gradable"] == [
             {"key": LOOKUP_KEYS[-1], "reason": "check_unreadable"}
         ]
