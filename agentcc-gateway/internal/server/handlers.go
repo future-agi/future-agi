@@ -946,6 +946,15 @@ func orgInstanceServed(rc *models.RequestContext) bool {
 		shouldApplyOrgProviderOverride(rc)
 }
 
+// recordServedBy records p as the provider instance that answered rc, for
+// post-plugins that judge the response by its instance (reported cost). p is
+// usually a narrower interface over the same instance.
+func recordServedBy(rc *models.RequestContext, p any) {
+	if served, ok := p.(providers.Provider); ok && served != nil {
+		rc.ServedBy = served
+	}
+}
+
 // servingProvider resolves the instance for handlers without chat retries.
 // Chat response writers retain the successful instance instead, since retries
 // can switch between base and org providers with the same ID.

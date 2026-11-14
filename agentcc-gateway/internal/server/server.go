@@ -324,6 +324,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -418,6 +419,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				if err != nil {
 					return err
 				}
+				recordServedBy(callRC, provider)
 				callRC.Response = resp
 				callRC.ResolvedModel = resp.Model
 				return nil
@@ -614,6 +616,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil

@@ -171,6 +171,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			return err
 		}
 		respBody = body
+		recordServedBy(callRC, rp)
 		applyResponsesUsage(callRC, body)
 		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
 		return nil
@@ -228,6 +229,7 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 			return err
 		}
 		stream = s
+		recordServedBy(callRC, rp)
 		callRC.IsStream = true
 		return nil
 	}

@@ -353,6 +353,7 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, ap)
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(anthropicResponseText(respBody))
@@ -447,6 +448,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, body, headers)
+		if callErr == nil {
+			recordServedBy(rc, ap)
+		}
 		return callErr
 	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
@@ -625,6 +629,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, provider)
 		rc.Response = canonicalResp
 		return nil
 	})
@@ -753,6 +758,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			chunk, err := waitForFirstStreamChunk(streamCtx, rawChunkCh, errCh)
 			if err == nil {
 				firstChunk = chunk
+				recordServedBy(rc, provider)
 				return nil
 			}
 			var apiErr *models.APIError
