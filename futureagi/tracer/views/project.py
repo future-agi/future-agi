@@ -726,7 +726,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         # Publish all three activity fields atomically only
                         # after the single bounded rollup read parses cleanly.
                         pending_volume_map = dict.fromkeys(project_ids, 0)
-                        pending_daily_map_raw = {pid: {} for pid in project_ids}
+                        pending_daily_map_raw: dict[str, dict[str, int]] = {
+                            pid: {} for pid in project_ids
+                        }
                         pending_last_active_values = dict.fromkeys(project_ids)
                         activity_result = service.execute_ch_query(
                             activity_query,

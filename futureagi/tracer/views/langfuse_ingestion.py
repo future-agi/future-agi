@@ -1,5 +1,6 @@
 import uuid
 from collections import defaultdict
+from typing import Any
 
 import structlog
 from drf_yasg.utils import swagger_auto_schema
@@ -53,7 +54,7 @@ def _merge_observation_events(obs_list):
     separate observations the update overwrites the create's fields with
     empty values.  Merging preserves all non-None fields from both events.
     """
-    merged = {}  # obs_id → merged body dict
+    merged: dict[Any, dict[str, Any]] = {}  # obs_id → merged body dict
     order = []  # preserve insertion order
 
     for obs in obs_list:
@@ -159,7 +160,7 @@ class LangfuseIngestionView(APIView):
         errors = []
 
         # ---- Group events by type and trace ID ----
-        trace_bodies = {}  # langfuse_trace_id → body dict
+        trace_bodies: dict[Any, dict[str, Any]] = {}  # langfuse_trace_id → body dict
         observation_bodies = defaultdict(list)  # langfuse_trace_id → [body dicts]
         score_bodies = defaultdict(list)  # langfuse_trace_id → [body dicts]
 

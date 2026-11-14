@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import islice
+from typing import Any
 
 import structlog
 from django.conf import settings
@@ -501,7 +502,7 @@ def _build_usage_chart(aggregate_rows, start_date, end_date, bucket_delta):
     last_bucket = _floor_usage_bucket(
         end_date - timedelta(microseconds=1), bucket_delta
     )
-    chart_data = []
+    chart_data: list[dict[str, Any]] = []
     while current_bucket <= last_bucket:
         if len(chart_data) >= _USAGE_MAX_CHART_POINTS:
             raise ValueError("Evaluation usage chart exceeds its bounded point limit")
@@ -923,7 +924,7 @@ def _bounded_usage_logs_queryset(queryset):
 def _bounded_usage_span_projection(span_ids, mapping_paths, *, project_id=None):
     """Fetch finite span identity plus only the JSON paths this page needs."""
 
-    annotations = {}
+    annotations: dict[str, Any] = {}
     input_preview, input_length = _usage_json_text_annotation(
         "span_attributes", "input"
     )
@@ -1011,7 +1012,7 @@ def _bounded_usage_span_context(logs_page, *, project_id=None):
     config_mappings = _bounded_usage_config_mappings(config_ids)
     bounded_entries_by_config = {}
     invalid_entries_by_config = {}
-    ordered_paths = []
+    ordered_paths: list[str] = []
     for config_id in sorted(config_ids):
         mapping_record = config_mappings.get(config_id, {})
         mapping = mapping_record.get("mapping") or {}
@@ -1070,7 +1071,7 @@ def _bounded_usage_span_context(logs_page, *, project_id=None):
             )
             if resolved is not None:
                 mappings[str(variable)] = resolved
-        omitted_fields = []
+        omitted_fields: list[str] = []
         if config_record.get("oversized"):
             _append_usage_omission(omitted_fields, "input_variables.mapping_oversized")
         elif len(config_mapping) > _USAGE_MAPPING_ENTRY_LIMIT:
@@ -1107,7 +1108,7 @@ def _bounded_usage_span_context(logs_page, *, project_id=None):
 def _aggregate_usage_chart_rows(rows, bucket_delta):
     """Aggregate one finite usage page into chart buckets in memory."""
 
-    buckets = defaultdict(
+    buckets: defaultdict[datetime, dict[str, float]] = defaultdict(
         lambda: {
             "calls": 0,
             "pass_count": 0,
@@ -1247,7 +1248,7 @@ def _compute_span_aggregation(rows):
     When the same ``(span, eval_config)`` has multiple rows (re-runs),
     the latest by ``created_at`` wins via the ORDER BY + first-seen set.
     """
-    result = defaultdict(dict)
+    result: defaultdict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     seen = set()
     for row in rows:
         if row.get("status") != EvalEntryStatus.COMPLETED or row.get("error") is True:
@@ -1486,7 +1487,7 @@ def _eval_task_progress_by_id(tasks):
     if not historical_ids:
         return {}
 
-    counts_by_task = defaultdict(Counter)
+    counts_by_task: defaultdict[str, Counter[str]] = defaultdict(Counter)
     rows = (
         EvalLogger.objects.filter(eval_task_id__in=historical_ids)
         .values("eval_task_id", "status")
