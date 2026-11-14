@@ -1021,8 +1021,8 @@ def _run_base_evaluation_sync(
         # the callback attribute, point it at evaluation_tracker so that
         # StopUserEvalView's request_cancel breaks the loop at row level.
         if hasattr(runner, "_check_cancel_callback"):
-            runner._check_cancel_callback = (
-                lambda eid=user_eval_metric.id: evaluation_tracker.should_cancel(eid)
+            runner._check_cancel_callback = lambda eid=user_eval_metric.id: (
+                evaluation_tracker.should_cancel(eid)
             )
 
         # If base column is a run_prompt column and eval needs prompt_chain,
@@ -1143,8 +1143,6 @@ def _run_base_evaluation_sync(
         raise
     finally:
         close_old_connections()
-
-
 
 
 def _check_column_status_sync(column_id: str) -> dict:
@@ -2088,7 +2086,9 @@ def _create_error_eval_cells_sync(
                             for row in row_map.values()
                         ]
                         if reason_cells:
-                            Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
+                            Cell.objects.bulk_create(
+                                reason_cells, ignore_conflicts=True
+                            )
 
             except Exception as e:
                 activity.logger.exception(
@@ -2334,10 +2334,8 @@ def _process_row_evals_sync(
                 # Wire distributed cancel check so the runner aborts the
                 # row mid-flight if the user presses Stop during execution.
                 if hasattr(runner, "_check_cancel_callback"):
-                    runner._check_cancel_callback = (
-                        lambda eid=eval_template.id: (
-                            evaluation_tracker.should_cancel(eid)
-                        )
+                    runner._check_cancel_callback = lambda eid=eval_template.id: (
+                        evaluation_tracker.should_cancel(eid)
                     )
 
                 # Run evaluation for this single row
@@ -2765,8 +2763,7 @@ async def stop_experiment_cleanup_activity(
 
     except Exception as e:
         activity.logger.exception(
-            f"Error in stop_experiment_cleanup_activity for "
-            f"{input.experiment_id}: {e}"
+            f"Error in stop_experiment_cleanup_activity for {input.experiment_id}: {e}"
         )
         return StopExperimentCleanupOutput(
             experiment_id=input.experiment_id,

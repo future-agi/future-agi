@@ -200,9 +200,7 @@ class TestOrgConfigActivate:
         old_active = _make_config(user.organization, version=1, is_active=True)
         new_version = _make_config(user.organization, version=2, is_active=False)
 
-        response = auth_client.post(
-            f"/agentcc/org-configs/{new_version.id}/activate/"
-        )
+        response = auth_client.post(f"/agentcc/org-configs/{new_version.id}/activate/")
 
         assert response.status_code == 200, response.json()
         old_active.refresh_from_db()

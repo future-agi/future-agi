@@ -475,6 +475,7 @@ const fakeDockerScript = `#!/bin/sh
 if [ -n "$FAKE_DOCKER_FAIL" ]; then echo "$FAKE_DOCKER_FAIL $*" >&2; exit 1; fi
 case " $* " in
   *" context inspect "*) cat "$FAKE_DOCKER/context.json" ;;
+  *" network inspect e2e-link-network "*) cat "$FAKE_DOCKER/link-network.json" ;;
   *" network inspect "*) cat "$FAKE_DOCKER/network.json" ;;
   *" compose "*" config "*) cat "$FAKE_DOCKER/config.json" ;;
   *" compose "*" ps "*) cat "$FAKE_DOCKER/ps.txt" ;;
@@ -533,12 +534,19 @@ function fakeStack(stack: 'standalone' | 'distributed') {
       ...(c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
       ...(c.volumes ?? []).map(([Source, Destination, RW]) => ({ Type: 'volume', Source, Destination, RW })),
     ],
-    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' } },
+    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' },
+      ...(['app', 'backend', 'worker'].includes(c.service) ? {
+        [`${project}_link-public`]: { NetworkID: 'e2e-link-network', Aliases: [c.service], IPAddress: '11.23.0.2' },
+      } : {}) },
       Ports: Object.fromEntries(Object.entries(c.ports ?? {}).map(([p, host]) => [p, [{ HostIp: '127.0.0.1', HostPort: host }]])) },
   }));
   return {
     'context.json': [{ Endpoints: { docker: { Host: 'unix:///var/run/docker.sock' } } }],
-    'config.json': { name: project, networks: { default: { name: network } }, services: {} },
+    'config.json': { name: project, networks: { default: { name: network },
+      'link-public': { name: `${project}_link-public` } }, services: {} },
+    'link-network.json': [{ Driver: 'bridge', Internal: true, Labels: {
+      'com.docker.compose.project': project, 'com.docker.compose.network': 'link-public',
+    } }],
     'ps.txt': containers.map(c => c.Id).join('\n'),
     'containers.json': containers,
     'network.json': [{ Driver: 'bridge', Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': 'default' } }],

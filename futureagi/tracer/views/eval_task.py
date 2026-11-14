@@ -40,6 +40,7 @@ from model_hub.utils.eval_input_validation import (
     PARTIAL_INPUT_MESSAGE,
     PARTIAL_INPUT_WARNING_TYPE,
 )
+from tfc.routers import primary_required
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -1750,10 +1751,12 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         requested_ids = {str(eval_id) for eval_id in (eval_ids or [])}
         if not requested_ids:
             return []
+        # Primary: the configs are usually created just before the task that
+        # uses them, and a lagging replica would report them missing.
         visible_ids = {
             str(eval_id)
             for eval_id in self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all(), project_id=project_id
+                CustomEvalConfig.objects.using("default"), project_id=project_id
             )
             .filter(id__in=requested_ids)
             .values_list("id", flat=True)
@@ -1772,8 +1775,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all()
+            # many=True validates through the child, not ManyRelatedField itself.
+            evals_field = fields["evals"].child_relation
+            evals_field.queryset = self._scope_custom_eval_config_queryset(
+                CustomEvalConfig.objects.using("default")
             )
         return serializer
 
@@ -1871,10 +1876,15 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
+    # Mutation contexts include contract validation, relation reads and response
+    # serialization. Keep primary_required outside validated_request; browsing
+    # deliberately retains replica-eligible prefetches.
+    @primary_required
     @validated_request(request_serializer=EvalTaskSerializer)
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         partial_request_validation=True,
@@ -1894,6 +1904,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         responses={
@@ -2094,7 +2105,11 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             # materialized entry (the manager already excludes soft-deleted),
             # so while a task is pending Total shows the full set and success/
             # errors start at 0 and climb as the drain executes.
-            counts = EvalLogger.objects.filter(
+            # The status above is read from the primary, so the counts, error
+            # groups and warnings are too: a replica behind the drain would pair
+            # "completed" with unfinished tallies, and the UI stops polling then.
+            entries = EvalLogger.objects.using("default")
+            counts = entries.filter(
                 eval_task_id=eval_task_id,
                 deleted=False,
             ).aggregate(
@@ -2146,7 +2161,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             # core-frontend/src/sections/common/EvalsTasks/classifyTaskError.js
             error_group_rows = list(
                 _bounded_eval_task_error_groups_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._ERROR_GROUPS_LIMIT + 1]
             )
             error_groups = [
@@ -2166,7 +2181,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
             warning_rows = list(
                 _bounded_eval_task_warning_rows_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._WARNING_LOG_SCAN_LIMIT]
             )
             (
@@ -2995,6 +3010,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Evaluation tasks could not be loaded")
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
         responses={
@@ -3255,9 +3271,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 .get(id=eval_id)
             )
 
+            # Primary: the task page builds its edit form from this list right
+            # after a task is created or saved, and a Save from a stale form
+            # would write the old eval set back.
             eval_configs = list(
                 self._scope_custom_eval_config_queryset(
-                    CustomEvalConfig.objects.select_related("eval_template")
+                    CustomEvalConfig.objects.using("default").select_related(
+                        "eval_template"
+                    )
                 )
                 .filter(eval_tasks=queryset)
                 .order_by("-created_at", "id")[

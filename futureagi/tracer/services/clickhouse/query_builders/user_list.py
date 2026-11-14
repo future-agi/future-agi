@@ -232,7 +232,9 @@ def _latest_user_usage_sql(*, include_num_sessions: bool = False) -> str:
     state. Wrapping nullable fields in the row tuple also prevents argMax from
     reviving an older non-null owner/end time.
     """
-    coverage = usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.", include_summary=True)
+    coverage = usage_coverage_sql(
+        attrs="spans.attrs_string", prefix="spans.", include_summary=True
+    )
     known_fact = """(
         spans.total_tokens > 0 OR spans.prompt_tokens > 0
         OR spans.completion_tokens > 0 OR spans.observation_type = 'llm'

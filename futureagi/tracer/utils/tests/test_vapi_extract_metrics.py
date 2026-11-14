@@ -41,9 +41,7 @@ class TestExtractMetricsOSSGuard:
 
     def test_extract_eval_attributes_survives_when_calculator_absent(self):
         with patch.object(vapi, "metrics_calculator", None):
-            attrs = vapi._extract_eval_attributes(
-                _SAMPLE_LOG, include_call_logs=False
-            )
+            attrs = vapi._extract_eval_attributes(_SAMPLE_LOG, include_call_logs=False)
 
         assert attrs["vapi.call_id"] == "vapi-call-123"
         assert "raw_log" in attrs
