@@ -261,3 +261,70 @@ def test_public_system_chart_returns_sanitized_retryable_error(
     payload = str(response.json())
     assert "temporarily unavailable" in payload
     assert "secret ClickHouse host" not in payload
+
+
+@pytest.mark.unit
+def test_eval_chart_too_broad_tag_returns_400_without_scheduling(monkeypatch):
+    from contextlib import contextmanager
+
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GraphTagFilterTooBroadError,
+    )
+    from tracer.views import charts
+
+    tag_filter = {
+        "column_id": "tag",
+        "filter_config": {
+            "col_type": "NORMAL",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "wanted",
+        },
+    }
+    calls = []
+
+    def preflight(identity):
+        assert identity["filters"] == [WINDOW_FILTER, tag_filter]
+        raise GraphTagFilterTooBroadError()
+
+    monkeypatch.setattr(graph_dispatch, "_preflight_scheduled_graph_tags", preflight)
+    monkeypatch.setattr(
+        graph_dispatch, "_read_or_refresh_exact_graph", lambda **kw: calls.append(kw)
+    )
+    monkeypatch.setattr(charts, "get_request_organization", lambda _request: object())
+
+    @contextmanager
+    def postgres_scope(_deadline):
+        yield
+
+    monkeypatch.setattr(charts, "graph_action_postgres_budget", postgres_scope)
+    monkeypatch.setattr(
+        charts.Project.objects,
+        "get",
+        lambda **kw: SimpleNamespace(id=PROJECT_ID, organization_id=PROJECT_ID),
+    )
+    config = SimpleNamespace(
+        name="Outcome",
+        eval_template=SimpleNamespace(config={"output": "SCORE"}, choices=[]),
+    )
+    request = SimpleNamespace(
+        validated_query_data={
+            "project_id": PROJECT_ID,
+            "interval": "day",
+            "property": "average",
+            "req_data_config": {"type": "EVAL", "id": EVAL_CONFIG_ID},
+            "filters": [WINDOW_FILTER, tag_filter],
+            "refresh": False,
+        },
+        workspace=SimpleNamespace(id=PROJECT_ID),
+    )
+    view = charts.ChartsView()
+    view.request = request
+    with mock.patch.object(CustomEvalConfig.objects, "select_related") as related:
+        related.return_value.get.return_value = config
+        response = inspect.unwrap(charts.ChartsView.fetch_graph)(
+            view, request, _graph_action_deadline=object()
+        )
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad", response.data
+    assert not calls

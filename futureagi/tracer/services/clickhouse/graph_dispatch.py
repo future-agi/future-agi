@@ -1807,8 +1807,12 @@ def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
             continue
         column_id = item.get("column_id") or item.get("columnId")
         config = item.get("filter_config") or item.get("filterConfig") or {}
-        if isinstance(config, dict) and is_effective_tag_leaf(
-            column_id, config.get("col_type") or config.get("colType")
+        if (
+            isinstance(column_id, str)
+            and isinstance(config, dict)
+            and is_effective_tag_leaf(
+                column_id, config.get("col_type") or config.get("colType")
+            )
         ):
             leaves.append((index, column_id, config))
     if not leaves:
@@ -1874,7 +1878,12 @@ def _schedule_unaffordable_graph_read(
     )
     # Even when no background lane can run the raw scan, a deterministic
     # tag-filter 400 takes precedence over a retryable scan-cost response.
-    _preflight_scheduled_graph_tags(identity)
+    if namespace in {
+        "observe-system-graph",
+        "observe-eval-graph",
+        "observe-annotation-graph",
+    }:
+        _preflight_scheduled_graph_tags(identity)
     if organization_id and schedulable:
         try:
             scheduled = _read_or_refresh_exact_graph(
@@ -2110,6 +2119,8 @@ def fetch_system_metric_graph_ch(
         and graph_payload_is_publishable(cached, allow_sampled=False)
     ):
         if refresh and organization_id:
+            # A refresh can see changed tags despite a complete snapshot. The
+            # worker recompiles, but this preflight preserves a request-time 400.
             _preflight_scheduled_graph_tags(identity)
             return _read_or_refresh_exact_graph(
                 namespace="observe-system-graph",
@@ -2962,6 +2973,7 @@ def fetch_eval_chart_series_ch(
         "req_data_config": req_data_config,
         "eval_name": eval_name,
     }
+    _preflight_scheduled_graph_tags(identity)
     return _read_or_refresh_exact_graph(
         namespace="observe-eval-chart-series",
         identity=identity,

@@ -28,6 +28,9 @@ from tracer.services.clickhouse.graph_dispatch import graph_payload_is_publishab
 from tracer.services.clickhouse.graph_metric_statistic import (
     chart_bundle_statistics,
 )
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -244,6 +247,12 @@ class ChartsView(GenericViewSet):
 
             return finish(self._gm.success_response(metric_data))
 
+        except GraphTagFilterTooBroadError as exc:
+            return finish(
+                self._gm.custom_error_response(
+                    status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
+                )
+            )
         except EvalGraphConfigurationError as exc:
             return finish(self._gm.bad_request(str(exc)))
         except FilterPrincipalContextError as exc:

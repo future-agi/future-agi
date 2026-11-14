@@ -1593,3 +1593,140 @@ def test_the_users_graph_view_never_sees_the_expired_wall_from_the_gate(
     # the statement was never issued on the spent wall.
     assert len(analytics.cost_probes) == 1
     assert users_reader == []
+
+
+@pytest.mark.unit
+def test_users_scheduled_tag_graph_does_not_run_unrelated_preflight(monkeypatch):
+    tag_filter = {
+        "column_id": "tag",
+        "filter_config": {
+            "col_type": "NORMAL",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "wanted",
+        },
+    }
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_preflight_scheduled_graph_tags",
+        lambda identity: pytest.fail(
+            "users worker does not use the graph tag compiler"
+        ),
+    )
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_read_or_refresh_exact_graph",
+        lambda **kwargs: kwargs["pending_payload"],
+    )
+    response = graph_dispatch._schedule_unaffordable_graph_read(
+        metric_id="active_users",
+        verdict=graph_dispatch._GraphReadUnaffordable(estimated_rows=None),
+        identity={
+            "project_id": PROJECT_ID,
+            "filters": [_window(), tag_filter],
+            "interval": "day",
+        },
+        pending_payload={"query_status": "pending"},
+        refresh=False,
+        organization_id=ORG_ID,
+        workspace_id=None,
+        namespace="observe-user-system-graph",
+    )
+    assert response["query_status"] == "pending"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error, status_code, code",
+    [
+        ("too_broad", 400, "tag_filter_too_broad"),
+        ("bounded", 503, "service_unavailable"),
+        ("tag_unavailable", 503, "service_unavailable"),
+    ],
+)
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_users_tag_graph_view_maps_reader_failures(
+    monkeypatch, error, status_code, code, scheduled
+):
+    from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GraphTagFilterTooBroadError,
+    )
+    from tracer.services.entity_tags import TagReadUnavailable
+    from tracer.views import project as project_view
+
+    @contextmanager
+    def postgres_scope(_deadline):
+        yield
+
+    monkeypatch.setattr(project_view, "graph_action_postgres_budget", postgres_scope)
+    monkeypatch.setattr(
+        project_view, "validate_property_graph_namespace", lambda *_a, **_kw: None
+    )
+    monkeypatch.setattr(project_view, "V2AnalyticsQueryService", lambda: object())
+    view = project_view.ProjectView()
+    monkeypatch.setattr(
+        view,
+        "_get_project_in_scope",
+        lambda _id: SimpleNamespace(organization_id=ORG_ID),
+    )
+    failure = {
+        "too_broad": GraphTagFilterTooBroadError(),
+        "bounded": BoundedGraphReadError("tag_source_unavailable", retryable=True),
+        "tag_unavailable": TagReadUnavailable("tag_source_unavailable"),
+    }[error]
+
+    def fetch(**kwargs):
+        assert kwargs["filters"][1]["column_id"] == "tag"
+        assert kwargs["organization_id"] == ORG_ID
+        assert scheduled == (kwargs["timeout_ms"] < 200)
+        raise failure
+
+    monkeypatch.setattr(project_view, "fetch_user_system_metric_graph_ch", fetch)
+    request = SimpleNamespace(
+        validated_query_data={"refresh": False},
+        validated_data={
+            "project_id": PROJECT_ID,
+            "filters": [
+                _window(),
+                {
+                    "column_id": "tag",
+                    "filter_config": {
+                        "col_type": "NORMAL",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "wanted",
+                    },
+                },
+            ],
+            "interval": "day",
+            "req_data_config": {"id": "active_users", "type": "SYSTEM_METRIC"},
+        },
+        workspace=SimpleNamespace(id=None, is_default=False),
+        user=SimpleNamespace(organization=SimpleNamespace(id=ORG_ID)),
+    )
+    view.request = request
+
+    class Wall:
+        def remaining_ms(self, cap_ms=None, *, floor_ms=1):
+            return 100 if scheduled else 1000
+
+    response = unwrap(project_view.ProjectView.get_users_aggregate_graph_data)(
+        view, request, _graph_action_deadline=Wall()
+    )
+    assert response.status_code == status_code
+    assert response.data["code"] == code
+
+
+@pytest.mark.unit
+def test_preflight_ignores_non_string_column_identifiers():
+    graph_dispatch._preflight_scheduled_graph_tags(
+        {
+            "filters": [
+                {
+                    "column_id": {"not": "a column"},
+                    "filter_config": {"col_type": "NORMAL"},
+                }
+            ],
+        }
+    )
