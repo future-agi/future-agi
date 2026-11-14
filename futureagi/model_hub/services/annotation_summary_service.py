@@ -65,7 +65,9 @@ def _scalar_value(value: Any, label_type: str) -> Optional[str]:
     return None
 
 
-def _numeric_min_max(label_type: str, settings: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+def _numeric_min_max(
+    label_type: str, settings: Dict[str, Any]
+) -> tuple[Optional[float], Optional[float]]:
     """Return (min, max) for numeric histogram bucketing. Star uses 1..no_of_stars."""
     if label_type == "numeric":
         try:
@@ -80,14 +82,18 @@ def _numeric_min_max(label_type: str, settings: Dict[str, Any]) -> tuple[Optiona
     return None, None
 
 
-def _header_min_max_strings(label_type: str, settings: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+def _header_min_max_strings(
+    label_type: str, settings: Dict[str, Any]
+) -> tuple[Optional[str], Optional[str]]:
     """Header_data uses string min/max, with min_length/max_length for text."""
     if label_type == "numeric":
         return _str_or_none(settings.get("min")), _str_or_none(settings.get("max"))
     if label_type == "star":
         return "1", _str_or_none(settings.get("no_of_stars", 5))
     if label_type == "text":
-        return _str_or_none(settings.get("min_length")), _str_or_none(settings.get("max_length"))
+        return _str_or_none(settings.get("min_length")), _str_or_none(
+            settings.get("max_length")
+        )
     return None, None
 
 
@@ -118,7 +124,9 @@ def _bucket_edges(min_val: float, max_val: float) -> List[tuple]:
     ]
 
 
-def get_annotation_summary_data(dataset_id, organization_id=None) -> Dict[str, pd.DataFrame]:
+def get_annotation_summary_data(
+    dataset_id, organization_id=None
+) -> Dict[str, pd.DataFrame]:
     """Build the 6 DataFrames the AnnotationSummaryView expects, from Score.
 
     The caller (the view) has already authorized the dataset belongs to
@@ -159,8 +167,8 @@ def get_annotation_summary_data(dataset_id, organization_id=None) -> Dict[str, p
             label_id,
             {
                 "name": s.label.name,
-                "type": s.label.type,           # original
-                "summary_type": summary_type,    # folded
+                "type": s.label.type,  # original
+                "summary_type": summary_type,  # folded
                 "settings": s.label.settings or {},
             },
         )
@@ -255,8 +263,12 @@ def _header_data(rows, label_meta) -> pd.DataFrame:
                 "label_name": meta["name"],
                 "type": summary_type,
                 "count_records": int(len(group)),
-                "sum_value": float(numeric_clean.sum()) if not numeric_clean.empty else None,
-                "avg_value": float(numeric_clean.mean()) if not numeric_clean.empty else None,
+                "sum_value": float(numeric_clean.sum())
+                if not numeric_clean.empty
+                else None,
+                "avg_value": float(numeric_clean.mean())
+                if not numeric_clean.empty
+                else None,
                 # Score doesn't track per-annotation time spent — leave NaN so
                 # the consumer's ``replace(0, nan).dropna()`` filter excludes
                 # it from ETA math.
@@ -274,7 +286,9 @@ def _header_data(rows, label_meta) -> pd.DataFrame:
                 # All Score rows are present-by-construction; legacy computed
                 # coverage at cell level which doesn't translate.
                 "label_coverage": 100.0,
-                "cat_label_counts": json.dumps(cat_counts) if cat_counts else json.dumps({}),
+                "cat_label_counts": json.dumps(cat_counts)
+                if cat_counts
+                else json.dumps({}),
                 "min_value": min_str,
                 "max_value": max_str,
             }
@@ -378,7 +392,9 @@ def _annotator_performance(rows, annotator_names) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=columns)
     grouped = df.groupby("user_id").size().reset_index(name="annotations")
-    grouped["name"] = grouped["user_id"].map(lambda u: annotator_names.get(u, "Unknown"))
+    grouped["name"] = grouped["user_id"].map(
+        lambda u: annotator_names.get(u, "Unknown")
+    )
     grouped["avg_time"] = float("nan")
     return grouped[columns]
 

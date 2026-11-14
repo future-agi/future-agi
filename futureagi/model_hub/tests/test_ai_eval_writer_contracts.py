@@ -17,9 +17,7 @@ def _patch_llm(content):
     """
     return patch(
         "agentic_eval.core.llm.llm.LLM",
-        return_value=MagicMock(
-            _get_completion_content=MagicMock(return_value=content)
-        ),
+        return_value=MagicMock(_get_completion_content=MagicMock(return_value=content)),
     )
 
 
@@ -121,7 +119,9 @@ class TestAIEvalWriterGeneration:
     def test_prompt_format_still_works(self, auth_client):
         # Regression guard for the pre-existing default format after adding the
         # new branch.
-        generated = "You are an expert evaluator. Check {{output}} against {{ground_truth}}."
+        generated = (
+            "You are an expert evaluator. Check {{output}} against {{ground_truth}}."
+        )
         with _patch_llm(generated):
             response = auth_client.post(
                 "/model-hub/ai-eval-writer/",

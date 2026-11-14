@@ -349,7 +349,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)

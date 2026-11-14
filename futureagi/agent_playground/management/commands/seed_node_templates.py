@@ -54,9 +54,7 @@ def seed_node_templates(
     created, updated = 0, 0
     for name, definition in templates.items():
         defaults = {k: v for k, v in definition.items() if k != "name"}
-        existing = node_template_model.objects.filter(
-            name=name, deleted=False
-        ).first()
+        existing = node_template_model.objects.filter(name=name, deleted=False).first()
 
         if existing:
             for field in PROTECTED_FIELDS:

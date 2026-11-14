@@ -39,8 +39,7 @@ def _make_active_snapshot(features: frozenset[str] | None = None) -> LicenseSnap
         customer_id="cus_test_001",
         issued_to="Test Corp",
         band="business",
-        features=features
-        or frozenset({"falcon_ai", "agentic_eval", "turing_models"}),
+        features=features or frozenset({"falcon_ai", "agentic_eval", "turing_models"}),
         limits={"traces_monthly": 1_000_000, "gateway_requests_monthly": 500_000},
         max_instances=3,
         issued_at=now - timedelta(days=180),

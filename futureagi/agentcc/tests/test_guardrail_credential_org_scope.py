@@ -63,9 +63,7 @@ def test_own_policy_credentials_are_injected(organization, policies, shape):
 
 
 @pytest.mark.parametrize("shape", ["rules", "checks-map", "checks-list"])
-def test_foreign_policy_credentials_are_never_decrypted(
-    organization, policies, shape
-):
+def test_foreign_policy_credentials_are_never_decrypted(organization, policies, shape):
     _, foreign = policies
     config = AgentccOrgConfig(
         organization=organization, guardrails=_guardrails(shape, foreign)

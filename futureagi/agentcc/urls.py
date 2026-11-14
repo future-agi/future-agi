@@ -33,7 +33,9 @@ from agentcc.views.webhook_outbound import (
 router = DefaultRouter()
 router.register(r"gateways", AgentccGatewayViewSet, basename="agentcc-gateway")
 router.register(r"api-keys", AgentccAPIKeyViewSet, basename="agentcc-api-key")
-router.register(r"request-logs", AgentccRequestLogViewSet, basename="agentcc-request-log")
+router.register(
+    r"request-logs", AgentccRequestLogViewSet, basename="agentcc-request-log"
+)
 router.register(r"analytics", AgentccAnalyticsViewSet, basename="agentcc-analytics")
 router.register(r"org-configs", AgentccOrgConfigViewSet, basename="agentcc-org-config")
 router.register(
@@ -43,7 +45,9 @@ router.register(
 )
 router.register(r"blocklists", AgentccBlocklistViewSet, basename="agentcc-blocklist")
 router.register(
-    r"guardrail-configs", AgentccGuardrailConfigViewSet, basename="agentcc-guardrail-config"
+    r"guardrail-configs",
+    AgentccGuardrailConfigViewSet,
+    basename="agentcc-guardrail-config",
 )
 router.register(
     r"guardrail-feedback",
@@ -63,7 +67,9 @@ router.register(
 router.register(
     r"routing-policies", AgentccRoutingPolicyViewSet, basename="agentcc-routing-policy"
 )
-router.register(r"email-alerts", AgentccEmailAlertViewSet, basename="agentcc-email-alert")
+router.register(
+    r"email-alerts", AgentccEmailAlertViewSet, basename="agentcc-email-alert"
+)
 router.register(
     r"shadow-experiments",
     AgentccShadowExperimentViewSet,

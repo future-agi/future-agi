@@ -24,6 +24,7 @@ from simulate.models.run_test import RunTest
 from simulate.models.simulation_phone_number import SimulationPhoneNumber
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+
 try:
     from ee.voice.services.phone_number_service import PhoneNumberService
 except ImportError:

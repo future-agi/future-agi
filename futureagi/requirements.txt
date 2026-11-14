@@ -202,8 +202,6 @@ docstring-parser==0.17.0
     # via anthropic
 drf-yasg==1.21.14
     # via core-backend
-ecdsa==0.19.1
-    # via python-jose
 elementpath==4.8.0
     # via xmlschema
 et-xmlfile==2.0.0
@@ -654,7 +652,6 @@ pyarrow==23.0.1
 pyasn1==0.6.1
     # via
     #   pyasn1-modules
-    #   python-jose
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
@@ -720,8 +717,6 @@ python-dotenv==1.2.1
     #   pydantic-settings
 python-ipware==3.0.0
     # via django-ipware
-python-jose==3.5.0
-    # via core-backend
 python-levenshtein==0.27.3
     # via core-backend
 python-multipart==0.0.32
@@ -789,9 +784,7 @@ rpds-py==0.30.0
     #   jsonschema
     #   referencing
 rsa==4.9.1
-    # via
-    #   google-auth
-    #   python-jose
+    # via google-auth
 s3transfer==0.16.0
     # via boto3
 scikit-learn==1.8.0
@@ -806,7 +799,6 @@ setuptools==80.9.0
     # via grpcio-tools
 six==1.17.0
     # via
-    #   ecdsa
     #   posthog
     #   python-dateutil
     #   rouge-score
