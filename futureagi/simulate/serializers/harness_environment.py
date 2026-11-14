@@ -1927,6 +1927,8 @@ class HarnessScenarioRestoreSerializer(serializers.Serializer):
 class HarnessScenarioLifecycleResponseSerializer(serializers.Serializer):
     scenario_key = serializers.CharField()
     lifecycle = serializers.DictField(allow_null=True)
+    # Restore only: true when the case was still in the saved suite and runs again at once.
+    live = serializers.BooleanField(required=False)
 
 
 class HarnessScenarioRevisionSerializer(serializers.Serializer):

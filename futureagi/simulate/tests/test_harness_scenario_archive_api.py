@@ -1,4 +1,5 @@
-"""Archive takes a case out of future runs and keeps its identity; restore brings it back as a draft."""
+"""Archive takes a case out of future runs at once, with no draft change, and keeps its identity; the next
+Save leaves it out. Restore brings a still-saved case back at once, or a saved-out one back as a draft."""
 
 import json
 from unittest.mock import patch
@@ -54,9 +55,30 @@ def _draft_keys(environment):
     return [one.scenario_key for one in rows or []]
 
 
-def test_archive_drops_the_key_from_the_draft_and_twice_is_refused(
-    user, workspace, storage, auth_client
-):
+def _draft_with_a_new_case(environment, user):
+    """A suite draft that adds one case, so a Save has something to save."""
+    files = drafts.edit_sides(environment)["suite"]
+    suite = drafts.suite_documents(files)
+    drafts.write_suite_edit(
+        environment,
+        [*suite, {**suite[0], "name": "brand_new", "scenario_key": "brand-new"}],
+        user=user,
+        restored_files=_copied_folder(files, suite[0], "brand_new"),
+    )
+
+
+def _saved_keys(environment):
+    from simulate.models import HarnessSuiteMember
+
+    environment.refresh_from_db()
+    return set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    )
+
+
+def test_archive_once_and_twice_is_refused(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ar-once")
     key = _key(NAMES[1])
 
@@ -65,7 +87,6 @@ def test_archive_drops_the_key_from_the_draft_and_twice_is_refused(
 
     assert first.status_code == 200, first.content
     assert first.json()["lifecycle"]["state"] == "archived"
-    assert key not in _draft_keys(environment)
     row = HostedHarnessScenario.no_workspace_objects.get(
         job=environment, scenario_key=key
     )
@@ -73,10 +94,66 @@ def test_archive_drops_the_key_from_the_draft_and_twice_is_refused(
     assert (second.status_code, second.json()["error"]) == (409, "scenario_archived")
 
 
+def test_archive_leaves_no_draft_change(user, workspace, storage, auth_client):
+    from simulate.services.harness_scenario_lifecycle import (
+        runnable,
+        scenario_lifecycle,
+    )
+
+    environment = _built(user, workspace, "ar-no-draft")
+    key = _key(NAMES[1])
+
+    response = _archive(auth_client, environment, key)
+
+    assert response.status_code == 200, response.content
+    assert _draft(environment) is None
+    assert not drafts.draft_rows(environment)
+    environment.refresh_from_db()
+    view = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+        keys=[key],
+    )[key]
+    # Selection holds an archived case back at once: it is still in the saved suite, archived.
+    assert view["state"] == "archived" and runnable(view) is False
+
+
+def test_save_drops_an_archived_member(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "ar-save-drops")
+    key = _key(NAMES[1])
+    _archive(auth_client, environment, key)
+    assert key in _saved_keys(environment)
+    _draft_with_a_new_case(environment, user)
+
+    _save(environment, user)
+
+    saved = _saved_keys(environment)
+    assert key not in saved and "brand-new" in saved
+
+
+def test_restore_of_a_live_member_reads_its_lifecycle(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "ar-restore-live")
+    key = _key(NAMES[1])
+    _archive(auth_client, environment, key)
+
+    restored = _restore(auth_client, environment, key)
+
+    assert restored.status_code == 200, restored.content
+    assert restored.json()["live"] is True
+    assert restored.json()["lifecycle"]["reason"] != "in_draft"
+    assert restored.json()["lifecycle"]["state"] != "archived"
+    assert _draft(environment) is None
+
+
 def test_restore_puts_the_same_key_back_in_draft(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ar-restore")
     key = _key(NAMES[1])
     _archive(auth_client, environment, key)
+    _draft_with_a_new_case(environment, user)
+    _save(environment, user)
 
     restored = _restore(auth_client, environment, key)
 
@@ -99,6 +176,7 @@ def test_a_new_scenario_with_an_archived_key_is_refused(
     environment = _built(user, workspace, "ar-key")
     key = _key(NAMES[1])
     _archive(auth_client, environment, key)
+    _draft_with_a_new_case(environment, user)
     _save(environment, user)
 
     with pytest.raises(HostedHarnessError) as refused:
@@ -114,17 +192,21 @@ def test_a_concurrent_suite_edit_is_draft_changed(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "ar-race")
+    key = _key(NAMES[1])
+    _archive(auth_client, environment, key)
+    _draft_with_a_new_case(environment, user)
+    _save(environment, user)
     refused = HostedHarnessError("draft_changed", "edited elsewhere", status_code=409)
 
     with patch.object(drafts, "write_suite_edit", side_effect=refused):
-        response = _archive(auth_client, environment, _key(NAMES[1]))
+        response = _restore(auth_client, environment, key)
 
     assert (response.status_code, response.json()["error"]) == (409, "draft_changed")
     assert (
         HostedHarnessScenario.no_workspace_objects.get(
-            job=environment, scenario_key=_key(NAMES[1])
+            job=environment, scenario_key=key
         ).archived_at
-        is None
+        is not None
     )
 
 

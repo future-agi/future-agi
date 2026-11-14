@@ -825,7 +825,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         url_path=r"scenarios/(?P<key>[^/]{1,255})/restore",
     )
     def restore_scenario(self, request, pk=None, key=None):
-        """Put an archived scenario back as a draft under its own key."""
+        """Bring an archived scenario back: at once when the saved suite still holds it, else as a draft."""
         from simulate.services.harness_scenario_actions import restore_scenario
 
         version_reads.require_versioning()

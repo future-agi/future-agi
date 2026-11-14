@@ -48,8 +48,9 @@ function ArchiveAction({ row, jobId, onDone }) {
 
   const run = async () => {
     try {
-      await archive.mutateAsync({ key, reason, restore: archived });
-      enqueueSnackbar(archived ? SCENARIOS_COPY.restored : SCENARIOS_COPY.archived, { variant: "success" });
+      const done = await archive.mutateAsync({ key, reason, restore: archived });
+      const restoredCopy = done?.live ? SCENARIOS_COPY.restoredLive : SCENARIOS_COPY.restored;
+      enqueueSnackbar(archived ? restoredCopy : SCENARIOS_COPY.archived, { variant: "success" });
       setConfirming(false);
       onDone?.();
     } catch (error) {
