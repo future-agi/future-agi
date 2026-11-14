@@ -1,0 +1,345 @@
+name: Low-risk PR autopilot
+# Binds each run to one PR; scripts/pr_risk.py trusts review evidence only from
+# a dispatch run on dev whose title names the same PR.
+# Quoted: an unquoted ' #' would start a YAML comment and cut the expression.
+run-name: "${{ github.event_name == 'pull_request_target' && format('PR autopilot #{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('PR autopilot #{0}', inputs.pr_number) || github.event_name == 'pull_request' && format('PR autopilot tests #{0}', github.event.pull_request.number) || 'PR autopilot sweep' }}"
+
+on:
+  # Since 8 Dec 2025 this event runs the default branch's (main's) copy of this
+  # workflow, whatever the PR's base, and never the PR's proposed copy. main's
+  # copy checks out dev's controller. It only classifies, labels and dispatches
+  # a run on dev: reviews, approvals and merges happen only in
+  # workflow_dispatch runs on dev. From 2 Dec 2026 GitHub blocks this event in
+  # public repositories unless an Actions event policy allows it for this file
+  # (docs/pr-autopilot.md); without it the sweep still classifies, more slowly.
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+  # Tests of proposed policy code run separately, without secrets or write rights.
+  # Every workflow file, not only this one: a test checks the post-merge
+  # dispatch list against every dev push workflow, and an exact list would
+  # miss a new one.
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/pr-autopilot.yml
+      - .github/workflows/**
+      - scripts/pr_risk.py
+      - scripts/test_pr_risk.py
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR into dev to re-evaluate (dispatch this workflow on dev)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Serialize every run for one PR, dispatch and pull_request_target alike, so
+# reservations and approvals never overlap. Cancellation must never reset the
+# review budget.
+concurrency:
+  group: pr-autopilot-${{ github.event_name == 'pull_request' && 'tests-' || '' }}${{ github.event.pull_request.number || inputs.pr_number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  policy-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Synthetic policy and merge-decision tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          # PyYAML lets the tests parse this workflow as GitHub does.
+          python3 -m pip install --disable-pip-version-check -q PyYAML==6.0.3
+          python3 scripts/test_pr_risk.py
+
+  prepare:
+    # Reruns must not reuse a reservation; dispatch a fresh evaluation instead.
+    if: github.event_name != 'pull_request' && vars.PR_AUTOPILOT == 'on' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+      # Posts the append-only reservation status (a check run can be renamed,
+      # a status cannot be edited or deleted) and reads legacy status evidence.
+      statuses: write
+      actions: write # schedule and pull_request_target -> workflow_dispatch on dev; no PR code runs here
+    outputs:
+      review: ${{ steps.policy.outputs.review }}
+      context: ${{ steps.policy.outputs.context }}
+      prompt: ${{ steps.policy.outputs.prompt }}
+      policy_sha: ${{ steps.checkout-sha.outputs.sha }}
+    steps:
+      - name: Check out only trusted controller and policy from dev
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: dev
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Record the trusted policy revision
+        id: checkout-sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Classify, check protection and reserve at most one review round
+        id: policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          # The sweep starts the follow-ups of a merge whose run ended before
+          # its merged record.
+          DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
+          POLICY_SHA: ${{ steps.checkout-sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py prepare
+      # Evidence for later runs that this run reserved a review: a record citing
+      # a run without this step was edited. The name is rendered from the policy
+      # step's plain output and must match RESERVED_STEP in scripts/pr_risk.py.
+      # always(): a reservation made before a later failure is still recorded.
+      - name: "Review reserved: ${{ steps.policy.outputs.reserved }}"
+        if: always() && steps.policy.outputs.reserved != ''
+        run: 'true'
+      # A reservation whose review never started: the policy step failed (a
+      # GitHub write after the ledger comment) before it emitted review=true.
+      # The AI job runs only when review is 'true' and the gate job only after
+      # prepare succeeded, so no verdict exists that this could re-roll and no
+      # second outcome can be written. The diff is retried after the branch
+      # changes instead of being barred. Must match OUTCOME_STEPS["retryable"].
+      - name: "Review retryable: ${{ steps.policy.outputs.reserved }}"
+        if: always() && steps.policy.outputs.reserved != '' && steps.policy.outputs.review != 'true'
+        run: 'true'
+
+  ai-review:
+    name: Diff-only AI review
+    needs: prepare
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' &&
+      needs.prepare.outputs.review == 'true' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The model never shares a runner or token with approval/merge steps.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      verdict: ${{ steps.claude.outputs.structured_output }}
+    steps:
+      - name: Reject partial workflow reruns before any AI invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+      - name: Check out the same trusted sparse revision, never the PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.policy_sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      # Explicit prompt selects agent mode, which does not check out the PR or
+      # load its context. Re-read at this commit: src/modes/detector.ts and
+      # src/modes/agent/index.ts. It installs Claude Code 2.1.322, which knows
+      # claude-opus-5-5. Its apt step runs only with allowed_non_write_users,
+      # which this job does not set, and its inline-comment post-step is
+      # turned off below.
+      - name: Review the supplied diff as data and return a structured verdict
+        id: claude
+        # Below the job limit, so a slow review fails this step (a retryable
+        # outcome) instead of timing out the whole job.
+        timeout-minutes: 12
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        # --tools= (not --tools ""): the action drops an empty quoted value and
+        # passes a bare --tools, which the CLI then fills with the next flag.
+        # The SDK itself writes --tools= for an empty tool list.
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: 'github-actions[bot]'
+          track_progress: 'false'
+          include_fix_links: 'false'
+          # Skips the action's "Post buffered inline comments" post-step, which
+          # otherwise runs under always() with the API key and the job token.
+          # Agent mode buffers no inline comments, so it has nothing to post.
+          classify_inline_comments: 'false'
+          display_report: 'false'
+          show_full_output: 'false'
+          prompt: ${{ needs.prepare.outputs.prompt }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 3
+            --tools=
+            --disallowedTools "mcp__*"
+            --disable-slash-commands
+            --strict-mcp-config
+            --mcp-config '{"mcpServers":{}}'
+            --json-schema '{"type":"object","additionalProperties":false,"properties":{"blocking_findings":{"type":"boolean"},"complete":{"type":"boolean"},"reasons":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"string","minLength":1,"maxLength":2000}},"head_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"base_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"}},"required":["blocking_findings","complete","reasons","head_sha","base_sha"]}'
+
+  review-gate-and-merge:
+    name: Publish the review gate
+    needs: [prepare, ai-review]
+    if: >-
+      always() && !cancelled() && github.run_attempt == '1' &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' &&
+      needs.prepare.result == 'success' && needs.prepare.outputs.context != ''
+    # No environment here: an environment that refuses or holds a job would
+    # stop the outcome markers below, and a diff with no outcome is barred.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+    # Plain strings, so the next job's condition never parses the context:
+    # outcome is empty for a reused pass, and reused is 'true' only then.
+    outputs:
+      outcome: ${{ steps.publish.outputs.outcome }}
+      reused: ${{ !fromJSON(needs.prepare.outputs.context).check_id }}
+    steps:
+      - name: Check out only the same trusted controller revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.policy_sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      # Publishes the head-bound PR Autopilot review check and writes the outcome
+      # (passed, blocked or retryable). It exits 0 whenever it published, so the
+      # marker step below records every verdict, not only passes.
+      - name: Publish the review verdict
+        id: publish
+        if: fromJSON(needs.prepare.outputs.context).check_id
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
+          PR_CONTEXT: ${{ needs.prepare.outputs.context }}
+          AI_VERDICT: ${{ needs.ai-review.outputs.verdict }}
+          AI_JOB_RESULT: ${{ needs.ai-review.result }}
+        # Model output is parsed as JSON from the environment, never shell code.
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py publish
+      # Outcome evidence for later runs. The names are rendered from the trusted
+      # prepare output and must match OUTCOME_STEPS in scripts/pr_risk.py; only
+      # the step for the published outcome runs. Step names in a finished run
+      # cannot be edited, unlike a check run's conclusion.
+      - name: "Review passed: head ${{ fromJSON(needs.prepare.outputs.context).head }} base ${{ fromJSON(needs.prepare.outputs.context).base }} patch ${{ fromJSON(needs.prepare.outputs.context).patch }}"
+        if: steps.publish.outputs.outcome == 'passed'
+        run: 'true'
+      - name: "Review blocked: head ${{ fromJSON(needs.prepare.outputs.context).head }} base ${{ fromJSON(needs.prepare.outputs.context).base }} patch ${{ fromJSON(needs.prepare.outputs.context).patch }}"
+        if: steps.publish.outputs.outcome == 'blocked'
+        run: 'true'
+      - name: "Review retryable: head ${{ fromJSON(needs.prepare.outputs.context).head }} base ${{ fromJSON(needs.prepare.outputs.context).base }} patch ${{ fromJSON(needs.prepare.outputs.context).patch }}"
+        if: steps.publish.outputs.outcome == 'retryable'
+        run: 'true'
+
+  approve-and-merge:
+    name: Recheck every gate, approve and merge
+    needs: [prepare, review-gate-and-merge]
+    # Only after a pass published in this run, or for a reused pass (no
+    # reservation in this run). always(): on a reused pass ai-review is
+    # skipped, and a skipped job earlier in the chain would skip this one.
+    if: >-
+      always() && !cancelled() && github.run_attempt == '1' &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' &&
+      needs.prepare.result == 'success' && needs.review-gate-and-merge.result == 'success' &&
+      (needs.review-gate-and-merge.outputs.outcome == 'passed' || needs.review-gate-and-merge.outputs.reused == 'true')
+    # Holds the approver App's client ID and private key. Its deployment branch
+    # rule allows only dev, so no copy of this workflow on another branch (and
+    # no pull_request_target run, which runs on main) can read the key. It must
+    # have no required reviewers or wait timer: they would hold this job and,
+    # through the PR's concurrency group, every later run for the PR. The
+    # verdict is recorded by the job above before this one starts.
+    environment: pr-autopilot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: read
+      statuses: read # legacy commit-status evidence is a separate permission
+      actions: write # explicit post-merge CI/dev frontend dispatches; push runs are suppressed
+    steps:
+      - name: Check out only the same trusted controller revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.policy_sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      # This token only posts the approval and, if the head moved while it was
+      # posted, withdraws it; comments, labels, the merge and dispatches use
+      # github.token. continue-on-error: if the key, variable or installation
+      # is missing, the next step still runs, finds no token and tells the PR,
+      # instead of the job failing with nothing posted.
+      - name: Mint the approver App token
+        id: approver
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOPILOT_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write
+      - name: Re-read every merge gate, then approve and merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVER_TOKEN: ${{ steps.approver.outputs.token }}
+          APPROVER_LOGIN: ${{ steps.approver.outputs.app-slug }}[bot]
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
+          PR_CONTEXT: ${{ needs.prepare.outputs.context }}
+          REVIEW_OUTCOME: ${{ needs.review-gate-and-merge.outputs.outcome }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py merge
