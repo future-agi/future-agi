@@ -94,6 +94,8 @@ _ARTIFACT_KINDS = {
     "recording_assistant",
     "transcript",
     "tool_trace",
+    # The world's records at a trial's end with its action log, kept so a fixed check can grade it again.
+    "world_state",
     "result",
     "build",
     "trace",
@@ -102,7 +104,15 @@ _ARTIFACT_KINDS = {
 }
 _ALLOWED_ARTIFACTS = {
     "metadata-only": {"build", "result", "log"},
-    "traces": {"build", "result", "log", "trace", "tool_trace", "transcript"},
+    "traces": {
+        "build",
+        "result",
+        "log",
+        "trace",
+        "tool_trace",
+        "transcript",
+        "world_state",
+    },
     "traces-and-recordings": _ARTIFACT_KINDS - {"other"},
     "full": _ARTIFACT_KINDS,
 }

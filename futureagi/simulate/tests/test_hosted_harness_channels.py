@@ -1902,6 +1902,38 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
 
 
 @pytest.mark.django_db
+def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="world-state-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = json.dumps(
+        {
+            "schema": "futureagi.world-state.v1",
+            "tables": {"orders": []},
+            "skipped": [],
+            "action_log": [],
+        }
+    ).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=MagicMock(),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="world_state",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund-1",
+            **_headers(capability),
+        )
+    assert response.status_code == 201, response.content
+
+
+@pytest.mark.django_db
 def test_artifact_budget_is_rechecked_after_concurrent_upload(organization, settings):
     settings.HARNESS_MAX_ARTIFACT_BYTES = 10
     payload = _payload(
