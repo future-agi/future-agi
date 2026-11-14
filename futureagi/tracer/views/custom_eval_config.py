@@ -28,7 +28,6 @@ from tracer.serializers.custom_eval_config import (
 )
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.eval import evaluate_observation_span
-from tracer.views.observation_span import _project_workspace_scope_q
 
 
 class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
@@ -286,6 +285,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
                 )
             )
+            from tracer.views.observation_span import _project_workspace_scope_q
+
             # Only the request's workspace, fresh or not. CustomEvalConfig has
             # no workspace of its own, so its manager adds no workspace
             # filter and the organization alone spans sibling workspaces.
