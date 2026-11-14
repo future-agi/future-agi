@@ -802,6 +802,10 @@ class MetricProjectRefresh(models.Model):
     last_error_at = models.DateTimeField(null=True, blank=True)
     last_error_code = models.CharField(max_length=64, blank=True, default="")
     consecutive_failures = models.PositiveIntegerField(default=0)
+    # Capture statements this project's next pass may plan, learned when a
+    # pass stops at its soft budget (half of what it managed). NULL means the
+    # configured METRICS_PASS_MAX_CAPTURES; a fast pass doubles it back.
+    pass_capture_budget = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
 

@@ -69,6 +69,8 @@ DISPATCH_SECONDS = 60
 RUN_NOW_THROTTLE = timedelta(seconds=60)
 # Retry policy, not throughput/cadence qualification. Cursors never move here.
 BACKOFF_BASE_SECONDS = 60
+# One pass's budget: the activity's 600 s timeout less a minute to unwind.
+PASS_SECONDS = 540
 BACKOFF_MAX_SECONDS = 900
 _LOCK_NAMESPACE = 0x4D455452
 _DISPATCH_LOCK = -1
@@ -565,7 +567,9 @@ def execute_reservation(
     reservation = Reservation.from_payload(payload)
     # The activity timeout cannot kill a synchronous Python thread. Leave a
     # full minute for unwinding transports/locks before its 600-second timeout.
-    lease = ProjectLease(reservation.grant, clock=clock, deadline=monotonic() + 540)
+    lease = ProjectLease(
+        reservation.grant, clock=clock, deadline=monotonic() + PASS_SECONDS
+    )
     if not metrics_enabled(project=lease.project_id):
         _release_queued(reservation)
         return False
@@ -595,6 +599,7 @@ def execute_reservation(
             previous_head = MetricProjectRefresh.objects.values_list(
                 "head_manifest_id", flat=True
             ).get(project_id=lease.project_id)
+            started = lease.ticker()
             if reservation.expiry_id:
                 run_project_cleanup(lease, reservation.expiry_id)
             else:
@@ -609,6 +614,18 @@ def execute_reservation(
                     and state.refresh_requested_at == reservation.requested_at
                 ):
                     updates["refresh_requested_at"] = None
+                # A pass that finished in under a quarter of its budget earns
+                # back capture budget lost to an earlier yield.
+                learned = state.pass_capture_budget
+                if learned is not None and lease.ticker() - started < PASS_SECONDS / 4:
+                    from tracer.services.derived_metrics.refresh import (
+                        pass_max_captures,
+                    )
+
+                    grown = learned * 2
+                    updates["pass_capture_budget"] = (
+                        None if grown >= pass_max_captures() else grown
+                    )
                 MetricProjectRefresh.objects.filter(pk=state.pk).update(**updates)
             return True
         except MetricPassDeadline:
@@ -841,6 +858,19 @@ def run_incremental(writer, analytics, scope, state) -> None:
             skip_incremental=True
         )
         return
+    # A window more than one pass can capture is paged through the durable
+    # burst sweep instead (bug 6: one BIG pass planned 107 captures, ran past
+    # its lease and published nothing, and the next pass repeated it).
+    allowance = backfill.pass_unit_allowance(definitions, state)
+    discovered = sum(1 for unit in batch.units if unit.level == "conversation")
+    if allowance is not None and discovered > allowance:
+        backfill.queue_overflow_sweep(
+            analytics, writer, state.head_manifest, definitions, now=now
+        )
+        backfill.BackfillRunner(writer, analytics, scope).run_repair_pages(
+            skip_incremental=True
+        )
+        return
     # Read the committed queue, not physical stale nominations. The existing
     # writer recomputes source arrival and uses the committed arrival as a floor.
     # No lower time bound: a long scheduler outage never drops overdue units.
@@ -854,6 +884,10 @@ def run_incremental(writer, analytics, scope, state) -> None:
         f"SELECT level, unit_id FROM ({sql}) WHERE is_deleted = 0 AND due_at <= %(due_now)s ORDER BY due_at, level, unit_id LIMIT 1000",
         {**params, "due_now": now},
     )
+    if allowance is not None:
+        # Oldest due first, inside what is left of the pass's capture budget;
+        # the rest stay due for the next pass.
+        due = due[: max(0, allowance - discovered)]
     batch = replace(
         batch,
         units=tuple(sorted(set(batch.units) | {changes.UnitKey(*row) for row in due})),

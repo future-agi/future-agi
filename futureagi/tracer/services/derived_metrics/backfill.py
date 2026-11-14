@@ -1257,6 +1257,25 @@ def version_coverage_page(
     )
 
 
+def pass_unit_allowance(definitions, state):
+    """Conversation units one pass may capture inside its capture budget.
+
+    None when no definition captures conversations. Always at least one
+    500-unit batch, so a pass makes progress however many fields there are.
+    """
+    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+    from tracer.services.derived_metrics.refresh import capture_budget
+
+    fields = sum(1 for d in definitions if getattr(d, "level", "") != "span")
+    if not fields:
+        return None
+    return max(1, capture_budget(state) // fields) * MAX_BATCH_ROWS
+
+
+def _conversation_units(batch):
+    return sum(1 for unit in batch.units if unit.level == "conversation")
+
+
 def merge_changes(*batches):
     """Discovery is conservative; include old AND new memberships from each path."""
     return changes.ChangeBatch(
@@ -2033,28 +2052,38 @@ class BackfillRunner:
                 queue_overflow_sweep(self.analytics, writer, head, definitions, now=now)
                 state = MetricProjectRefresh.for_project(writer.lease.project_id)
                 skip_incremental = True
-        page = changes.reconcile_page(
-            self.analytics,
-            org_id=writer.org_id,
-            project_id=writer.lease.project_id,
-            committed_attempts=committed,
-            now=now,
-            checkpoint=_retained_repair_checkpoint(
-                changes.ReconciliationCheckpoint.from_dict(state.reconciliation_cursor)
-                if state.reconciliation_cursor
-                else None,
-                cutoff=max(v for v in (cutoff, floor) if v is not None)
-                if cutoff or floor
-                else None,
-            ),
-            # A burst page is sized by METRICS_BURST_PAGE_KEYS unless the
-            # runner was given a smaller page explicitly.
-            page_size=burst_page_keys()
+        # A burst page is sized by METRICS_BURST_PAGE_KEYS unless the runner
+        # was given a smaller page explicitly.
+        page_size = (
+            burst_page_keys()
             if self.page_size == PAGE_SIZE
             and (state.reconciliation_cursor or {}).get("floor")
-            else self.page_size,
-            floor=floor,
+            else self.page_size
         )
+        allowance = pass_unit_allowance(definitions, state)
+
+        def plan(size):
+            return changes.reconcile_page(
+                self.analytics,
+                org_id=writer.org_id,
+                project_id=writer.lease.project_id,
+                committed_attempts=committed,
+                now=now,
+                checkpoint=_retained_repair_checkpoint(
+                    changes.ReconciliationCheckpoint.from_dict(
+                        state.reconciliation_cursor
+                    )
+                    if state.reconciliation_cursor
+                    else None,
+                    cutoff=max(v for v in (cutoff, floor) if v is not None)
+                    if cutoff or floor
+                    else None,
+                ),
+                page_size=size,
+                floor=floor,
+            )
+
+        page = plan(page_size)
         if not discovered:
             try:
                 incremental = incremental_changes(
@@ -2063,6 +2092,20 @@ class BackfillRunner:
             except changes.arrivals.ContinuousCandidateOverflow:
                 skip_incremental = True
         batch = merge_changes(page.changes, incremental)
+        # Bound the page to what one pass can capture (bug 6: a pass over its
+        # lease published nothing and the next pass repeated it). Arrivals
+        # discovered here are left for a later pass first, then the page
+        # halves; a one-key page always runs.
+        while allowance is not None and _conversation_units(batch) > allowance:
+            if incremental.units or incremental.source_keys:
+                incremental = changes.ChangeBatch((), (), (), (), (), {})
+                skip_incremental = True
+            elif page_size > 1:
+                page_size = max(1, page_size // 2)
+                page = plan(page_size)
+            else:
+                break
+            batch = merge_changes(page.changes, incremental)
         if batch.cursor_updates.get("reconciliation_cursor") is not None:
             # Date the private keyset, so expiry drops it only once its own
             # source ages out. Policy metadata is nonidentifying audit context.

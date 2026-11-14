@@ -291,6 +291,131 @@ def test_forward_span_version_computes_only_spans_from_coverage_start(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("enabled_metrics")
+def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_open(
+    live_writer, workspace, observe_project, settings, monkeypatch
+):
+    """10M bug 6: a BIG pass planned 107 captures (~3.5 s each), ran past its
+    540 s lease and published nothing; the next pass repeated the same work.
+
+    1,600 conversations, a capture budget of 2 and a fake clock on which each
+    capture takes 150 s: the arrivals are paged through the burst sweep, a pass
+    that runs late stops cleanly 200 s before its deadline (attempt aborted,
+    its ledger carried), no pass ever ends with an open attempt, the head
+    advances, and every conversation ends with its true value.
+    """
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics import refresh
+    from tracer.services.derived_metrics.lease import MetricPassDeadline
+
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    writer.store.execute(
+        "ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''"
+    )
+    definition = definition_for(writer, workspace, observe_project)
+    hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    enrolled = hour - timedelta(hours=3)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
+    at = enrolled + timedelta(hours=1)
+    truth = {}
+    rows = []
+    for index in range(1_600):
+        session = uuid4()
+        truth[str(session)] = float(index % 7)
+        start = at + timedelta(seconds=index)
+        rows.append(
+            (
+                f"span-{index}",
+                str(uuid4()),
+                observe_project.id,
+                workspace.organization_id,
+                session,
+                start,
+                start + timedelta(seconds=1),
+                start,
+                start,
+                changes.ns(start),
+                0,
+                {"resolved": float(index % 7)},
+                {"region": "west"},
+            )
+        )
+    writer.store.client.execute(
+        "INSERT INTO spans (id, trace_id, project_id, org_id, trace_session_id, "
+        "start_time, end_time, created_at, updated_at, _version, is_deleted, "
+        "attrs_number, attrs_string) VALUES",
+        rows,
+    )
+    settings.METRICS_BACKFILL_MAX_SPANS = 2
+    settings.METRICS_PASS_MAX_CAPTURES = 2
+    analytics = Analytics(writer.store.client)
+    assert backfill.enter_backfill(
+        writer.lease, analytics, retention_days=lambda: 0
+    ) == {str(definition.id): "forward"}
+    clock = [0.0]
+    writer.lease.ticker = lambda: clock[0]
+    capture = refresh.capture_source_output
+
+    def slow_capture(*args, **kwargs):
+        clock[0] += 150
+        return capture(*args, **kwargs)
+
+    monkeypatch.setattr(refresh, "capture_source_output", slow_capture)
+    heads, yields = [], 0
+    for _ in range(14):
+        # One pass: a fresh writer counter and a 540 s budget on the fake clock.
+        writer.pass_captures = 0
+        writer.lease.deadline = clock[0] + 540
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        try:
+            if state.pending_repair:
+                backfill.BackfillRunner(writer, analytics, scope).run_repair_pages()
+            else:
+                admission.run_incremental(writer, analytics, scope, state)
+        except MetricPassDeadline as stop:
+            assert isinstance(stop, refresh.MetricPassYield)
+            yields += 1
+        # Every pass ends with its own attempt published or aborted.
+        assert not MetricRefreshAttempt.objects.filter(
+            project_id=observe_project.id,
+            state__in=MetricRefreshAttempt.OPEN_STATES,
+        ).exists()
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        heads.append(state.head_manifest_id)
+        if state.head_manifest_id and len(
+            _version_fields(writer, state.head_manifest, definition)
+        ) == len(truth):
+            break
+    else:
+        pytest.fail(f"never completed: {len(set(heads))} heads, {yields} yields")
+    assert yields >= 1  # the budget was really exceeded and the pass stopped
+    assert len({h for h in heads if h}) >= 2  # progress over several passes
+    assert dict(_version_fields(writer, state.head_manifest, definition)) == truth
+    # A yield's ledger is carried by the next pass, exactly once: one more pass
+    # (now fast) takes any still waiting, and the values stay true.
+    monkeypatch.setattr(refresh, "capture_source_output", capture)
+    writer.pass_captures = 0
+    writer.lease.deadline = clock[0] + 540
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    if state.pending_repair:
+        backfill.BackfillRunner(writer, analytics, scope).run_repair_pages()
+    else:
+        admission.run_incremental(writer, analytics, scope, state)
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=observe_project.id, abort_reason=refresh.PASS_YIELD
+    ).exists()
+    assert (
+        MetricRefreshAttempt.objects.filter(
+            project_id=observe_project.id, abort_reason=refresh.PASS_YIELD_CARRIED
+        ).count()
+        == yields
+    )
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert dict(_version_fields(writer, state.head_manifest, definition)) == truth
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("enabled_metrics")
 def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
     live_writer, workspace, observe_project, settings
 ):

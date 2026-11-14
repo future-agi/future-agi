@@ -808,6 +808,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
 # larger projects start with no history and fill forward from enrollment.
 # METRICS_MAX_DELTAS_BEFORE_COMPACTION is how many deltas a project's committed
 # head carries before its next pass compacts it (the chain's limit is 20).
+# METRICS_PASS_MAX_CAPTURES bounds the capture statements one pass plans (a
+# larger arrival window goes to the paged burst sweep); a pass stops cleanly
+# METRICS_PASS_SOFT_MARGIN_SECONDS before its deadline.
 # METRICS_BURST_* bound one pass of a forward-only burst sweep: its wall budget,
 # its page count and the source keys per page.
 METRICS_FEATURE_SETTING_SPECS = _specs(
@@ -815,6 +818,8 @@ METRICS_FEATURE_SETTING_SPECS = _specs(
         ("METRICS_ENABLED", 0, 0, 1),
         ("METRICS_BACKFILL_MAX_SPANS", 150_000, 1, 10_000_000),
         ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", 19, 1, 19),
+        ("METRICS_PASS_MAX_CAPTURES", 48, 1, 10_000),
+        ("METRICS_PASS_SOFT_MARGIN_SECONDS", 200, 30, 500),
         ("METRICS_BURST_PASS_SECONDS", 20, 1, 300),
         ("METRICS_BURST_MAX_PAGES", 19, 1, 200),
         ("METRICS_BURST_PAGE_KEYS", 5_000, 1, 10_000),

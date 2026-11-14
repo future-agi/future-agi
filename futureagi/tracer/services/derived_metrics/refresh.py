@@ -54,6 +54,7 @@ from tracer.services.derived_metrics.deletion_protocol import (
     collect_history,
     serialized_project,
 )
+from tracer.services.derived_metrics.lease import MetricPassYield
 from tracer.services.derived_metrics.publication import (
     MAX_BATCH_ROWS,
     MAX_COMPACTION_ROWS,
@@ -85,11 +86,59 @@ from tracer.services.derived_metrics.unit_reads import (
 )
 
 MAX_PASS_UNITS = 50_000
+# A pass that stops at its soft budget aborts its attempt with this reason;
+# the next pass carries its ledger and marks it carried (abort_stale).
+PASS_YIELD = "pass_yield"
+PASS_YIELD_CARRIED = "pass_yield_carried"
+DEFAULT_PASS_MAX_CAPTURES = 48
+DEFAULT_PASS_SOFT_MARGIN_SECONDS = 200
 # A head carries at most this many deltas: a pass compacts once it reaches it,
 # before beginning its own attempt, so that attempt publishes at most this many.
 # Every delta publication passes that trigger (retention and erasure publish
 # checkpoints), so 19 keeps one spare under MAX_MANIFEST_DELTAS.
 DEFAULT_DELTAS_BEFORE_COMPACTION = 19
+
+
+def pass_max_captures():
+    """Most capture statements a pass plans (METRICS_PASS_MAX_CAPTURES).
+
+    10M: one capture took about 3.5 s, so 48 is about 170 s of a 540 s pass.
+    A project that yields lowers its own budget below this (pass_capture_budget).
+    """
+    value = getattr(settings, "METRICS_PASS_MAX_CAPTURES", DEFAULT_PASS_MAX_CAPTURES)
+    if type(value) is not int or not 1 <= value <= 10_000:
+        raise ImproperlyConfigured(
+            "METRICS_PASS_MAX_CAPTURES must be an integer from 1 to 10000"
+        )
+    return value
+
+
+def pass_soft_margin_seconds():
+    """Seconds before the pass deadline at which a pass stops cleanly."""
+    value = getattr(
+        settings, "METRICS_PASS_SOFT_MARGIN_SECONDS", DEFAULT_PASS_SOFT_MARGIN_SECONDS
+    )
+    if type(value) is not int or not 30 <= value <= 500:
+        raise ImproperlyConfigured(
+            "METRICS_PASS_SOFT_MARGIN_SECONDS must be an integer from 30 to 500"
+        )
+    return value
+
+
+def capture_budget(state):
+    """Capture statements this project's next pass may plan."""
+    configured = pass_max_captures()
+    learned = getattr(state, "pass_capture_budget", None)
+    return configured if learned is None else min(configured, learned)
+
+
+def estimated_captures(definitions, unit_count):
+    """Capture statements a pass over ``unit_count`` conversations runs.
+
+    One per conversation-backed definition per 500-unit batch.
+    """
+    fields = sum(1 for d in definitions if getattr(d, "level", "") != "span")
+    return fields * -(-unit_count // MAX_BATCH_ROWS)
 
 
 def deltas_before_compaction():
@@ -959,6 +1008,26 @@ class RefreshWriter:
         if head and head.published_by.source_ceilings.get("recovery_pending"):
             for chunk in head.published_by.ledger_chunks.exclude(part="cleanup_intent"):
                 entries[chunk.part].extend(chunk.payload)
+        # A pass that stopped at its soft budget aborted its own attempt
+        # (yield_if_late): carry its ledger, which already holds every earlier
+        # handoff, exactly as for an open one. Marked carried with the
+        # successor's ledger, in the caller's transaction, so it is taken once.
+        yielded = list(
+            MetricRefreshAttempt.objects.filter(
+                project_id=self.lease.project_id,
+                state=MetricRefreshAttempt.State.ABORTED,
+                abort_reason=PASS_YIELD,
+                fencing_epoch__lte=self.lease.grant.fencing_epoch,
+            ).values_list("id", flat=True)
+        )
+        for chunk in MetricAttemptLedgerChunk.objects.filter(
+            attempt_id__in=yielded
+        ).order_by("attempt__generation", "part", "chunk_no"):
+            if chunk.part != "cleanup_intent":
+                entries[chunk.part].extend(chunk.payload)
+        self.carried_yields = yielded
+        if abort:
+            self.mark_yields_carried()
         for attempt in MetricRefreshAttempt.objects.filter(
             project_id=self.lease.project_id,
             state__in=MetricRefreshAttempt.OPEN_STATES,
@@ -973,6 +1042,34 @@ class RefreshWriter:
                     attempt.id, reason="lease_takeover", **self.lease.check()
                 )
         return entries
+
+    def mark_yields_carried(self):
+        """Record that the yielded attempts abort_stale returned were carried."""
+        MetricRefreshAttempt.objects.filter(
+            id__in=getattr(self, "carried_yields", ()), abort_reason=PASS_YIELD
+        ).update(abort_reason=PASS_YIELD_CARRIED)
+        self.carried_yields = []
+
+    def yield_if_late(self, attempt):
+        """Stop the pass cleanly while its lease is still valid.
+
+        Called before each capture statement. With less than the soft margin
+        left before the pass deadline, the attempt is aborted (its ledger is
+        carried to the next pass by abort_stale), the project's capture budget
+        drops to half of what this pass managed, and MetricPassYield ends the
+        pass. Never a takeover of an open attempt, never a partial publication.
+        """
+        left = self.lease.budget_seconds()
+        if left is None or left >= pass_soft_margin_seconds():
+            return
+        done = getattr(self, "pass_captures", 0)
+        with transaction.atomic():
+            fence = self.lease.check()
+            MetricRefreshAttempt.abort(attempt.id, reason=PASS_YIELD, **fence)
+            MetricProjectRefresh.objects.filter(
+                MetricProjectRefresh.lease_q(**fence), project_id=self.lease.project_id
+            ).update(pass_capture_budget=max(1, done // 2))
+        raise MetricPassYield()
 
     def _publish_compaction(self, attempt, *, deadline):
         # Preserve stage_and_publish's replay/interleaving API. Scope the total
@@ -1611,6 +1708,7 @@ class RefreshWriter:
                         source_identities=source_relation,
                         start_floor=floors[candidates],
                     )
+                    self.yield_if_late(attempt)
                     captured = capture_source_output(
                         self.store,
                         query,
@@ -1619,6 +1717,7 @@ class RefreshWriter:
                         field_version=definition.version,
                         candidate_count=len(candidates),
                     )
+                    self.pass_captures = getattr(self, "pass_captures", 0) + 1
                     for source_page in captured.pages():
                         query, params = source_page.select()
                         old_sql, old_params = committed_rows_select(

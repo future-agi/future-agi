@@ -20,17 +20,32 @@ class MetricPassDeadline(BaseException):
     """
 
 
+class MetricPassYield(MetricPassDeadline):
+    """A pass stopped at its soft budget, with its attempt already aborted.
+
+    Raised while the lease is still valid (RefreshWriter.yield_if_late): the
+    attempt's ledger is carried to the next pass, never left open for a
+    takeover, and nothing partial is published.
+    """
+
+
 class ProjectLease:
-    def __init__(self, grant, *, clock=timezone.now, deadline=None):
+    def __init__(self, grant, *, clock=timezone.now, deadline=None, ticker=monotonic):
         self.grant = grant
         self.clock = clock
         self.expires_at = grant.expires_at
         self.deadline = deadline
+        # The monotonic clock ``deadline`` is on (a fake in tests).
+        self.ticker = ticker
+
+    def budget_seconds(self):
+        """Seconds left before the pass deadline, or None without one."""
+        return None if self.deadline is None else self.deadline - self.ticker()
 
     def remaining_seconds(self):
         remaining = (self.expires_at - self.clock()).total_seconds()
         if self.deadline is not None:
-            budget = self.deadline - monotonic()
+            budget = self.deadline - self.ticker()
             if budget <= 0:
                 raise MetricPassDeadline()
             remaining = min(remaining, budget)
@@ -61,7 +76,7 @@ class ProjectLease:
     def renew(self, ttl=DEFAULT_LEASE_TTL):
         self.remaining_seconds()
         if self.deadline is not None:
-            ttl = min(ttl, timedelta(seconds=self.deadline - monotonic()))
+            ttl = min(ttl, timedelta(seconds=self.deadline - self.ticker()))
             if ttl <= timedelta(0):
                 raise MetricPassDeadline()
         self.expires_at = MetricProjectRefresh.renew_lease(

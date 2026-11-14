@@ -1447,6 +1447,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             MetricRefreshAttempt.abort(
                 predecessor, reason="retention_replan", **writer.lease.check()
             )
+        # Yielded passes' ledgers are in this checkpoint's handoff too.
+        writer.mark_yields_carried()
     if span_definitions:
         writer.freeze(
             attempt,
