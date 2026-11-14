@@ -8,6 +8,8 @@ import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { genderLabel } from "./personaLabels";
 import { SCENARIOS_COPY } from "./scenarios.constants";
 import { useScenarioRevisions } from "src/api/harness/scenarios";
+import { useDrafts, useSaveDrafts } from "src/api/simulate-environments/versions";
+import { draftSaveRequests } from "../drafts/draftSave";
 import SourceCompareDialog from "./SourceCompareDialog";
 
 // A scenario, in full — the expanded body of a list-view row.
@@ -310,6 +312,9 @@ export function LifecycleSections({ row, jobId }) {
               )}
             </Stack>
           )}
+          {lifecycle.state === "validated" && jobId && (
+            <ActivateButton jobId={jobId} />
+          )}
           {comparing && (
             <SourceCompareDialog
               open
@@ -382,6 +387,31 @@ LifecycleSections.propTypes = {
   row: PropTypes.object,
   jobId: PropTypes.string,
 };
+
+// Activate is the Save of the unsaved versions this Validated case was proved on: saving them makes
+// its cases Active. It starts no run.
+function ActivateButton({ jobId }) {
+  const { data: drafts } = useDrafts(jobId);
+  const save = useSaveDrafts(jobId);
+  const nothing = !drafts?.any;
+  return (
+    <Stack spacing={0.25} alignItems="flex-start" data-testid="lifecycle-activate">
+      <Button
+        size="small"
+        variant="contained"
+        disabled={nothing || save.isPending}
+        onClick={() => save.mutate(draftSaveRequests(drafts))}
+      >
+        {SCENARIOS_COPY.activate}
+      </Button>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        {nothing ? SCENARIOS_COPY.activateNothing : SCENARIOS_COPY.activateHint}
+      </Typography>
+    </Stack>
+  );
+}
+
+ActivateButton.propTypes = { jobId: PropTypes.string.isRequired };
 
 function Revisions({ jobId, scenarioKey }) {
   const { data } = useScenarioRevisions(jobId, scenarioKey);

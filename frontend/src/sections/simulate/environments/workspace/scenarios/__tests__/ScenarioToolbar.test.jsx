@@ -52,3 +52,43 @@ describe("ScenarioToolbar — lifecycle filter", () => {
     expect(onLifecycleFilterChange).toHaveBeenCalledWith("source_changed");
   });
 });
+
+describe("ScenarioToolbar — versions in view", () => {
+  it("offers the saved pair and each candidate pair, and hands back the one picked", async () => {
+    const { versionPairs } = await import("../scenarios.constants");
+    const pairs = versionPairs({
+      empty: false,
+      suite: [
+        { id: "s1", label: "v1", status: "active", isDefault: true },
+        { id: "s2", label: "v2", status: "candidate", isDefault: false },
+      ],
+      environment: [
+        { id: "e1", label: "v1", status: "active", isDefault: true },
+        { id: "e2", label: "v2", status: "candidate", isDefault: false },
+      ],
+      defaults: {
+        suite: { id: "s1", label: "v1", status: "active", isDefault: true },
+        environment: { id: "e1", label: "v1", status: "active", isDefault: true },
+      },
+    });
+    expect(pairs[0]).toMatchObject({
+      value: "s2:e2",
+      suiteVersionId: "s2",
+      environmentVersionId: "e2",
+      label: "Suite v2 on environment v2 (candidate)",
+    });
+    const onVersionPairChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ScenarioToolbar {...props} versionPairs={pairs} versionPair="" onVersionPairChange={onVersionPairChange} />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Versions" }));
+    await user.click(screen.getByRole("option", { name: "Suite v2 on environment v2 (candidate)" }));
+    expect(onVersionPairChange).toHaveBeenCalledWith("s2:e2");
+  });
+
+  it("shows no versions select when the environment has only its saved pair", () => {
+    render(<ScenarioToolbar {...props} versionPairs={[]} onVersionPairChange={vi.fn()} />);
+    expect(screen.queryByTestId("versions-select")).toBeNull();
+  });
+});
