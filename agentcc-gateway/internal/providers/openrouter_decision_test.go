@@ -49,7 +49,7 @@ func TestNewOpenRouterDecisionProviderEndpoint(t *testing.T) {
 		if sp.Dialect().Name != "openrouter" || sp.Endpoint() != want {
 			t.Errorf("%q: dialect %q posting to %q, want openrouter posting to %q", base, sp.Dialect().Name, sp.Endpoint(), want)
 		}
-		p.Close()
+		_ = p.Close()
 	}
 }
 

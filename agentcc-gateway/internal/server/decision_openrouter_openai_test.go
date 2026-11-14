@@ -39,7 +39,7 @@ func openRouterChatGateway(t *testing.T, authOff bool) *decisionGateway {
 		}}},
 	})
 	g.upstream.setReply(func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, openRouterJevAnswer)
+		_, _ = io.WriteString(w, openRouterJevAnswer)
 	})
 	return g
 }
