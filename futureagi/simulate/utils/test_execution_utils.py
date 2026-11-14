@@ -89,6 +89,8 @@ class TestExecutionUtils:
             return queryset
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            if op in ("is_null", "is_not_null"):
+                return queryset.filter(**{f"{field}__isnull": op == "is_null"})
             values = as_list(value)
             if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
@@ -120,8 +122,6 @@ class TestExecutionUtils:
         def apply_number_any_field_filter(
             queryset, fields, op, value, transform=lambda v: v
         ):
-            values = as_list(value)
-
             def q_for(field, lookup, val):
                 key = field if lookup is None else f"{field}__{lookup}"
                 return models.Q(**{key: val})
@@ -132,6 +132,15 @@ class TestExecutionUtils:
                     condition |= q_for(field, lookup, val)
                 return condition
 
+            if op == "is_null":
+                # A value in either cost field makes the column non-null.
+                return queryset.filter(
+                    **{f"{field}__isnull": True for field in fields}
+                )
+            if op == "is_not_null":
+                return queryset.filter(any_field_q("isnull", False))
+
+            values = as_list(value)
             if op == "equals":
                 return queryset.filter(any_field_q(None, transform(values[0])))
             if op == "not_equals":
@@ -422,6 +431,11 @@ class TestExecutionUtils:
                 elif column_id in ["responseTime", "response_time"]:
                     # Filter by response time (convert to milliseconds for database comparison)
                     if filter_type == "number":
+                        if filter_op in ("is_null", "is_not_null"):
+                            call_executions = call_executions.filter(
+                                response_time_ms__isnull=filter_op == "is_null"
+                            )
+                            continue
                         filter_value = float(filter_value)
                         # Convert seconds to milliseconds for database comparison
                         filter_value_ms = filter_value * 1000
