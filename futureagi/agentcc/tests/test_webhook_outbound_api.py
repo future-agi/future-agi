@@ -83,6 +83,50 @@ class TestAgentccWebhookCRUD:
         webhook.refresh_from_db()
         assert webhook.description == "now with a description"
 
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"url": "https://example.com/fixed"},
+            {"secret": "a-new-secret"},
+            {"headers": {"X-Fixed": "1"}},
+        ],
+    )
+    def test_fixing_the_receiver_ends_the_failure_pause(
+        self, auth_client, user, change
+    ):
+        """Round 3: a new url, secret or headers ends the pause a failing
+        run set, so the fixed webhook is delivered at the next tick."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        webhook = _make_webhook(
+            user,
+            name="paused",
+            consecutive_failures=2,
+            next_delivery_at=timezone.now() + timedelta(minutes=4),
+        )
+        response = auth_client.patch(
+            f"/agentcc/webhooks/{webhook.id}/", change, format="json"
+        )
+        assert response.status_code == 200
+        webhook.refresh_from_db()
+        assert webhook.next_delivery_at is None
+
+    def test_a_description_edit_keeps_the_failure_pause(self, auth_client, user):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        until = timezone.now() + timedelta(minutes=4)
+        webhook = _make_webhook(user, name="kept", next_delivery_at=until)
+        response = auth_client.patch(
+            f"/agentcc/webhooks/{webhook.id}/", {"description": "x"}, format="json"
+        )
+        assert response.status_code == 200
+        webhook.refresh_from_db()
+        assert webhook.next_delivery_at == until
+
     def test_destroy_soft_deletes_webhook(self, auth_client, user):
         webhook = _make_webhook(user, name="to-delete")
         response = auth_client.delete(f"/agentcc/webhooks/{webhook.id}/")
