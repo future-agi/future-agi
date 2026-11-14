@@ -8,7 +8,7 @@ import { formatBytes } from "src/sections/skills/utils/format";
 const STATUS = {
   new: { status: "pending", label: "New" },
   changed: { status: "warning", label: "Changed" },
-  unchanged: { status: "success", label: "Up to date" },
+  unchanged: { status: "up_to_date", label: "Up to date" },
   invalid: { status: "failed", label: "Invalid" },
 };
 
