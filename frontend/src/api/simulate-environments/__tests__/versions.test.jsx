@@ -33,6 +33,8 @@ const {
   useStopNudge,
   useDrafts,
   useSaveDrafts,
+  useSaveCandidates,
+  useValidateDrafts,
   useDiscardDraft,
   useEditActor,
   actorsKey,
@@ -1543,5 +1545,75 @@ describe("useEditActor", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     await edit({ op: "replace", actor: {}, actorId: "manager", revision: 3 });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("validate before save requests", () => {
+  beforeEach(() => {
+    keyCount = 0;
+    axios.post.mockReset();
+    axios.post.mockResolvedValue({ data: {} });
+  });
+
+  it("validates the reviewed revisions with the digest seen", async () => {
+    const { result } = renderHook(() => useValidateDrafts("env-1"), {
+      wrapper,
+    });
+
+    await act(() =>
+      result.current.mutateAsync({
+        expectedRevisions: { environment: 3, suite: 1 },
+        expectedReviewDigest: "sha256:review",
+      }),
+    );
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/drafts/validate/",
+      {
+        expected_revisions: { environment: 3, suite: 1 },
+        expected_review_digest: "sha256:review",
+      },
+    );
+  });
+
+  it("saves the validated candidates under one key per click", async () => {
+    const { result } = renderHook(() => useSaveCandidates("env-1"), {
+      wrapper,
+    });
+
+    await act(() =>
+      result.current.mutateAsync({
+        candidates: { environmentVersionId: "e9", suiteVersionId: "s9" },
+        expectedReviewDigest: "sha256:review",
+      }),
+    );
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/drafts/save/",
+      {
+        candidates: { environment_version_id: "e9", suite_version_id: "s9" },
+        expected_review_digest: "sha256:review",
+        idempotency_key: "key-1",
+      },
+    );
+  });
+
+  it("maps the validation and candidates on the drafts", () => {
+    const drafts = toDrafts({
+      environment: null,
+      suite: null,
+      set_aside: [],
+      validation: { state: "failed", affected_scenarios: ["refund-1"] },
+      candidates: { environment_version_id: "e9", suite_version_id: "s9" },
+    });
+
+    expect(drafts.validation).toEqual({
+      state: "failed",
+      affectedScenarios: ["refund-1"],
+    });
+    expect(drafts.candidates).toEqual({
+      environmentVersionId: "e9",
+      suiteVersionId: "s9",
+    });
   });
 });
