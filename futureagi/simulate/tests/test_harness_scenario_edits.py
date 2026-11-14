@@ -186,6 +186,8 @@ def _a_sub_goal(environment, name):
 
 def test_control_edit_needs_reproof(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ed-control")
+    # A built case names the sub-goals it checks; a control may only fail one of those.
+    _amend_with(auth_client, environment, NAMES[0], "sub_goals", ["refunded"])
     control = {
         "name": "refunds_twice",
         "why": "refunds the order twice",
