@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
@@ -191,7 +191,13 @@ def selection_report(
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
     report = readiness_report(pairing)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    )
     placed = placement.placed
     requested = len(placed)
     by_bucket: dict[Bucket, list[str]] = {bucket: [] for bucket in BUCKETS}
@@ -307,7 +313,13 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             retryable=True,
         )
     report = readiness_report(pairing, bundle=bundle)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    )
     dropped = [
         one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
     ]
@@ -353,7 +365,13 @@ def case_page(
         HostedHarnessError: as ``selection_report``.
     """
     report = readiness_report(pairing)
-    placed = _place_all(pairing, report["rows"], keys=keys, trials=trials).placed
+    placed = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    ).placed
     matching = [
         one
         for one in placed
@@ -451,7 +469,12 @@ def _capped(keys: list[str]) -> CaseList:
 
 
 def _place_all(
-    pairing: Pairing, rows: list[RowView], *, keys: list[str] | None, trials: int
+    pairing: Pairing,
+    rows: list[RowView],
+    *,
+    keys: list[str] | None,
+    trials: int,
+    workers: list[Mapping[str, Any]] = (),
 ) -> _Placement:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
@@ -491,6 +514,10 @@ def _place_all(
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
     many = len(kept) > 1 or trials > 1
+    # A case relying on a worker whose limits a run cannot rely on is held until its binding is fixed.
+    blocked_workers = frozenset(
+        str(one.get("worker_id")) for one in workers if one.get("status") == "blocked"
+    )
     placed = [
         _place(
             case,
@@ -500,6 +527,7 @@ def _place_all(
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
+            blocked_workers=blocked_workers,
         )
         for case in kept
     ]
@@ -602,6 +630,7 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
+    blocked_workers: frozenset[str] = frozenset(),
 ) -> Placed:
     needed = set(case.rows)
     if voice:
@@ -628,6 +657,7 @@ def _place(
     blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
+    blocked.extend(f"worker:{one}" for one in sorted(case.workers & blocked_workers))
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")
