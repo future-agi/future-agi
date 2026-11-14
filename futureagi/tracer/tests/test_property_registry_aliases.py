@@ -21,26 +21,39 @@ def test_trace_name_identity_accepts_native_root_name_filter(property_name):
         property_id, column_id="name", column_type="SYSTEM_METRIC", source="traces"
     )
     assert decoded["property_id"] == "system_attribute:traces:trace_name"
-    serializer = TraceObserveListQuerySerializer(data={
-        "filters": [{
-            "column_id": "name", "property_id": property_id,
-            "filter_config": {
-                "col_type": "SYSTEM_METRIC", "filter_type": "text",
-                "filter_op": "in", "filter_value": ["example-trace"],
-            },
-        }],
-        "cursor_mode": True, "page_size": 25,
-    })
+    serializer = TraceObserveListQuerySerializer(
+        data={
+            "filters": [
+                {
+                    "column_id": "name",
+                    "property_id": property_id,
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["example-trace"],
+                    },
+                }
+            ],
+            "cursor_mode": True,
+            "page_size": 25,
+        }
+    )
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["filters"][0]["column_id"] == "name"
 
 
 def test_trace_name_alias_does_not_rebind_raw_attributes_or_span_names():
     assert parse_property_registry_id("custom_attribute:name")["metric_name"] == "name"
-    assert parse_property_registry_id("system_attribute:spans:name")["metric_name"] == "name"
+    assert (
+        parse_property_registry_id("system_attribute:spans:name")["metric_name"]
+        == "name"
+    )
     with pytest.raises(ValueError, match="does not match column_id"):
         validate_property_filter_binding(
-            "custom_attribute:name", column_id="trace_name", column_type="SPAN_ATTRIBUTE"
+            "custom_attribute:name",
+            column_id="trace_name",
+            column_type="SPAN_ATTRIBUTE",
         )
 
 

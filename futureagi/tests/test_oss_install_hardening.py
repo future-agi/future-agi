@@ -784,7 +784,13 @@ def test_the_admin_password_reaches_create_user_on_stdin_only(
     if typed:
         script, environment, state = _installer_sandbox(tmp_path)
         # The last answer declines the one-time automatic-update opt-in.
-        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, "n"]
+        answers = [
+            "abhijai@futureagi.com",
+            "Abhijai",
+            ADMIN_PASSWORD,
+            ADMIN_PASSWORD,
+            "n",
+        ]
         code, _, stderr = _run_installer(
             script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
         )
@@ -2210,7 +2216,9 @@ def test_the_telemetry_notice_comes_before_the_admin_email_is_asked(
     script, environment, _ = _installer_sandbox(tmp_path)
 
     # A blank email skips the account; "n" declines the automatic-update opt-in.
-    code, stdout, stderr = _run_installer(script, environment, typed=b"\nn\n", timeout=120)
+    code, stdout, stderr = _run_installer(
+        script, environment, typed=b"\nn\n", timeout=120
+    )
 
     assert code == 0, stderr
     notice = stdout.index("this install registers with api.futureagi.com")

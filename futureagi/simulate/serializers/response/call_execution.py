@@ -56,7 +56,11 @@ class ErrorLocalizerTaskResponseSerializer(serializers.Serializer):
     eval_template_id = serializers.UUIDField(read_only=True, allow_null=True)
 
     def to_representation(self, instance):
-        data = dict(instance) if isinstance(instance, dict) else super().to_representation(instance)
+        data = (
+            dict(instance)
+            if isinstance(instance, dict)
+            else super().to_representation(instance)
+        )
         data["status"] = _EL_TASK_FE_STATUS.get(data.get("status"), "")
         return data
 

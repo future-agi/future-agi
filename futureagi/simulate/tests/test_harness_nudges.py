@@ -951,15 +951,23 @@ class TestRaise:
                 "diff_facts",
                 return_value=nudges._no_facts({"kind": "github", "changed": False}),
             ):
-                assert nudges.raise_environment_nudge(
-                    second.id, a4.id, default_moved=False
-                ) is None
+                assert (
+                    nudges.raise_environment_nudge(
+                        second.id, a4.id, default_moved=False
+                    )
+                    is None
+                )
         else:
-            offer = nudges.raise_environment_nudge(second.id, a4.id, default_moved=False)
+            offer = nudges.raise_environment_nudge(
+                second.id, a4.id, default_moved=False
+            )
             if newer == "answered_no":
                 assert _answer(auth_client, second, offer, "no").status_code == 200
 
-        assert nudges.raise_environment_nudge(second.id, a3.id, default_moved=False) is None
+        assert (
+            nudges.raise_environment_nudge(second.id, a3.id, default_moved=False)
+            is None
+        )
 
         assert _nudges(second, trigger_agent_version=a3) == []
         [standing] = _nudges(second, target="environment")
@@ -981,9 +989,10 @@ class TestRaise:
             "diff_facts",
             return_value=nudges._no_facts({"kind": "github", "changed": False}),
         ):
-            assert nudges.raise_environment_nudge(
-                second.id, a4.id, default_moved=False
-            ) is None
+            assert (
+                nudges.raise_environment_nudge(second.id, a4.id, default_moved=False)
+                is None
+            )
         new = nudges.raise_environment_nudge(second.id, a5.id, default_moved=False)
 
         body = auth_client.get(f"{BASE}/{second.id}/nudges/").json()

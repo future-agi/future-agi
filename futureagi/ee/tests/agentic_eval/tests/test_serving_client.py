@@ -36,14 +36,14 @@ class TestModelServingClient:
 
     def teardown_method(self):
         """Cleanup after each test"""
-        if hasattr(self.client, 'session'):
+        if hasattr(self.client, "session"):
             self.client.close()
 
     def test_initialization_default_url(self):
         """Test client initialization with default URL"""
-        with patch.dict('os.environ', {'MODEL_SERVING_URL': 'http://env-serving:8080'}):
+        with patch.dict("os.environ", {"MODEL_SERVING_URL": "http://env-serving:8080"}):
             client = ModelServingClient()
-            assert client.base_url == 'http://env-serving:8080'
+            assert client.base_url == "http://env-serving:8080"
             client.close()
 
     def test_the_default_url_is_the_normalised_serving_url(self, monkeypatch):
@@ -62,11 +62,8 @@ class TestModelServingClient:
 
     def test_initialization_environment_config(self):
         """Test client initialization with environment variables"""
-        env_vars = {
-            'MODEL_SERVING_TIMEOUT': '60',
-            'MODEL_SERVING_MAX_RETRIES': '5'
-        }
-        with patch.dict('os.environ', env_vars):
+        env_vars = {"MODEL_SERVING_TIMEOUT": "60", "MODEL_SERVING_MAX_RETRIES": "5"}
+        with patch.dict("os.environ", env_vars):
             client = ModelServingClient()
             assert client.default_timeout == 60
             assert client.max_retries == 5
@@ -76,11 +73,11 @@ class TestModelServingClient:
         """Test that session is created with proper configuration"""
         assert self.client.session is not None
         assert isinstance(self.client.session, requests.Session)
-        assert 'Content-Type' in self.client.session.headers
-        assert self.client.session.headers['Content-Type'] == 'application/json'
-        assert 'User-Agent' in self.client.session.headers
+        assert "Content-Type" in self.client.session.headers
+        assert self.client.session.headers["Content-Type"] == "application/json"
+        assert "User-Agent" in self.client.session.headers
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_make_request_success(self, mock_post):
         """Test successful request"""
         mock_response = Mock()
@@ -93,7 +90,7 @@ class TestModelServingClient:
         assert result == {"embeddings": [0.1, 0.2, 0.3]}
         mock_post.assert_called_once()
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_make_request_404_error(self, mock_post):
         """Test 404 error handling"""
         mock_response = Mock()
@@ -104,7 +101,7 @@ class TestModelServingClient:
         with pytest.raises(ValueError, match="Model or endpoint not found"):
             self.client._make_request("/test", {"data": "test"})
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_make_request_400_error(self, mock_post):
         """Test 400 error handling"""
         mock_response = Mock()
@@ -115,7 +112,7 @@ class TestModelServingClient:
         with pytest.raises(ValueError, match="Bad request"):
             self.client._make_request("/test", {"data": "test"})
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_make_request_timeout(self, mock_post):
         """Test timeout error handling"""
         mock_post.side_effect = requests.exceptions.Timeout()
@@ -123,7 +120,7 @@ class TestModelServingClient:
         with pytest.raises(TimeoutError, match="Request timed out"):
             self.client._make_request("/test", {"data": "test"})
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_make_request_connection_error(self, mock_post):
         """Test connection error handling"""
         mock_post.side_effect = requests.exceptions.ConnectionError()
@@ -133,29 +130,27 @@ class TestModelServingClient:
 
     def test_embed_text_string_input(self):
         """Test text embedding with string input"""
-        with patch.object(self.client, '_make_request') as mock_request:
+        with patch.object(self.client, "_make_request") as mock_request:
             mock_request.return_value = {"embeddings": [0.1, 0.2, 0.3]}
 
             result = self.client.embed_text("Hello world")
 
             assert result == [0.1, 0.2, 0.3]
-            mock_request.assert_called_once_with("/embed", {
-                "text": ["Hello world"],
-                "input_type": "text"
-            })
+            mock_request.assert_called_once_with(
+                "/embed", {"text": ["Hello world"], "input_type": "text"}
+            )
 
     def test_embed_text_list_input(self):
         """Test text embedding with list input"""
-        with patch.object(self.client, '_make_request') as mock_request:
+        with patch.object(self.client, "_make_request") as mock_request:
             mock_request.return_value = {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
 
             result = self.client.embed_text(["Hello", "world"])
 
             assert result == [[0.1, 0.2], [0.3, 0.4]]
-            mock_request.assert_called_once_with("/embed", {
-                "text": ["Hello", "world"],
-                "input_type": "text"
-            })
+            mock_request.assert_called_once_with(
+                "/embed", {"text": ["Hello", "world"], "input_type": "text"}
+            )
 
     def test_embed_text_empty_input(self):
         """Test text embedding with empty input"""
@@ -173,8 +168,8 @@ class TestModelServingClient:
 
     def test_embed_image_string_input(self):
         """Test image embedding with string input"""
-        with patch.object(self.client, '_make_request') as mock_request:
-            with patch.object(self.client, '_process_image_input') as mock_process:
+        with patch.object(self.client, "_make_request") as mock_request:
+            with patch.object(self.client, "_process_image_input") as mock_process:
                 mock_process.return_value = "processed_image"
                 mock_request.return_value = {"embeddings": [0.1, 0.2, 0.3]}
 
@@ -182,10 +177,9 @@ class TestModelServingClient:
 
                 assert result == [0.1, 0.2, 0.3]
                 mock_process.assert_called_once_with("http://example.com/image.jpg")
-                mock_request.assert_called_once_with("/embed/image", {
-                    "image": "processed_image",
-                    "input_type": "image"
-                })
+                mock_request.assert_called_once_with(
+                    "/embed/image", {"image": "processed_image", "input_type": "image"}
+                )
 
     def test_embed_image_none_input(self):
         """Test image embedding with None input"""
@@ -195,8 +189,8 @@ class TestModelServingClient:
 
     def test_embed_audio_success(self):
         """Test audio embedding"""
-        with patch.object(self.client, '_make_request') as mock_request:
-            with patch.object(self.client, '_process_audio_input') as mock_process:
+        with patch.object(self.client, "_make_request") as mock_request:
+            with patch.object(self.client, "_process_audio_input") as mock_process:
                 mock_process.return_value = "processed_audio"
                 mock_request.return_value = {"embeddings": [0.1, 0.2, 0.3]}
 
@@ -213,26 +207,25 @@ class TestModelServingClient:
 
     def test_embed_image_text_with_text(self):
         """Test image-text embedding with text input"""
-        with patch.object(self.client, '_make_request') as mock_request:
+        with patch.object(self.client, "_make_request") as mock_request:
             mock_request.return_value = {"embeddings": [0.1, 0.2, 0.3]}
 
             result = self.client.embed_image_text("Hello world")
 
             assert result == [0.1, 0.2, 0.3]
-            mock_request.assert_called_once_with("/embed/image-text", {
-                "text": "Hello world",
-                "input_type": "image-text"
-            })
+            mock_request.assert_called_once_with(
+                "/embed/image-text", {"text": "Hello world", "input_type": "image-text"}
+            )
 
     def test_embed_image_text_with_image(self):
         """Test image-text embedding with image input"""
-        with patch.object(self.client, '_make_request') as mock_request:
-            with patch.object(self.client, '_process_image_input') as mock_process:
+        with patch.object(self.client, "_make_request") as mock_request:
+            with patch.object(self.client, "_process_image_input") as mock_process:
                 mock_process.return_value = "processed_image"
                 mock_request.return_value = {"embeddings": [0.1, 0.2, 0.3]}
 
                 # Create a simple PIL image
-                img = Image.new('RGB', (10, 10), color='red')
+                img = Image.new("RGB", (10, 10), color="red")
                 result = self.client.embed_image_text(img)
 
                 assert result == [0.1, 0.2, 0.3]
@@ -246,7 +239,7 @@ class TestModelServingClient:
 
     def test_get_syn_data_embedding(self):
         """Test synthetic data embedding"""
-        with patch('requests.Session.post') as mock_post:
+        with patch("requests.Session.post") as mock_post:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"embeddings": [0.1, 0.2, 0.3]}
@@ -258,7 +251,7 @@ class TestModelServingClient:
             mock_post.assert_called_once_with(
                 f"{self.base_url}/model/v1/embed/syn-data",
                 json={"text": "test text", "input_type": "text"},
-                timeout=self.client.default_timeout
+                timeout=self.client.default_timeout,
             )
 
     def test_process_image_input_string(self):
@@ -269,7 +262,7 @@ class TestModelServingClient:
 
     def test_process_image_input_pil_image(self):
         """Test image input processing with PIL Image"""
-        img = Image.new('RGB', (10, 10), color='red')
+        img = Image.new("RGB", (10, 10), color="red")
         result = self.client._process_image_input(img)
 
         assert result.startswith("data:image/")
@@ -280,7 +273,9 @@ class TestModelServingClient:
         img_bytes = b"fake_image_bytes"
         result = self.client._process_image_input(img_bytes)
 
-        expected = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+        expected = (
+            f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+        )
         assert result == expected
 
     def test_process_image_input_invalid_type(self):
@@ -306,7 +301,9 @@ class TestModelServingClient:
         audio_bytes = b"fake_audio_bytes"
         result = self.client._process_audio_input(audio_bytes)
 
-        expected = f"data:audio/wav;base64,{base64.b64encode(audio_bytes).decode('utf-8')}"
+        expected = (
+            f"data:audio/wav;base64,{base64.b64encode(audio_bytes).decode('utf-8')}"
+        )
         assert result == expected
 
     def test_process_audio_input_invalid_type(self):
@@ -371,12 +368,14 @@ class TestModelServingClient:
         assert self.client.health_check() is False
         session_get.assert_not_called()
 
-    @patch('requests.Session.get')
+    @patch("requests.Session.get")
     def test_get_model_status_success(self, mock_get):
         """Test successful model status retrieval"""
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"models": ["text_embedding", "image_embedding"]}
+        mock_response.json.return_value = {
+            "models": ["text_embedding", "image_embedding"]
+        }
         mock_get.return_value = mock_response
 
         result = self.client.get_model_status()
@@ -384,7 +383,7 @@ class TestModelServingClient:
         assert result == {"models": ["text_embedding", "image_embedding"]}
         mock_get.assert_called_once()
 
-    @patch('requests.Session.get')
+    @patch("requests.Session.get")
     def test_get_model_status_failure(self, mock_get):
         """Test model status retrieval failure"""
         mock_get.side_effect = requests.exceptions.ConnectionError()
@@ -421,7 +420,7 @@ class TestGlobalClientFunctions:
     def test_close_serving_client(self):
         """Test closing the global client"""
         client = get_serving_client()
-        with patch.object(client, 'close') as mock_close:
+        with patch.object(client, "close") as mock_close:
             close_serving_client()
             mock_close.assert_called_once()
 
@@ -443,7 +442,7 @@ class TestErrorScenarios:
 
     def test_network_failures(self):
         """Test handling of various network failures"""
-        with patch.object(self.client, '_make_request') as mock_request:
+        with patch.object(self.client, "_make_request") as mock_request:
             # Test different network errors
             mock_request.side_effect = TimeoutError("Request timed out")
             with pytest.raises(TimeoutError):
@@ -455,7 +454,7 @@ class TestErrorScenarios:
 
     def test_invalid_server_responses(self):
         """Test handling of invalid server responses"""
-        with patch.object(self.client, '_make_request') as mock_request:
+        with patch.object(self.client, "_make_request") as mock_request:
             # Test malformed response
             mock_request.return_value = {"invalid": "response"}
 
@@ -474,7 +473,7 @@ class TestPerformance:
     def teardown_method(self):
         self.client.close()
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_batch_processing(self, mock_post):
         """Test batch processing performance"""
         mock_response = Mock()
@@ -506,7 +505,7 @@ def mock_serving_response():
 @pytest.fixture
 def sample_image():
     """Fixture for sample PIL image"""
-    return Image.new('RGB', (10, 10), color='red')
+    return Image.new("RGB", (10, 10), color="red")
 
 
 @pytest.fixture
@@ -518,7 +517,7 @@ def sample_audio_bytes():
 @pytest.mark.integration
 def test_usage_example(mock_serving_response):
     """Test typical usage patterns"""
-    with patch('requests.Session.post', return_value=mock_serving_response):
+    with patch("requests.Session.post", return_value=mock_serving_response):
         client = ModelServingClient()
 
         # Test typical usage
@@ -539,12 +538,14 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Run the tests
-    exit_code = pytest.main([
-        __file__,
-        "-v",
-        "--tb=short",
-        "--durations=10",  # Show 10 slowest tests
-        "-x"  # Stop on first failure
-    ])
+    exit_code = pytest.main(
+        [
+            __file__,
+            "-v",
+            "--tb=short",
+            "--durations=10",  # Show 10 slowest tests
+            "-x",  # Stop on first failure
+        ]
+    )
 
     sys.exit(exit_code)

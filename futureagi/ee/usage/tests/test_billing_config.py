@@ -86,9 +86,9 @@ class TestBillingYamlFile:
             "ee_bands",
             "ai_credit_models",
         }
-        assert required.issubset(
-            raw.keys()
-        ), f"Missing sections: {required - set(raw.keys())}"
+        assert required.issubset(raw.keys()), (
+            f"Missing sections: {required - set(raw.keys())}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -204,17 +204,17 @@ class TestPricingTiersSection:
         for dim, tiers in raw["pricing_tiers"].items():
             for i, tier in enumerate(tiers):
                 assert "up_to" in tier, f"Tier {dim}[{i}] missing 'up_to'"
-                assert (
-                    "price_per_unit" in tier
-                ), f"Tier {dim}[{i}] missing 'price_per_unit'"
+                assert "price_per_unit" in tier, (
+                    f"Tier {dim}[{i}] missing 'price_per_unit'"
+                )
 
     def test_last_tier_has_null_up_to(self):
         raw = load_raw_yaml()
         for dim, tiers in raw["pricing_tiers"].items():
             last = tiers[-1]
-            assert (
-                last["up_to"] is None
-            ), f"Dimension '{dim}' last tier up_to should be null, got {last['up_to']}"
+            assert last["up_to"] is None, (
+                f"Dimension '{dim}' last tier up_to should be null, got {last['up_to']}"
+            )
 
     def test_tiers_are_ascending(self):
         raw = load_raw_yaml()
@@ -291,9 +291,9 @@ class TestApiCallTypesSection:
     def test_dimensions_exist(self):
         raw = load_raw_yaml()
         for ct, config in raw["api_call_types"].items():
-            assert (
-                config["dimension"] in raw["dimensions"]
-            ), f"API call type '{ct}' references unknown dimension '{config['dimension']}'"
+            assert config["dimension"] in raw["dimensions"], (
+                f"API call type '{ct}' references unknown dimension '{config['dimension']}'"
+            )
 
     def test_ai_credit_types_have_per_call(self):
         raw = load_raw_yaml()
@@ -318,9 +318,9 @@ class TestCrossSectionConsistency:
             for plan_key in plan_map:
                 if plan_key == "_all":
                     continue
-                assert (
-                    plan_key in VALID_PLAN_KEYS
-                ), f"Entitlement '{feature}' has invalid plan key '{plan_key}'"
+                assert plan_key in VALID_PLAN_KEYS, (
+                    f"Entitlement '{feature}' has invalid plan key '{plan_key}'"
+                )
 
     def test_full_config_validates_via_pydantic(self):
         """The real billing.yaml should pass full Pydantic validation."""

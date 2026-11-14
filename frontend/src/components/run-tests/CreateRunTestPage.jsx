@@ -30,7 +30,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useSnackbar } from "notistack";
 import { useRouter } from "src/routes/hooks";
-import { useDebounce } from "src/hooks/use-debounce";
 import {
   EvalPickerDrawer,
   serializeEvalConfig,
@@ -43,7 +42,9 @@ import {
   voiceEvalColumns,
   chatEvalColumns,
   getVersionedEvalName,
+  runTestEventFields,
   useAgentDefinitions,
+  useSearchedPagination,
 } from "./common";
 import { useNavigate } from "react-router";
 import { ShowComponent } from "../show";
@@ -213,12 +214,13 @@ const CreateRunTestPage = ({ open, onClose }) => {
   }, [open]);
 
   // Scenarios state
-  const [scenarioSearch, setScenarioSearch] = useState("");
-  const debouncedSearch = useDebounce(scenarioSearch, 500);
-  const [scenariosPagination, setScenariosPagination] = useState({
-    page: 1,
-    pageSize: 10,
-  });
+  const {
+    search: scenarioSearch,
+    setSearch: setScenarioSearch,
+    debouncedSearch,
+    pagination: scenariosPagination,
+    setPagination: setScenariosPagination,
+  } = useSearchedPagination();
 
   // Fetch scenarios with pagination
   const {
@@ -566,7 +568,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
     // Submit the payload
     trackEvent(Events.runTestCreateTestClicked, {
-      [PropertyName.formFields]: payload,
+      [PropertyName.formFields]: runTestEventFields(payload),
     });
     createTestMutation.mutate(payload);
   };

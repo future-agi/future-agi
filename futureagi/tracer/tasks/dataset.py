@@ -58,7 +58,12 @@ def _chspan_field_value(span, field_name):
         strings on CHSpan; decode them so callers see Python dicts/lists
         (matching the prior Django JSONField behavior).
     """
-    if field_name in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+    if field_name in (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    ):
         from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
         extra = CHSpanReader.attributes_extra_as_dict(span)
@@ -76,7 +81,12 @@ def _chspan_field_value(span, field_name):
         merged.update(span.attrs_number or {})
         merged.update(span.attrs_bool or {})
         for k, v in extra.items():
-            if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+            if k not in (
+                "model_parameters",
+                "input_images",
+                "eval_input",
+                "eval_attributes",
+            ):
                 merged[k] = v
         return merged
     if field_name == "metadata":
@@ -186,7 +196,9 @@ def _mapped_span_fields(column_span_mapping_data):
     return fields
 
 
-def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org_id=None):
+def _export_span_rows(
+    reader, span_ids, mapped_span_fields, project_id=None, org_id=None
+):
     if not span_ids:
         return {}
 
@@ -450,10 +462,12 @@ def process_spans_chunk_task(
         if needs_eval_metrics:
             from tracer.models.observation_span import EvalLogger
 
-            for log in EvalLogger.objects.filter(
-                observation_span_id__in=span_ids
-            ).order_by(
-                "created_at"
+            # Primary: the copy is permanent, and a result the user sees (from
+            # ClickHouse) may not have reached a lagging replica yet.
+            for log in (
+                EvalLogger.objects.using("default")
+                .filter(observation_span_id__in=span_ids)
+                .order_by("created_at")
             ):  # ascending → most recent wins per key
                 key = log.eval_type_id or str(log.id)
                 if log.output_float is not None:
