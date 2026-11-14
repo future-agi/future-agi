@@ -244,7 +244,10 @@ func (t *Translator) ResponseFromCanonicalWithMapping(
 //	api_error        → api_error
 //	overloaded       → overloaded_error
 //	server_error     → api_error   (closest Anthropic equivalent)
+//	gateway_timeout  → timeout_error
 //	<anything else>  → api_error
+//
+// The gateway's error code, when it has one, is sent as error.code.
 func (t *Translator) ErrorFromCanonical(err *models.APIError) (statusCode int, body []byte, contentType string) {
 	anthType := gatewayTypeToAnthropic(err.Type)
 
@@ -253,6 +256,7 @@ func (t *Translator) ErrorFromCanonical(err *models.APIError) (statusCode int, b
 		Error: ErrorDetail{
 			Type:    anthType,
 			Message: err.Message,
+			Code:    err.Code,
 		},
 	}
 
@@ -288,6 +292,8 @@ func gatewayTypeToAnthropic(t string) string {
 		return "overloaded_error"
 	case models.ErrTypeServer: // "server_error"
 		return "api_error"
+	case models.ErrTypeGatewayTimeout: // "gateway_timeout"
+		return "timeout_error"
 	default:
 		return "api_error"
 	}
@@ -309,6 +315,8 @@ func anthropicStatusForType(t string) int {
 		return http.StatusTooManyRequests
 	case "overloaded_error":
 		return http.StatusServiceUnavailable
+	case "timeout_error":
+		return http.StatusGatewayTimeout
 	default: // api_error
 		return http.StatusInternalServerError
 	}
@@ -384,4 +392,3 @@ func generateMsgID() string {
 func reverseMapFinishReasonForStream(openaiReason string) string {
 	return reverseMapFinishReason(openaiReason)
 }
-

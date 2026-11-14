@@ -755,13 +755,19 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				firstChunk = chunk
 				return nil
 			}
+			// A stream that never started because the deadline passed is a
+			// timeout: answer 504 now rather than retry or report a bare
+			// context error as a 500.
+			if streamCtx.Err() != nil {
+				return deadlineAsTimeout(streamCtx, err)
+			}
 			var apiErr *models.APIError
 			if attempt == 1 || !errors.As(err, &apiErr) || (apiErr.Status != http.StatusBadGateway && apiErr.Status != http.StatusGatewayTimeout) {
 				return err
 			}
 			select {
 			case <-streamCtx.Done():
-				return streamCtx.Err()
+				return deadlineAsTimeout(streamCtx, streamCtx.Err())
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
@@ -966,6 +972,16 @@ func translatedStreamChatCompletion(ctx context.Context, provider providers.Prov
 		return rp.StreamChatCompletionViaResponses(ctx, req)
 	}
 	return provider.StreamChatCompletion(ctx, req)
+}
+
+// deadlineAsTimeout is err, for a stream that could not start before ctx
+// ended, as the gateway timeout it is when ctx reached its deadline. When the
+// client left instead, nobody is reading, and err is returned as it is.
+func deadlineAsTimeout(ctx context.Context, err error) error {
+	if apiErr := streamEndError(ctx, err); apiErr != nil {
+		return apiErr
+	}
+	return err
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.
