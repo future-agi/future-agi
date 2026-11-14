@@ -20,6 +20,7 @@ import urllib3
 _MAX_REDIRECTS = 5
 _DEFAULT_TIMEOUT_SECONDS = 5
 _DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024
+_monotonic = time.monotonic
 
 
 class SsrfBlocked(ValueError):
@@ -183,7 +184,7 @@ _RESOLVER_SLOTS = threading.BoundedSemaphore(4)
 
 
 def _remaining(deadline):
-    remaining = deadline - time.monotonic()
+    remaining = deadline - _monotonic()
     if remaining <= 0:
         raise TimeoutError("URL fetch deadline exceeded.")
     return remaining
@@ -331,7 +332,7 @@ def safe_fetch(
     if total_timeout is not None:
         if not math.isfinite(total_timeout) or total_timeout <= 0:
             raise ValueError("total_timeout must be finite and positive.")
-        deadline = time.monotonic() + total_timeout
+        deadline = _monotonic() + total_timeout
     current_url = url
     caller_headers = headers or {}
     origin_host = urlparse(url).hostname
@@ -355,10 +356,12 @@ def safe_fetch(
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
-        # Host header must include the port for non-default ports so
-        # vhost-routed backends match the correct server_name.
+        # Host header keeps IPv6 literals bracketed and non-default ports explicit.
         default_port = 443 if parsed.scheme == "https" else 80
-        host_header = host if port == default_port else f"{host}:{port}"
+        authority_host = f"[{host}]" if ":" in host else host
+        host_header = (
+            authority_host if port == default_port else f"{authority_host}:{port}"
+        )
 
         # Strip sensitive headers on cross-origin hops so a redirect to
         # attacker.com does not leak Authorization/Cookie/etc.
@@ -402,6 +405,7 @@ def safe_fetch(
                 body = bytearray()
                 for chunk in response.stream(64 * 1024):
                     if deadline is not None:
+                        # Second guard after the raw reader's per-read budget.
                         _remaining(deadline)
                     body.extend(chunk)
                     if len(body) > max_bytes:
@@ -425,6 +429,7 @@ def safe_fetch(
                 if deadline is not None:
                     # Incomplete bodies/redirects must close their file/socket,
                     # not just return a still-reading connection to the pool.
+                    # Close the response before releasing its connection.
                     response.close()
                 response.release_conn()
             pool.close()

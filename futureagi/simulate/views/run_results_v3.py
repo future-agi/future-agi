@@ -687,6 +687,15 @@ class TrialStateChangeSerializer(serializers.Serializer):
     faulted = serializers.IntegerField()
     duplicate = serializers.IntegerField()
     committed_actions = serializers.ListField(child=serializers.CharField())
+    read = serializers.IntegerField(
+        required=False,
+        help_text="Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
+    )
+    read_actions = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        help_text="The reads, in order.",
+    )
     no_change = serializers.BooleanField(
         required=False,
         help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",

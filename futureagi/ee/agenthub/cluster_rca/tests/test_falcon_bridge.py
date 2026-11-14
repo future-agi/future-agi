@@ -28,7 +28,11 @@ class TestFormatSynthesisMessage:
         assert "Low" in msg
 
     def test_confidence_labels(self):
-        for conf, label in [(Confidence.HIGH, "High"), (Confidence.MEDIUM, "Medium"), (Confidence.LOW, "Low")]:
+        for conf, label in [
+            (Confidence.HIGH, "High"),
+            (Confidence.MEDIUM, "Medium"),
+            (Confidence.LOW, "Low"),
+        ]:
             s = ClusterSynthesis(synthesis="x", fix="y", confidence=conf)
             assert label in _format_synthesis_message(s)
 

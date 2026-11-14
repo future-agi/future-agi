@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { render } from "src/utils/test-utils";
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
+import { withCast } from "../../actors/actorUtils";
 import ScenarioDrawer from "../ScenarioDrawer";
 
 // A row exactly as the scenarios list API sends it.
@@ -143,6 +144,40 @@ describe("ScenarioDrawer actors", () => {
       screen.getByText(/a friend with the caller · After the agent's turn 2/),
     ).toBeInTheDocument();
     expect(screen.getByText("You want a second item.")).toBeInTheDocument();
+  });
+
+  it("names an actor who never speaks, with its own activation and fallback", () => {
+    const cast = {
+      actors: [
+        { id: "friend", name: "Rowan", channel: "chat" },
+        {
+          id: "approver",
+          name: "Avery Stone",
+          role: "approves refunds",
+          activation: {
+            trigger: { kind: "contacted" },
+            timeout_seconds: 60,
+            fallback: "decline",
+          },
+        },
+      ],
+    };
+    open(
+      { ...API_ROW, actors: [{ id: "approver" }] },
+      { env: withCast({ id: "env-1" }, cast) },
+    );
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.queryByText("approver")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/approves refunds · When the agent contacts them/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Present from the start/)).not.toBeInTheDocument();
+    expect(screen.getByText("Waits 60 s, then it declines")).toBeInTheDocument();
+  });
+
+  it("keeps the environment's own actors when there is no cast", () => {
+    const env = { callActors: [{ id: "friend", name: "Rowan" }] };
+    expect(withCast(env, undefined)).toBe(env);
   });
 
   it("has no actors row for a scenario that includes none", () => {
