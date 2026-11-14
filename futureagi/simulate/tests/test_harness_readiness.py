@@ -3180,3 +3180,109 @@ def test_routing_kept_on_the_bundle_is_read(user, workspace, storage):
     )
 
     assert _rows(_report(environment))["tool_routing"]["status"] == "supported"
+
+
+def _case(door=frozenset()):
+    from simulate.services.harness_scenario_needs import CaseNeeds
+
+    return CaseNeeds(
+        key="refund-1",
+        number=1,
+        name="refund-1",
+        persona="",
+        rows=frozenset({"start", "message"}),
+        tools=frozenset(),
+        unknown=False,
+        recorded=True,
+        grading_gap=None,
+        door=frozenset(door),
+    )
+
+
+def _in_process_pairing(entrypoints):
+    from types import SimpleNamespace
+
+    contract = {"runtime": {"language": "python"}, "tool_entrypoints": entrypoints}
+    return SimpleNamespace(
+        environment_version=SimpleNamespace(documents={"contract": contract})
+    )
+
+
+def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
+    from simulate.services.harness_readiness.selection import (
+        NO_DOOR_REASON,
+        NO_DOOR_ROW,
+        _door_reach,
+        _needs_a_missing_door,
+        _place,
+    )
+    from simulate.services.harness_scenario_needs import ACTING, door_needs
+
+    acting = door_needs(
+        {"actors": [{"id": "dana", "actions": [{"action": "approvals.put"}]}]}
+    )
+    assert acting == frozenset({ACTING})
+    closures = _door_reach(
+        _in_process_pairing([{"tool": "issue_refund", "mode": "unreachable"}])
+    )
+    assert _needs_a_missing_door(_case(acting), closures) is True
+    placed = _place(
+        _case(acting),
+        {},
+        proved=True,
+        voice=False,
+        many=False,
+        pair_validating=False,
+        pair_failed=False,
+        no_door=True,
+    )
+    assert (placed.bucket, placed.by) == ("blocked", [NO_DOOR_ROW])
+    assert NO_DOOR_REASON == (
+        "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
+        "tools service to test this."
+    )
+
+
+def test_a_fault_on_a_tool_behind_a_door_is_not_held_back_and_one_on_a_closure_is():
+    from simulate.services.harness_readiness.selection import (
+        _door_reach,
+        _needs_a_missing_door,
+    )
+    from simulate.services.harness_scenario_needs import door_needs
+
+    reach = _door_reach(
+        _in_process_pairing(
+            [
+                {
+                    "tool": "issue_refund",
+                    "mode": "service",
+                    "endpoint": "orders/refund",
+                },
+                {
+                    "tool": "lookup",
+                    "mode": "import",
+                    "module": "agent.tools",
+                    "callable": "lookup",
+                },
+                {"tool": "closure", "mode": "unreachable"},
+            ]
+        )
+    )
+    behind = door_needs(
+        {"faults": [{"action": "orders.refund", "mode": "unavailable"}]}
+    )
+    in_process = door_needs({"faults": [{"action": "lookup", "mode": "unavailable"}]})
+    closure = door_needs({"faults": [{"action": "closure", "mode": "unavailable"}]})
+    assert _needs_a_missing_door(_case(behind), reach) is False
+    assert _needs_a_missing_door(_case(in_process), reach) is False
+    assert _needs_a_missing_door(_case(closure), reach) is True
+    # An acting actor is held back only when no tool is behind a door.
+    assert (
+        _needs_a_missing_door(
+            _case(
+                door_needs({"actors": [{"id": "d", "trigger": {"kind": "on_tool"}}]})
+            ),
+            reach,
+        )
+        is False
+    )
