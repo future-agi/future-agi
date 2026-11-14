@@ -25505,6 +25505,10 @@ export interface TrialStateChangeApi {
   faulted: number;
   duplicate: number;
   committed_actions: string[];
+  /** Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart. */
+  read?: number;
+  /** The reads, in order. */
+  read_actions?: string[];
   /** True when this participant committed nothing: a result shown as 'no change', never left out. */
   no_change?: boolean;
 }

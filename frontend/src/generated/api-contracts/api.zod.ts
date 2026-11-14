@@ -53648,6 +53648,16 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           faulted: zod.number(),
           duplicate: zod.number(),
           committed_actions: zod.array(zod.string().min(1)),
+          read: zod
+            .number()
+            .optional()
+            .describe(
+              "Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
+            ),
+          read_actions: zod
+            .array(zod.string())
+            .optional()
+            .describe("The reads, in order."),
           no_change: zod
             .boolean()
             .optional()

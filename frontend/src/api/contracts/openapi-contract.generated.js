@@ -120357,6 +120357,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        read: {
+          title: "Read",
+          description:
+            "Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
+          type: "integer",
+        },
+        read_actions: {
+          description: "The reads, in order.",
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
         no_change: {
           title: "No change",
           description:
