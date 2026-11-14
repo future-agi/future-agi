@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -157,6 +158,10 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 
 		am, err := translateMessage(msg)
 		if err != nil {
+			var apiErr *models.APIError
+			if errors.As(err, &apiErr) {
+				return nil, apiErr
+			}
 			return nil, fmt.Errorf("translating message: %w", err)
 		}
 		ar.Messages = append(ar.Messages, am)
@@ -276,9 +281,11 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 		return am, nil
 	}
 
-	// Standard message: check for vision content first (handles both text + images),
-	// then fall back to text-only, then pass-through.
-	if blocks := translateVisionContent(msg.Content); blocks != nil {
+	// Standard message: check for vision content first (handles text + binary
+	// parts), then fall back to text-only, then pass-through.
+	if blocks, err := translateVisionContent(msg.Content); err != nil {
+		return am, err
+	} else if blocks != nil {
 		content, _ := json.Marshal(blocks)
 		am.Content = content
 	} else if text := extractTextContent(msg.Content); text != "" {
@@ -295,12 +302,19 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 
 // translateVisionContent converts OpenAI vision content parts to Anthropic format.
 // OpenAI: [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]
-// OpenAI: [{"type":"input_audio","input_audio":{"data":"<base64>","format":"wav"}}]
-// OpenAI: [{"type":"file","file":{"file_id":"https://example.com/video.mp4","format":"video/mp4"}}]
+// OpenAI: [{"type":"file","file":{"file_data":"data:application/pdf;base64,...","filename":"..."}}]
 // Anthropic: [{"type":"text","text":"..."}, {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}]
-func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
+//
+//	[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"..."}}]
+//
+// Parts with no Anthropic representation (input_audio; file_id values that are
+// managed identifiers rather than fetchable URLs) are rejected with a 400
+// invalid_request_error instead of being forwarded in their source shape or
+// silently dropped — Anthropic does not define either shape, so forwarding
+// only produces an upstream error that does not mention the attachment.
+func translateVisionContent(content json.RawMessage) ([]anthropicContentBlock, error) {
 	if len(content) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var parts []struct {
@@ -315,12 +329,14 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 			Format string `json:"format"`
 		} `json:"input_audio"`
 		File *struct {
-			FileID string `json:"file_id"`
-			Format string `json:"format"`
+			FileID   string `json:"file_id"`
+			FileData string `json:"file_data"`
+			Filename string `json:"filename"`
+			Format   string `json:"format"`
 		} `json:"file"`
 	}
 	if err := json.Unmarshal(content, &parts); err != nil {
-		return nil
+		return nil, nil
 	}
 
 	// Only process if we find multimodal content parts (image_url, input_audio, or file).
@@ -328,13 +344,13 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 	for _, p := range parts {
 		if (p.Type == "image_url" && p.ImageURL != nil) ||
 			(p.Type == "input_audio" && p.InputAudio != nil) ||
-			(p.Type == "file" && p.File != nil) {
+			(p.Type == "file" && p.File != nil && (p.File.FileID != "" || p.File.FileData != "")) {
 			hasMultimodal = true
 			break
 		}
 	}
 	if !hasMultimodal {
-		return nil
+		return nil, nil
 	}
 
 	var blocks []anthropicContentBlock
@@ -351,21 +367,65 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 				blocks = append(blocks, *block)
 			}
 		case "input_audio":
-			// Anthropic does not support audio input — skip and warn rather
-			// than sending audio as type:"image" which will always be rejected.
+			// Anthropic has no audio-input block type; reject so the caller
+			// hears it, instead of forwarding a shape the upstream rejects
+			// with an error that does not mention the attachment.
 			if p.InputAudio != nil {
-				slog.Warn("anthropic: input_audio content type not supported, skipping part",
+				slog.Warn("anthropic: input_audio content part rejected",
 					"format", p.InputAudio.Format)
+				return nil, models.ErrBadRequest("unsupported_content_part",
+					"anthropic does not support input_audio content parts; audio input is not routable to this provider")
 			}
 			continue
 		case "file":
-			if p.File == nil || p.File.FileID == "" {
+			if p.File == nil {
 				continue
 			}
-			// file_id holds the URL; format holds the MIME type (e.g. "video/mp4").
-			// Pass through as a URL-based source block.
+			// file_data carries a data: URI with inline bytes, which maps onto
+			// the Anthropic document/image base64 source block.
+			if p.File.FileData != "" {
+				mediaType, data := parseDataURI(p.File.FileData)
+				if data == "" {
+					return nil, models.ErrBadRequest("unsupported_content_part",
+						fmt.Sprintf("file part %q has a file_data value that is not a parsable data URI", p.File.Filename))
+				}
+				if mediaType == "" {
+					mediaType = p.File.Format
+				}
+				if mediaType == "" {
+					mediaType = "application/pdf"
+				}
+				blockType, err := binaryBlockType(mediaType)
+				if err != nil {
+					return nil, err
+				}
+				blocks = append(blocks, anthropicContentBlock{
+					Type: blockType,
+					Source: &imageSource{
+						Type:      "base64",
+						MediaType: mediaType,
+						Data:      data,
+					},
+				})
+				continue
+			}
+			if p.File.FileID == "" {
+				continue
+			}
+			// file_id is a managed identifier in the caller's provider account,
+			// not a fetchable URL. Only a URL can be forwarded as a source;
+			// an opaque identifier cannot be resolved here, so reject rather
+			// than send the model a broken reference.
+			if !strings.HasPrefix(p.File.FileID, "http://") && !strings.HasPrefix(p.File.FileID, "https://") {
+				return nil, models.ErrBadRequest("unsupported_content_part",
+					fmt.Sprintf("file part %q references a managed file identifier %q that cannot be routed to Anthropic without resolution; pass a URL or inline file_data instead", p.File.Filename, p.File.FileID))
+			}
+			blockType, err := urlBinaryBlockType(p.File.Format, p.File.FileID)
+			if err != nil {
+				return nil, err
+			}
 			blocks = append(blocks, anthropicContentBlock{
-				Type: "image", // Anthropic uses "image" type with source block for all binary data
+				Type: blockType,
 				Source: &imageSource{
 					Type: "url",
 					URL:  p.File.FileID,
@@ -373,7 +433,42 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 			})
 		}
 	}
-	return blocks
+	return blocks, nil
+}
+
+// binaryBlockType classifies inline binary data for Anthropic, which accepts
+// only four image types and PDFs; anything else is refused here rather than
+// shipped as a block the upstream will reject without naming the attachment.
+func binaryBlockType(mediaType string) (string, error) {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return "image", nil
+	case "application/pdf":
+		return "document", nil
+	default:
+		return "", models.ErrBadRequest("unsupported_content_part",
+			fmt.Sprintf("Anthropic cannot carry %q content; pass the file as a supported media type (image/jpeg, image/png, image/gif, image/webp, application/pdf)", mediaType))
+	}
+}
+
+// urlBinaryBlockType classifies a URL-sourced file for Anthropic: documents
+// for PDFs (by declared format, accepting the "pdf" shorthand, or a .pdf
+// extension after any query string), images for the four supported image
+// types, and a refusal for anything else the upstream would reject.
+func urlBinaryBlockType(format, url string) (string, error) {
+	switch format {
+	case "application/pdf", "pdf":
+		return "document", nil
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return "image", nil
+	}
+	cleanURL, _, _ := strings.Cut(url, "?")
+	cleanURL, _, _ = strings.Cut(cleanURL, "#")
+	if strings.HasSuffix(strings.ToLower(cleanURL), ".pdf") {
+		return "document", nil
+	}
+	return "", models.ErrBadRequest("unsupported_content_part",
+		fmt.Sprintf("cannot determine that %q is a file type Anthropic accepts (image/jpeg, image/png, image/gif, image/webp, application/pdf); pass an explicit format or a URL ending in .pdf", url))
 }
 
 // convertImageToAnthropic converts an image URL (data URI or HTTP URL) to Anthropic image block.

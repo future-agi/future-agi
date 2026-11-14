@@ -2265,3 +2265,67 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 		t.Fatal("cached tokens must be retained without subtracting input context")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// RejectUnroutableFileParts tests (issue #2888, case 2)
+// ---------------------------------------------------------------------------
+
+func TestRejectUnroutableFileParts_OpaqueIDRejected(t *testing.T) {
+	messages := []models.Message{{
+		Role: "user",
+		Content: json.RawMessage(`[
+			{"type":"file","file":{"file_id":"file-abc123"}}
+		]`),
+	}}
+
+	err := RejectUnroutableFileParts(messages)
+	if err == nil {
+		t.Fatal("expected a refusal for an opaque file_id, got nil")
+	}
+	if err.Status != 400 || err.Code != "unsupported_content_part" {
+		t.Fatalf("status=%d code=%q, want 400 unsupported_content_part", err.Status, err.Code)
+	}
+}
+
+func TestRejectUnroutableFileParts_RoutableReferencesPass(t *testing.T) {
+	messages := []models.Message{{
+		Role: "user",
+		Content: json.RawMessage(`[
+			{"type":"text","text":"hi"},
+			{"type":"file","file":{"file_id":"https://example.com/doc.pdf"}},
+			{"type":"file","file":{"file_id":"gs://my-bucket/doc.pdf"}},
+			{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0x"}}
+		]`),
+	}}
+
+	if err := RejectUnroutableFileParts(messages); err != nil {
+		t.Fatalf("unexpected refusal for routable references: %v", err)
+	}
+}
+
+func TestRejectUnroutableFileParts_PlainStringContent(t *testing.T) {
+	// Plain-string content must not trip the validator.
+	messages := []models.Message{{Role: "user", Content: json.RawMessage(`"just text"`)}}
+	if err := RejectUnroutableFileParts(messages); err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+}
+
+func TestRejectUnroutableFileParts_UnparsableFileDataRejected(t *testing.T) {
+	// Bare base64 (no data: prefix) is silently dropped by the translator —
+	// the validator must refuse it instead of letting the attachment vanish.
+	messages := []models.Message{{
+		Role: "user",
+		Content: json.RawMessage(`[
+			{"type":"file","file":{"file_data":"JVBERi0x"}}
+		]`),
+	}}
+
+	err := RejectUnroutableFileParts(messages)
+	if err == nil {
+		t.Fatal("expected a refusal for bare-base64 file_data, got nil")
+	}
+	if err.Status != 400 || err.Code != "unsupported_content_part" {
+		t.Fatalf("status=%d code=%q, want 400 unsupported_content_part", err.Status, err.Code)
+	}
+}

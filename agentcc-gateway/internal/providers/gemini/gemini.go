@@ -195,6 +195,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	if err := RejectUnsupportedTools(req.Tools); err != nil {
 		return nil, err
 	}
+	if err := RejectUnroutableFileParts(req.Messages); err != nil {
+		return nil, err
+	}
 
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
@@ -260,6 +263,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(errs)
 
 		if err := RejectUnsupportedTools(req.Tools); err != nil {
+			errs <- err
+			return
+		}
+		if err := RejectUnroutableFileParts(req.Messages); err != nil {
 			errs <- err
 			return
 		}

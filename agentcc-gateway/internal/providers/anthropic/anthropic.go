@@ -106,6 +106,13 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	ar, err := translateRequest(req)
 	if err != nil {
+		// A client-content rejection (unroutable attachment shape) is already
+		// a 400 invalid_request_error; pass it through instead of masking it
+		// as a 500.
+		var apiErr *models.APIError
+		if errors.As(err, &apiErr) {
+			return nil, apiErr
+		}
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 	}
 	ar.Stream = false
@@ -165,6 +172,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		ar, err := translateRequest(req)
 		if err != nil {
+			var apiErr *models.APIError
+			if errors.As(err, &apiErr) {
+				errs <- apiErr
+				return
+			}
 			errs <- models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 			return
 		}

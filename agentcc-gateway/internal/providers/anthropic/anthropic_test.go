@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -855,5 +856,60 @@ func TestIntegration_NonStreamingToolUseRoundtrip(t *testing.T) {
 	}
 	if tc.Function.Name != "get_weather" {
 		t.Errorf("tool call name = %q, want %q", tc.Function.Name, "get_weather")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unroutable attachment refusals
+// ---------------------------------------------------------------------------
+
+// An attachment the Anthropic route cannot carry is refused with a 400 before
+// anything is sent, instead of being forwarded in its source shape (which the
+// upstream rejects with an error that never mentions the attachment) or
+// dropped (which quietly changes what the model sees).
+func TestChatCompletion_UnroutableFilePartIsRefused(t *testing.T) {
+	tests := []struct {
+		name string
+		part string
+	}{
+		{"an opaque file_id", `[{"type":"file","file":{"file_id":"file-abc123"}}]`},
+		{"an input_audio part", `[{"type":"input_audio","input_audio":{"data":"UklGRiQ=","format":"wav"}}]`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var req models.ChatCompletionRequest
+			body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"messages":[{"role":"user","content":` + tc.part + `}]}`
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatalf("reading the request: %v", err)
+			}
+
+			reached := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[]}`))
+			}))
+			defer server.Close()
+
+			p := newTestProvider(t, server.URL)
+			defer p.Close()
+			_, err := p.ChatCompletion(context.Background(), &req)
+
+			if err == nil {
+				t.Fatal("the request was accepted, want a refusal")
+			}
+			var apiErr *models.APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("error %v is not an *models.APIError", err)
+			}
+			if apiErr.Status != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadRequest)
+			}
+			if apiErr.Code != "unsupported_content_part" {
+				t.Errorf("code = %q, want %q", apiErr.Code, "unsupported_content_part")
+			}
+			if reached {
+				t.Error("the upstream was called for a request the gateway cannot serve")
+			}
+		})
 	}
 }
