@@ -1220,10 +1220,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1236,7 +1236,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1465,6 +1465,81 @@
 - when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
 - without the opt-in the log response has no source_navigation, and =false is identical
 
+### EVAL-E2E-015 — Recalculate on an eval task's result replaces it in place
+
+**Goal:** A user who disagrees with an eval task's verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span's current input
+
+**Spec:** `flows/evals/recalculate-task-result.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace through the collector, and register its trace and LLM span through the public trace and span API
+2. author an LLM-as-a-judge eval (mock LLM through the gateway) and run an eval task over the project
+3. leave feedback on the task's result for the LLM span (the Observe feedback form's request)
+4. re-send the span with a new value for the eval's mapped attribute
+5. open the eval, its Feedback tab, the feedback, Edit Feedback
+6. pick Re-calculate and re-tune and submit the feedback
+7. read the span's eval result in Observe
+
+**Backend state verified:**
+
+- the eval task completes with one live completed entry for the span and eval in PG tracer_eval_logger, its verdict naming the span's first input
+- Recalculate answers 200 and the feedback row records action recalculate with the user's note
+- afterwards the span and eval have exactly one live entry: completed, of the same eval task, a new row whose verdict names the span's new input (the judge ran again)
+- the previous entry is retired (deleted = true), not left live beside the new one
+- the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
+
+### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+
+**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+
+**Spec:** `flows/evals/link-destinations.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. resolve the two shipped system template IDs without rewriting their code
+2. open each system evaluator in the browser
+3. submit approved links, link-free prose and refused destinations in the Custom playground
+4. read exact verdicts and explanations
+5. inspect the exact request set on the owned canary
+
+**Backend state verified:**
+
+- both shipped templates retain their system identity and text input contract
+- browser-submitted playground responses match the exact verdict and explanation matrix
+- the owned canary records only approved HEAD requests and never receives refused destinations
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -1519,7 +1594,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -1576,6 +1651,30 @@
 - the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
+
+## knowledge-base
+
+### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
+
+**Goal:** A workspace reader downloads an uploaded file with its original filename and exact bytes, while other scopes cannot download it
+
+**Spec:** `flows/knowledge-base/file-download.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic text document
+2. open its knowledge-base file table
+3. click Download on the file row
+4. save the browser download
+5. check foreign-organization, sibling-workspace and anonymous refusals
+
+**Backend state verified:**
+
+- the file list API returns the uploaded file identity and name
+- authorized download returns exactly the uploaded bytes as an attachment with no storage URL
+- foreign-org, sibling-workspace and anonymous requests return refusal without file bytes
 
 ## observe
 
@@ -2486,7 +2585,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 

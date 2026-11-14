@@ -24,7 +24,6 @@ function sentryOptions() {
         options = value;
       },
       browserTracingIntegration: (value) => ({ name: "Tracing", ...value }),
-      replayIntegration: (value) => ({ name: "Replay", ...value }),
     },
     SENTRY_DSN: "",
     CURRENT_ENVIRONMENT: "local",
@@ -97,15 +96,12 @@ describe("Sentry callback URL configuration", () => {
     });
   });
 
-  it("projects Replay recordings without changing text and media masking", () => {
-    const replay = sentryOptions().integrations.find(
-      (integration) => integration.name === "Replay",
-    );
-    expect(replay.maskAllText).toBe(true);
-    expect(replay.blockAllMedia).toBe(true);
+  it("leaves Replay registration to the post-paint effect", () => {
     expect(
-      replay.beforeAddRecordingEvent({ type: 4, data: { href: marked } }),
-    ).toEqual({ type: 4, data: { href: clean } });
+      sentryOptions().integrations.find(
+        (integration) => integration.name === "Replay",
+      ),
+    ).toBeUndefined();
   });
 
   it("projects Replay metadata through the configured event processor", () => {
