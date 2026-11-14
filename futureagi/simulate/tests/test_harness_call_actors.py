@@ -521,6 +521,63 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
     )
 
 
+@pytest.mark.django_db
+def test_actor_facet_counts_match_the_python_reference(organization, workspace):
+    from simulate.services.run_results_v3_queries import (
+        _call_actor_facet,
+        _call_actor_facet_python,
+    )
+
+    summaries = [
+        [
+            {
+                "actor": "friend",
+                "name": "Rowan",
+                "triggered": True,
+                "delivered": 2,
+                "drawn": True,
+            }
+        ],
+        [{"actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}],
+        [
+            {"actor": "friend", "name": "Rowan", "triggered": True, "delivered": 0},
+            {"actor": "partner", "name": "Sam", "triggered": False, "drawn": False},
+        ],
+        [
+            {"actor": "partner", "name": "Sam", "triggered": True, "delivered": 1},
+            "not-an-entry",
+            {"name": "x"},
+        ],
+        [{"actor": "partner", "name": "Sam", "triggered": False, "drawn": False}],
+        "not-a-list",
+        None,
+    ]
+    ids = []
+    for index, summary in enumerate(summaries):
+        call = _ingest(
+            organization,
+            workspace,
+            f"facet-reference-{index}",
+            CallExecution.SimulationCallType.TEXT,
+            {"messages": []},
+            {},
+        )
+        if summary is not None:
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "harness_call_actors": {"summary": summary},
+            }
+            call.save(update_fields=["call_metadata"])
+        ids.append(call.id)
+    calls = CallExecution.objects.filter(id__in=ids)
+
+    assert _call_actor_facet(calls) == _call_actor_facet_python(calls)
+    by_value = {one["value"]: one for one in _call_actor_facet(calls)}
+    # A call whose only planned actor was not drawn counts as simulated user only.
+    assert by_value["none"]["count"] == 3
+    assert (by_value["friend"]["count"], by_value["friend"]["dropped"]) == (3, 1)
+
+
 def test_a_pinned_suite_version_keeps_each_scenario_s_call_actors():
     from simulate.services.harness_versioning.versions import _member_content
 

@@ -1267,8 +1267,81 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
+# How far an actor got in one call, as `call_actor_delivery` reads it, in SQL over one summary entry `e`.
+_DELIVERY_SQL = """
+CASE
+  WHEN jsonb_typeof(e -> 'delivered') = 'number' AND (e ->> 'delivered')::numeric > 0 THEN 'delivered'
+  WHEN e -> 'triggered' IS NOT NULL
+       AND e -> 'triggered' NOT IN ('false'::jsonb, 'null'::jsonb, '0'::jsonb, '""'::jsonb) THEN 'dropped'
+  WHEN e -> 'drawn' = 'false'::jsonb THEN 'not_drawn'
+  ELSE 'not_triggered'
+END
+"""
+
+
 def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
-    """Calls per actor planned for them, by name and by how far it got; none when no run call had one."""
+    """Calls per actor planned for them, by name and by how far it got; none when no run call had one. Counted by
+    the database in one aggregate over the calls' actor summaries on Postgres; read call by call elsewhere."""
+    database = router.db_for_read(calls.model)
+    if connections[database].vendor != "postgresql":
+        return _call_actor_facet_python(calls)
+    ids_sql, ids_params = calls.order_by().values("id").query.sql_with_params()
+    table = calls.model._meta.db_table
+    sql = f"""
+        WITH summaries AS (
+            SELECT c.id, c.call_metadata -> 'harness_call_actors' -> 'summary' AS summary
+            FROM "{table}" c WHERE c.id IN ({ids_sql})
+        ), planned AS (
+            SELECT s.id, e ->> 'actor' AS actor, e ->> 'name' AS name, {_DELIVERY_SQL} AS delivery
+            FROM summaries s,
+                 jsonb_array_elements(
+                     CASE WHEN jsonb_typeof(s.summary) = 'array' THEN s.summary ELSE '[]'::jsonb END
+                 ) AS e
+            WHERE jsonb_typeof(e) = 'object' AND COALESCE(e ->> 'actor', '') <> ''
+        )
+        SELECT actor, min(name), delivery, count(*) FROM planned
+        WHERE delivery <> 'not_drawn' GROUP BY actor, delivery
+        UNION ALL
+        SELECT NULL, NULL, NULL, count(*) FROM summaries s
+        WHERE NOT EXISTS (SELECT 1 FROM planned p WHERE p.id = s.id AND p.delivery <> 'not_drawn')
+    """  # noqa: S608 - the table is the model's own; every value is a parameter
+    with connections[database].cursor() as cursor:
+        cursor.execute(sql, ids_params)
+        found = cursor.fetchall()
+    counts: Counter = Counter()
+    deliveries: defaultdict[str, Counter] = defaultdict(Counter)
+    names = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
+    for actor, name, delivery, count in found:
+        if actor is None:
+            if count:
+                counts[NO_CALL_ACTOR] += int(count)
+            continue
+        counts[actor] += int(count)
+        deliveries[actor][delivery] += int(count)
+        names.setdefault(actor, str(name or actor))
+    return _actor_facet_values(counts, deliveries, names)
+
+
+def _actor_facet_values(
+    counts: Counter, deliveries: defaultdict[str, Counter], names: dict[str, str]
+) -> list[CallActorFacetValue]:
+    if set(counts) <= {NO_CALL_ACTOR}:
+        return []
+    return [
+        {
+            "value": value,
+            "count": count,
+            "label": names[value],
+            "delivered": deliveries[value]["delivered"],
+            "dropped": deliveries[value]["dropped"],
+            "not_triggered": deliveries[value]["not_triggered"],
+        }
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _call_actor_facet_python(calls: QuerySet) -> list[CallActorFacetValue]:
+    """The actor facet read call by call: the reference the database's aggregate matches."""
     counts: Counter = Counter()
     deliveries: defaultdict[str, Counter] = defaultdict(Counter)
     names = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
@@ -1292,19 +1365,7 @@ def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
             names.setdefault(key, str(one.get("name") or key))
         if not planned:
             counts[NO_CALL_ACTOR] += 1
-    if set(counts) <= {NO_CALL_ACTOR}:
-        return []
-    return [
-        {
-            "value": value,
-            "count": count,
-            "label": names[value],
-            "delivered": deliveries[value]["delivered"],
-            "dropped": deliveries[value]["dropped"],
-            "not_triggered": deliveries[value]["not_triggered"],
-        }
-        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    ]
+    return _actor_facet_values(counts, deliveries, names)
 
 
 def run_call_facets(
