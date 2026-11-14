@@ -67,3 +67,81 @@ func TestDecisionPricingOverride(t *testing.T) {
 		t.Fatalf("cost = %g, %v", cost, ok)
 	}
 }
+
+// OpenRouter names Jev "typesafe/jev-1.13" and answers with a dated model
+// such as "typesafe/jev-1.13-20260917"; both are the priced jev-1.13.0.
+func TestDecisionPricingOpenRouterJevNames(t *testing.T) {
+	db := New(BundledModels, nil)
+	for _, model := range []string{
+		"typesafe/jev-1.13",
+		"typesafe/jev-1.14",
+		"typesafe/jev-1.13-20260917",
+		"typesafe/jev-1.14-20261015",
+		"typesafe/jev-1.13.0-20260917",
+		"openrouter/typesafe/jev-1.13",
+		"~typesafe/jev-latest",
+		"typesafe/jev-1.13.0",
+		"jev-1.13",
+	} {
+		cost, ok := db.CalculateDecisionCost(model, 1_000_000, 500)
+		if !ok || math.Abs(cost-0.042) > 1e-12 {
+			t.Errorf("%s: cost = %g, %v; want 0.042, true", model, cost, ok)
+		}
+	}
+}
+
+// Only the known Jev shapes are normalized. An unknown version, an unknown
+// patch, a malformed date or another model stays unpriced: never free and
+// never priced as another version.
+func TestDecisionPricingUnknownJevVersionsStayUnpriced(t *testing.T) {
+	db := New(BundledModels, nil)
+	for _, model := range []string{
+		"jev-9.9",
+		"typesafe/jev-9.9",
+		"typesafe/jev-9.9-20270101",
+		"jev-1.13.2",
+		"jev-1.13-2026",
+		"jev-1.13-20260917-beta",
+		"jev-1.13-20261399",
+		"xjev-1.13",
+		"jev-1.13/",
+		"gpt-6-luna-20260917",
+	} {
+		if cost, ok := db.CalculateDecisionCost(model, 1_000_000, 500); ok || cost != 0 {
+			t.Errorf("%s: cost = %g, %v; want 0, false", model, cost, ok)
+		}
+	}
+}
+
+// An exact decision key beats normalization, so an operator can price one
+// OpenRouter name apart from the bundled version it normalizes to.
+func TestDecisionPricingExactKeyBeatsJevNormalization(t *testing.T) {
+	p := 0.5 / 1_000_000
+	db := New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-1.13": {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &p}},
+	})
+	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13", 1_000_000, 0); !ok || math.Abs(cost-0.5) > 1e-9 {
+		t.Errorf("typesafe/jev-1.13 = %g, %v; want the 0.5 override", cost, ok)
+	}
+	// The dated name has no exact key and still normalizes to jev-1.13.0.
+	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13-20260917", 1_000_000, 0); !ok || math.Abs(cost-0.042) > 1e-9 {
+		t.Errorf("typesafe/jev-1.13-20260917 = %g, %v; want 0.042", cost, ok)
+	}
+}
+
+// A Jev name never borrows a chat-namespace price, even when a chat entry of
+// the same name exists, as litellm's "typesafe/jev-*" evaluation entries do.
+func TestDecisionPricingJevNeverUsesChatEntries(t *testing.T) {
+	bundled := map[string]*ModelInfo{
+		"typesafe/jev-9.9": {Provider: "typesafe", Mode: ModeChat, Pricing: PricingInfo{InputPerToken: 7.0 / 1_000_000}},
+		"jev-9.9":          {Provider: "typesafe", Mode: ModeChat, Pricing: PricingInfo{InputPerToken: 7.0 / 1_000_000}},
+		"jev-9.9.0":        {Provider: "typesafe", Mode: ModeChat, Pricing: PricingInfo{InputPerToken: 7.0 / 1_000_000}},
+	}
+	addDecisionModels(bundled)
+	db := New(bundled, nil)
+	for _, model := range []string{"typesafe/jev-9.9", "jev-9.9", "typesafe/jev-9.9-20270101"} {
+		if cost, ok := db.CalculateDecisionCost(model, 1_000_000, 0); ok {
+			t.Errorf("%s priced %g from a chat entry", model, cost)
+		}
+	}
+}

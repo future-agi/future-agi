@@ -1,6 +1,10 @@
 package modeldb
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+	"time"
+)
 
 // DecisionKeyPrefix namespaces decision-model prices. A decision model can
 // share its name with a chat model (gpt-6-luna is both) at a different price,
@@ -36,13 +40,25 @@ func addDecisionModels(bundled map[string]*ModelInfo) {
 }
 
 // DecisionPricing returns a decision model's price. It looks only under
-// "decision:" keys, first for the model as named and then for its last path
-// segment ("typesafe/jev-1.13.0" from OpenRouter), and never falls back to a
-// chat model of the same name.
+// "decision:" keys and never falls back to a chat model of the same name. It
+// tries, in order:
+//   - the model as named;
+//   - its last path segment ("jev-1.13.0" from "typesafe/jev-1.13.0");
+//   - for Jev only, that segment normalized to the version it names, so
+//     OpenRouter's "typesafe/jev-1.13" and the dated "typesafe/jev-1.13-20260917"
+//     it answers with are priced as jev-1.13.0 (see normalizeJevVersion).
+//
+// An exact key always wins over normalization, so an operator override on
+// "decision:jev-1.13" prices that name on its own.
 func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
+	last := model
 	candidates := []string{model}
 	if idx := strings.LastIndexByte(model, '/'); idx >= 0 && idx < len(model)-1 {
-		candidates = append(candidates, model[idx+1:])
+		last = model[idx+1:]
+		candidates = append(candidates, last)
+	}
+	if normalized, ok := normalizeJevVersion(last); ok {
+		candidates = append(candidates, normalized)
 	}
 	for _, id := range candidates {
 		if m, ok := db.models[DecisionKeyPrefix+id]; ok && m.Pricing.HasPricing() {
@@ -50,6 +66,34 @@ func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// jevVersion matches the Jev names OpenRouter uses: "jev-<major>.<minor>",
+// optionally with a ".<patch>", optionally with a "-YYYYMMDD" release date.
+var jevVersion = regexp.MustCompile(`^jev-(\d+)\.(\d+)(?:\.(\d+))?(?:-(\d{8}))?$`)
+
+// normalizeJevVersion maps a Jev model name to the "jev-<major>.<minor>.<patch>"
+// version it names: the date suffix is dropped and a missing patch is ".0", so
+// "jev-1.13" and "jev-1.13-20260917" are "jev-1.13.0". A patch that is given is
+// kept as is ("jev-1.13.2" stays "jev-1.13.2"), so a name is never priced as
+// another version. Anything that is not a Jev version, including a suffix
+// that is not a calendar date, is not normalized.
+func normalizeJevVersion(name string) (string, bool) {
+	m := jevVersion.FindStringSubmatch(name)
+	if m == nil {
+		return "", false
+	}
+	if date := m[4]; date != "" {
+		if _, err := time.Parse("20060102", date); err != nil {
+			return "", false
+		}
+	}
+	patch := m[3]
+	if patch == "" {
+		patch = "0"
+	}
+	normalized := "jev-" + m[1] + "." + m[2] + "." + patch
+	return normalized, normalized != name
 }
 
 // CalculateDecisionCost prices a decision call from the vendor's token counts.
