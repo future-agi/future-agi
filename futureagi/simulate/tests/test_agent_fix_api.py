@@ -22,6 +22,7 @@ from accounts.models import Organization, Workspace
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
@@ -32,6 +33,7 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     engine_brief,
 )
+from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -80,7 +82,9 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.views.run_results_v3 import _execution_payload
+from tfc.capabilities.service import CapabilityDecision, denial_message
 from tfc.ee_gating import EEFeature, FeatureUnavailable
+from tfc.licensing.types import DenialReason
 
 pytestmark = pytest.mark.django_db
 
@@ -210,6 +214,12 @@ class TestEngineAuthentication:
                 "transcript",
                 "failure",
                 "duration_s",
+                "models",
+                "spans_seen",
+                "agent_cost_usd",
+                "unpriced_models",
+                "instrumentation_partial",
+                "reply_latency_ms",
             }
         ]
 
@@ -301,6 +311,9 @@ class TestEngineCalls:
             "failure": None,
             "records": [],
             "parallelism": None,
+            # The unsealed check run's one conversation, held at the worst case.
+            "committed_usd": 0.05,
+            "usage_unreadable": False,
         }
 
         ended = _engine(
@@ -432,6 +445,16 @@ class TestEngineCalls:
         tiers = [
             {"name": "static", "status": "passed", "detail": "1 file changed"},
             {"name": "target", "status": "failed", "detail": "0 of 1 passed"},
+            # A tier that holds several checks keeps each one's own status.
+            {
+                "name": "ceilings",
+                "status": "skipped",
+                "detail": "latency within; cost not verified",
+                "parts": [
+                    {"name": "reply latency", "status": "passed", "detail": "within"},
+                    {"name": "agent cost", "status": "skipped", "detail": "untraced"},
+                ],
+            },
         ]
 
         response = _engine(
@@ -479,7 +502,9 @@ class TestEngineCalls:
             0,
         )
         assert read["diagnosis"] == {"causes": ["It never refunds before closing"]}
-        assert read["candidates"][0]["verdict"]["tiers"] == tiers
+        assert read["candidates"][0]["verdict"]["tiers"] == [
+            {"parts": [], **tier} for tier in tiers
+        ]
 
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
         self, api_client, source_run, temporal
@@ -781,6 +806,96 @@ class TestUserApi:
         brief = _engine(api_client, "get", _armed(fix_run), "brief/").json()
         assert brief["request"]["protected_scenario_keys"] == [KEYS[1]]
 
+    def test_a_fix_reads_back_what_it_is_held_to(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["model-a", "model-b"],
+                reply_latency_margin_pct=40,
+                cost_margin_pct=10,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        read = auth_client.get(f"{BASE}/{response.json()['id']}/").json()["request"]
+        assert read["allowed_models"] == ["model-a", "model-b"]
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (40, 10, 0.02)
+        assert {"observes_models", "meters_agent_cost"} <= set(read)
+
+    def test_an_omitted_margin_is_left_to_the_launch_default(
+        self, auth_client, source_run
+    ):
+        body = _launch_body(source_run)
+        # The launch serializer leaves an omitted margin out, so the service decides it.
+        launch = AgentFixLaunchSerializer(data=body)
+        assert launch.is_valid(), launch.errors
+        assert not {"reply_latency_margin_pct", "cost_margin_pct"} & set(
+            launch.validated_data
+        )
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            25,
+            25,
+        )
+
+    def test_a_zero_margin_stays_zero(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, reply_latency_margin_pct=0, cost_margin_pct=0),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            0,
+            0,
+        )
+
+    def test_a_fix_from_before_its_limits_reads_as_untraced(
+        self, auth_client, source_run
+    ):
+        response = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+        fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
+        limits = {
+            "allowed_models",
+            "reply_latency_margin_pct",
+            "cost_margin_pct",
+            "cost_limit_usd",
+            "observes_models",
+            "meters_agent_cost",
+        }
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={k: v for k, v in fix_run.request.items() if k not in limits}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["request"]
+        assert (
+            read["allowed_models"],
+            read["observes_models"],
+            read["meters_agent_cost"],
+        ) == (
+            [],
+            False,
+            False,
+        )
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (25, 25, None)
+
     @pytest.mark.parametrize(
         ("protected", "code"),
         [
@@ -887,10 +1002,16 @@ class TestUserApi:
             ("settings", True),
             ("code", True),
         ]
+        # A GitHub agent is not traced: no model it called can be seen.
         assert options["defaults"] == {
             "surfaces": ["prompt"],
             "budget_credits": 1500,
             "max_minutes": 180,
+            "allowed_models": [],
+            "agent_cost_metered": False,
+            "agent_calls_unmeasured": False,
+            "reply_latency_margin_pct": 25,
+            "cost_margin_pct": 25,
         }
         assert options["limits"] == {
             "budget_credits_max": 50000,
@@ -910,6 +1031,63 @@ class TestUserApi:
     )
     def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
         assert default_max_minutes(cases) == minutes
+
+    @pytest.mark.parametrize(
+        ("field", "refused", "taken"),
+        [
+            ("cost_limit_usd", 0, 0.01),
+            ("reply_latency_margin_pct", 1001, 1000),
+            ("cost_margin_pct", -1, 0),
+            ("allowed_models", ["m" * 201], ["m" * 200]),
+        ],
+    )
+    def test_a_constraint_out_of_bounds_starts_nothing(
+        self, auth_client, source_run, field, refused, taken
+    ):
+        bad = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: refused}), format="json"
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+        good = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: taken}), format="json"
+        )
+
+        assert (bad.status_code, good.status_code) == (400, 201)
+        assert AgentFixRun.no_workspace_objects.get().request[field] == taken
+
+    def test_a_launch_keeps_the_constraints_it_was_given(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["gpt-5-mini"],
+                reply_latency_margin_pct=10,
+                cost_margin_pct=40,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        request = AgentFixRun.no_workspace_objects.get().request
+        assert {
+            key: request[key]
+            for key in (
+                "allowed_models",
+                "reply_latency_margin_pct",
+                "cost_margin_pct",
+                "cost_limit_usd",
+                "observes_models",
+                "meters_agent_cost",
+            )
+        } == {
+            "allowed_models": ["gpt-5-mini"],
+            "reply_latency_margin_pct": 10,
+            "cost_margin_pct": 40,
+            "cost_limit_usd": 0.02,
+            "observes_models": False,
+            "meters_agent_cost": False,
+        }
 
     def test_a_launch_without_a_time_limit_gets_the_suggested_one(
         self, auth_client, source_run
@@ -1028,16 +1206,21 @@ class TestUserApi:
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
             read.pop("eval_warnings")
+            read.pop("eval_grading")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
         # The engine's $0.25, and two unsealed check conversations held at $0.50 each.
         assert shown() == (25.0, 125.0)
-        # Sealed, the check run counts at what it billed and its hold goes.
+        # Sealed and settled, the check run counts at what it and its evals billed, and
+        # its hold goes.
         HostedHarnessJob.no_workspace_objects.filter(id=check.id).update(
-            fix_cost_usd=Decimal("0.094")
+            fix_cost_usd=Decimal("0.094"), fix_eval_cost_usd=Decimal("0.01")
         )
-        assert shown() == (34.4, 34.4)
+        Execution.objects.filter(id=check.test_execution_id).update(
+            status=Execution.ExecutionStatus.COMPLETED
+        )
+        assert shown() == (35.4, 35.4)
         read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
         assert read["request"]["budget_credits"] == 500.0
 
@@ -1463,11 +1646,13 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
+            "Proven by Epoch: held-back cases 0% → 61%, target cases 0% → 63%; "
             "passed every tier" in sent["json"]["body"]
         )
         title = sent["json"]["title"]
-        assert len(title) <= 120 and title.endswith("r asked for…")
+        # Named for Epoch, cut on a word at 120 characters.
+        assert title.startswith("Epoch: Keep the date the caller asked for ")
+        assert len(title) <= 120 and title.endswith(" Keep…")
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
@@ -1698,7 +1883,7 @@ class TestUserApi:
         )
         pull = sent["json"]
         assert pull["draft"] is True
-        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
         assert f"- `{self.REGRESSED}`" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
@@ -1770,6 +1955,53 @@ class TestUserApi:
 
         assert self._override(auth_client, fix_run)["allowed"] is True
         assert (response.status_code, len(calls)) == (200, 1)
+
+    @pytest.mark.parametrize(
+        ("ceilings", "lock"),
+        [("skipped", "skipped"), ("passed", "skipped"), ("skipped", "passed")],
+        ids=["nothing-measured", "lock-not-verified", "cost-not-verified"],
+    )
+    def test_a_check_that_could_not_be_measured_does_not_stop_an_override(
+        self, auth_client, source_run, github, ceilings, lock
+    ):
+        def allowed(ceilings, lock):
+            AgentFixRun.no_workspace_objects.all().delete()
+            tiers = [
+                *self._final(skip=("ceilings",)),
+                {"name": "ceilings", "status": ceilings},
+                {"name": "model-lock", "status": lock},
+            ]
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            return self._override(auth_client, fix_run)["allowed"]
+
+        # A measured breach still refuses it.
+        assert (
+            allowed(ceilings, lock),
+            allowed("failed", lock),
+            allowed(ceilings, "failed"),
+        ) == (True, False, False)
+
+    def test_a_verdict_from_before_the_model_lock_tier_reads_as_it_always_did(
+        self, auth_client, source_run, github
+    ):
+        def override(tiers):
+            AgentFixRun.no_workspace_objects.all().delete()
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+            return shown["verdict"]["tiers"], shown["override"]["allowed"]
+
+        old = self._final()
+        # The old engine's six tiers, only must-pass failed: it ships on a reason.
+        shown, allowed = override(old)
+        # Its skipped ceilings were never run, not unverified: that still refuses it.
+        _, unrun = override(
+            [*old[:5], {"name": "ceilings", "status": "skipped", "detail": ""}]
+        )
+
+        assert [(one["name"], one["status"]) for one in shown] == [
+            (one["name"], one["status"]) for one in old
+        ]
+        assert (allowed, unrun) == (True, False)
 
     def _final(self, failed="must-pass", skip=()):
         return [
@@ -2011,6 +2243,17 @@ class TestUserApi:
         assert self._override(auth_client, fix_run)["reason"] == ""
 
 
+def test_a_plan_refusal_names_the_feature_epoch():
+    """The plan and licence gate names the feature the way every screen does."""
+    refusal = CapabilityDecision(
+        allowed=False,
+        feature_id="fix_my_agent",
+        reason_code=DenialReason.PLAN_FEATURE_MISSING.value,
+    )
+
+    assert denial_message(refusal) == "Epoch isn't included in your plan."
+
+
 @pytest.mark.parametrize(
     "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
 )
@@ -2055,20 +2298,90 @@ class TestEvalWarnings:
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             outcome=outcome
         )
-        base = _check(fix_run, label="base", keys=keys, trials=self.TRIALS)
+        # The base version's baseline and the winner's final check: the runs compared.
+        base = _check(fix_run, label="baseline-r1", keys=keys, trials=self.TRIALS)
         mine = _check(
             fix_run,
-            label="c1",
+            label="c1-finalist-r1",
             version_id=candidate.agent_version_id,
             keys=(KEYS[0],),
             trials=self.TRIALS,
         )
         return fix_run, base, mine, _mapped_eval(source_run)
 
-    def _warnings(self, auth_client, fix_run):
+    def _read(self, auth_client, fix_run):
         read = auth_client.get(f"{BASE}/{fix_run.id}/")
         assert read.status_code == 200, read.content
-        return read.json()["eval_warnings"]
+        return read.json()
+
+    def _warnings(self, auth_client, fix_run):
+        return self._read(auth_client, fix_run)["eval_warnings"]
+
+    @staticmethod
+    def _finished(*runs):
+        """The runs' calls finished, as grading needs them."""
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for run in runs for one in _executions(run)]
+        ).update(status=CallExecution.CallStatus.COMPLETED)
+
+    def test_the_winner_s_screens_are_not_compared(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        screen = _check(
+            fix_run,
+            label="c1-target-r1",
+            version_id=mine.agent_version_id,
+            trials=self.TRIALS,
+        )
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        _judged(screen, config, passes=0)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_grading_is_pending_while_a_job_holds_a_call_open(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "pending"}}
+        call.save(update_fields=["eval_outputs"])
+
+        read = self._read(auth_client, fix_run)
+
+        # Pending is not clean: nothing is said about the evals until they finish.
+        assert (read["eval_grading"], read["eval_warnings"]) == ("pending", [])
+
+    def test_grading_is_done_once_every_graded_call_holds_a_verdict(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+
+        read = self._read(auth_client, fix_run)
+
+        assert read["eval_grading"] == "done"
+        assert [one["name"] for one in read["eval_warnings"]] == [config.name]
+
+    def test_a_verdict_grading_lost_reads_incomplete(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "timed_out"}}
+        call.save(update_fields=["eval_outputs"])
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "incomplete"
+
+    def test_a_fix_with_no_winner_grades_nothing(self, auth_client, source_run):
+        fix_run, *_ = self._arms(source_run, outcome="rejected")
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "none"
 
     def test_the_read_warns_when_the_winner_does_worse_on_a_platform_eval(
         self, auth_client, source_run
@@ -2377,9 +2690,81 @@ class TestEngineMemory:
             "summary": "nothing held up",
             "failure": None,
             "winner_candidate_id": None,
+            "flaky_protected": [],
         }
         assert list(fix_run.engine_notes["lost_models"]) == ["deepseek/flash"]
         assert fix_run.engine_notes["last_error"] == "hung"
+
+    def test_the_protected_cases_a_fix_could_not_be_held_to_reach_the_read(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": KEYS[1],
+                "name": "Escalate a large order",
+                "sub_goal": "refunded",
+                "passed": 2,
+                "runs": 3,
+            }
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+
+    def test_no_flaky_case_fails_the_final_report_it_arrives_with(
+        self, api_client, auth_client, source_run
+    ):
+        # Scenario keys run to 255 characters, sub-goals are free text and an unnamed
+        # scenario's name is "". The list is only shown, so none of these may refuse the
+        # ending.
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": "k" * 255,
+                "name": "n" * 255,
+                "sub_goal": " ".join(["the agent"] * 60),
+                "passed": 1,
+                "runs": 3,
+            },
+            {"key": "unnamed", "name": "", "sub_goal": "done", "passed": 1, "runs": 2},
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+        assert read["ending"] == "no_improvement"
+
+    def test_a_report_from_before_flaky_protected_reads_as_none(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, ending="no_improvement", summary="nothing held up"
+        )
+        fix_run.refresh_from_db()
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            report={k: v for k, v in fix_run.report.items() if k != "flaky_protected"}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == []
+        assert read["summary"] == "nothing held up"
 
     def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
         self, api_client, source_run

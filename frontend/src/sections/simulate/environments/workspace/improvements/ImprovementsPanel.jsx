@@ -169,7 +169,7 @@ export default function ImprovementsPanel({ env }) {
         }
         rowHeight={ROW_HEIGHT}
         headerHeight={HEADER_HEIGHT}
-        emptyMessage="Nothing has been improved in this environment yet. Debug failures on a finished run starts one."
+        emptyMessage="No epochs have run in this environment yet. To start one, open Debug failures on a finished run and choose Run Epoch."
       />
       {count > 0 && (
         <DataTablePagination

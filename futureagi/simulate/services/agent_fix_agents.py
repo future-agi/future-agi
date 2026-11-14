@@ -92,7 +92,7 @@ class VersionedSourceAgent:
         if not versioning_enabled() or not certify_enabled():
             raise HostedHarnessError(
                 "fix_unavailable",
-                "Fix my agent needs agent versions and new version builds turned on",
+                "Epoch needs agent versions and new version builds turned on",
                 status_code=422,
             )
 
@@ -178,7 +178,7 @@ def agent_kind(environment: HostedHarnessJob) -> AgentKind:
             return kind
     raise HostedHarnessError(
         "fix_agent_not_editable",
-        "Fix my agent can change an uploaded or GitHub agent; this agent's prompt and tools"
+        "Epoch can change an uploaded or GitHub agent; this agent's prompt and tools"
         " run outside Future AGI",
         status_code=422,
     )

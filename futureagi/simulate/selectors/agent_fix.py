@@ -6,8 +6,10 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
+from statistics import median
 from typing import Any
 
+import structlog
 from django.conf import settings
 from django.db.models import (
     Case,
@@ -26,13 +28,14 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HarnessSuiteVersion,
@@ -40,6 +43,7 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessScenario,
+    TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
@@ -47,6 +51,7 @@ from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
     HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     VARIATIONS_PER_CASE,
@@ -55,6 +60,8 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    EvalGrading,
+    EvalReview,
     EvalWarning,
     FailureOwner,
     FixRequest,
@@ -73,6 +80,10 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
+from simulate.services.harness_evals import (
+    runnable_eval_config_ids,
+    runnable_eval_configs,
+)
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import (
@@ -85,10 +96,15 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     live_eval_specs,
 )
+from simulate.services.run_traces_v3 import CallUsage, run_usage
 from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 TRANSCRIPT_CHARS = 8000
 # A lost model is skipped for this long after it was lost: a short outage may be over.
@@ -232,7 +248,7 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
     if fix_run.source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     source = (fix_run.source_run.payload or {}).get("source") or {}
@@ -247,6 +263,12 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
+        worst_case_usd_per_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=False)
+        ),
+        worst_case_usd_per_graded_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=True)
+        ),
         deadline_at=fix_deadline(fix_run).isoformat(),
         source_failures=source_failures(
             fix_run.source_run, request, variations_run(fix_run)
@@ -319,6 +341,17 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     # transcripts, the heavy part, come only then.
     calls = [execution.call_execution for execution in executions]
     transcripts = _transcripts(call.id for call in calls) if finished else {}
+    # Only a fix whose source run exported the agent's model calls reads its runs' spans.
+    request = FixRequest.model_validate(run.fix_run.request)
+    traced = request.observes_models or request.meters_agent_cost
+    usage, unreadable = {}, False
+    if finished and traced:
+        try:
+            usage = _read_usage(run)
+        except CHError:
+            logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
+            unreadable = True
+    latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
         receipt = (execution.call_execution.call_metadata or {}).get(
@@ -332,6 +365,8 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
                 execution.trial_index,
                 receipt,
                 transcripts.get(execution.call_execution_id, ""),
+                usage=usage.get(str(execution.call_execution_id)),
+                reply_latency_ms=latencies.get(execution.call_execution_id),
             )
         )
     return CheckRunStatus(
@@ -346,6 +381,8 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         ),
         records=records,
         parallelism=ran_at(run, len(executions)) if finished else None,
+        committed_usd=float(committed_usd(run.fix_run)),
+        usage_unreadable=unreadable,
     )
 
 
@@ -409,7 +446,13 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
 
 
 def _record(
-    scenario_key: str, trial: int, receipt: Mapping[str, Any], transcript: str
+    scenario_key: str,
+    trial: int,
+    receipt: Mapping[str, Any],
+    transcript: str,
+    *,
+    usage: CallUsage | None = None,
+    reply_latency_ms: float | None = None,
 ) -> CheckRecord:
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
     judged = judged_sub_goals(receipt)
@@ -441,7 +484,130 @@ def _record(
         },
         transcript=transcript,
         duration_s=duration_ms / 1000 if duration_ms else None,
+        models=usage.models if usage else [],
+        spans_seen=usage.llm_spans if usage else 0,
+        agent_cost_usd=usage.cost_usd if usage else None,
+        unpriced_models=usage.unpriced_models if usage else [],
+        instrumentation_partial=usage.partial if usage else False,
+        reply_latency_ms=reply_latency_ms,
     )
+
+
+def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
+    if run.test_execution_id is None:
+        return {}
+    return run_usage(run.test_execution) or {}
+
+
+def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
+    """``_read_usage`` for the run a fix starts from, whose spans set what the fix can
+    check for good. A read that fails refuses the launch, to be tried again: a fix
+    frozen as untraced would never check what it could have."""
+    try:
+        return _read_usage(source_run)
+    except CHError as exc:
+        logger.warning(
+            "agent_fix_source_span_read_failed", run=str(source_run.id), exc_info=True
+        )
+        raise HostedHarnessError(
+            "fix_traces_unreadable",
+            "could not read this run's traces; try again",
+            status_code=503,
+            retryable=True,
+        ) from exc
+
+
+def model_key(name: str) -> str:
+    """A model's name as the lock compares it, without its provider: the engine counts
+    "vertex_ai/gemini-3.8-flash" as the allowed "gemini-3.8-flash"."""
+    return name.lower().rsplit("/", 1)[-1]
+
+
+def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
+    return sorted({model for one in usage.values() for model in one.models})
+
+
+def _first_time_ms(content: Any, *, text_only: bool = False) -> int | None:
+    """When a chat row's first timed item was said, or with ``text_only`` its first
+    text, not a tool call or its result: hosted chat stores each segment's start time
+    on its item."""
+    return next(
+        (
+            item["start_time_ms"]
+            for item in content or []
+            if isinstance(item, Mapping)
+            and isinstance(item.get("start_time_ms"), int)
+            and not (text_only and (item.get("kind") or not item.get("content")))
+        ),
+        None,
+    )
+
+
+def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
+    """Each call's reply latency in ms. A voice call has its agent's average latency. A
+    chat has the median, over its user turns, of the time from the user's message to
+    the agent's first text after it: a tool loop before the answer is time the user
+    waits. An agent's greeting before any user turn, and a last user turn the agent
+    never answered in text, have no reply."""
+    latencies: dict[Any, float | None] = {}
+    chats = []
+    for call in calls:
+        if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+            chats.append(call.id)
+        else:
+            latencies[call.id] = (
+                float(call.avg_agent_latency_ms)
+                if call.avg_agent_latency_ms is not None
+                else None
+            )
+    turns: dict[Any, list[tuple[int | None, Any, str, str, int | None]]] = defaultdict(
+        list
+    )
+    for (
+        call_id,
+        created_at,
+        row_id,
+        role,
+        content,
+    ) in ChatMessageModel.no_workspace_objects.filter(
+        call_execution_id__in=chats,
+        role__in=[
+            ChatMessageModel.RoleChoices.USER,
+            ChatMessageModel.RoleChoices.ASSISTANT,
+        ],
+    ).values_list("call_execution_id", "created_at", "id", "role", "content"):
+        turns[call_id].append(
+            (
+                _first_time_ms(content),
+                created_at,
+                str(row_id),
+                role,
+                _first_time_ms(content, text_only=True),
+            )
+        )
+    for call_id in chats:
+        rows = turns[call_id]
+        # The conversation's order: its own times when every row has one, else the
+        # order the rows were stored in (each row's created_at is its own).
+        if all(at is not None for at, *_ in rows):
+            rows.sort(key=lambda row: (row[0], row[1], row[2]))
+        else:
+            rows.sort(key=lambda row: (row[1], row[2]))
+        gaps = []
+        asked: int | None = None
+        waiting = False
+        for at, _created_at, _row_id, role, answered in rows:
+            if role == ChatMessageModel.RoleChoices.USER:
+                asked, waiting = at, True
+                continue
+            # Rows of tool calls alone keep the user waiting for the text.
+            if not waiting or answered is None:
+                continue
+            if asked is not None and answered >= asked:
+                gaps.append(answered - asked)
+            waiting = False
+        latencies[call_id] = float(median(gaps)) if gaps else None
+    return latencies
 
 
 # The engine's speaker for a chat row's role.
@@ -555,30 +721,90 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
     return list(results.values())
 
 
+# A check run whose TestExecution ended: its evals are not grading, and a winner's grading
+# moves it back to evaluating until they are.
+_SETTLED_RUN_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
+
+
+def _worst_case(evals: Any) -> Any:
+    """What one execution of a check run may cost: its simulation, and each billed eval a
+    winner's grading may run on it. ``evals`` is a count or an expression of one."""
+    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION) + evals * Decimal(
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL
+    )
+
+
+def is_graded_label(label: str) -> bool:
+    """Whether a winner's grading reads a check run with this label: the base version's
+    baseline repeats and a candidate's final check. No other check run is ever graded."""
+    return bool(_BASELINE_LABEL.match(label) or _FINALIST_LABEL.match(label))
+
+
+def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decimal:
+    """What a check run reserves of the fix's budget for each execution: its simulation,
+    and each billed eval only when a winner's grading reads the run."""
+    evals = (
+        len(runnable_eval_config_ids(fix_run.environment.run_test_id)) if graded else 0
+    )
+    return _worst_case(evals)
+
+
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
-    plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
-    each check run still unsealed; it is what the fix's limit is held against."""
+    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
+    every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
+    fix's limit is held against: a check run not settled yet (usage not sealed, or evals
+    still grading) holds at least a worst case for each execution."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
-    sealed = Coalesce(
-        Sum("check_runs__fix_cost_usd", filter=live),
-        Value(Decimal(0)),
+    actual = ExpressionWrapper(
+        Coalesce(F("check_runs__fix_cost_usd"), Value(Decimal(0)))
+        + F("check_runs__fix_eval_cost_usd"),
         output_field=money,
     )
-    unsealed = Coalesce(
-        Sum(
-            "check_runs__scenario_count",
-            filter=live & Q(check_runs__fix_cost_usd__isnull=True),
+    evals = Coalesce(
+        Subquery(
+            runnable_eval_configs(OuterRef("environment__run_test_id"))
+            .values("run_test_id")
+            .annotate(total=Count("id"))
+            .values("total")
         ),
         0,
     )
-    worst_case = Value(Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION))
-    return runs.annotate(
-        fix_spent_usd=ExpressionWrapper(F("spent_usd") + sealed, output_field=money),
-        committed_usd=ExpressionWrapper(
-            F("spent_usd") + sealed + unsealed * worst_case, output_field=money
+    graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
+        check_runs__fix_label__regex=_FINALIST_LABEL.pattern
+    )
+    per_execution = Case(
+        When(graded, then=_worst_case(evals)),
+        default=Value(_worst_case(0)),
+        output_field=money,
+    )
+    held = Greatest(
+        actual,
+        ExpressionWrapper(
+            F("check_runs__scenario_count") * per_execution, output_field=money
         ),
+        output_field=money,
+    )
+    settled = Q(
+        check_runs__fix_cost_usd__isnull=False,
+        check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES,
+    )
+    spent = Coalesce(Sum(actual, filter=live), Value(Decimal(0)), output_field=money)
+    committed = Coalesce(
+        Sum(
+            Case(When(settled, then=actual), default=held, output_field=money),
+            filter=live,
+        ),
+        Value(Decimal(0)),
+        output_field=money,
+    )
+    return runs.annotate(
+        fix_spent_usd=ExpressionWrapper(F("spent_usd") + spent, output_field=money),
+        committed_usd=ExpressionWrapper(F("spent_usd") + committed, output_field=money),
     )
 
 
@@ -684,7 +910,18 @@ def limited_validation(fix_run: AgentFixRun) -> bool:
 
 
 # The tiers the engine's final check records for a finalist, in order.
-VERDICT_TIERS = ("static", "target", "held-back", "must-pass", "repeats", "ceilings")
+VERDICT_TIERS = (
+    "static",
+    "target",
+    "held-back",
+    "must-pass",
+    "repeats",
+    "ceilings",
+    "model-lock",
+)
+# The tiers that read skipped when what they check could not be measured. That proves
+# nothing either way, and refuses no candidate.
+UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
 
 
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
@@ -696,8 +933,20 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
         return []
     verdict = candidate.verdict or {}
     # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
-    tiers = [
+    recorded = [
         (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+    ]
+    # An engine before the model-lock tier checked the lock inside the screens' tiers,
+    # and every tier it skipped went unrun: its verdicts are read as they always were.
+    locked = any(name == "model-lock" for name, _ in recorded)
+    tiers = [
+        (
+            name,
+            "passed"
+            if locked and name in UNVERIFIED_TIERS and status == "skipped"
+            else status,
+        )
+        for name, status in recorded
     ]
     # The frozen plan, not the verdict being checked, says whether the final check owed a
     # held-back tier: the engine drops that tier when it froze no held-back case.
@@ -707,7 +956,7 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     expected = [
         (name, "failed" if name == "must-pass" else "passed")
         for name in VERDICT_TIERS
-        if held_back or name != "held-back"
+        if (held_back or name != "held-back") and (locked or name != "model-lock")
     ]
     regressions = verdict.get("must_pass_regressions") or []
     # The engine names a lost protected case only in prose, so every regression on a
@@ -810,11 +1059,13 @@ def _pooled(
     return sum(one[0] for one in rows), sum(one[1] for one in rows)
 
 
-def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
-    """The platform evals the winner does worse on than the base version, on the scenarios
-    both ran. They do not decide a fix's verdict, so the person who reviews it reads them
-    here. Evals land after their call ends, so this reads them rather than a snapshot."""
-    winner = next(
+# The base version's repeats and a candidate's final check, the runs a winner's evals compare.
+_BASELINE_LABEL = re.compile(r"^baseline-r\d+$")
+_FINALIST_LABEL = re.compile(r"^c\d+-finalist-r\d+$")
+
+
+def fix_winner(fix_run: AgentFixRun) -> AgentFixCandidate | None:
+    return next(
         (
             one
             for one in fix_run.candidates.all()
@@ -822,23 +1073,61 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
         ),
         None,
     )
+
+
+def graded_check_runs(
+    fix_run: AgentFixRun, winner: AgentFixCandidate
+) -> tuple[list[HostedHarnessJob], list[HostedHarnessJob]]:
+    """The base version's baseline repeats and the winner's final check: the runs a fix's
+    evals grade once it has a winner, and all they compare."""
+    if not hasattr(fix_run, "check_run_list"):
+        fix_run.check_run_list = list(
+            HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run)
+        )
+    base = [
+        run for run in base_check_runs(fix_run) if _BASELINE_LABEL.match(run.fix_label)
+    ]
+    final = [
+        run
+        for run in fix_run.check_run_list
+        if run.agent_version_id == winner.agent_version_id
+        and _FINALIST_LABEL.match(run.fix_label)
+    ]
+    return base, final
+
+
+def eval_review(fix_run: AgentFixRun) -> EvalReview:
+    """The platform evals the winner does worse on than the base version, on the scenarios
+    both ran, and how far their grading is. A fix grades only its winner's final check and
+    the baseline, so these are all it compares. They do not decide its verdict; the person
+    who ships it reads them, once no grading is pending."""
+    winner = fix_winner(fix_run)
     if winner is None:
-        return []
-    evals = live_eval_specs(fix_run.environment.run_test_id)
-    mine = _eval_trials(
-        [
-            run.id
-            for run in fix_run.check_run_list
-            if run.agent_version_id == winner.agent_version_id
-        ],
-        evals,
-    )
-    base = _eval_trials([run.id for run in base_check_runs(fix_run)], evals)
+        return EvalReview(grading=EvalGrading.NONE)
+    run_test_id = fix_run.environment.run_test_id
+    base, final = graded_check_runs(fix_run, winner)
+    billed = set(runnable_eval_config_ids(run_test_id))
+    graded = HostedHarnessExecution.no_workspace_objects.filter(
+        job_id__in=[run.id for run in (*base, *final)],
+        call_execution__status=CallExecution.CallStatus.COMPLETED,
+    ).values_list("call_execution__eval_outputs", flat=True)
+    rows = [
+        (outputs or {}).get(config_id) for outputs in graded for config_id in billed
+    ]
+    scoring = TestExecution.objects.filter(
+        id__in=[run.test_execution_id for run in (*base, *final)],
+        status=TestExecution.ExecutionStatus.EVALUATING,
+    ).exists()
+    if scoring or any(is_pending_placeholder(row) for row in rows):
+        return EvalReview(grading=EvalGrading.PENDING)
+    evals = live_eval_specs(run_test_id)
+    mine = _eval_trials([run.id for run in final], evals)
+    theirs = _eval_trials([run.id for run in base], evals)
     warnings = []
     for config_id, live in evals.items():
-        shared = mine[config_id].keys() & base[config_id].keys()
+        shared = mine[config_id].keys() & theirs[config_id].keys()
         passed, trials = _pooled(mine[config_id], shared)
-        base_passed, base_trials = _pooled(base[config_id], shared)
+        base_passed, base_trials = _pooled(theirs[config_id], shared)
         if verdict(passed, trials, base_passed, base_trials)[0] == REGRESSED:
             warnings.append(
                 EvalWarning(
@@ -849,7 +1138,15 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
                     base_trials=base_trials,
                 )
             )
-    return warnings
+    return EvalReview(
+        grading=(
+            EvalGrading.DONE
+            if all(is_sealed_verdict(row) for row in rows)
+            else EvalGrading.INCOMPLETE
+        ),
+        warnings=warnings,
+        compared=len(evals),
+    )
 
 
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
@@ -888,7 +1185,9 @@ def launch_blocker(
     when nothing would. Launch checks usage itself, to answer with the usage refusal."""
     if source_run.state not in FINISHED_RUN_STATES:
         return HostedHarnessError(
-            "fix_source_running", "wait for the run to finish", status_code=409
+            "fix_source_running",
+            "This run is still going. Run an epoch once it finishes.",
+            status_code=409,
         )
     try:
         agent_kind(source_run.environment).require_available()
@@ -899,7 +1198,8 @@ def launch_blocker(
     ).exists():
         return HostedHarnessError(
             "fix_run_active",
-            "this environment already has a fix in progress",
+            "An epoch is already running in this environment. Open it, or wait for it to"
+            " finish.",
             status_code=409,
         )
     if usage:
@@ -940,8 +1240,8 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     if source_run.suite_version_id is None or source_run.environment_version_id is None:
         return HostedHarnessError(
             "fix_variations_unpinned",
-            "variations need a run pinned to scenario and environment versions; run the"
-            " environment again",
+            "This run was made before versions were saved. Run the environment again,"
+            " then run the epoch.",
             status_code=409,
         )
     if environment.state != HostedHarnessJob.State.COMPLETED:
@@ -969,7 +1269,7 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     if drafts.fresh_draft(environment, "suite") is not None:
         return HostedHarnessError(
             "fix_suite_draft_open",
-            "Save or discard the environment's unsaved scenario changes first: the fix"
+            "Save or discard the environment's unsaved scenario changes first: the epoch"
             " writes its variations of the failing cases on top of them",
             status_code=409,
         )
@@ -1035,6 +1335,13 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     )
     blocked = launch_blocker(source_run)
     variations_blocked = variations_blocker(source_run)
+    try:
+        usage = source_run_usage(source_run)
+    except HostedHarnessError as exc:
+        # The launch would be refused the same way: the form says so, rather than call
+        # the agent untraced.
+        usage = {}
+        blocked = blocked or exc
     return LaunchOptions(
         source_run=LaunchSourceRun(
             id=str(source_run.test_execution_id),
@@ -1064,7 +1371,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
                 allowed=surface in offered,
                 reason=None
                 if surface in offered
-                else "this kind of agent does not let a fix change it",
+                else f"Epoch can't change the {label.lower()} of this kind of agent.",
             )
             for surface, label in SURFACE_LABELS.items()
         ],
@@ -1072,6 +1379,12 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
             max_minutes=default_max_minutes(len(scenarios) + variations),
+            allowed_models=models_called(usage),
+            agent_cost_metered=bool(usage),
+            agent_calls_unmeasured=bool(usage)
+            and all(one.partial for one in usage.values()),
+            reply_latency_margin_pct=MARGIN_PCT_DEFAULT,
+            cost_margin_pct=MARGIN_PCT_DEFAULT,
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,

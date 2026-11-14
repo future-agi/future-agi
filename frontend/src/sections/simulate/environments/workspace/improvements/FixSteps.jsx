@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
-import { heldToRows, stepRows } from "./fixRunView";
+import { heldToRows, measuredNotice, stepRows } from "./fixRunView";
 
 const NUM = { fontVariantNumeric: "tabular-nums" };
 
@@ -71,6 +71,7 @@ export default function FixSteps({ fix, runTestId }) {
         )
       : null;
   const heldTo = heldToRows(fix);
+  const notice = measuredNotice(fix);
   return (
     <Box
       data-testid="fix-steps"
@@ -169,32 +170,36 @@ export default function FixSteps({ fix, runTestId }) {
           />
         </Box>
         <Typography sx={{ ...labelCell, fontWeight: 600 }}>Held to</Typography>
-        <Stack
-          direction="row"
-          flexWrap="wrap"
-          columnGap={2}
-          rowGap={0.25}
-          sx={{ flex: 1, minWidth: 0 }}
-        >
-          {heldTo.map((c) => (
-            <Typography
-              key={c.label}
-              sx={{
-                typography: "s2",
-                color: "text.secondary",
-                lineHeight: "20px",
-              }}
-            >
-              {`${c.label} · `}
-              <Box
-                component="span"
-                sx={{ color: "text.primary", fontWeight: 600 }}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" flexWrap="wrap" columnGap={2} rowGap={0.25}>
+            {heldTo.map((c) => (
+              <Typography
+                key={c.label}
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  lineHeight: "20px",
+                }}
               >
-                {c.value}
-              </Box>
+                {`${c.label} · `}
+                <Box
+                  component="span"
+                  sx={{ color: "text.primary", fontWeight: 600 }}
+                >
+                  {c.value}
+                </Box>
+              </Typography>
+            ))}
+          </Stack>
+          {notice && (
+            <Typography
+              data-testid="measured-notice"
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
+              {notice}
             </Typography>
-          ))}
-        </Stack>
+          )}
+        </Box>
       </Stack>
     </Box>
   );

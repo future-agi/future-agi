@@ -22,19 +22,25 @@ from simulate.models import (
 from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     VARIATIONS_PER_CASE,
+    EvalGrading,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    eval_review,
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
+    model_key,
+    models_called,
     overridable_regressions,
     recent_lost_models,
     scenario_results,
+    source_run_usage,
     variations_blocker,
     written_variations,
 )
@@ -108,13 +114,19 @@ def launch_fix_run(
     max_minutes: int | None,
     user: Any,
     protected_scenario_keys: Sequence[str] = (),
+    allowed_models: Sequence[str] | None = None,
+    reply_latency_margin_pct: int | None = None,
+    cost_margin_pct: int | None = None,
+    cost_limit_usd: float | None = None,
 ) -> AgentFixRun:
     """Start fixing the agent of a finished run on the scenarios the user chose; without
-    ``max_minutes``, within the time the launch form suggests for the run's suite."""
+    ``max_minutes``, within the time the launch form suggests for the run's suite,
+    without ``allowed_models``, locked to the models the run's spans show, and without a
+    margin, at the default margin."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
-            "fix_source_not_a_run", "Fix my agent starts from a run", status_code=422
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
     # Usage is checked below, to answer with the usage refusal itself.
     if blocked := launch_blocker(source_run, usage=False):
@@ -123,7 +135,7 @@ def launch_fix_run(
     if refused := sorted(set(surfaces) - kind.surfaces):
         raise HostedHarnessError(
             "fix_surface_not_allowed",
-            f"a fix cannot change this agent's {', '.join(refused)}",
+            f"an epoch cannot change this agent's {', '.join(refused)}",
             status_code=422,
         )
     base_version_id = kind.base_version_id(source_run)
@@ -165,7 +177,7 @@ def launch_fix_run(
     if failing_cases < fewest_failing_cases():
         raise HostedHarnessError(
             "fix_targets_too_few",
-            f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
+            f"an epoch needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
             f"to be proven; these have {failing_cases}, too few to reach it even with "
             f"{VARIATIONS_PER_CASE} variations of each",
             status_code=422,
@@ -178,6 +190,26 @@ def launch_fix_run(
         max_minutes = default_max_minutes(
             len(ran) + (VARIATIONS_PER_CASE * failing_cases if variations else 0)
         )
+    usage = source_run_usage(source_run)
+    seen = models_called(usage)
+    allowed = list(dict.fromkeys(seen if allowed_models is None else allowed_models))
+    # A fix that sees the agent's models with none allowed, or without one the run
+    # called, would refuse every candidate once the base version's run showed it.
+    if seen and not allowed:
+        raise HostedHarnessError(
+            "fix_models_empty",
+            "allow at least one model: this agent's model calls are traced, and each"
+            " must name an allowed model",
+            status_code=400,
+        )
+    kept = {model_key(model) for model in allowed}
+    if left_out := [model for model in seen if model_key(model) not in kept]:
+        raise HostedHarnessError(
+            "fix_models_exclude_source",
+            "allow every model this run's agent called, or the epoch would refuse every"
+            f" candidate: {', '.join(left_out)}",
+            status_code=400,
+        )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
@@ -188,6 +220,18 @@ def launch_fix_run(
         budget_usd=budget_usd,
         max_minutes=max_minutes,
         variations_pending=variations,
+        allowed_models=allowed,
+        reply_latency_margin_pct=(
+            MARGIN_PCT_DEFAULT
+            if reply_latency_margin_pct is None
+            else reply_latency_margin_pct
+        ),
+        cost_margin_pct=MARGIN_PCT_DEFAULT
+        if cost_margin_pct is None
+        else cost_margin_pct,
+        cost_limit_usd=cost_limit_usd,
+        observes_models=bool(seen),
+        meters_agent_cost=bool(usage),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
@@ -236,14 +280,14 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if not is_retryable(failed):
         raise HostedHarnessError(
             "fix_not_retryable",
-            "only a failed fix can be started again, and only once",
+            "Only a failed epoch can be retried, and only once.",
             status_code=409,
         )
     source_run = failed.source_run
     if source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     if blocked := launch_blocker(source_run, usage=False):
@@ -297,7 +341,7 @@ def _create_fix_run(
             raise
         raise HostedHarnessError(
             "fix_run_active",
-            "this environment already has a fix in progress",
+            "this environment already has an epoch in progress",
             status_code=409,
         ) from exc
     logger.info(
@@ -322,7 +366,7 @@ def _start_workflow(fix_run_id: Any) -> None:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_dispatch_failed",
-                "message": "the fix could not be scheduled; try again",
+                "message": "the epoch could not be scheduled; try again",
             },
         )
 
@@ -488,17 +532,25 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
         )
     # Only the winner went through the final check; a finalist passed its screens only.
     if candidate.outcome == AgentFixCandidate.Outcome.WINNER:
+        # Its evals read the winner's final check; it ships once they have.
+        if eval_review(candidate.fix_run).grading == EvalGrading.PENDING:
+            raise HostedHarnessError(
+                "fix_grading_pending",
+                "Platform evals are still scoring this candidate. You can ship it once"
+                " they finish.",
+                status_code=409,
+            )
         if override_reason:
             raise HostedHarnessError(
                 "fix_override_not_needed",
-                "the fix's winner ships without a reason",
+                "the epoch's winner ships without a reason",
                 status_code=422,
             )
         return
     if not overridable_regressions(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only the fix's winner can ship; a candidate only the must-pass check"
+            "only the epoch's winner can ship; a candidate only the must-pass check"
             " refused can ship with a reason, unless it regressed a protected case",
             status_code=422,
         )
@@ -537,8 +589,8 @@ def base_moved(base: str, current: str | None) -> HostedHarnessError:
     )
     return HostedHarnessError(
         "fix_base_moved",
-        f"The agent changed since this fix started: the fix was made on {base} and"
-        f" {now}. Run the environment on the current version and fix it again.",
+        f"The agent changed since this epoch started: the epoch was made on {base} and"
+        f" {now}. Run the environment on the current version, then run a new epoch.",
         status_code=409,
     )
 
@@ -579,8 +631,9 @@ def make_candidate_default(
     if outcome not in ("activated", "already_default"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
-            f"the version could not become the default: {outcome}",
+            "The version could not become the environment default. Try again.",
             status_code=409,
+            details={"outcome": outcome},
         )
     record_override(candidate, reason=override_reason, user=user)
     return outcome

@@ -1127,9 +1127,13 @@ AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
 )
-# A check run reserves this much of a fix's budget for each scenario execution.
+# A check run reserves this much of a fix's budget for each scenario execution, for its
+# simulation, and the second for each platform eval a winner's grading may run on it.
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EVAL", "0.02"
 )
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.

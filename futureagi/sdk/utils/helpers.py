@@ -1,8 +1,9 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import ModelChoices
 from tfc.constants.api_calls import APICallTypeChoices
+
+logger = structlog.get_logger(__name__)
 
 model_to_api_call_type = {
     ModelChoices.TURING_LARGE: APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
@@ -97,11 +98,16 @@ def _emit_jev_usage(evaluator, *, org_id: str, run_id: str) -> bool:
     ee.jev.metering events at the flat per-run eval fee, with ids stable per
     run attempt. Emits nothing and returns False for any other evaluator, which
     the caller bills as before."""
+    return _emit_jev_usage_billed(evaluator, org_id=org_id, run_id=run_id) is not None
+
+
+def _emit_jev_usage_billed(evaluator, *, org_id: str, run_id: str):
+    """``_emit_jev_usage``, returning the credits it billed, or None for an evaluator
+    that is not Jev's."""
     if not _is_jev_evaluator(evaluator):
-        return False
+        return None
     try:
         from ee.jev.metering import emit_usage_events
     except ImportError:
-        return False
-    emit_usage_events(evaluator, org_id=org_id, cell_or_run_id=run_id)
-    return True
+        return None
+    return emit_usage_events(evaluator, org_id=org_id, cell_or_run_id=run_id)

@@ -31,15 +31,15 @@ CLEANUP_WINDOW = timedelta(days=7)
 
 _NOT_SCHEDULED = {
     "code": "fix_dispatch_failed",
-    "message": "the fix could not be scheduled; try again",
+    "message": "the epoch could not be scheduled; try again",
 }
 _LOST = {
     "code": "fix_workflow_lost",
-    "message": "the platform stopped tracking this fix; start it again",
+    "message": "the platform stopped tracking this epoch; start it again",
 }
 _LATE = {
     "code": "fix_deadline",
-    "message": "the fix ran out of the time it was given",
+    "message": "the epoch ran out of the time it was given",
 }
 
 Closing = tuple[AgentFixRun.State, dict[str, str] | None]

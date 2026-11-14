@@ -1,11 +1,10 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
-
-import Iconify from "src/components/iconify";
+import { Box, Typography } from "@mui/material";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SideDrawer from "../../components/SideDrawer";
 
+import CheckLine from "./CheckLine";
 import FixStatusChip from "./FixStatusChip";
 import {
   checksLine,
@@ -13,6 +12,9 @@ import {
   headline,
   pct,
   pts,
+  describeChecks,
+  oldVerdictLine,
+  rejectionChecks,
   winnerOf,
 } from "./fixRunView";
 
@@ -38,13 +40,41 @@ const gain = (r) => {
   return d ? `${d > 0 ? "↑" : "↓"} ${Math.abs(d)} pts` : "";
 };
 
+// One check and, for a tier that holds several (such as each ceiling), what each
+// one verified.
+function CheckRows({ check, sx }) {
+  return (
+    <>
+      <CheckLine check={check} nameWidth={120} sx={sx} />
+      {(check.parts || []).map((part) => (
+        <CheckLine
+          key={part.name}
+          check={part}
+          nameWidth={120}
+          sx={{ pl: 3, mt: 0.5 }}
+        />
+      ))}
+    </>
+  );
+}
+CheckRows.propTypes = {
+  check: PropTypes.object.isRequired,
+  sx: PropTypes.object,
+};
+
 // "How it was decided", laid out as the design's decision drawer: the evidence
 // for the kept trial, every finalist side by side, and the checks it passed.
+// When no trial was kept, each rejected trial shows the check that rejected it.
 export default function FixDecisionDrawer({ fix, open, onClose }) {
   const winner = winnerOf(fix);
   const finalists = (fix.candidates || [])
     .filter((c) => c.outcome === "winner" || c.outcome === "finalist")
     .sort((a, b) => a.attempt - b.attempt);
+  const rejected = winner
+    ? []
+    : (fix.candidates || [])
+        .filter((c) => c.outcome === "rejected" && c.verdict)
+        .sort((a, b) => a.attempt - b.attempt);
   const v = winner?.verdict;
   const evidence = v
     ? [
@@ -78,7 +108,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 2 }}>
           {winner
-            ? `${fixName(fix)} · Trial ${winner.attempt} kept`
+            ? `${fixName(fix)} · Candidate ${winner.attempt} kept`
             : fixName(fix)}
         </Typography>
         <Box sx={{ ...table, p: 1.5, mb: 2 }}>
@@ -130,7 +160,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
               <Box
                 sx={{ ...rowSx(0), gridTemplateColumns: "1fr 90px 90px 80px" }}
               >
-                {["Run", "Target", "Held back", "Result"].map((h) => (
+                {["Candidate", "Target", "Held back", "Result"].map((h) => (
                   <Typography
                     key={h}
                     sx={{
@@ -154,10 +184,8 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 >
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600 }}
-                  >{`Trial ${c.attempt}`}</Typography>
-                  <Typography
-                    sx={{ typography: "s3", ...num }}
-                  >
+                  >{`Candidate ${c.attempt}`}</Typography>
+                  <Typography sx={{ typography: "s3", ...num }}>
                     {c.verdict.target_pass_rate
                       ? `${pct(c.verdict.target_pass_rate[1])}%`
                       : "Pending"}
@@ -189,39 +217,45 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   {checksLine(v.tiers)}
                 </Typography>
               </Box>
-              {v.tiers.map((t, i) => (
-                <Stack
-                  key={t.name}
-                  direction="row"
-                  spacing={1}
-                  alignItems="center"
-                  sx={{ ...rowSx(i + 1), display: "flex" }}
+              {describeChecks(v.tiers, fix.request, v, fix.plan).map((t, i) => (
+                <Box key={t.name} sx={rowSx(i + 1)}>
+                  <CheckRows check={t} />
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )}
+        {rejected.length > 0 && (
+          <Box>
+            <Typography sx={sectionTitle}>Rejected candidates</Typography>
+            <Box sx={table}>
+              {rejected.map((c, i) => (
+                <Box
+                  key={c.id}
+                  data-testid={`rejected-${c.attempt}`}
+                  sx={{ ...rowSx(i), gridTemplateColumns: "1fr" }}
                 >
-                  <Iconify
-                    icon={
-                      t.status === "failed"
-                        ? "solar:close-circle-bold"
-                        : "solar:check-circle-linear"
-                    }
-                    width={14}
-                    sx={{
-                      color:
-                        t.status === "failed"
-                          ? BUILD_TONES.red
-                          : "text.secondary",
-                    }}
-                  />
                   <Typography
-                    sx={{ typography: "s3", fontWeight: 600, width: 90 }}
-                  >
-                    {t.name}
-                  </Typography>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary" }}
-                  >
-                    {t.detail}
-                  </Typography>
-                </Stack>
+                    sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
+                  >{`Candidate ${c.attempt}`}</Typography>
+                  {c.verdict.tiers?.length > 0 ? (
+                    rejectionChecks(
+                      c.verdict.tiers,
+                      fix.request,
+                      c.verdict,
+                      fix.plan,
+                    ).map((t) => (
+                      <CheckRows key={t.name} check={t} sx={{ mt: 0.25 }} />
+                    ))
+                  ) : (
+                    // A verdict from before checks were recorded: its numbers in words.
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {oldVerdictLine(c.verdict)}
+                    </Typography>
+                  )}
+                </Box>
               ))}
             </Box>
           </Box>

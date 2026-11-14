@@ -67,11 +67,12 @@ describe("ImprovementsPanel", () => {
   it("shows a fix's name, agent, state, held-back result and cost", () => {
     render(<ImprovementsPanel env={env} />);
     const row = within(screen.getByTestId("row-fix-ready-archive"));
-    expect(row.getByText("Improvement 10")).toBeInTheDocument();
+    expect(row.getByText("Epoch 10")).toBeInTheDocument();
     expect(row.getByText("Pickup dispatch agent · v8")).toBeInTheDocument();
     expect(row.getByText("Ready for review")).toBeInTheDocument();
     expect(row.getByText("Held back 17% → 83%")).toBeInTheDocument();
-    expect(row.getByText("broke 1 held back")).toBeInTheDocument();
+    // It counts must-pass regressions, so it says so.
+    expect(row.getByText("broke 1 must-pass")).toBeInTheDocument();
     expect(row.getByText("412 credits")).toBeInTheDocument();
   });
 
@@ -107,7 +108,7 @@ describe("ImprovementsPanel", () => {
     render(<ImprovementsPanel env={env} />);
     const row = screen.getByTestId("row-fix-unknown-identity");
     expect(row.textContent).not.toMatch(/null|undefined/);
-    expect(within(row).getByText("Improvement")).toBeInTheDocument();
+    expect(within(row).getByText("Epoch")).toBeInTheDocument();
   });
 
   it("opens the fix page", () => {

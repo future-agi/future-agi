@@ -13,7 +13,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, QuerySet
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
@@ -922,14 +922,19 @@ def add_selected_eval(
         return bind_eval_config(run_test, template, mapping)
 
 
+def runnable_eval_configs(run_test_id) -> QuerySet[SimulateEvalConfig]:
+    """Configs the evaluator can run, so the platform bills: a harness result column
+    carries an empty mapping (``{}``, the field's default, or none)."""
+    return SimulateEvalConfig.objects.filter(
+        run_test_id=run_test_id, deleted=False
+    ).exclude(Q(mapping__isnull=True) | Q(mapping={}))
+
+
 def runnable_eval_config_ids(run_test_id) -> list[str]:
-    """Config ids the evaluator can run: a harness result column carries an empty mapping."""
+    """Ids of ``runnable_eval_configs``."""
     return [
         str(config_id)
-        for config_id, mapping in SimulateEvalConfig.objects.filter(
-            run_test_id=run_test_id, deleted=False
-        ).values_list("id", "mapping")
-        if mapping
+        for config_id in runnable_eval_configs(run_test_id).values_list("id", flat=True)
     ]
 
 

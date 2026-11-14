@@ -619,7 +619,7 @@ class TestSettle:
         assert fix_run.failure["code"] == "fix_targets_too_few"
         assert fix_run.failure["message"] == (
             "The run had 1 failing case. The builder wrote 3 variations of them, and 1"
-            " failed on the current version: 2 failing cases, and a fix needs 4."
+            " failed on the current version: 2 failing cases, and an epoch needs 4."
         )
         assert fix_run.request["variation_parents"] == {kept: PARENT}
         assert fix_run.suite_version.fix_run_id == fix_run.id
@@ -980,7 +980,7 @@ class TestACaseWithoutVariations:
         _land(fix_run, storage, _builder_save(environment))
         names = [_named(fix_run, n) for n in (1, 2, 3)]
         assert _private(fix_run).summary == (
-            "3 variations of 1 of 2 failing cases, for a fix"
+            "3 variations of 1 of 2 failing cases, for an epoch"
         )
         _finish(_base_run(fix_run), failed=names)
 
@@ -1002,5 +1002,5 @@ class TestACaseWithoutVariations:
         assert fix_run.failure["message"] == (
             "The run had 2 failing cases (1 of them got no usable variation). The"
             " builder wrote 3 variations of them, and 1 failed on the current version:"
-            " 3 failing cases, and a fix needs 4."
+            " 3 failing cases, and an epoch needs 4."
         )

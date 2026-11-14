@@ -531,7 +531,17 @@ export function fixtureLaunchOptions(sourceRunId) {
       { id: "settings", label: "Settings", allowed: true, reason: null },
       { id: "code", label: "Code", allowed: true, reason: null },
     ],
-    defaults: { surfaces: ["prompt"], budget_credits: 1500, max_minutes: 150 },
+    // A GitHub agent is not traced: the run's spans show no model it called.
+    defaults: {
+      surfaces: ["prompt"],
+      budget_credits: 1500,
+      max_minutes: 150,
+      allowed_models: [],
+      agent_cost_metered: false,
+      agent_calls_unmeasured: false,
+      reply_latency_margin_pct: 25,
+      cost_margin_pct: 25,
+    },
     limits: {
       budget_credits_max: 50000,
       max_minutes_max: 1440,

@@ -337,7 +337,7 @@ def land(
     ).exists():
         raise HostedHarnessError(
             "fix_variations_not_final",
-            "Kept for the fix, not saved to the environment: the fix takes these"
+            "Kept for the epoch, not saved to the environment: the epoch takes these"
             " variations when this turn ends",
             status_code=409,
         )
@@ -409,7 +409,7 @@ def land(
             fix_run=locked,
             created_by=locked.created_by,
             summary=f"{len(variations)} variations of {len(parents) - len(without)}"
-            f" of {len(parents)} failing cases, for a fix",
+            f" of {len(parents)} failing cases, for an epoch",
             scenario_count=len(prepared.scenarios),
             **{
                 **prepared.suite_fields,
@@ -627,7 +627,7 @@ def _settle(
                 f"The run had {_count(len(parents), 'failing case')}{unvaried}. The"
                 f" builder wrote {_count(len(variations), 'variation')} of them, and"
                 f" {len(kept)} failed on the current version:"
-                f" {_count(len(failing), 'failing case')}, and a fix needs {floor}.",
+                f" {_count(len(failing), 'failing case')}, and an epoch needs {floor}.",
             )
     logger.info(
         "agent_fix_variations_settled",

@@ -70,8 +70,19 @@ def _error_response(exc):
     if isinstance(exc, HostedHarnessError):
         return Response(exc.as_dict(), status=exc.status_code)
     if isinstance(exc, PydanticValidationError):
+        # The fields stay in the details for a machine; the message is for a person.
         return _error_response(
-            HostedHarnessError("validation_error", str(exc), status_code=400)
+            HostedHarnessError(
+                "validation_error",
+                "Some settings are not valid. Check them and try again.",
+                status_code=400,
+                details={
+                    "fields": [
+                        ".".join(str(part) for part in error["loc"])
+                        for error in exc.errors()
+                    ]
+                },
+            )
         )
     return _usage_limit_response(exc)
 
@@ -195,6 +206,10 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             budget_usd=data["budget_credits"] / 100,
             max_minutes=data.get("max_minutes"),
             user=request.user,
+            allowed_models=data.get("allowed_models"),
+            reply_latency_margin_pct=data.get("reply_latency_margin_pct"),
+            cost_margin_pct=data.get("cost_margin_pct"),
+            cost_limit_usd=data.get("cost_limit_usd"),
         )
         return Response(
             AgentFixRunSerializer(self._fix_run(request, fix_run.id)).data,
@@ -383,9 +398,13 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     )
     def check_run(self, request, pk=None, run_id=None):
         # A retry reads the check runs the fixes it retries finished, as its own.
-        run = HostedHarnessJob.no_workspace_objects.filter(
-            id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
-        ).first()
+        run = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
+            )
+            .select_related("fix_run")
+            .first()
+        )
         if run is None:
             return _not_found()
         return Response(check_run_status(run).model_dump(mode="json"))

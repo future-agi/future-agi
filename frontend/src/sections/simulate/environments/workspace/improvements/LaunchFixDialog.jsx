@@ -28,11 +28,20 @@ import {
 import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
+  NO_MODELS_NOTE,
+  UNMEASURED_NOTE,
+  UNTRACED_NOTE,
   blockedByDraft,
   blockedReason as blockedReasonOf,
   budgetSteps,
+  costLimitOf,
   countsLine,
+  isTraced,
+  callsUnmeasured,
+  seesModels,
+  tracesUnreadable,
   launchError,
+  marginSteps,
   minuteSteps,
   reviewSentence,
   variationsNote,
@@ -87,30 +96,35 @@ Row.propTypes = {
   children: PropTypes.node,
 };
 
-function LockedFiles({ paths: locked, onChange }) {
+// Values typed one at a time, each added by Enter, a comma or leaving the field.
+function ChipsInput({ values, onChange, label, placeholder, testId }) {
   const add = (input) => {
     const v = input.value.trim().replace(/,$/, "").trim();
     if (!v) return;
-    onChange([...new Set([...locked, v])]);
+    onChange([...new Set([...values, v])]);
     input.value = "";
   };
   return (
-    <Stack direction="row" flexWrap="wrap" alignItems="center" gap={0.75}>
-      {locked.map((p) => (
+    <Stack
+      direction="row"
+      flexWrap="wrap"
+      alignItems="center"
+      gap={0.75}
+      data-testid={testId}
+    >
+      {values.map((p) => (
         <Chip
           key={p}
           size="small"
           label={p}
-          onDelete={() => onChange(locked.filter((x) => x !== p))}
+          onDelete={() => onChange(values.filter((x) => x !== p))}
         />
       ))}
       <InputBase
         placeholder={
-          locked.length
-            ? "Add another, then press Enter"
-            : "Files or globs it must never edit, like prompts/*.md. Press Enter to add each."
+          values.length ? "Add another, then press Enter" : placeholder
         }
-        inputProps={{ "aria-label": "Add a locked file" }}
+        inputProps={{ "aria-label": label }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -130,9 +144,12 @@ function LockedFiles({ paths: locked, onChange }) {
     </Stack>
   );
 }
-LockedFiles.propTypes = {
-  paths: PropTypes.array.isRequired,
+ChipsInput.propTypes = {
+  values: PropTypes.array.isRequired,
   onChange: PropTypes.func.isRequired,
+  label: PropTypes.string.isRequired,
+  placeholder: PropTypes.string.isRequired,
+  testId: PropTypes.string,
 };
 
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
@@ -150,6 +167,10 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const [locked, setLocked] = useState([]);
   const [budget, setBudget] = useState(0);
   const [minutes, setMinutes] = useState(0);
+  const [models, setModels] = useState([]);
+  const [latencyMargin, setLatencyMargin] = useState(0);
+  const [costMargin, setCostMargin] = useState(0);
+  const [costLimit, setCostLimit] = useState("");
   const [picking, setPicking] = useState(false);
 
   useEffect(() => {
@@ -160,6 +181,10 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
     setLocked([]);
     setBudget(options.defaults.budget_credits);
     setMinutes(options.defaults.max_minutes);
+    setModels(options.defaults.allowed_models);
+    setLatencyMargin(options.defaults.reply_latency_margin_pct);
+    setCostMargin(options.defaults.cost_margin_pct);
+    setCostLimit("");
   }, [options]);
 
   if (!options) {
@@ -193,7 +218,16 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   }
 
   const { agent, environment, limits } = options;
-  const error = launchError({ targets, protectedKeys, surfaces, limits });
+  const lockable = seesModels(options);
+  const error = launchError({
+    targets,
+    protectedKeys,
+    surfaces,
+    limits,
+    models,
+    seenModels: options.defaults.allowed_models,
+    costLimit,
+  });
   const blockedReason = blockedReasonOf(options, targets.length);
   const draftBlocks = blockedByDraft(options, targets.length);
   const variations = variationsNote(targets.length, limits, agent.kind);
@@ -219,16 +253,20 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         locked_paths: locked,
         budget_credits: budget,
         max_minutes: minutes,
+        // A form that saw no model leaves the default to the platform.
+        ...(lockable ? { allowed_models: models } : {}),
+        reply_latency_margin_pct: latencyMargin,
+        cost_margin_pct: costMargin,
+        cost_limit_usd: costLimitOf(costLimit),
       });
       onClose();
       navigate(
         paths.dashboard.simulate.environments.improvement(envId, fix.id),
       );
     } catch (e) {
-      enqueueSnackbar(
-        fixErrorOf(e).message || "Could not start the improvement",
-        { variant: "error" },
-      );
+      enqueueSnackbar(fixErrorOf(e).message || "Could not start the epoch", {
+        variant: "error",
+      });
     }
   };
 
@@ -255,7 +293,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         <Box flex={1} minWidth={0} sx={{ pr: 4 }}>
           <Typography
             sx={{ typography: "s1", fontWeight: 600 }}
-          >{`Improve ${agent.name}`}</Typography>
+          >{`Run Epoch on ${agent.name}`}</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {`Searches for a better ${agent.name}, scored by this environment`}
           </Typography>
@@ -349,7 +387,89 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             </Stack>
           </Row>
           <Row k="Locked files" center>
-            <LockedFiles paths={locked} onChange={setLocked} />
+            <ChipsInput
+              values={locked}
+              onChange={setLocked}
+              label="Add a locked file"
+              placeholder="Files or globs it must never edit, like prompts/*.md. Press Enter to add each."
+              testId="locked-files"
+            />
+          </Row>
+          <Row k="Models" center>
+            {lockable ? (
+              <ChipsInput
+                values={models}
+                onChange={setModels}
+                label="Add an allowed model"
+                placeholder="The models it may call. Press Enter to add each."
+                testId="allowed-models"
+              />
+            ) : (
+              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                {tracesUnreadable(options)
+                  ? options.blocked.message
+                  : callsUnmeasured(options)
+                    ? UNMEASURED_NOTE
+                    : isTraced(options)
+                      ? NO_MODELS_NOTE
+                      : UNTRACED_NOTE}
+              </Typography>
+            )}
+          </Row>
+          <Row k="Reply time" center>
+            <Select
+              size="small"
+              value={latencyMargin}
+              onChange={(e) => setLatencyMargin(Number(e.target.value))}
+              sx={{ ...selectSx, width: 220 }}
+              inputProps={{ "aria-label": "Reply time margin" }}
+            >
+              {marginSteps(latencyMargin).map((n) => (
+                <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                  {n === 0 ? "No increase" : `Up to ${n}% slower than now`}
+                </MenuItem>
+              ))}
+            </Select>
+          </Row>
+          <Row k="Agent's cost" center>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Select
+                size="small"
+                value={costMargin}
+                onChange={(e) => setCostMargin(Number(e.target.value))}
+                sx={{ ...selectSx, width: 220 }}
+                inputProps={{ "aria-label": "Agent's cost margin" }}
+              >
+                {marginSteps(costMargin).map((n) => (
+                  <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                    {n === 0 ? "No increase" : `Up to ${n}% more than now`}
+                  </MenuItem>
+                ))}
+              </Select>
+              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                and at most $
+              </Typography>
+              <InputBase
+                value={costLimit}
+                onChange={(e) => setCostLimit(e.target.value)}
+                placeholder="no limit"
+                inputProps={{
+                  "aria-label": "Agent's cost limit per conversation",
+                  inputMode: "decimal",
+                }}
+                sx={{
+                  width: 80,
+                  "& .MuiInputBase-input": {
+                    typography: "s2",
+                    p: 0,
+                    height: 22,
+                  },
+                }}
+              />
+              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                a conversation
+              </Typography>
+            </Stack>
           </Row>
           <Row k="Budget" center>
             <Stack direction="row" spacing={1.5}>
@@ -381,9 +501,9 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               </Select>
             </Stack>
           </Row>
-          <Row k="Cost">
+          <Row k="Stops at">
             <Typography sx={{ typography: "s2" }}>
-              Stops at the limit with the best it found.
+              {`${formatCredits(budget)} or ${formatMinutes(minutes)}, whichever comes first.`}
             </Typography>
           </Row>
         </Box>
@@ -431,7 +551,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           onClick={start}
           startIcon={<Iconify icon="solar:play-bold" width={16} />}
         >
-          Start improvement
+          Run Epoch
         </Button>
       </Stack>
     </ClosableDialog>

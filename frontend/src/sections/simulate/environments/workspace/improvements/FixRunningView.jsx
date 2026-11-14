@@ -18,8 +18,8 @@ export default function FixRunningView({ fix, runTestId }) {
         <>
           <Typography sx={{ typography: "s1", fontWeight: 600, mb: 1 }}>
             {max
-              ? `Trials (${trials.length} of up to ${max})`
-              : `Trials (${trials.length})`}
+              ? `Candidates (${trials.length} of up to ${max})`
+              : `Candidates (${trials.length})`}
           </Typography>
           <TrialsTable fix={fix} />
         </>

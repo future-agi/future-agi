@@ -94,9 +94,9 @@ function formState() {
     fix: picked("cases-fix"),
     protect: picked("cases-protect"),
     surfaces: ["Instructions", "Tools", "Settings", "Code"].filter(surface),
-    locked: [...document.querySelectorAll(".MuiChip-label")].map(
-      (c) => c.textContent,
-    ),
+    locked: [
+      ...screen.getByTestId("locked-files").querySelectorAll(".MuiChip-label"),
+    ].map((c) => c.textContent),
     budget: screen.getByLabelText("Budget").closest(".MuiInputBase-root")
       .textContent,
     time: screen.getByLabelText("Time limit").closest(".MuiInputBase-root")
@@ -126,7 +126,7 @@ describe("LaunchFixDialog", () => {
     );
     expect(
       screen.getByText(
-        "11 failing, and up to 33 variations of them · 6 must keep passing",
+        "11 failing, and up to 33 variations of them · 6 protected",
       ),
     ).toBeInTheDocument();
     expect(protectCases().getByText("6 of 6")).toBeInTheDocument();
@@ -248,15 +248,32 @@ describe("LaunchFixDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("says where the fix stops, from the budget and time the user picks", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "1,500 credits or 2 h 30 min, whichever comes first.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Stops at")).toBeInTheDocument();
+    // "Agent's cost" is the agent's spend; the fix's own stop is not a second "Cost".
+    expect(screen.queryByText("Cost")).not.toBeInTheDocument();
+
+    await pickOption(user, "Budget", "5,000 credits");
+    await pickOption(user, "Time limit", "1 h");
+    expect(
+      screen.getByText("5,000 credits or 1 h, whichever comes first."),
+    ).toBeInTheDocument();
+  });
+
   it("disables Start with the reason when nothing may change", async () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(
       await screen.findByRole("checkbox", { name: "Instructions" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
     expect(
       screen.getByText("Pick at least one part it may change."),
     ).toBeInTheDocument();
@@ -274,9 +291,7 @@ describe("LaunchFixDialog", () => {
     expect(
       await screen.findByText("A fix is already running in this environment."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
   });
 
   it("writes variations first for fewer failing cases than a fix needs", async () => {
@@ -289,12 +304,10 @@ describe("LaunchFixDialog", () => {
     renderDialog();
     expect(
       await screen.findByText(
-        "A fix needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
+        "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
   });
 
   it("disables Start while the variations could not be written", async () => {
@@ -317,9 +330,7 @@ describe("LaunchFixDialog", () => {
         "Save or discard the environment's unsaved scenario changes first.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
     // The way out: the environment's Scenarios tab, whose draft bar saves or discards.
     await userEvent.click(
       screen.getByRole("button", { name: "Review unsaved changes" }),
@@ -341,7 +352,7 @@ describe("LaunchFixDialog", () => {
       },
     });
     renderDialog();
-    await screen.findByRole("button", { name: "Start improvement" });
+    await screen.findByRole("button", { name: "Run Epoch" });
     expect(
       screen.queryByRole("button", { name: "Review unsaved changes" }),
     ).not.toBeInTheDocument();
@@ -391,26 +402,203 @@ describe("LaunchFixDialog", () => {
   it("starts the fix with the contract's fields only and opens its page", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(
-      await screen.findByRole("button", { name: "Start improvement" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Run Epoch" }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     // The backend refuses unknown fields.
     const [url, body] = axios.post.mock.calls.at(-1);
     expect(url).toBe("/simulate/api/agent-fix-runs/");
     expect(Object.keys(body).sort()).toEqual([
       "budget_credits",
+      "cost_limit_usd",
+      "cost_margin_pct",
       "locked_paths",
       "max_minutes",
       "protected_scenario_keys",
+      "reply_latency_margin_pct",
       "source_run_id",
       "surfaces",
       "target_scenario_keys",
     ]);
     expect(body.source_run_id).toBe("te-run-6");
+    // An untraced agent: no model to lock, so the platform keeps its default;
+    // the default margins, and no cost limit.
+    expect("allowed_models" in body).toBe(false);
+    expect([
+      body.reply_latency_margin_pct,
+      body.cost_margin_pct,
+      body.cost_limit_usd,
+    ]).toEqual([25, 25, null]);
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("says plainly when the agent is not traced", async () => {
+    renderDialog();
+
+    expect(
+      await screen.findByText(/This agent is not traced/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add an allowed model")).toBeNull();
+  });
+
+  it("says when the traces name no model, and leaves the lock to the platform", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.agent_cost_metered = true;
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(
+      await screen.findByText(/This agent's traces name no model/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect("allowed_models" in axios.post.mock.calls.at(-1)[1]).toBe(false);
+  });
+
+  it("says an agent whose every model call went unmeasured has an unknown cost", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.agent_cost_metered = true;
+    options.defaults.agent_calls_unmeasured = true;
+    pinOptions(options);
+    renderDialog();
+
+    expect(
+      await screen.findByText(
+        /This agent calls its model in a way Epoch can't measure, such as another SDK or a direct HTTP request\. The model lock and the cost limit will show “Unknown”\./,
+      ),
+    ).toBeInTheDocument();
+    // The cost is not checked: no line says it is.
+    expect(screen.queryByText(/Its cost is still checked/)).toBeNull();
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+  });
+
+  it("locks a traced agent to the models its run called, and sends the user's limits", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = [
+      "gpt-5-mini",
+      "vertex_ai/gemini-3.8-flash",
+    ];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    const models = within(await screen.findByTestId("allowed-models"));
+    expect(
+      [
+        ...screen
+          .getByTestId("allowed-models")
+          .querySelectorAll(".MuiChip-label"),
+      ].map((c) => c.textContent),
+    ).toEqual(["gpt-5-mini", "vertex_ai/gemini-3.8-flash"]);
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "openai/gpt-5{Enter}",
+    );
+    expect(models.getAllByTestId("CancelIcon")).toHaveLength(3);
+    await pickOption(user, "Reply time margin", "Up to 10% slower than now");
+    await pickOption(user, "Agent's cost margin", "Up to 50% more than now");
+    await user.type(
+      screen.getByLabelText("Agent's cost limit per conversation"),
+      "0.02",
+    );
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect([
+      body.allowed_models,
+      body.reply_latency_margin_pct,
+      body.cost_margin_pct,
+      body.cost_limit_usd,
+    ]).toEqual([
+      ["gpt-5-mini", "vertex_ai/gemini-3.8-flash", "openai/gpt-5"],
+      10,
+      50,
+      0.02,
+    ]);
+  });
+
+  it("lets the reply time and the agent's cost allow no increase at all", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = ["vertex_ai/gemini-3.8-flash"];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    await screen.findByTestId("allowed-models");
+
+    await pickOption(user, "Reply time margin", "No increase");
+    await pickOption(user, "Agent's cost margin", "No increase");
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect([body.reply_latency_margin_pct, body.cost_margin_pct]).toEqual([
+      0, 0,
+    ]);
+  });
+
+  it("disables Start when a traced agent may call no model, or the cost limit is not a price", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = ["gpt-5-mini"];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    const start = await screen.findByRole("button", {
+      name: "Run Epoch",
+    });
+
+    await user.click(
+      within(screen.getByTestId("allowed-models")).getByTestId("CancelIcon"),
+    );
+    expect(start).toBeDisabled();
+    expect(screen.getByText("Allow at least one model.")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "gpt-5{Enter}",
+    );
+    // Every model the run called stays allowed, with or without its provider.
+    expect(start).toBeDisabled();
+    expect(
+      screen.getByText("Allow every model this run called: gpt-5-mini."),
+    ).toBeInTheDocument();
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "openai/gpt-5-mini{Enter}",
+    );
+    expect(start).toBeEnabled();
+    await user.type(
+      screen.getByLabelText("Agent's cost limit per conversation"),
+      "0",
+    );
+    expect(start).toBeDisabled();
+    expect(
+      screen.getByText("The cost limit must be a number of dollars above 0."),
+    ).toBeInTheDocument();
+  });
+
+  it("says when the run's traces could not be read, and keeps Start off", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.blocked = {
+      code: "fix_traces_unreadable",
+      message: "could not read this run's traces; try again",
+    };
+    pinOptions(options);
+    renderDialog();
+
+    const start = await screen.findByRole("button", {
+      name: "Run Epoch",
+    });
+    expect(start).toBeDisabled();
+    // The Models row and the footer say it; the form never calls the agent untraced.
+    expect(
+      screen.getAllByText("could not read this run's traces; try again"),
+    ).toHaveLength(2);
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
   });
 });

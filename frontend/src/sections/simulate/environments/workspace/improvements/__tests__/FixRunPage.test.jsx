@@ -82,15 +82,17 @@ describe("FixRunPage", () => {
 
   it("heads a running fix with its name, state and stage", async () => {
     renderPage("fix-search");
-    expect(await screen.findByText("Improvement 13")).toBeInTheDocument();
+    expect(await screen.findByText("Epoch 13")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Screen · attempt 2")).toBeInTheDocument();
+    // The step in words, never the engine's own stage name.
+    expect(screen.getByText("Searching")).toBeInTheDocument();
+    expect(screen.queryByText("Screen · attempt 2")).toBeNull();
   });
 
-  it("goes back to the Improvements tab", async () => {
+  it("goes back to the Epochs tab", async () => {
     renderPage("fix-search");
     expect(
-      await screen.findByRole("link", { name: "Back to improvements" }),
+      await screen.findByRole("link", { name: "Back to epochs" }),
     ).toHaveAttribute(
       "href",
       "/dashboard/simulate/environments/env-1?tab=improvements",
@@ -99,7 +101,7 @@ describe("FixRunPage", () => {
 
   it("offers no Stop and no stage on a finished fix", async () => {
     renderPage("fix-ready-archive");
-    expect(await screen.findByText("Improvement 10")).toBeInTheDocument();
+    expect(await screen.findByText("Epoch 10")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(screen.queryByText(/attempt/)).toBeNull();
   });
@@ -110,7 +112,7 @@ describe("FixRunPage", () => {
     const dialog = await openStop(user);
     expect(
       within(dialog).getByText(
-        "2 of up to 4 trials have run · 412 credits spent so far.",
+        "2 of up to 4 candidates have run · 412 credits spent so far.",
       ),
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Stop" }));
@@ -130,7 +132,7 @@ describe("FixRunPage", () => {
       within(dialog).queryByText(/None of them has been checked/),
     ).toBeNull();
     expect(
-      within(dialog).getByText(/Today's version stays/),
+      within(dialog).getByText(/The current version stays/),
     ).toBeInTheDocument();
   });
 
@@ -161,10 +163,8 @@ describe("FixRunPage", () => {
       error: new Error("network"),
     };
     renderPage("fix-search");
-    expect(screen.getByText("Improvement 13")).toBeInTheDocument();
-    expect(
-      screen.queryByText("This improvement could not be found"),
-    ).toBeNull();
+    expect(screen.getByText("Epoch 13")).toBeInTheDocument();
+    expect(screen.queryByText("This epoch could not be found")).toBeNull();
   });
 
   it("switches to the finished view when a running fix ends", async () => {

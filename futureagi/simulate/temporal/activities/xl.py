@@ -21,6 +21,7 @@ accumulate and hit PgBouncer's pool limit (~20 by default).
 
 import asyncio
 import traceback
+from functools import partial
 from itertools import chain
 from uuid import uuid4
 
@@ -42,8 +43,12 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
-from simulate.utils.test_execution_utils import eval_source
+from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
+    eval_source,
+)
 from simulate.utils.verdicts import has_stored_verdict
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.storage_client import server_reachable_url
 
@@ -1029,6 +1034,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 else None,
             }
 
+        source = eval_source(call_execution.test_execution_id)
+        # A fix's check run counts what its evals bill, and nobody reads its localizer.
+        check_run = source == FIX_CHECK_RUN_EVAL_SOURCE
         eval_result = run_eval_func(
             config=config,
             mappings=updated_mapping,
@@ -1036,10 +1044,15 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             org=organization,
             model=eval_config.model,
             kb_id=eval_config.kb_id,
-            error_localizer=eval_config.error_localizer,
+            error_localizer=eval_config.error_localizer and not check_run,
             workspace=call_execution.test_execution.run_test.workspace,
-            source=eval_source(call_execution.test_execution_id),
+            source=source,
             call_context=_call_context,
+            on_billed=(
+                partial(accrue_check_run_eval_cost, call_execution.test_execution_id)
+                if check_run
+                else None
+            ),
         )
 
         if isinstance(eval_result, str):
@@ -1071,7 +1084,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             )
 
             el_enabled = error_localizer_enabled(eval_config)
-            if el_enabled and eval_output is not None:
+            if el_enabled and not check_run and eval_output is not None:
                 try:
                     trigger_error_localization_for_simulate(
                         eval_template=eval_template,
