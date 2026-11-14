@@ -268,8 +268,11 @@ def _run_for_target(
             )
             # Single evals write inside _execute_evaluation; composites return the
             # logger kwargs for the caller to persist (mirrors the span wrapper).
+            # Strict: a failed write must end the entry ERRORED, not COMPLETED
+            # with no result (which would also retire a Recalculate's previous
+            # result).
             if isinstance(result, dict) and "trace" in result:
-                _write_eval_logger(result, span, config, task_id)
+                _write_eval_logger(result, span, config, task_id, strict=True)
         elif entry.target_type == EvalTargetType.TRACE:
             trace = get_trace(
                 entry.trace_id,
