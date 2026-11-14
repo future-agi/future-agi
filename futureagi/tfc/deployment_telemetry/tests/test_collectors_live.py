@@ -87,6 +87,9 @@ def scratch_spans(settings, fresh_ch_client):
     ch.command(f"CREATE DATABASE {scratch}")
     try:
         ch.command(f"CREATE TABLE {scratch}.spans AS {config['database']}.spans")
+        # Keep every inserted version and tombstone in its own part, as an
+        # unmerged table is in production, so only FINAL collapses them.
+        ch.command(f"SYSTEM STOP MERGES {scratch}.spans")
         settings.CLICKHOUSE_V2 = {
             **(getattr(settings, "CLICKHOUSE_V2", {}) or {}),
             "CH25_DATABASE": scratch,
