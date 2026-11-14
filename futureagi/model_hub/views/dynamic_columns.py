@@ -36,6 +36,7 @@ from model_hub.models.develop_dataset import (
     Dataset,
     Row,
 )
+from model_hub.models.openai_tools import Tools
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     AddApiColumnRequestSerializer,
@@ -60,7 +61,7 @@ from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
 )
-from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.run_prompt import _extract_tool_ids, populate_placeholders
 
 # Define a Celery task for running the evaluation
 # Define a Celery task for running the evaluation
@@ -1603,6 +1604,15 @@ class ConditionalColumnView(APIView):
                 )
 
             elif output_type == "run_prompt":
+                tools_config = []
+                tool_ids = _extract_tool_ids(config.get("tools"))
+                if tool_ids:
+                    tools = Tools.objects.filter(
+                        _request_workspace_filter(row.dataset),
+                        id__in=tool_ids,
+                        organization_id=row.dataset.organization_id,
+                    )
+                    tools_config = [tool.as_openai_tool() for tool in tools]
                 messages = populate_placeholders(
                     config.get("messages"),
                     dataset_id=row.dataset.id,
@@ -1633,7 +1643,7 @@ class ConditionalColumnView(APIView):
                         "response_format"
                     ),  # Default response format
                     tool_choice=config.get("tool_choice"),  # Default tool choice
-                    tools=config.get("tools"),  # Default tools
+                    tools=tools_config,
                     output_format=config.get("output_format"),  # Default output format
                     workspace_id=(
                         row.dataset.workspace.id if row.dataset.workspace else None

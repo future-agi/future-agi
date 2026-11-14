@@ -117,6 +117,7 @@ from model_hub.models.evals_metric import (
     UserEvalMetric,
 )
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
+from model_hub.models.openai_tools import Tools
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.selectors.feedback import resolve_feedback_template_data
@@ -286,7 +287,7 @@ from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
-from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
+from model_hub.views.run_prompt import PROVIDERS_WITH_JSON, _extract_tool_ids
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
@@ -10993,6 +10994,15 @@ class ConditionalColumnView(APIView):
                 )
 
             elif output_type == "run_prompt":
+                tools_config = []
+                tool_ids = _extract_tool_ids(config.get("tools"))
+                if tool_ids:
+                    tools = Tools.objects.filter(
+                        _request_workspace_filter(row.dataset),
+                        id__in=tool_ids,
+                        organization_id=row.dataset.organization_id,
+                    )
+                    tools_config = [tool.as_openai_tool() for tool in tools]
                 executor = RunPrompt(
                     model=config.get("model"),
                     organization_id=org_id,
@@ -11012,7 +11022,7 @@ class ConditionalColumnView(APIView):
                         "response_format"
                     ),  # Default response format
                     tool_choice=config.get("tool_choice"),  # Default tool choice
-                    tools=config.get("tools"),  # Default tools
+                    tools=tools_config,
                     output_format=config.get("output_format"),  # Default output format
                     workspace_id=(
                         row.dataset.workspace.id if row.dataset.workspace else None

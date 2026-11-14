@@ -17,6 +17,7 @@ Endpoints covered:
 import json
 import time
 import uuid
+from copy import deepcopy
 from unittest.mock import Mock, patch
 
 import pytest
@@ -37,6 +38,8 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.openai_tools import Tools
+from model_hub.views import develop_dataset, dynamic_columns
 from model_hub.views.dynamic_columns import (
     AddApiColumnView,
     ExecutePythonCodeView,
@@ -726,6 +729,116 @@ class TestExecutePythonCodeViewSecurity(DynamicColumnsBaseTestCase):
 @pytest.mark.django_db
 class TestConditionalColumnView(DynamicColumnsBaseTestCase):
     """Tests for ConditionalColumnView."""
+
+    def _assert_run_prompt_tools(self, row, config, expected_tools):
+        branch = {"branch_node_config": {"type": "run_prompt", "config": config}}
+        original_branch = deepcopy(branch)
+        response = ("tool result", {"cost": 0})
+        for views in (dynamic_columns, develop_dataset):
+            with self.subTest(module=views.__name__, config=config):
+                with patch.object(views, "RunPrompt") as run_prompt:
+                    run_prompt.return_value.litellm_response.return_value = response
+                    result = views.ConditionalColumnView()._process_branch(
+                        row, branch, org_id=self.organization.id
+                    )
+                assert result == response
+                run_prompt.assert_called_once()
+                assert run_prompt.call_args.kwargs["tools"] == expected_tools
+                assert run_prompt.call_args.kwargs["tool_choice"] == config.get(
+                    "tool_choice"
+                )
+                run_prompt.return_value.litellm_response.assert_called_once_with()
+                assert branch == original_branch
+
+    def test_run_prompt_branch_resolves_saved_tools(self):
+        """Both conditional paths must send function envelopes, not stored IDs."""
+        _, _, rows = self.create_test_dataset(num_columns=0, num_rows=1)
+        parameters = {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        }
+        tool = Tools.objects.create(
+            name="Lookup weather",
+            description="Find weather for a city",
+            config={"parameters": parameters},
+            organization=self.organization,
+            workspace=self.workspace,
+        )
+        expected_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "Lookup_weather",
+                    "description": tool.description,
+                    "parameters": parameters,
+                },
+            }
+        ]
+        for tool_choice in ("auto", "required"):
+            self._assert_run_prompt_tools(
+                rows[0],
+                {
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "Weather in Paris?"}],
+                    "tools": [{"id": str(tool.id)}],
+                    "tool_choice": tool_choice,
+                },
+                expected_tools,
+            )
+
+    def test_run_prompt_branch_without_tools(self):
+        """Missing, null and empty tool selections still execute the prompt."""
+        _, _, rows = self.create_test_dataset(num_columns=0, num_rows=1)
+        for selection in ({}, {"tools": None}, {"tools": []}):
+            self._assert_run_prompt_tools(
+                rows[0],
+                {
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    **selection,
+                },
+                [],
+            )
+
+    def test_run_prompt_branch_tools_are_dataset_scoped(self):
+        """Background execution must not resolve another tenant's saved tools."""
+        dataset, _, rows = self.create_test_dataset(num_columns=0, num_rows=1)
+        dataset.workspace = self.workspace
+        dataset.save(update_fields=["workspace"])
+        other_workspace = Workspace.objects.create(
+            name="Other workspace",
+            organization=self.organization,
+            created_by=self.user,
+        )
+        tools = [
+            Tools.no_workspace_objects.create(
+                name=name,
+                description=name,
+                config={"parameters": {"type": "object", "properties": {}}},
+                organization=organization,
+                workspace=workspace,
+                deleted=deleted,
+            )
+            for name, organization, workspace, deleted in (
+                ("allowed", self.organization, self.workspace, False),
+                ("other_workspace", self.organization, other_workspace, False),
+                ("other_org", self.other_organization, self.other_workspace, False),
+                ("deleted", self.organization, self.workspace, True),
+            )
+        ]
+        with patch("tfc.utils.base_model.get_current_workspace", return_value=None):
+            self._assert_run_prompt_tools(
+                rows[0],
+                {
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "tools": [{"id": str(tool.id)} for tool in tools]
+                    + [{"id": str(uuid.uuid4())}],
+                    "tool_choice": "auto",
+                },
+                [tools[0].as_openai_tool()],
+            )
 
     def test_conditional_missing_config(self):
         """Test that missing config returns bad request."""
