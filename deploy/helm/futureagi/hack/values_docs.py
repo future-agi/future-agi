@@ -88,12 +88,12 @@ RULES: list[tuple[str, dict]] = [
     ("*.service.port", PORT),
     ("agentccGateway.tls.minVersion", {"enum": ["1.2", "1.3"]}),
     ("frontend.tls.reloadInterval", {"type": "integer", "minimum": 1, "maximum": 60}),
-    # The gateway refuses a duration that is not above zero and at most 1m.
+    # A Go duration (time.ParseDuration); validate.yaml checks the range.
     (
         "agentccGateway.tls.reloadInterval",
         {
             "type": "string",
-            "pattern": "^(([1-9]|[1-5][0-9]|60)s|1m|1m0s|([1-9][0-9]{0,3}|[1-5][0-9]{4}|60000)ms)$",
+            "pattern": "^([+]?(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+)?$",
         },
     ),
     ("bootstrap.ttlSecondsAfterFinished", {"type": ["integer", "string"]}),

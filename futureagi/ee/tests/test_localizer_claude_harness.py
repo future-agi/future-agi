@@ -434,10 +434,44 @@ async def test_adapter_still_verifies_an_https_gateway_without_a_ca_bundle(
     assert result.json()["error"]["message"] == "AgentCC transport failed"
 
 
-def test_no_backend_http_client_drops_the_ca_bundle():
-    """httpx with trust_env=False ignores SSL_CERT_FILE/SSL_CERT_DIR, where
-    the chart's global.caBundle lands; such a client must set verify itself."""
+def ca_bundle_offenders(source, label="<source>"):
+    """Calls that turn httpx's trust_env off without choosing verify themselves.
+
+    With trust_env=False, httpx ignores SSL_CERT_FILE/SSL_CERT_DIR, where the
+    chart's global.caBundle lands, so verify must be an expression that reads
+    them (verify=True falls back to certifi; verify=False checks nothing).
+    """
     import ast
+
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {k.arg: k.value for k in node.keywords if k.arg}
+        trust = keywords.get("trust_env")
+        if not (isinstance(trust, ast.Constant) and trust.value is False):
+            continue
+        verify = keywords.get("verify")
+        if verify is None or isinstance(verify, ast.Constant):
+            offenders.append(f"{label}:{node.lineno}")
+    return offenders
+
+
+def test_ca_bundle_guard_flags_constant_verify():
+    def flagged(call):
+        return bool(ca_bundle_offenders(f"import httpx\n{call}\n"))
+
+    assert flagged("httpx.AsyncClient(trust_env=False)")
+    assert flagged("httpx.AsyncClient(trust_env=False, verify=True)")
+    assert flagged("httpx.Client(timeout=5, trust_env=False, verify=False)")
+    assert not flagged(
+        "httpx.AsyncClient(trust_env=False, verify=gateway_tls_verify())"
+    )
+    assert not flagged("httpx.AsyncClient(verify=True)")
+    assert not flagged("httpx.AsyncClient()")
+
+
+def test_no_backend_http_client_drops_the_ca_bundle():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
@@ -452,19 +486,8 @@ def test_no_backend_http_client_drops_the_ca_bundle():
         ):
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
-        if "trust_env" not in source:
-            continue
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.Call):
-                continue
-            keywords = {k.arg: k.value for k in node.keywords if k.arg}
-            trust = keywords.get("trust_env")
-            if (
-                isinstance(trust, ast.Constant)
-                and trust.value is False
-                and "verify" not in keywords
-            ):
-                offenders.append(f"{relative}:{node.lineno}")
+        if "trust_env" in source:
+            offenders += ca_bundle_offenders(source, str(relative))
     assert not offenders, offenders
 
 
