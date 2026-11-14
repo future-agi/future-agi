@@ -40366,6 +40366,15 @@ export const SimulateApiHarnessEnvironmentsDraftsParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
   environment: zod
     .object({
@@ -40478,6 +40487,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40619,6 +40636,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40760,6 +40785,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -41111,6 +41144,18 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
     .describe("Repeating a Save with the same key repeats its answer."),
 });
 
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   zod.object({
     saved: zod
@@ -41230,6 +41275,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             )
             .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
+            ),
         }),
       )
       .describe("Each saved piece's new default version, by piece."),
@@ -41349,6 +41402,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             )
             .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
+            ),
         }),
       ),
       environment: zod.array(
@@ -41466,6 +41527,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             )
             .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
+            ),
         }),
       ),
       suite: zod.array(
@@ -41583,6 +41652,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             )
             .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
+            ),
         }),
       ),
     }),
@@ -43012,6 +43089,15 @@ export const SimulateApiHarnessEnvironmentsVersionsParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
   agent: zod.array(
     zod.object({
@@ -43124,6 +43210,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
     }),
   ),
   environment: zod.array(
@@ -43237,6 +43331,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
     }),
   ),
   suite: zod.array(
@@ -43350,6 +43452,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         )
         .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
     }),
   ),
 });
@@ -43424,6 +43534,15 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionParam
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionBody =
   zod.object({});
+
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault =
+  false;
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse =
   zod.object({
@@ -43540,6 +43659,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -43655,6 +43782,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -43770,6 +43905,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
   });
@@ -43830,6 +43973,15 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultBody = zod.object(
       ),
   },
 );
+
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault =
+  false;
 
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
   zod.object({
@@ -43946,6 +44098,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -44061,6 +44221,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -44176,6 +44344,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           )
           .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
   });
