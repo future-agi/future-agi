@@ -236,8 +236,10 @@ and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It expects
 Debian's ffmpeg in standard tags up to v1.58 (every standard release before
 the minimal build became the default shipped it) and the minimal build in
 every other tag; a tag without a version, such as `latest`, is judged by the
-image's `org.opencontainers.image.version` label. For an image built with
-another `FFMPEG_FLAVOR`, pass `OSS_FFMPEG_FLAVOR=minimal|debian|none`.
+image's `org.opencontainers.image.version` label. That guess is for
+published images: for an image you built, pass the flavor it was built with,
+`OSS_FFMPEG_FLAVOR=minimal|debian|none` (`release-backend.yml` passes
+`minimal`, since it builds this tree's default).
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built

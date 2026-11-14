@@ -18,7 +18,10 @@ set -euo pipefail
 #   standard tag up to v1.58 (LAST_DEBIAN_FFMPEG_RELEASE below: every
 #   standard release up to it shipped Debian's ffmpeg), else minimal. A
 #   digest reference, or a tag without a version (latest, a local build), is
-#   judged by the image's org.opencontainers.image.version label.
+#   judged by the image's org.opencontainers.image.version label. That guess
+#   is for images already published; a build you made yourself (or a dev or
+#   rc build of this tree tagged v1.58 or lower) should pass the flavor it
+#   was built with, as release-backend.yml does.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"

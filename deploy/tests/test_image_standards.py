@@ -450,6 +450,17 @@ class BackendVariants(unittest.TestCase):
                 with self.subTest(path=path.name, group=group):
                     self.assertTrue(imported & set(smoke.EXTRA_MODULES[group]))
 
+    def test_release_backend_checks_the_ffmpeg_it_built(self):
+        # release-backend.yml builds from the branch it checks out with no
+        # FFMPEG_FLAVOR, so the image has the variant's default ffmpeg; the
+        # verify step must say so instead of letting the script guess the
+        # flavor from a version tag (a v1.58.1-dev build is still minimal).
+        text = (WORKFLOWS / "release-backend.yml").read_text(encoding="utf-8")
+        self.assertNotIn("FFMPEG_FLAVOR=", text)
+        step = text[text.index("- name: Verify OSS image boundary") :]
+        step = step[: step.index("run:")]
+        self.assertRegex(step, r"\n\s+OSS_FFMPEG_FLAVOR: minimal\n")
+
     def test_ffmpeg_stages_match_the_variant_defaults(self):
         # FROM picks the ffmpeg stage before any RUN could source the script.
         aliases = {}
