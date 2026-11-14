@@ -1735,6 +1735,112 @@ def test_sampling_revalidation_dropping_a_requeued_replacement_puts_the_previous
     assert not _recalculation_rows().exists()
 
 
+def _delete_commits_mid_put_back(monkeypatch, span):
+    """A delete of ``span`` that commits after the put-back's own check of its
+    parents (``_still_there``, inside the restoring update) and before the
+    put-back commits: its cascade ran while the result was still retired, so
+    the restored result would come back under a deleted parent."""
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.services.eval_tasks import recalculate
+
+    original = recalculate.restore_retired
+
+    def restore_then_delete(results):
+        restored = original(results)
+        ObservationSpan._base_manager.using("default").filter(pk=span.pk).update(
+            deleted=True
+        )
+        return restored
+
+    monkeypatch.setattr(recalculate, "restore_retired", restore_then_delete)
+
+
+def test_put_back_by_the_sweep_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _sweep()
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _stored(replacement_id).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_put_back_by_the_request_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    """The request's own close: the recompute fails, the previous result is
+    put back, and a delete of its span lands before that commits."""
+    _engine_down(monkeypatch)
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    issue, member = _issue_with(previous)
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_put_back_without_a_delete_keeps_the_result_after_the_recheck(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The tombstone check retires nothing when every parent still exists."""
+    from tracer.services.eval_tasks.recalculate import _retire_if_parents_deleted
+
+    previous, _replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    assert _sweep()["restored"] == 1
+
+    assert _retire_if_parents_deleted(previous.pk) is False
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+
+
 # -- round 9: Recalculate on a result with no eval task -------------------------
 
 
@@ -2034,6 +2140,36 @@ def test_sweep_restores_an_untasked_result_whose_recalculate_was_killed(
     assert not _recalculation_rows().exists()
     # The next Recalculate finds a result again.
     assert _sweep()["restored"] == 0
+
+
+def test_untasked_put_back_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    previous, _new, _issue, member = _crashed_untasked(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        observation_span,
+        custom_eval_config,
+        wrote=False,
+    )
+    _age_untasked(RECOVER_AFTER_SECONDS + 60)
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _sweep()
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
 
 
 def test_sweep_keeps_an_untasked_result_written_before_the_crash(

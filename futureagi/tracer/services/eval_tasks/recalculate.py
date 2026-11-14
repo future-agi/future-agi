@@ -314,6 +314,48 @@ def _still_there(results):
     )
 
 
+def _retire_if_parents_deleted(previous_id) -> bool:
+    """The after-commit tombstone check of a put-back: retire ``previous_id``
+    for good if its span, trace, session or eval config is deleted now.
+
+    A put-back checks its parents inside the restoring update
+    (``_still_there``), so a delete that had not committed then is not seen:
+    its cascade ran before the restore and missed the restored result, which
+    would stay live under a deleted parent. Re-reading the parents once the
+    put-back has committed closes that window without locking them (row
+    locks on the parents conflict with the reconciler's ``FOR UPDATE`` on
+    configs). Returns whether it retired the result."""
+    with transaction.atomic(using="default"):
+        live = _rows().filter(pk=previous_id, deleted=False)
+        if not live.exists() or _still_there(live).exists():
+            return False
+        soft_delete_eval_results(live)
+        _retire_for_good(previous_id)
+    logger.warning(
+        "recalculate_restored_result_parent_deleted",
+        eval_logger_id=str(previous_id),
+    )
+    return True
+
+
+def _recheck_after_commit(previous_id) -> None:
+    """Run the tombstone check once the caller's transaction commits: the
+    request's close, the sweep and the reconciler all put results back in
+    one. Never fails the caller: a failed check is logged and the result
+    stays as the put-back left it."""
+
+    def check():
+        try:
+            _retire_if_parents_deleted(previous_id)
+        except Exception:
+            logger.exception(
+                "recalculate_restored_result_recheck_failed",
+                eval_logger_id=str(previous_id),
+            )
+
+    transaction.on_commit(check, using="default")
+
+
 def _put_previous_back(journal: EvalRecalculation) -> bool:
     """Bring the previous result back once its replacement is retired.
 
@@ -351,6 +393,7 @@ def _put_previous_back(journal: EvalRecalculation) -> bool:
     from tracer.services.eval_tasks.entries import _record_instant_answer
 
     _record_instant_answer(journal.previous_id, journal.eval_task_id)
+    _recheck_after_commit(journal.previous_id)
     return True
 
 
@@ -523,6 +566,8 @@ def _put_untasked_previous_back(journal: EvalRecalculation) -> bool:
     )
     if not restored:
         _retire_for_good(journal.previous_id)
+    else:
+        _recheck_after_commit(journal.previous_id)
     return bool(restored)
 
 
