@@ -8,6 +8,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# What an import reads: Observe sessions or calls, transcripts or dataset rows.
+ImportKind = Literal["session", "call", "transcript", "dataset"]
+# How redaction found what it replaced: Presidio, or the basic patterns without it.
+RedactionMethod = Literal["presidio", "basic"]
+
 
 class StoredTurn(BaseModel):
     role: Literal["user", "agent"]
@@ -32,7 +37,7 @@ class StoredRedaction(BaseModel):
     """What redaction replaced when the transcripts were stored
     (``EvidenceImport.redaction``)."""
 
-    method: Literal["presidio", "basic"]
+    method: RedactionMethod
     # Why the method could not find everything; blank for Presidio.
     reason: str
     total: int = Field(ge=0)

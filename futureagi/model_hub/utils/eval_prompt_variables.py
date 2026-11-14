@@ -72,7 +72,9 @@ def sync_required_keys_from_prompt(
     # the branch below reads intentionally instead of as a short-circuit.
     filter_by_allowed = bool(allowed_keys)
 
-    required_keys = list(config.get("required_keys") or config.get("requiredKeys") or [])
+    required_keys = list(
+        config.get("required_keys") or config.get("requiredKeys") or []
+    )
     seen = set(required_keys)
     for variable in prompt_variables:
         if variable in seen:

@@ -2,10 +2,11 @@
 improvement engine (in its sandbox) say to each other."""
 
 from enum import StrEnum
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from simulate.pydantic_schemas.evidence_import import ImportKind
 
 # What one fix may ask for; the launch form shows the same limits.
 SCENARIOS_MAX = 200
@@ -52,7 +53,7 @@ class FixEvidence(BaseModel):
     fix came from. Ids only, never a source's name or content."""
 
     import_id: str
-    source_kind: Literal["session", "call", "transcript", "dataset"]
+    source_kind: ImportKind
     # The added cases among the targets, in import order: each one's source and the scenario
     # it became.
     source_ids: list[str]

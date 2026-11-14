@@ -251,7 +251,7 @@ const PromtLeftSidebar = ({
               </ListItemIcon>
               <ListItemText
                 primaryTypographyProps={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: index === currentIndex ? 500 : 400,
                   width: "83%",
                 }}
@@ -263,7 +263,7 @@ const PromtLeftSidebar = ({
             <ListItem>
               <ListItemText
                 primaryTypographyProps={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: "fontWeightRegular",
                   width: "83%",
                   color: "text.disabled",

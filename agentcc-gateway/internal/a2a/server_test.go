@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -305,6 +307,80 @@ func TestTasksCancel(t *testing.T) {
 	}
 }
 
+func TestListAgentsConcurrentWithFetchCards(t *testing.T) {
+	cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AgentCard{Name: "travel", Version: "1.0"})
+	}))
+	defer cardSrv.Close()
+
+	reg := NewRegistry(map[string]AgentConfig{
+		"travel": {URL: cardSrv.URL, Description: "Travel agent"},
+	})
+	s := NewServer(CardConfig{Name: "test"}, reg)
+	defer s.Close()
+	listSrv := httptest.NewServer(http.HandlerFunc(s.ListAgents))
+	defer listSrv.Close()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	var sawCard atomic.Bool
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			type agentInfo struct {
+				Name string     `json:"name"`
+				Card *AgentCard `json:"card"`
+			}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					resp, err := listSrv.Client().Get(listSrv.URL + "/v1/agents")
+					if err != nil {
+						t.Errorf("list agents: %v", err)
+						return
+					}
+					var result []agentInfo
+					err = json.NewDecoder(resp.Body).Decode(&result)
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						t.Errorf("expected 200, got %d", resp.StatusCode)
+						return
+					}
+					if err != nil {
+						t.Errorf("decode: %v", err)
+						return
+					}
+					for _, info := range result {
+						if info.Card != nil {
+							sawCard.Store(true)
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 20; i++ {
+		reg.FetchCards(context.Background())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !sawCard.Load() {
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("timed out waiting for card in GET /v1/agents")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
 // newPipelineTestA2AServer returns a server that takes the pipeline path, with
 // model calls going to executor.
 func newPipelineTestA2AServer(t *testing.T, executor ChatCompletionExecutor) *Server {
@@ -384,7 +460,7 @@ func waitForTaskWorker(t *testing.T, s *Server, taskID string) {
 func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 	// Without metadata.model the worker fails the task at once, while the
 	// handler is still encoding the message/send response.
-	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		t.Error("executor should not be called without a model")
 		return nil, nil
 	})
@@ -402,7 +478,7 @@ func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 
 func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 	started := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ string, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ Caller, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -426,7 +502,7 @@ func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 func TestTasksCancelIsNotOverwrittenByLateResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-release
 		return &models.ChatCompletionResponse{Choices: []models.Choice{{

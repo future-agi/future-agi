@@ -7,6 +7,7 @@ Outputs: issues[] + key_moments[] + meta{}
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -14,9 +15,13 @@ import structlog
 
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
+    _OK_STATUS,
+    _get_span_kind,
+    _tool_names_from_definitions,
     attribute_key_moments,
     build_trace_payload,
     extract_programmatic_metadata,
+    flatten_spans,
     recover_verbatim,
     structural_prefilter_with_ids,
     unwrap_output,
@@ -27,13 +32,17 @@ from ee.agenthub.trace_scanner.prompt import (
     SUBCAT_TO_GROUP,
     SYSTEM_V8,
     VALID_SUBCATEGORIES,
-    build_prompt_v8,
+    build_prompt_v8_with_view,
+    span_header,
+    tools_available_text,
 )
+from ee.agenthub.untrusted_content import neutralize
 from agentic_eval.core.utils.model_config import (
     LiteLlmProvider,
     ModelConfig,
     ModelConfigs,
 )
+
 try:
     from ee.usage.services.gateway_llm_client import (
         call_llm as gateway_call_llm,
@@ -117,7 +126,10 @@ def _final_response_output(trace, span_id):
     if not spans:
         return None
     return max(
-        (str((s.get("span_attributes") or {}).get("output.value") or "") for s in spans),
+        (
+            str((s.get("span_attributes") or {}).get("output.value") or "")
+            for s in spans
+        ),
         key=len,
     )
 
@@ -198,12 +210,430 @@ def _evidence_is_quotable(evidence, haystack_norm: str) -> bool:
     for sentence in re.split(r"(?<=[.!?])\s+", ev):
         if len(sentence) >= _MIN_EVIDENCE_CHARS and sentence in haystack_norm:
             return True
+    return _trigrams_are_quoted(ev, haystack_norm)
+
+
+def _trigrams_are_quoted(ev: str, haystack_norm: str) -> bool:
+    """Enough of a normalised quote's word-trigrams appear in the haystack."""
     words = ev.split()
     if len(words) < 3:
         return False
     grams = [" ".join(words[i : i + 3]) for i in range(len(words) - 2)]
     hits = sum(1 for g in grams if g in haystack_norm)
     return hits / len(grams) >= _EVIDENCE_TRIGRAM_FLOOR
+
+
+# The recorded fields a FAIL can cite, as the prompt names them. A tool span
+# whose only record of failure is its status (no input, no output) is cited by
+# that status; an available tool the agent never called is cited by its name in
+# the TOOLS AVAILABLE list, which belongs to the trace rather than to a span.
+_FIELD_KEYS = {"in": "input.value", "out": "output.value"}
+_STATUS_FIELD = "status"
+_TOOLS_FIELD = "tools"
+_FIELD_ALIASES = {
+    "in": "in",
+    "input": "in",
+    "out": "out",
+    "output": "out",
+    "status": _STATUS_FIELD,
+    "status_code": _STATUS_FIELD,
+    "tools": _TOOLS_FIELD,
+    "tools_available": _TOOLS_FIELD,
+}
+# Status values that cannot support a FAIL: the span never set one, or it
+# recorded success (the same set key-moment attribution reads as "fine").
+_NO_STATUS = _OK_STATUS | {"status_code_unset"}
+# A quote is bound to the passages it was copied from. GOAL, TOOLS and
+# INSTRUCTION each ask for two passages that usually live in different fields;
+# a third is slack. Citing more than that binds the quote to nothing in
+# particular, so it is refused rather than truncated.
+_MAX_CITES = 3
+# Words of a span's header line, for matching a quote of its status.
+_STATUS_WORD = re.compile(r"[a-z0-9_]+")
+# Where a quote is split into sentences: one passage per cite when a quote has
+# no per-cite passages, and one checked sentence at a time within a passage.
+_PASSAGE_BREAK = re.compile(r"(?<=[.!?])\s+")
+# Words of a quote with punctuation and casing set aside. An apostrophe inside
+# a word is punctuation too: "can't", "can’t" and "cant" are one word.
+_WORD = re.compile(r"\w+")
+_INWORD_APOSTROPHE = re.compile(r"(?<=\w)['\u2019](?=\w)")
+# An optional label in front of a quote of the tools list, as the prompt shows it.
+_TOOLS_LABEL = re.compile(r"^tools available\s*:\s*")
+# Attributes a trace records a called tool's name under: the tool span's own
+# name (``tool.name``, ``gen_ai.tool.name``) and the function name of a tool
+# call on the span that made it (``...tool_calls.N.tool_call.function.name``).
+# The tool definitions sent to the model (``llm.tools.N...``, under any
+# prefix) name the tools available, not the ones called.
+_TOOL_NAME_KEY = re.compile(
+    r"(?:^|[._])(?:tool[._]name|tool_call\.function\.name|function_call\.name)$"
+)
+_TOOL_DEFINITION_KEY = re.compile(r"(?:^|\.)llm\.tools\.|tool[._]definitions")
+# Words a tool span's name can carry besides the tool's own name. A span name
+# with "tool" in it ("Tool #1", "execute_tool") or made only of these words
+# ("run", "function_call") does not say which tool ran.
+_TOOL_SPAN_WORDS = frozenset(
+    {"tool", "tools", "call", "calls", "function", "execute", "run", "invoke"}
+)
+_TOOL_LABEL_WORDS = frozenset({"tool", "tools"})
+_TOOL_KINDS = {"Tool", "TOOL"}
+
+
+def _cites(verdict: dict[str, Any]):
+    """The (span id, field, passage) entries a FAIL says its evidence came from.
+
+    ``passage`` is the entry's own ``quote``, or ``None`` when it gives none.
+    ``[]`` when it cites nothing; ``None`` when it cites something that cannot
+    be read as a span field, or more passages than a quote can be bound to.
+    A bare ``span``/``field`` pair on the verdict is read as one citation. The
+    tools list belongs to no span, so its cite needs no span id.
+    """
+    raw = verdict.get("cite")
+    if raw is None and verdict.get("span"):
+        raw = [{"span": verdict.get("span"), "field": verdict.get("field")}]
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > _MAX_CITES:
+        return None
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        span_id = str(entry.get("span") or "").strip()
+        name = _FIELD_ALIASES.get(str(entry.get("field") or "").strip().lower())
+        quote = entry.get("quote")
+        if not name or not isinstance(quote, (str, type(None))):
+            return None
+        if not span_id and name != _TOOLS_FIELD:
+            return None
+        entries.append((span_id, name, quote.strip() if quote else None))
+    return entries
+
+
+def _cited_passages(verdict: dict[str, Any], entries) -> list[str | None] | None:
+    """One passage per cite, in cite order, or None if they cannot be paired.
+
+    Each cite's own ``quote`` when every cite carries one; a status cite may
+    leave its quote out next to quoted cites (its passage is then ``None`` and
+    stands for the recorded status). Without any quotes, a single cite takes
+    the whole evidence, and several cites take the evidence's sentences in
+    order, one each; a quote that does not split into exactly one passage per
+    cite cannot say which passage came from which field.
+    """
+    quotes = [quote for _span_id, _name, quote in entries]
+    if all(quotes):
+        return quotes
+    if any(quotes):
+        unquoted = {name for _span_id, name, quote in entries if not quote}
+        return quotes if unquoted == {_STATUS_FIELD} else None
+    evidence = str(verdict.get("evidence") or "").strip()
+    if len(entries) == 1:
+        return [evidence]
+    passages = [p for p in _PASSAGE_BREAK.split(evidence) if p.strip()]
+    return passages if len(passages) == len(entries) else None
+
+
+def _field_values(trace, span_id: str, name: str) -> list[str]:
+    """Recorded values of one cited span field ("in"/"out"), one per copy of
+    the span.
+
+    Read from the trace itself, never from the prompt: the prompt also carries
+    our instructions and framing, and a quote that only matches those is not a
+    quote from the trace. Neutralised as the prompt neutralised them, so a
+    quote of a field that contained a marker still matches. Every copy of a
+    duplicated span id counts, as it does for the completion gate. ``[]`` when
+    the span is unknown or recorded nothing in that field.
+    """
+    values = [
+        str((s.get("span_attributes") or {}).get(_FIELD_KEYS[name]) or "")
+        for s in _named_spans(trace, span_id)
+    ]
+    return [neutralize(v) for v in values if v.strip()]
+
+
+def _status_lines(shown, span_id: str) -> list[tuple[str, str]]:
+    """(header line, status) of each shown copy of a span that recorded a
+    status other than success.
+
+    The line is rebuilt from the payload the prompt was built from, with the
+    prompt's own renderer, so it is the line the model saw word for word,
+    including the [FLAGGED] mark the prefilter puts on every Error span.
+    """
+    lines = []
+    for s in (shown or {}).get("spans") or []:
+        if str(s.get("id") or "") != span_id:
+            continue
+        status = str(s.get("status") or "").strip()
+        if status.casefold() in _NO_STATUS:
+            continue
+        lines.append((span_header(s), neutralize(status)))
+    return lines
+
+
+def _shown_tool_names(shown) -> list[str]:
+    """The tool names the TOOLS AVAILABLE line shows in full, in its order."""
+    names = [neutralize(t) for t in (shown or {}).get("tools_available") or ()]
+    text = tools_available_text(names)
+    visible, end = [], 0
+    for n in names:
+        end += len(n)
+        if end > len(text):
+            break
+        visible.append(n)
+        end += len(", ")
+    return visible
+
+
+def _recorded_tool_names(attrs) -> set[str]:
+    """Tool names recorded in a span's attributes, as the prompt shows names."""
+    return {
+        _norm_for_match(neutralize(value))
+        for key, value in attrs.items()
+        if _TOOL_NAME_KEY.search(str(key))
+        and not _TOOL_DEFINITION_KEY.search(str(key))
+        and str(value or "").strip()
+    }
+
+
+def _names_listed_tool(span_name: str, listed: str) -> bool:
+    """Does a tool span's name carry this tool name as a whole name?"""
+    if not listed or listed not in span_name:
+        return False
+    whole = rf"(?<![a-z0-9_]){re.escape(listed)}(?![a-z0-9_])"
+    return re.search(whole, span_name) is not None
+
+
+def _span_name_words(span_name: str) -> set[str]:
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", span_name).casefold()
+    return set(re.findall(r"[a-z0-9]+", spaced))
+
+
+def _span_name_is_a_tool_name(span_name: str) -> bool:
+    """Can a tool span's own name be read as the name of the tool it ran?"""
+    words = _span_name_words(span_name)
+    return bool(words - _TOOL_SPAN_WORDS) and not words & _TOOL_LABEL_WORDS
+
+
+def _called_tool_names(trace) -> set[str] | None:
+    """Names of the tools the trace recorded a call to, or None when it
+    recorded a tool call whose tool cannot be named.
+
+    A tool span (by the prefilter's rule) is a call of the tool its name
+    attribute names, of every declared tool whose name appears in its span
+    name as a whole name ("Tool issue_refund" is a call of issue_refund), and
+    of its own span name. A tool call recorded on the span that made it counts
+    too. A tool span named by none of these ("Tool #1", "run") could be a call
+    of any listed tool, so nothing is known to be uncalled; a span whose kind
+    says it is not a tool ("Tool Calls" on an LLM span) is not a call.
+    """
+    spans = [
+        span
+        for top in (trace or {}).get("spans") or []
+        for span, _depth in flatten_spans(top)
+    ]
+    declared = set()
+    for span in spans:
+        names = _tool_names_from_definitions(span.get("span_attributes") or {})
+        declared |= {_norm_for_match(neutralize(n)) for n in names}
+    called = set()
+    for span in spans:
+        attrs = span.get("span_attributes") or {}
+        recorded = _recorded_tool_names(attrs)
+        called |= recorded
+        raw_name = str(span.get("span_name") or "")
+        kind = _get_span_kind(attrs)
+        if not (kind in _TOOL_KINDS or "Tool" in raw_name):
+            continue
+        name = _norm_for_match(neutralize(raw_name))
+        named = {n for n in declared if _names_listed_tool(name, n)}
+        called |= named | {name}
+        if recorded or named or _span_name_is_a_tool_name(raw_name):
+            continue
+        if not kind or kind in _TOOL_KINDS:
+            return None
+    return called
+
+
+def _shown_span_ids(shown) -> set[str]:
+    return {str(s.get("id") or "") for s in (shown or {}).get("spans") or []}
+
+
+def _passage_names_status(passage: str | None, lines) -> bool:
+    """Does this passage quote the cited span's status?
+
+    A status is a single recorded word ("Error"), shorter than any quote the
+    text gate accepts. A passage citing it must name that status and may
+    otherwise only repeat words from the span's header line (id, name, kind,
+    the [FLAGGED] mark when the prompt showed it): anything else in it was not
+    recorded on that span. A status cite without a passage stands for the
+    recorded status.
+    """
+    if passage is None:
+        return bool(lines)
+    said = set(_STATUS_WORD.findall(_norm_for_match(passage)))
+    for line, status in lines:
+        recorded = set(_STATUS_WORD.findall(_norm_for_match(status)))
+        if recorded and recorded <= said <= set(
+            _STATUS_WORD.findall(_norm_for_match(line))
+        ):
+            return True
+    return False
+
+
+def _passage_names_tools(passage: str, names: list[str], trace) -> bool:
+    """Is this passage copied from TOOLS AVAILABLE, naming a tool never called?
+
+    The passage must be one listed name or a run of them in the order the
+    line shows (optionally with its label), and at least one of them must
+    have no recorded call: a tools cite supports a FAIL for an available tool
+    the agent never called, and a tool it did call cannot show that. When the
+    trace recorded a tool call it does not name, no tool is known to be
+    uncalled and the cite is declined.
+    """
+    said = _TOOLS_LABEL.sub("", _norm_for_match(passage))
+    items = [i.strip(" \"'`.") for i in said.split(",")]
+    if not items or not all(items):
+        return False
+    listed = [_norm_for_match(n) for n in names]
+    width = len(items)
+    in_order = any(
+        listed[i : i + width] == items for i in range(len(listed) - width + 1)
+    )
+    if not in_order:
+        return False
+    called = _called_tool_names(trace)
+    return called is not None and any(i not in called for i in items)
+
+
+def _words(text) -> str:
+    """A quote's words, space-separated and padded, with punctuation, casing
+    and Unicode composition set aside, so a word sequence is matched on word
+    boundaries."""
+    folded = unicodedata.normalize("NFC", str(text or "").casefold())
+    return f" {' '.join(_WORD.findall(_INWORD_APOSTROPHE.sub('', folded)))} "
+
+
+def _sentence_is_quoted(sentence: str, first: bool, last: bool, recorded) -> bool:
+    """One sentence of a passage of several, found in one recorded sentence.
+
+    ``recorded`` are the cited field's sentences as ``_words``. The sentence's
+    words must be that sentence's words, in order, with punctuation, casing
+    and whitespace set aside. A sentence break inside the passage must be one
+    in the field: the first sentence may start inside a recorded sentence but
+    ends where it ends, the last starts where one starts but may stop early,
+    and any sentence between them is a whole recorded sentence. A break the
+    passage adds cannot join words recorded in different places.
+    """
+    words = _words(sentence)
+    if not words.strip():
+        return True
+    if first:
+        return any(r.endswith(words) for r in recorded)
+    if last:
+        return any(r.startswith(words) for r in recorded)
+    return words in recorded
+
+
+def _passage_in_field(passage: str, values: list[str]) -> bool:
+    """Is this passage a quote of the cited span field?
+
+    Punctuation, casing and whitespace a model rewrites are set aside, but no
+    word may be changed, added or left out: the passage's words must appear in
+    the field in order, or each of its sentences must be found in the field
+    on its own, joined at the field's own sentence breaks.
+    """
+    said = _norm_for_match(passage)
+    fields = [_norm_for_match(v) for v in values]
+    if said and said in fields:
+        # The whole field, however short, is unambiguous.
+        return True
+    if len(said) < _MIN_EVIDENCE_CHARS:
+        return False
+    if any(said in f for f in fields):
+        return True
+    field_words = [_words(v) for v in values]
+    if _words(said).strip() and any(_words(said) in f for f in field_words):
+        return True
+    sentences = [s for s in _PASSAGE_BREAK.split(said) if s]
+    if len(sentences) < 2:
+        return False
+    recorded = [_words(s) for f in fields for s in _PASSAGE_BREAK.split(f)]
+    last = len(sentences) - 1
+    return all(
+        _sentence_is_quoted(s, i == 0, i == last, recorded)
+        for i, s in enumerate(sentences)
+    )
+
+
+def _leading_quote(evidence: str, values: list[str]) -> str | None:
+    """The first sentence of a one-cite evidence string when it is copied
+    exactly from the cited field, else None.
+
+    A quote followed by the model's own commentary is still a quote, but only
+    the copied sentence is evidence: the commentary is not kept.
+    """
+    first = _PASSAGE_BREAK.split(evidence.strip(), 1)[0].strip()
+    said = _norm_for_match(first)
+    if len(said) < _MIN_EVIDENCE_CHARS:
+        return None
+    if any(said in _norm_for_match(v) for v in values):
+        return first
+    return None
+
+
+def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]:
+    """(why this FAIL's evidence is not bound to the trace, its passages).
+
+    The reason is None when every cited passage is found in its own cited
+    field, so one real passage cannot carry another that is not in the trace.
+    The passages are then the FAIL's evidence of record. ``shown`` is the
+    part of the payload the prompt showed: only its spans and tools list can
+    be cited, span statuses and the tools list are matched as the prompt
+    showed them, span inputs and outputs against the trace's recorded values.
+    """
+    entries = _cites(verdict)
+    if entries is None:
+        return "unreadable_cite", []
+    if not entries:
+        return "uncited", []
+    passages = _cited_passages(verdict, entries)
+    if passages is None:
+        return "unpaired_passages", []
+    # One cite without a quote of its own takes the whole evidence, which may
+    # be a quote followed by the model's commentary.
+    lone = len(entries) == 1 and entries[0][2] is None
+    checked = []
+    for (span_id, name, _quote), passage in zip(entries, passages, strict=True):
+        if name == _STATUS_FIELD:
+            lines = _status_lines(shown, span_id)
+            if not lines:
+                return "cited_field_missing", []
+            if not _passage_names_status(passage, lines):
+                return "not_in_cited_field", []
+            checked.append(passage if passage is not None else lines[0][0])
+            continue
+        if name == _TOOLS_FIELD:
+            names = _shown_tool_names(shown)
+            if not names:
+                return "cited_field_missing", []
+            if not _passage_names_tools(passage, names, trace):
+                return "not_in_cited_field", []
+            checked.append(passage)
+            continue
+        if shown is not None and span_id not in _shown_span_ids(shown):
+            return "cited_field_missing", []
+        values = _field_values(trace, span_id, name)
+        if not values:
+            return "cited_field_missing", []
+        if _passage_in_field(passage, values):
+            checked.append(passage)
+            continue
+        head = _leading_quote(passage, values) if lone else None
+        if head is None:
+            return "not_in_cited_field", []
+        checked.append(head)
+    return None, checked
 
 
 # Share of the shorter quote's word-trigrams that must appear in the longer one
@@ -259,15 +689,19 @@ def _collapse_same_event(failed: set, dims: dict) -> set:
     """
     ordered = sorted(
         failed,
-        key=lambda d: _DIMENSION_SPECIFICITY.index(d)
-        if d in _DIMENSION_SPECIFICITY
-        else len(_DIMENSION_SPECIFICITY),
+        key=lambda d: (
+            _DIMENSION_SPECIFICITY.index(d)
+            if d in _DIMENSION_SPECIFICITY
+            else len(_DIMENSION_SPECIFICITY)
+        ),
     )
     kept: list = []
     dropped: list = []
     for dim in ordered:
         evidence = (dims.get(dim) or {}).get("evidence")
-        if any(_same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept):
+        if any(
+            _same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept
+        ):
             dropped.append(dim)
             continue
         kept.append(dim)
@@ -414,7 +848,9 @@ class TraceScanner:
 
         # Build prompt and call LLM. BATCH_SIZE is 1, so this is one trace per call
         # and the decomposed prompt gets the model's full attention on it.
-        user_prompt = build_prompt_v8(payloads)
+        # The view is what the prompt actually shows after its length guard;
+        # only that can be cited.
+        user_prompt, shown = build_prompt_v8_with_view(payloads)
         messages = [
             {"role": "system", "content": SYSTEM_V8},
             {"role": "user", "content": user_prompt},
@@ -432,13 +868,18 @@ class TraceScanner:
                 parsed = {
                     first_label: self._v8_to_trace_output(
                         parsed,
-                        # The gate compares evidence against the exact text the
-                        # model was shown, so a legitimate quote always matches.
-                        user_prompt,
-                        # The raw trace: the completion gate verifies the named
-                        # span's real output, not a pre-selected result.
-                        trace_map[first_label][0],
-                        _trace_has_captured_content(trace_map[first_label][0]),
+                        # The raw trace, not the prompt: every quote is checked
+                        # against the span fields it cites, and the completion
+                        # gate verifies the named span's real output. The
+                        # prompt also holds our own instructions and framing,
+                        # which are not evidence of anything the agent did.
+                        trace=trace_map[first_label][0],
+                        trace_has_content=_trace_has_captured_content(
+                            trace_map[first_label][0]
+                        ),
+                        # What the model was shown: which spans and whether
+                        # the tools list, and the lines a status cite quotes.
+                        shown=shown,
                     )
                 }
         except Exception as e:
@@ -562,12 +1003,10 @@ class TraceScanner:
         response = _result.response
         usage = getattr(response, "usage", None)
         if usage:
-            self.token_usage["prompt_tokens"] += getattr(
-                usage, "prompt_tokens", 0
-            ) or 0
-            self.token_usage["completion_tokens"] += getattr(
-                usage, "completion_tokens", 0
-            ) or 0
+            self.token_usage["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
+            self.token_usage["completion_tokens"] += (
+                getattr(usage, "completion_tokens", 0) or 0
+            )
             self.token_usage["total_tokens"] += getattr(usage, "total_tokens", 0) or 0
         try:
             return response.choices[0].message.content
@@ -600,6 +1039,7 @@ class TraceScanner:
         seen_text: str = "",
         trace: Optional[Dict[str, Any]] = None,
         trace_has_content: bool = True,
+        shown: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Translate V8's per-dimension verdicts into the shipped issue shape.
 
@@ -613,16 +1053,40 @@ class TraceScanner:
         enforced by the model on itself — nothing checked that the quote it
         returned was ever in front of it, and the quote was then discarded.
 
-        ``seen_text`` is what the model was actually shown. A FAIL whose evidence
-        cannot be found there is dropped: the model asserting a quote it did not
-        receive is the definition of the failure this gate exists to stop. This
-        is deliberately fail-closed — a dropped real issue costs recall, a kept
-        invented one costs the user's trust in every other row.
+        With the ``trace`` in hand, each passage of a FAIL's evidence must be
+        found in the recorded text of the span field cited for it (span id +
+        "in"/"out", or "status" for a span that recorded only its status), read
+        from the trace itself. Matching against the prompt instead would accept
+        a quote of our own instructions or framing, and would not say where in
+        the trace the quote came from. A FAIL that cites nothing, cites a field
+        that does not hold its quote, or cites a span that does not exist is
+        dropped: the model asserting a quote it cannot place is the definition
+        of the failure this gate exists to stop. This is deliberately
+        fail-closed — a dropped real issue costs recall, a kept invented one
+        costs the user's trust in every other row.
+
+        ``shown`` is the part of the payload the prompt showed
+        (build_prompt_v8_with_view): only spans and a tools list it showed can
+        be cited, a cited status is matched against the span's header line
+        exactly as the prompt rendered it, and a cited tool name against the
+        TOOLS AVAILABLE list. Rebuilt from the trace when not supplied.
+
+        ``seen_text`` is consulted only when no trace is supplied; the scanner
+        always supplies one.
         """
         dims = parsed.get("dimensions") or {}
-        hay = _norm_for_match(seen_text)
+        if trace is not None and shown is None:
+            shown = build_prompt_v8_with_view(
+                build_trace_payload(trace, structural_prefilter_with_ids(trace))
+            )[1]
+        hay = "" if trace is not None else _norm_for_match(seen_text)
         failed = set()
         unverified = []
+        reasons = set()
+        # Dimensions whose evidence was checked passage by passage carry those
+        # passages from here on, so text the gate never checked cannot decide
+        # which claims describe the same moment.
+        checked = {}
         for k, v in dims.items():
             if not isinstance(v, dict) or str(v.get("verdict", "")).upper() != "FAIL":
                 continue
@@ -658,15 +1122,25 @@ class TraceScanner:
                     # told apart by the same floor that defines an absence, not
                     # by mere non-emptiness: an empty provider envelope unwraps
                     # to a short placeholder, which is still an absence and has
-                    # nothing to quote.
+                    # nothing to quote. The quote is bound to the span the claim
+                    # names: the cut-off ending has to be that span's output.
                     or (
-                        hay
-                        and _is_truncation_not_absence(named_output)
-                        and not _evidence_is_quotable(v.get("evidence"), hay)
+                        _is_truncation_not_absence(named_output)
+                        and not _evidence_is_quotable(
+                            v.get("evidence"),
+                            _norm_for_match(neutralize(named_output)),
+                        )
                     )
                 ):
                     unverified.append(k)
                     continue
+            elif trace is not None:
+                reason, passages = _bind(v, trace, shown)
+                if reason:
+                    unverified.append(k)
+                    reasons.add(reason)
+                    continue
+                checked[k] = {**v, "evidence": " ".join(passages)}
             elif hay and not _evidence_is_quotable(v.get("evidence"), hay):
                 unverified.append(k)
                 continue
@@ -674,14 +1148,17 @@ class TraceScanner:
         if unverified:
             # Suppression is a measurement, not a silent behaviour: without this
             # count there is no way to tell a precise scanner from a mute one.
+            # The reasons separate a model that stopped citing from one that
+            # cites the wrong place.
             logger.info(
                 "scanner_evidence_gate_dropped",
                 dimensions=sorted(unverified),
                 dropped=len(unverified),
+                reasons=sorted(reasons),
             )
         # Collapse after gating, not before: a dimension whose evidence was
         # invented must not be the one that survives a merge.
-        failed = _collapse_same_event(failed, dims)
+        failed = _collapse_same_event(failed, {**dims, **checked})
         briefs = {
             i.get("dim"): i for i in (parsed.get("issues") or []) if isinstance(i, dict)
         }
@@ -692,7 +1169,9 @@ class TraceScanner:
             # Prefer the model's own subcategory: DIMENSION_TO_SUBCATEGORY alone can only ever
             # emit 5 of 20, which halves category accuracy on TRAIL (36.8% -> 18.8%).
             cat = str(item.get("cat") or "").strip()
-            subcat = cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
+            subcat = (
+                cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
+            )
             if not subcat:
                 continue
             # NEVER fall back to the evidence quote. `brief` is what _retitle_from_members
@@ -714,11 +1193,13 @@ class TraceScanner:
             brief = " ".join(str(item.get("brief") or "").split())
             if not brief or len(brief) > _MAX_BRIEF_CHARS:
                 brief = subcat
-            issues.append({
-                "cat": subcat,
-                "conf": conf if conf in ("H", "M") else "M",
-                "brief": brief[:_MAX_BRIEF_CHARS],
-            })
+            issues.append(
+                {
+                    "cat": subcat,
+                    "conf": conf if conf in ("H", "M") else "M",
+                    "brief": brief[:_MAX_BRIEF_CHARS],
+                }
+            )
         if low_confidence:
             # Suppression has to be visible. Going quiet and being precise look
             # identical from the outside, and only these counters tell them apart.

@@ -14,11 +14,13 @@ import { useSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import SharedSection from "src/components/section";
+import { sessionTracesLink } from "src/sections/projects/Insights/insightsLinks";
 import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
 import {
   EVIDENCE_COPY,
   IMPORT_PARAM,
+  OBSERVE_KINDS,
   caseShowsDefault,
   errorText,
 } from "./evidence.constants";
@@ -58,6 +60,15 @@ const reachedStep = (data, cases) => {
   if (cases.some(isEvidenceCaseDrafted)) return "add";
   if (cases.some((one) => one.status === "added")) return "draft";
   return null;
+};
+
+// Where Observe shows a case's source: a session's traces around when it ran, or
+// the call's trace. None for evidence from outside Observe.
+const observeHref = (projectId, kind, one) => {
+  if (!OBSERVE_KINDS.has(kind) || !projectId || !one.source_id) return null;
+  return kind === "call"
+    ? `/dashboard/observe/${projectId}/trace/${encodeURIComponent(one.source_id)}`
+    : sessionTracesLink(projectId, one.source_id, one.started_at);
 };
 
 // The import review: what each case's source holds and lacks and what
@@ -230,6 +241,7 @@ export default function EvidenceReviewDrawer({
                   kind={kind}
                   simulated={Boolean(data.simulated)}
                   production={Boolean(data.production)}
+                  observeHref={observeHref(data.project_id, kind, one)}
                   datasetHref={
                     dataset && data.dataset_id
                       ? `${paths.dashboard.develop}/${data.dataset_id}?tab=data`

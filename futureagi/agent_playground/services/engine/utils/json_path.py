@@ -202,8 +202,7 @@ def extract_json_path(data: Any, path: str) -> Any:
                 )
             if token not in current:
                 raise ValueError(
-                    f"Key '{token}' not found. Available keys: "
-                    f"{list(current.keys())}"
+                    f"Key '{token}' not found. Available keys: {list(current.keys())}"
                 )
             current = current[token]
 

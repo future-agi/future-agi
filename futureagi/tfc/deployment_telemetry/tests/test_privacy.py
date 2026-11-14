@@ -14,8 +14,12 @@ from tfc.deployment_telemetry.schema import (
     HEARTBEAT_FIELDS,
     REGISTRATION_FIELDS,
 )
-from tfc.logging.sentry import _scrub_deployment_telemetry_event
-from tfc.telemetry.middleware import OTelContextMiddleware
+from tfc.logging.sentry import _is_telemetry_url, _scrub_deployment_telemetry_event
+from tfc.telemetry.middleware import (
+    OTelContextMiddleware,
+    is_sensitive_body_path,
+    sensitive_path_pattern,
+)
 
 
 def test_otel_does_not_capture_deployment_telemetry_request_body():
@@ -105,6 +109,60 @@ def test_otel_never_records_a_transcript_import_or_its_refusal():
 
     assert "http.request.body" not in captured
     assert "http.response.body" not in captured
+
+
+# Every routed form of a sensitive path: DRF's format suffix, and no trailing
+# slash (the body is read before Django redirects it), for every entry.
+SLIPPED = [
+    f"{ENVIRONMENT}/evidence-imports.json/",
+    f"{ENVIRONMENT}/evidence-imports.json",
+    f"{ENVIRONMENT}/evidence-imports",
+    "/simulate/api/harness-jobs/secret-values.json",
+    "/simulate/api/harness-jobs/secret-files",
+    "/simulate/api/harness/github/webhook.json/",
+]
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_otel_never_records_a_sensitive_path_in_any_routed_form(path):
+    captured = _captured(path, status=400)
+
+    assert "http.request.body" not in captured
+    assert "http.response.body" not in captured
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_sentry_treats_every_routed_form_as_sensitive(path):
+    assert _is_telemetry_url(f"https://api.futureagi.com{path}?page=2")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{ENVIRONMENT}/evidence-imports-archive/",
+        "/simulate/api/harness-jobs/secret-values-history/",
+        "/telemetry-settings/",
+    ],
+)
+def test_a_path_that_only_starts_like_a_sensitive_one_is_not(path):
+    """The match ends at a segment: another resource sharing the stem is recorded."""
+    assert not is_sensitive_body_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/simulate/api/harness/conversations.json",
+        "/simulate/api/harness/conversations",
+        "/simulate/api/harness/conversations/c1/messages/",
+    ],
+)
+def test_an_entry_added_later_covers_every_routed_form(path):
+    """An entry needs no pattern of its own: each is built the same way."""
+    pattern = sensitive_path_pattern("/simulate/api/harness/conversations/")
+
+    assert pattern.match(path)
+    assert not pattern.match("/simulate/api/harness/conversations-archive/")
 
 
 def test_otel_still_records_an_environments_other_bodies():

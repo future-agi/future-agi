@@ -1,0 +1,5 @@
+# Changes to the Python lint gate and to this file need a code owner's review.
+/futureagi/pyproject.toml @nik13 @atharva-bhange @hadarishav
+/scripts/check_python_lint_delta.py @nik13 @atharva-bhange @hadarishav
+/.github/workflows/python-lint.yml @nik13 @atharva-bhange @hadarishav
+/.github/CODEOWNERS @nik13 @atharva-bhange @hadarishav

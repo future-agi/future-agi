@@ -485,4 +485,27 @@ describe("the environment's unfinished imports", () => {
       true,
     );
   });
+
+  it("discarding one asks again for the environment's other reviews", async () => {
+    // Discard can promote another import's repeat to the case to draft, so a
+    // review of that import read before now says "already imported" wrongly.
+    const OTHER = "33333333-3333-3333-3333-333333333333";
+    const ELSEWHERE = "44444444-4444-4444-4444-444444444444";
+    axios.delete.mockResolvedValue({ data: undefined });
+    client.setQueryData(evidenceImportKey(ENV, OTHER), bundle({ id: OTHER }));
+    client.setQueryData(evidenceImportKey(ELSEWHERE, OTHER), bundle());
+    const { result } = renderHook(() => useDiscardEvidenceImport(ENV), {
+      wrapper,
+    });
+
+    await act(() => result.current.mutateAsync(IMPORT));
+
+    expect(
+      client.getQueryState(evidenceImportKey(ENV, OTHER)).isInvalidated,
+    ).toBe(true);
+    // Another environment's reviews are left alone.
+    expect(
+      client.getQueryState(evidenceImportKey(ELSEWHERE, OTHER)).isInvalidated,
+    ).toBe(false);
+  });
 });

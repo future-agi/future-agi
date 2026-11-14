@@ -55,10 +55,20 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     # A transcript import carries the raw transcript, before redaction.
     "/simulate/api/harness-environments/*/evidence-imports/",
 )
+
+
+def sensitive_path_pattern(prefix: str) -> re.Pattern[str]:
+    """``prefix`` as a pattern, ``*`` standing for one path segment. It ends at a
+    segment boundary rather than at the trailing slash, so every routed form of
+    the resource is covered: with no trailing slash (the body is read before
+    Django redirects it), with a format suffix such as ".json", or before a query."""
+    stem = re.escape(prefix.rstrip("/")).replace(r"\*", "[^/]+")
+    return re.compile(stem + r"(?:[/.?#]|$)")
+
+
 # The prefixes as patterns: ``match`` a path, ``search`` a full URL.
 SENSITIVE_BODY_PATHS = tuple(
-    re.compile(re.escape(prefix).replace(r"\*", "[^/]+"))
-    for prefix in SENSITIVE_BODY_PATH_PREFIXES
+    sensitive_path_pattern(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
 )
 
 
@@ -326,7 +336,11 @@ class OTelContextMiddleware:
                 or (is_error and self.capture_response_on_error)
             ) and not is_sensitive_body_path(request.path)
 
-            if should_capture and hasattr(response, "content"):
+            if (
+                should_capture
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and hasattr(response, "content")
+            ):
                 self._capture_response_body(span, response, is_error)
 
         except Exception as e:

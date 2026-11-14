@@ -218,7 +218,7 @@ const DataMenuList = ({
             />
             <Typography
               fontWeight={400}
-              fontSize={13}
+              fontSize={12}
               color={"background.neutral"}
             >
               {selectedOption === "new" ? "Add Dataset" : "Add to Dataset"}

@@ -15,6 +15,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import PurePosixPath
+from typing import cast
 
 import structlog
 from django.db import transaction
@@ -60,13 +61,18 @@ TIMED_OUT = (
     f"minutes. {RETRY}"
 )
 SAVE_UNREADABLE = f"The builder's draft couldn't be read. {RETRY}"
+NO_VERSION = (
+    "This environment has no saved version to draft against. Save the "
+    f"environment, then {RETRY[0].lower()}{RETRY[1:]}"
+)
 # What a drafting chat's capability leaves out; its server-side refusals stand too.
 # The sandbox client will not load a capability without `rerun` and `adjust`, so
 # those two stay offered and refuse_for_drafting_job refuses them when called.
 UNOFFERED_ENDPOINTS = ("publish", "run_start")
 # The longest builder reply redacted for a blocked case; the reason keeps what fits.
 REPLY_CHARS = 2000
-REASON_LENGTH = EvidenceImportCase._meta.get_field("reason").max_length
+# The reason column is a CharField, so its max_length is always set.
+REASON_LENGTH = cast(int, EvidenceImportCase._meta.get_field("reason").max_length)
 
 
 def is_evidence_command(command: HostedHarnessConversationMessage | None) -> bool:
@@ -253,6 +259,9 @@ def _settle(
         drafts.fresh_draft(environment, "environment")
         or environment.environment_version
     )
+    if basis is None:
+        _block(cases, NO_VERSION)
+        return
     try:
         split, prepared = drafts._prepared(environment, files)
         added = _added_checks(environment, basis, files, prepared)
@@ -281,7 +290,7 @@ def _settle(
         key = scenario_key_for(case)
         document = by_token.get(_token(key))
         proposal = _proposal(split.suite, document, key) if document else None
-        if proposal is None:
+        if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
             continue
         object_key = archives.suite_key(
@@ -599,12 +608,12 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
 
     command = (
         HostedHarnessConversationMessage.no_workspace_objects.filter(
-            id=command_id, conversation_id=conversation_id
+            id=command_id, conversation_id=uuid.UUID(conversation_id)
         )
         .select_related("conversation")
         .first()
     )
-    if not is_evidence_command(command):
+    if command is None or not is_evidence_command(command):
         return
     _expire_chat_lease(command.conversation)
     if outcome == "success":
@@ -712,7 +721,8 @@ def sweep() -> dict[str, int]:
             status=EvidenceImportCase.Status.PENDING,
         )
         if waiting.exists():
-            if evidence_import.drafting_job.created_at > stale_before:
+            job = evidence_import.drafting_job
+            if job is None or job.created_at > stale_before:
                 continue
             _block(list(waiting), TIMED_OUT)
             timed_out += 1

@@ -58,7 +58,7 @@ def create_evidence_import(
     show it without reading Observe again."""
     evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
-        _lock(environment)
+        _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -96,7 +96,7 @@ def create_dataset_import(
     _check_columns(dataset, columns)
     evidence = import_rows(dataset, columns, row_ids)
     with transaction.atomic():
-        _lock(environment)
+        _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -178,7 +178,7 @@ def create_transcript_import(
         [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
     )
     with transaction.atomic():
-        _lock(environment)
+        _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -241,11 +241,12 @@ def _case(
     )
 
 
-def _lock(environment: HostedHarnessJob) -> None:
-    """Holds the environment's row until the import commits, so two imports of
-    one source made at once cannot both propose it."""
+def _lock(environment_id) -> None:
+    """Holds the environment's row until the transaction commits, so two imports
+    of one source made at once cannot both propose it, and a discard waits for
+    either."""
     HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",)).filter(
-        id=environment.id
+        id=environment_id
     ).first()
 
 
@@ -257,6 +258,21 @@ _REPEATED_STATUSES = (
     EvidenceImportCase.Status.DRAFTED,
     EvidenceImportCase.Status.ADDED,
 )
+
+
+def _stale_drafts(environment: HostedHarnessJob) -> Q:
+    """Drafted cases add-to-suite refuses: drafted on an environment that changed
+    since. Drafting takes only waiting cases, so importing the source again is how
+    such a case is drafted anew, and it is not one a new import repeats."""
+    current = (
+        drafts.fresh_draft(environment, "environment")
+        or environment.environment_version
+    )
+    if current is None:
+        return Q(pk__in=[])
+    return Q(status=EvidenceImportCase.Status.DRAFTED) & ~Q(
+        environment_hash=current.hash
+    )
 
 
 def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
@@ -288,8 +304,9 @@ class _Held:
 def _held(
     evidence_import: EvidenceImport, cases: list[EvidenceImportCase], statuses
 ) -> _Held:
-    """The environment's cases in ``statuses`` (in imports still kept, and no
-    repeat themselves) that hold the source or the conversation of ``cases``."""
+    """The environment's cases in ``statuses`` (in imports still kept, no repeat
+    themselves, and no stale draft) that hold the source or the conversation of
+    ``cases``."""
     held = _Held(by_source={}, by_digest={})
     digests = {case.content_digest for case in cases if case.content_digest}
     keyed = {
@@ -312,6 +329,7 @@ def _held(
             status__in=statuses,
             duplicate_of__isnull=True,
         )
+        .exclude(_stale_drafts(evidence_import.environment))
         .select_related("evidence_import")
         .order_by("evidence_import__created_at", "position")
     )
@@ -375,8 +393,13 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
     it added: the import is deleted, and a transcript's stored text with it.
     Some of it added: only its cases not added are discarded, so the added
     scenarios keep their provenance, and the import counts as finished. Refused
-    while the builder drafts its cases. Returns whether the import was deleted."""
+    while the builder drafts its cases. Returns whether the import was deleted.
+
+    Under the environment's lock first, as creating an import and adding to the
+    suite take it: an import made meanwhile never repeats a case being discarded,
+    and a case added meanwhile is seen as added."""
     with transaction.atomic():
+        _lock(evidence_import.environment_id)
         locked = EvidenceImport.no_workspace_objects.select_for_update().get(
             id=evidence_import.id
         )
@@ -387,6 +410,7 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
                 status_code=409,
             )
         cases = EvidenceImportCase.objects.filter(evidence_import=locked)
+        list(cases.select_for_update(of=("self",)).values_list("id", flat=True))
         if not cases.filter(status=EvidenceImportCase.Status.ADDED).exists():
             _promote_duplicates(locked, cases)
             locked.delete()
@@ -472,7 +496,9 @@ def add_to_suite(
         environment_version = (
             drafts.fresh_draft(locked, "environment") or locked.environment_version
         )
-        if any(case.environment_hash != environment_version.hash for case in cases):
+        if environment_version is None or any(
+            case.environment_hash != environment_version.hash for case in cases
+        ):
             raise HostedHarnessError(
                 "evidence_draft_stale",
                 "The environment changed since these cases were drafted; draft "

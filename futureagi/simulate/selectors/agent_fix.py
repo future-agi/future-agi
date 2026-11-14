@@ -845,10 +845,13 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     ).get(id=version_id)
     scenarios = scenario_results(source_run)
     # A scenario an evidence import added offers Run Epoch from that evidence.
+    origins = (
+        evidence_origins(environment, [one.key for one in scenarios])
+        if environment is not None
+        else []
+    )
     imported = {
-        key: origin.import_id
-        for origin in evidence_origins(environment, [one.key for one in scenarios])
-        for key in origin.scenario_keys
+        key: origin.import_id for origin in origins for key in origin.scenario_keys
     }
     scenarios = [
         one.model_copy(update={"evidence_import_id": imported.get(one.key)})

@@ -850,9 +850,7 @@ def test_a_livekit_code_agent_with_an_assistant_id_but_blank_livekit_fields_gets
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    "provider", ["livekit", "vapi"], ids=["livekit", "vapi"]
-)
+@pytest.mark.parametrize("provider", ["livekit", "vapi"], ids=["livekit", "vapi"])
 def test_a_code_agent_saved_with_a_changed_max_concurrency_keeps_it(
     organization, workspace, auth_client, provider
 ):

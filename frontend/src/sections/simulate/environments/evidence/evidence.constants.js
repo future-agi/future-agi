@@ -15,6 +15,9 @@ export const IMPORT_PARAM = "import";
 
 export const EVIDENCE_ACTION_ID = "create-environment-test";
 
+// The kinds Observe keeps; a transcript or a dataset row comes from outside it.
+export const OBSERVE_KINDS = new Set(["session", "call"]);
+
 // A transcript or dataset import nobody marked as production: the mark is
 // fixed at import, so changing it means importing again.
 const NOT_PRODUCTION_NOTICE =
@@ -202,6 +205,10 @@ export const EVIDENCE_COPY = {
     "Provenance unavailable: the dataset no longer holds this row.",
   expectedOutcome: "Expected outcome",
   openInDataset: "Open in dataset",
+  // The source's id, short, as Observe lists it: "Session 3f2a91c0".
+  observeSource: (kind, id) =>
+    `${kind[0].toUpperCase()}${kind.slice(1)} ${String(id).slice(0, 8)}`,
+  openInObserve: "Open in Observe",
   changed: "The source changed since it was imported.",
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,

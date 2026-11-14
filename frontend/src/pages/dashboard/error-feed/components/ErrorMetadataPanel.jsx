@@ -248,8 +248,6 @@ function StatusDropdown({ clusterId, current }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 150,
             mt: 0.5,
           },
@@ -384,8 +382,6 @@ function SeverityDropdown({ current, onChange }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -536,8 +532,6 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -907,7 +901,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           justifyContent="space-between"
         >
           <Stack gap={0.2}>
-            <Typography fontSize="13px" fontWeight={600} color="text.primary">
+            <Typography fontSize="12px" fontWeight={600} color="text.primary">
               Create Linear Issue
             </Typography>
             <Typography fontSize="12px" color="text.secondary">

@@ -23,7 +23,7 @@ const TooltipForEvals = ({
 
   const tooltipContent = Array.isArray(selectedEvalItem) ? (
     <Box sx={{ p: 1.5, maxHeight: 420, overflowY: "auto" }}>
-      <Typography sx={{ fontWeight: 600, fontSize: "13px", marginBottom: 0.5 }}>
+      <Typography sx={{ fontWeight: 600, fontSize: "12px", marginBottom: 0.5 }}>
         {heading}
       </Typography>
       <List
@@ -41,7 +41,7 @@ const TooltipForEvals = ({
             key={item || index}
             component="li"
             sx={{
-              fontSize: "13px",
+              fontSize: "12px",
               py: 0.25,
               display: "list-item",
               pl: 0,
@@ -65,7 +65,7 @@ const TooltipForEvals = ({
         <Typography
           sx={{
             fontWeight: 600,
-            fontSize: "13px",
+            fontSize: "12px",
             textTransform: "capitalize",
           }}
         >

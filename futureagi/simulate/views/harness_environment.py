@@ -701,6 +701,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             user=request.user,
         )
         evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
         return Response(
             EvidenceImportAddResponseSerializer(
                 {"saved": saved, "evidence_import": import_bundle(evidence_import)}

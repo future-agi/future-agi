@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, replace
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
+from typing import Literal, cast
+from uuid import UUID
 
 from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 from django.db.models.fields.json import KeyTextTransform
@@ -22,6 +26,8 @@ from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import FixEvidence
 from simulate.pydantic_schemas.evidence_import import (
     DatasetColumns,
+    ImportKind,
+    RedactionMethod,
     StoredRedaction,
     StoredTranscript,
     StoredTurn,
@@ -180,7 +186,27 @@ def environment_evidence_import(
     )
 
 
-def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
+OpenStatus = Literal["drafting", "blocked", "partly_added", "drafted", "waiting"]
+
+
+@dataclass(frozen=True)
+class OpenEvidenceImport:
+    """One import a person can still finish, as the Draft imports list shows it."""
+
+    id: UUID
+    source_kind: str
+    # The project's or dataset's name, else the first transcript's (redacted).
+    source_name: str | None
+    # A transcript's text is stored, so it never goes missing.
+    source_available: bool
+    case_count: int
+    added_count: int
+    status: OpenStatus
+    created_at: datetime
+    can_discard: bool
+
+
+def open_evidence_imports(environment: HostedHarnessJob) -> list[OpenEvidenceImport]:
     """The environment's imports a person can still finish, newest first: those
     with a case to draft, add or retry, or being drafted. Read from what the
     import stores only: no source is read again and nothing is redacted."""
@@ -215,25 +241,24 @@ def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
         .order_by("-created_at")[:MAX_OPEN_IMPORTS]
     )
     return [
-        {
-            "id": one.id,
-            "source_kind": one.source_kind,
-            "source_name": source.name
+        OpenEvidenceImport(
+            id=one.id,
+            source_kind=one.source_kind,
+            source_name=source.name
             if (source := one.project or one.dataset)
             else one.transcript_name or None,
-            # A transcript's text is stored, so it never goes missing.
-            "source_available": source is None or not source.deleted,
-            "case_count": one.case_count,
-            "added_count": one.added_count,
-            "status": _open_status(one),
-            "created_at": one.created_at,
-            "can_discard": one.drafting_job_id is None,
-        }
+            source_available=source is None or not source.deleted,
+            case_count=one.case_count,
+            added_count=one.added_count,
+            status=_open_status(one),
+            created_at=one.created_at,
+            can_discard=one.drafting_job_id is None,
+        )
         for one in imports
     ]
 
 
-def _open_status(evidence_import) -> str:
+def _open_status(evidence_import) -> OpenStatus:
     if evidence_import.drafting_job_id is not None:
         return "drafting"
     # Listed, yet nothing to draft or add: only blocked cases are left.
@@ -271,16 +296,17 @@ def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEv
     )
     origins: dict[str, FixEvidence] = {}
     for case in cases:
+        original = case.duplicate_of
         scenario_key = (
-            case.duplicate_of.scenario_key
-            if case.status == EvidenceImportCase.Status.DUPLICATE
+            original.scenario_key
+            if case.status == EvidenceImportCase.Status.DUPLICATE and original
             else case.scenario_key
         )
         origin = origins.setdefault(
             str(case.evidence_import_id),
             FixEvidence(
                 import_id=str(case.evidence_import_id),
-                source_kind=case.evidence_import.source_kind,
+                source_kind=_import_kind(case.evidence_import),
                 source_ids=[],
                 scenario_keys=[],
             ),
@@ -291,27 +317,39 @@ def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEv
 
 
 def import_evidence(
-    project: Project, source_kind: SourceKind, source_ids: list[str]
+    project: Project,
+    source_kind: SourceKind,
+    source_ids: list[str],
+    *,
+    shared_by: int | None = None,
 ) -> dict[str, SourceEvidence]:
     """What Observe holds now for ``source_ids``, each source cut to its equal
-    share of the import's budget. Nothing, once the project is deleted."""
+    share of the import's budget, split ``shared_by`` ways (by default, among
+    ``source_ids``). Nothing, once the project is deleted."""
     if project.deleted:
         return {}
-    return _shared(observe_evidence(project, source_kind, source_ids), source_ids)
+    return _shared(
+        observe_evidence(project, source_kind, source_ids),
+        shared_by or len(source_ids),
+    )
 
 
 def import_rows(
-    dataset: Dataset, columns: DatasetColumns, row_ids: list[str]
+    dataset: Dataset,
+    columns: DatasetColumns,
+    row_ids: list[str],
+    *,
+    shared_by: int | None = None,
 ) -> dict[str, SourceEvidence]:
     """What ``dataset`` holds now for ``row_ids``, each row cut to its equal
-    share of the import's budget."""
-    return _shared(dataset_evidence(dataset, columns, row_ids), row_ids)
+    share of the import's budget, split as ``import_evidence`` splits it."""
+    return _shared(
+        dataset_evidence(dataset, columns, row_ids), shared_by or len(row_ids)
+    )
 
 
-def _shared(
-    found: dict[str, SourceEvidence], source_ids: list[str]
-) -> dict[str, SourceEvidence]:
-    share = MAX_IMPORT_CHARS // max(1, len(source_ids))
+def _shared(found: dict[str, SourceEvidence], ways: int) -> dict[str, SourceEvidence]:
+    share = MAX_IMPORT_CHARS // max(1, ways)
     return {
         source_id: _within(evidence, share) for source_id, evidence in found.items()
     }
@@ -336,45 +374,63 @@ def current_evidence(
             if (found := _stored_evidence(case)) is not None
         }
     source_ids = [case.source_id for case in cases]
+    # Each source keeps the share it was cut to when the import was made: the
+    # budget split among all the import's cases, not only those read now.
+    shared_by = len(evidence_import.cases.all())
     if is_dataset(evidence_import):
+        columns = import_columns(evidence_import)
+        if evidence_import.dataset is None or columns is None:
+            return {}
         return import_rows(
-            evidence_import.dataset, import_columns(evidence_import), source_ids
+            evidence_import.dataset, columns, source_ids, shared_by=shared_by
         )
+    if evidence_import.project is None:
+        return {}
     return import_evidence(
-        evidence_import.project, evidence_import.source_kind, source_ids
+        evidence_import.project,
+        _observe_kind(evidence_import),
+        source_ids,
+        shared_by=shared_by,
     )
 
 
 def stored_transcripts(
     named: list[tuple[str, ParsedTranscript]],
 ) -> tuple[list[StoredTranscript], StoredRedaction]:
-    """Named transcripts as an import stores them: each cut to its equal share
-    of the import's budget, then every value redaction finds, in the text and
-    in the name, replaced with its token. Nothing unredacted is returned."""
+    """Named transcripts as an import stores them: every value redaction finds, in
+    the text and in the name, replaced with its token, then each cut to its equal
+    share of the import's budget. Redacted whole first, so a cut can never leave
+    part of a value (a card number split at one of its spaces) where redaction no
+    longer recognises it. Nothing unredacted is returned."""
     share = MAX_IMPORT_CHARS // max(1, len(named))
-    cut = [_cut_transcript(parsed, share) for _, parsed in named]
     texts = [name for name, _ in named] + [
-        turn.text for source in cut for turn in source.turns
+        turn.text for _, parsed in named for turn in parsed.turns
     ]
     found, method, reason = _analysed(texts)
     redacted = iter(
         [redact(text, hits) for text, hits in zip(texts, found, strict=True)]
     )
     names = [next(redacted) for _ in named]
+    clean = [
+        replace(
+            parsed,
+            turns=tuple(replace(turn, text=next(redacted)) for turn in parsed.turns),
+        )
+        for _, parsed in named
+    ]
+    cut = [_cut_transcript(parsed, share) for parsed in clean]
     stored = [
         StoredTranscript(
             name=name,
             turns=[
-                StoredTurn(
-                    role=turn.role, text=next(redacted), truncated=turn.truncated
-                )
+                StoredTurn(role=turn.role, text=turn.text, truncated=turn.truncated)
                 for turn in source.turns
             ],
             turns_truncated=source.turns_truncated,
             turns_omitted=source.turns_omitted,
             left_out=parsed.left_out,
         )
-        for name, source, (_, parsed) in zip(names, cut, named, strict=True)
+        for name, source, parsed in zip(names, cut, clean, strict=True)
     ]
     total = sum(len(hits) for hits in found)
     return stored, StoredRedaction(method=method, reason=reason, total=total)
@@ -383,8 +439,8 @@ def stored_transcripts(
 def _cut_transcript(parsed: ParsedTranscript, chars: int) -> SourceEvidence:
     """A parsed transcript cut as Observe evidence is: each turn to TURN_CHARS,
     MAX_TURNS turns (the first and last halves), then ``chars`` characters. A
-    cut turn ends at its last whitespace, so no value redaction must find is
-    left in two pieces it cannot recognise."""
+    cut turn ends at its last whitespace, so no redaction token is left in two
+    pieces."""
     cut = _within(text_evidence("", parsed), chars)
     return replace(
         cut,
@@ -441,33 +497,69 @@ def evidence_digest(evidence: SourceEvidence) -> str:
     blank when part of it could not be read, since then nobody can tell."""
     if evidence.tool_calls is None or evidence.transcript_unreadable:
         return ""
-    body = json.dumps(asdict(evidence), sort_keys=True, default=str)
+    held = asdict(evidence)
+    # A source with no expected outcome, as every Observe one, is fingerprinted as
+    # it was before dataset rows brought one, so its stored fingerprint still holds.
+    if held["expected"] is None and not held["expected_truncated"]:
+        del held["expected"], held["expected_truncated"]
+    body = json.dumps(held, sort_keys=True, default=str)
     return hashlib.sha256(body.encode()).hexdigest()
 
 
 def content_digest(evidence: SourceEvidence) -> str:
     """A fingerprint of the case a source holds: its turns, tool calls and expected
     outcome, without ids or times, so two sources holding the same conversation
-    match. Taken on the evidence as the import cut it. Blank when part of it could
-    not be read or it holds no turn, since then nobody can tell."""
+    match. Taken on the evidence as the import cut it, in one form for every
+    source kind: each text redacted and its whitespace collapsed, since a
+    transcript is stored redacted while Observe and a dataset row are read raw.
+    Blank when part of it could not be read or it holds no turn, since then
+    nobody can tell."""
     if (
         evidence.tool_calls is None
         or evidence.transcript_unreadable
         or not evidence.turns
     ):
         return ""
+    turns = [turn.text for turn in evidence.turns]
+    calls = [
+        _as_text(part)
+        for call in evidence.tool_calls
+        for part in (call.error or "", call.input, call.output)
+    ]
+    expected = [] if evidence.expected is None else [evidence.expected]
+    texts = [" ".join(text.split()) for text in _redacted(turns + calls + expected)]
+    said, done = texts[: len(turns)], texts[len(turns) : len(turns) + len(calls)]
     body = json.dumps(
         {
-            "turns": [[turn.role, turn.text] for turn in evidence.turns],
-            "tool_calls": [
-                [call.name, call.failed, call.error, call.input, call.output]
-                for call in evidence.tool_calls
+            "turns": [
+                [turn.role, text]
+                for turn, text in zip(evidence.turns, said, strict=True)
             ],
-            "expected": evidence.expected,
+            "tool_calls": [
+                [call.name, call.failed, *done[3 * n : 3 * n + 3]]
+                for n, call in enumerate(evidence.tool_calls)
+            ],
+            "expected": texts[-1] if expected else None,
         },
         sort_keys=True,
     )
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _as_text(value: object) -> str:
+    return (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, sort_keys=True, default=str)
+    )
+
+
+def _redacted(texts: list[str]) -> list[str]:
+    """Each text with every value redaction finds replaced with its token."""
+    if not texts:
+        return []
+    found, _method, _reason = _analysed(texts)
+    return [redact(text, hits) for text, hits in zip(texts, found, strict=True)]
 
 
 def import_bundle(
@@ -545,7 +637,7 @@ def _provenance(cases: list[EvidenceImportCase]):
     }
 
     def of(case: EvidenceImportCase) -> dict:
-        original = repeated.get(case.duplicate_of_id)
+        original = repeated.get(case.duplicate_of_id) if case.duplicate_of_id else None
         return {
             "also_from": also.get(case.id, 0),
             "duplicate_of": (
@@ -713,8 +805,9 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
 
 def _row_name(evidence_import: EvidenceImport, case: EvidenceImportCase) -> str:
     """What a dataset row is called in the review: its dataset, since a row id
-    says nothing to a person."""
-    return f"Row from {evidence_import.dataset.name}"
+    says nothing to a person. Deleting the dataset deletes its imports."""
+    dataset = evidence_import.dataset
+    return f"Row from {dataset.name}" if dataset else ""
 
 
 def _case(
@@ -925,8 +1018,18 @@ def _labels(evidence: SourceEvidence) -> dict:
     return _part("present", labels=labels)
 
 
+def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
+    # The model stores the kind as text; its choices are exactly Observe's kinds.
+    return cast(SourceKind, evidence_import.source_kind)
+
+
+def _import_kind(evidence_import: EvidenceImport) -> ImportKind:
+    # The model stores the kind as text; its choices are exactly these.
+    return cast(ImportKind, evidence_import.source_kind)
+
+
 def _texts(
-    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
+    cases: list[EvidenceImportCase], evidence: Mapping[str, SourceEvidence | None]
 ) -> list[tuple[EvidenceImportCase, str, int, str, str]]:
     """Every text the bundle carries, as (case, part, index, field, text)."""
     values: list[tuple[EvidenceImportCase, str, int, str, str]] = []
@@ -955,7 +1058,9 @@ def _texts(
     return values
 
 
-def _analysed(texts: list[str]) -> tuple[list[list[PiiFinding]], str, str]:
+def _analysed(
+    texts: list[str],
+) -> tuple[list[list[PiiFinding]], RedactionMethod, str]:
     """Each text's findings, analysed in one batch, with the method and its
     reason. Without Presidio, a fixed-shape match stands in."""
     found = find_pii(texts)

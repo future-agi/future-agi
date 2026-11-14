@@ -30,7 +30,11 @@ from simulate.models import (
     HostedHarnessConversationMessage,
 )
 from simulate.services import evidence_drafts
-from simulate.services.evidence_import import add_to_suite
+from simulate.services.evidence_import import (
+    TranscriptInput,
+    add_to_suite,
+    create_transcript_import,
+)
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
@@ -245,6 +249,27 @@ def test_an_injected_environment_change_keeps_nothing(environment, cases, storag
     assert environment.environment_version_id == environment_before
     assert drafts.open_draft(environment, "environment") is None
     assert drafts.open_draft(environment, "suite") is None
+
+
+def test_an_environment_with_no_saved_version_drafts_nothing(
+    environment, cases, storage
+):
+    """A legacy environment holds no saved version, so there is nothing to pin a
+    proposal to: every case is blocked with a way forward, and nothing lands."""
+    conversation, command = _command(environment, cases, 13)
+    keys = [evidence_drafts.scenario_key_for(case) for case in cases]
+    key, digest = _save(conversation, command, storage, keys)
+    _end_turn(conversation, command)
+    type(environment).no_workspace_objects.filter(id=environment.id).update(
+        environment_version=None
+    )
+
+    _promote(conversation, command, key, digest, 13)
+
+    assert [(c.status, c.reason) for c in _refreshed(cases)] == [
+        ("blocked", evidence_drafts.NO_VERSION)
+    ] * 2
+    assert not any(c.proposal_object_key for c in _refreshed(cases))
 
 
 def test_the_builders_own_publish_lands_nowhere(environment, cases, storage):
@@ -694,7 +719,7 @@ def test_discarding_a_partly_added_import_keeps_its_added_scenario(
         add_to_suite(
             made, [str(kept.id)], expected={}, idempotency_key="add-k", user=user
         )
-    assert [one["status"] for one in open_evidence_imports(environment)] == [
+    assert [one.status for one in open_evidence_imports(environment)] == [
         "partly_added"
     ]
 
@@ -761,3 +786,43 @@ def test_a_repeated_case_keeps_every_source_once_added(environment, storage, use
         (str(made.id), ["transcript-1", "transcript-2"], [scenario_key] * 2),
         (str(later.id), ["transcript-1"], [scenario_key]),
     ]
+
+
+def _imported(environment, user, name):
+    return create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput(name, "text", "User: Refund me\nAgent: Done.")],
+        production=True,
+        user=user,
+    )
+
+
+def test_a_case_drafted_on_an_older_environment_is_imported_again_as_new(
+    environment, user
+):
+    """Add refuses such a case ("draft them again") and drafting takes only
+    waiting cases, so importing its source again is the way back: it is no
+    duplicate of the stale draft."""
+    first = _imported(environment, user, "first")
+    first.cases.update(
+        status=EvidenceImportCase.Status.DRAFTED, environment_hash="an-older-one"
+    )
+
+    [case] = _imported(environment, user, "again").cases.all()
+
+    assert (case.status, case.duplicate_of_id) == ("pending", None)
+
+
+def test_a_case_drafted_on_the_current_environment_is_still_already_imported(
+    environment, user
+):
+    first = _imported(environment, user, "first")
+    first.cases.update(
+        status=EvidenceImportCase.Status.DRAFTED,
+        environment_hash=environment.environment_version.hash,
+    )
+    [drafted] = first.cases.all()
+
+    [case] = _imported(environment, user, "again").cases.all()
+
+    assert (case.status, case.duplicate_of_id) == ("duplicate", drafted.id)

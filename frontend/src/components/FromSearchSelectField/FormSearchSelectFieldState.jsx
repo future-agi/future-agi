@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import Iconify from "../iconify";
 import FormSelectMenus from "./FormSelectMenus";
-import { mergeRefs } from "src/utils/utils";
+import { mergeRefs } from "src/utils/mergeRefs";
 
 const FormSearchSelectFieldState = React.forwardRef(
   (

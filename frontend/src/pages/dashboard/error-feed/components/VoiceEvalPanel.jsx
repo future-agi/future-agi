@@ -430,7 +430,7 @@ function JudgeReasonCard({ reason, score }) {
           />
         )}
       </Stack>
-      <Typography fontSize="13px" color="text.primary" sx={{ lineHeight: 1.6 }}>
+      <Typography fontSize="12px" color="text.primary" sx={{ lineHeight: 1.6 }}>
         {reason}
       </Typography>
     </Box>

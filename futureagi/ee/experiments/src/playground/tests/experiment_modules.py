@@ -20,7 +20,6 @@ from ...core.utils.functions import calculate_score
 llm = LLM()
 
 
-
 class ChatExperimentRunner:
     def __init__(self, experiment_name, input_eval_prompt):
         self.experiment_name = experiment_name

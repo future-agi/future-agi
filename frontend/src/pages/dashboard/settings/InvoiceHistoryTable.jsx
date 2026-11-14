@@ -1,6 +1,7 @@
 import { ROW_HEIGHT } from "src/theme/sizes";
 import React, { useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { Box, IconButton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { Icon } from "@iconify/react";

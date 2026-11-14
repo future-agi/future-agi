@@ -326,8 +326,6 @@ durationpy==0.10
     # via kubernetes
 e2b==2.37.1
     # via core-backend
-ecdsa==0.19.1
-    # via python-jose
 elementpath==4.8.0
     # via xmlschema
 elevenlabs==2.30.0
@@ -1076,7 +1074,6 @@ pyarrow==23.0.1
 pyasn1==0.6.1
     # via
     #   pyasn1-modules
-    #   python-jose
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
@@ -1192,8 +1189,6 @@ python-engineio==4.14.0
     # via python-socketio
 python-ipware==3.0.0
     # via django-ipware
-python-jose==3.5.0
-    # via core-backend
 python-levenshtein==0.27.3
     # via core-backend
 python-multipart==0.0.32
@@ -1303,9 +1298,7 @@ rpds-py==0.30.0
     #   jsonschema
     #   referencing
 rsa==4.9.1
-    # via
-    #   google-auth
-    #   python-jose
+    # via google-auth
 s3transfer==0.16.0
     # via boto3
 safetensors==0.7.0
@@ -1335,7 +1328,6 @@ simple-websocket==1.1.0
     # via python-engineio
 six==1.17.0
     # via
-    #   ecdsa
     #   kubernetes
     #   posthog
     #   python-dateutil

@@ -154,7 +154,6 @@ def fetch_tool_calls(call_execution: CallExecution, role: ChatRole):
     for chat_message in chat_messages:
         content = chat_message.content
         if content and len(content) > 0:
-
             for item in content:
                 if (
                     item.get("role") == role
@@ -293,7 +292,12 @@ def fetch_voice_conversation_span(trace_id: str) -> dict:
     span_attributes.update(conversation_span.attrs_bool or {})
     # Overflow keys that aren't the round-tripped PG JSONField columns are
     # part of the original span_attributes; keep them merged in.
-    _ROUND_TRIP_COLS = ("model_parameters", "input_images", "eval_input", "eval_attributes")
+    _ROUND_TRIP_COLS = (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    )
     for k, v in extra.items():
         if k not in _ROUND_TRIP_COLS:
             span_attributes[k] = v
@@ -631,7 +635,9 @@ def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
         payload = {}
 
     recording = (
-        (payload.get("artifact") or {}).get("recording") or payload.get("recording") or {}
+        (payload.get("artifact") or {}).get("recording")
+        or payload.get("recording")
+        or {}
     )
     if not isinstance(recording, dict):
         recording = {}

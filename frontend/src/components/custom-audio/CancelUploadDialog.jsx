@@ -54,7 +54,7 @@ const CancelUploadDialog = ({ open, onClose, onConfirmCancel }) => {
         }}
       >
         <Typography
-          fontSize="13px"
+          fontSize="12px"
           color="text.secondary"
           sx={{
             pr: 4,

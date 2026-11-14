@@ -13,6 +13,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from rest_framework import status
+
+# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
+# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
+# model is still exposed through generated frontend contracts, so these tests
+# lock its supported fallback behavior while unified ``Score`` remains the
+# canonical annotation store.
+from rest_framework.test import APIClient
+
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models import AIModel, AnnotationTask
@@ -24,14 +33,6 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from rest_framework import status
-
-# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
-# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
-# model is still exposed through generated frontend contracts, so these tests
-# lock its supported fallback behavior while unified ``Score`` remains the
-# canonical annotation store.
-from rest_framework.test import APIClient
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -849,6 +850,11 @@ class TestAnnotationsViewSetActions:
         self, auth_client, annotation, row, column
     ):
         """Falsy-but-valid annotation values should survive request validation."""
+        label = annotation.labels.get()
+        column.source_id = f"{annotation.id}-sourceid-{label.id}"
+        column.source = SourceChoices.ANNOTATION_LABEL.value
+        column.save()
+        annotation.columns.add(column)
         payload = {
             "label_values": [
                 {
@@ -866,6 +872,10 @@ class TestAnnotationsViewSetActions:
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert (
+            Cell.objects.get(row=row, column=column, dataset=annotation.dataset).value
+            == "0"
+        )
 
     def test_update_cells_missing_data(self, auth_client, annotation):
         """Test update_cells with missing label_values and response_field_values."""
@@ -1317,10 +1327,11 @@ class TestUserViewSet:
         """A deliberately removed org member (inactive OrganizationMembership) is
         rejected even if a stale active WorkspaceMembership lingers — the gate
         fails closed and never lets workspace drift resurrect access (TH-6156)."""
+        from rest_framework.exceptions import NotFound
+
         from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.workspace import WorkspaceMembership
         from model_hub.views.develop_annotations import UserViewSet
-        from rest_framework.exceptions import NotFound
         from tfc.constants.levels import Level
         from tfc.constants.roles import OrganizationRoles
 
@@ -1362,9 +1373,10 @@ class TestUserViewSet:
         """A workspace-only requester whose only membership is in a soft-deleted
         (or deactivated) workspace is rejected — a dead workspace's stale
         membership must not authorize (TH-6156)."""
+        from rest_framework.exceptions import NotFound
+
         from accounts.models.workspace import Workspace, WorkspaceMembership
         from model_hub.views.develop_annotations import UserViewSet
-        from rest_framework.exceptions import NotFound
         from tfc.constants.levels import Level
         from tfc.constants.roles import OrganizationRoles
 
