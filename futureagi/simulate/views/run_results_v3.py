@@ -33,7 +33,7 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_worker_steps import worker_steps
-from simulate.services.harness_workers import WORKERS_KEY
+from simulate.services.harness_workers import WORKERS_KEY, served_workers
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -759,13 +759,36 @@ class ActorUsageSerializer(serializers.Serializer):
 
 
 class TrialNoticeSerializer(serializers.Serializer):
-    code = serializers.CharField(help_text="fault_not_applied or fault_not_triggered")
+    code = serializers.CharField(
+        help_text=(
+            "worker_channel_bypassed, worker_limits_not_enforced, fault_not_applied or fault_not_triggered"
+        )
+    )
     message = serializers.CharField(
         help_text="Plain words for the person reading the run."
     )
     action = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     on_call = serializers.IntegerField(required=False, allow_null=True)
     mode = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    # The workers the notice names, e.g. a separate worker that reached the world without its own channel.
+    workers = serializers.ListField(child=serializers.CharField(), required=False)
+
+
+class SharedRecordActionSerializer(serializers.Serializer):
+    who = serializers.CharField()
+    tool = serializers.CharField(allow_blank=True)
+    outcome = serializers.CharField()
+    # True when the contract tool records effects; null when it does not say (never false).
+    write = serializers.BooleanField(allow_null=True)
+
+
+class SharedRecordSerializer(serializers.Serializer):
+    key = serializers.CharField(help_text="What the calls named, as argument=value; never a database identity.")
+    argument = serializers.CharField()
+    value = serializers.CharField()
+    actions = SharedRecordActionSerializer(many=True)
+    committed_writes = serializers.IntegerField()
+    truncated = serializers.BooleanField()
 
 
 class TrialStateSerializer(serializers.Serializer):
@@ -782,6 +805,16 @@ class TrialStateSerializer(serializers.Serializer):
         required=False,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )
+    shared_records = SharedRecordSerializer(
+        many=True,
+        required=False,
+        help_text="Records two or more participants named in this trial, and what the world made of each call.",
+    )
+
+
+class CleanupSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("stopped_with_sandbox", "still_running", "unknown"))
+    at = serializers.CharField(allow_null=True)
 
 
 class CallWorkerSerializer(serializers.Serializer):
@@ -809,6 +842,8 @@ class CallWorkerSerializer(serializers.Serializer):
         ],
         required=False,
     )
+    # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
+    cleanup = CleanupSerializer(required=False, allow_null=True)
 
 
 class CallWorkerEventSerializer(serializers.Serializer):
@@ -1335,7 +1370,7 @@ class CallExecutionV3WorkersView(APIView):
             timeline.get("messages", []),
             turns_cut=bool(timeline.get("messages_omitted")),
         )
-        return Response(CallWorkersResponseSerializer({**timeline, **steps}).data)
+        return Response(CallWorkersResponseSerializer({**served_workers(call, timeline), **steps}).data)
 
 
 class RunAnalyticsV3View(APIView):

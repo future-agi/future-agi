@@ -1156,6 +1156,23 @@ def worker_cleanup(call: CallExecution, job: HostedHarnessJob | None, worker: Ma
     return {"status": "still_running", "at": ended}
 
 
+def served_workers(call: CallExecution, timeline: Mapping[str, Any]) -> dict[str, Any]:
+    """The stored workers record as served: a stored `cancel_requested` the job has since confirmed reads
+    `cancelled`, and each cut-short worker carries its cleanup. The stored record is never rewritten."""
+    workers = [dict(one) for one in timeline.get("workers") or [] if isinstance(one, Mapping)]
+    if not any(one.get("state") in CUT_SHORT_STATES for one in workers):
+        return {**timeline, "workers": workers}
+    job = _job_for_call(call)
+    ending = trial_ending(call, job) if any(one.get("state") == "cancel_requested" for one in workers) else None
+    for worker in workers:
+        if worker.get("state") == "cancel_requested" and ending == "cancelled":
+            worker["state"] = "cancelled"
+        cleanup = worker_cleanup(call, job, worker)
+        if cleanup is not None:
+            worker["cleanup"] = cleanup
+    return {**timeline, "workers": workers}
+
+
 def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
     """The workers the contract of the version the run was pinned to declares."""
     version = job.environment_version or (

@@ -140,6 +140,11 @@ class TurnSummary(TypedDict):
     at: str | None
 
 
+class WorkerCleanup(TypedDict):
+    status: Literal["stopped_with_sandbox", "still_running", "unknown"]
+    at: str | None
+
+
 class HarnessWorker(TypedDict):
     worker_id: str
     id: str
@@ -162,6 +167,8 @@ class HarnessWorker(TypedDict):
             "not_observed",
         ]
     ]
+    # A cut-short worker's cleanup, added when served and never stored.
+    cleanup: NotRequired[WorkerCleanup | None]
 
 
 class WorkerEvent(TypedDict, total=False):
