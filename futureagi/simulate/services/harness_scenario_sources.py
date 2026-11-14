@@ -88,6 +88,10 @@ def source_problems(value: object, *, require_one: bool = False) -> list[str]:
             problems.append(
                 f"sources[{at}]: a {kind} source needs the exact quote it cites"
             )
+        if kind == "assumption" and not (
+            str(quote or "").strip() or str(one.get("supports") or "").strip()
+        ):
+            problems.append(f"sources[{at}]: an assumption source says what was assumed")
     return problems
 
 
