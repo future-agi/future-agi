@@ -975,10 +975,10 @@ def _read_or_refresh_exact_graph(
         schedule_on_miss=schedule_on_miss,
         revalidate_open_window=revalidate_open_window,
         # A stale worker's missing companion is a miss, never a free price.
-        accept_snapshot=lambda payload: snapshot_names_its_statistic(
-            namespace, metric_id, payload
-        )
-        and _snapshot_has_monetary_coverage(namespace, metric_id, payload),
+        accept_snapshot=lambda payload: (
+            snapshot_names_its_statistic(namespace, metric_id, payload)
+            and _snapshot_has_monetary_coverage(namespace, metric_id, payload)
+        ),
     )
 
 
@@ -1789,6 +1789,41 @@ def _affordable_raw_graph_seed(
     return seed_candidate, seed_probe_count
 
 
+def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
+    """Resolve tag leaves before handing a raw graph to the Temporal worker.
+
+    Otherwise a deterministic 400 discovered only by the worker becomes a
+    failed-refresh pending envelope, which a browser cannot distinguish from
+    a retryable read failure. No non-tag filters or graph SQL run here.
+    """
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        EffectiveTagGraphCompiler,
+        is_effective_tag_leaf,
+    )
+
+    leaves = []
+    for index, item in enumerate(identity.get("filters") or []):
+        if not isinstance(item, dict):
+            continue
+        column_id = item.get("column_id") or item.get("columnId")
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        if isinstance(config, dict) and is_effective_tag_leaf(
+            column_id, config.get("col_type") or config.get("colType")
+        ):
+            leaves.append((index, column_id, config))
+    if not leaves:
+        return
+    start, end = BaseQueryBuilder.parse_time_range(identity["filters"], strict=True)
+    compiler = EffectiveTagGraphCompiler(
+        project_id=str(identity["project_id"]),
+        observe_type=str(identity.get("observe_type") or "trace"),
+        window_start=start,
+        window_end=end,
+    )
+    for index, column_id, config in leaves:
+        compiler.requirement(column_id=column_id, config=config, filter_index=index)
+
+
 def _schedule_unaffordable_graph_read(
     *,
     metric_id: str,
@@ -1837,6 +1872,9 @@ def _schedule_unaffordable_graph_read(
         remaining_ms=GRAPH_WALL_DEADLINE_MS,
         **raw_log_cost,
     )
+    # Even when no background lane can run the raw scan, a deterministic
+    # tag-filter 400 takes precedence over a retryable scan-cost response.
+    _preflight_scheduled_graph_tags(identity)
     if organization_id and schedulable:
         try:
             scheduled = _read_or_refresh_exact_graph(
@@ -2072,6 +2110,7 @@ def fetch_system_metric_graph_ch(
         and graph_payload_is_publishable(cached, allow_sampled=False)
     ):
         if refresh and organization_id:
+            _preflight_scheduled_graph_tags(identity)
             return _read_or_refresh_exact_graph(
                 namespace="observe-system-graph",
                 identity=dict(identity),
@@ -2084,6 +2123,7 @@ def fetch_system_metric_graph_ch(
     if isinstance(cached, dict) and cached.get("query_refreshing") is True:
         return cached
     if refresh and organization_id:
+        _preflight_scheduled_graph_tags(identity)
         return _read_or_refresh_exact_graph(
             namespace="observe-system-graph",
             identity=dict(identity),

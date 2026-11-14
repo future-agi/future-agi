@@ -38,7 +38,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     is_internal_trace_root_filter,
     simulator_call_root_predicate,
 )
-from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.entity_tags import TagReadUnavailable
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
@@ -694,6 +694,7 @@ class EffectiveTagGraphCompiler:
         self.window_end = window_end
         self._deadline: ReadDeadline | None = None
         self._rendered = 0
+        self._history_predicates: list[Any] = []
 
     def requirement(
         self, *, column_id: str, config: dict[str, Any], filter_index: int
@@ -703,6 +704,8 @@ class EffectiveTagGraphCompiler:
         )
         from tracer.services.clickhouse.v2.effective_tags import (
             MAX_TAG_OVERLAY_BYTES,
+            _graph_history_predicates,
+            _history_exceeds_graph_cap,
         )
 
         if self._deadline is None:
@@ -721,7 +724,29 @@ class EffectiveTagGraphCompiler:
             self._rendered += rendered
             if self._rendered > MAX_TAG_OVERLAY_BYTES:
                 raise TagReadUnavailable("tag_overlay_budget_exceeded")
+            if self.window_start is not None and self.window_end is not None:
+                names = requirement[2].get(f"etag_graph_{filter_index}_names")
+                self._history_predicates.append(
+                    _graph_history_predicates(
+                        (self.project_id,),
+                        None if names is None else tuple(names),
+                        self.window_start,
+                        self.window_end,
+                    )[0]
+                )
         except TagReadUnavailable as exc:
+            if exc.code != "tag_overlay_budget_exceeded" and self._history_predicates:
+                # The deadline spans *all* leaves. A later leaf can time out
+                # after an earlier leaf's over-cap history consumed its wall.
+                try:
+                    self._deadline.remaining_ms()
+                except ReadDeadlineExceeded:
+                    grace = ReadDeadline.start(500)
+                    if any(
+                        _history_exceeds_graph_cap(predicate, grace=grace)
+                        for predicate in self._history_predicates
+                    ):
+                        raise GraphTagFilterTooBroadError() from exc
             if exc.code == "tag_overlay_budget_exceeded":
                 # Deterministic for this project and filter: retrying the
                 # same graph can never succeed.

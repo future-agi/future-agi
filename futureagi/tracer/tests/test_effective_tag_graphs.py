@@ -361,25 +361,32 @@ def test_observe_graph_endpoint_reader_answers_a_tag_filter(stores, observe_type
     assert sum(point["value"] or 0 for point in response["data"]) == expected
 
 
-def post_graph(stores, monkeypatch, observe_type, item):
+def post_graph(stores, monkeypatch, observe_type, item, *, scheduled=False):
     """TraceView/ObservationSpanView.get_graph_methods for one filter.
 
-    Only the cache probe and the EXPLAIN-based affordability probe are
-    replaced (both are optional decorations of a cold read); compilation,
-    the overlay reads, the statement and the HTTP mapping are the real ones.
+    Cold inline calls stub the cache and cost probes; scheduled-path tests
+    supply those stubs themselves. Compilation, overlay reads and the HTTP
+    mapping are real in either case.
     """
     from tracer.views import observation_span as span_views
     from tracer.views import trace as trace_views
 
-    project = SimpleNamespace(id=PROJECT, trace_type="observe", organization_id=None)
+    project = SimpleNamespace(
+        id=PROJECT,
+        trace_type="observe",
+        organization_id="org" if scheduled else None,
+    )
     projects = SimpleNamespace(
         filter=lambda *a, **k: SimpleNamespace(first=lambda: project)
     )
     analytics = GraphAnalytics(stores)
-    monkeypatch.setattr(
-        graph_dispatch, "_read_or_refresh_exact_graph", lambda **k: None
-    )
-    monkeypatch.setattr(graph_dispatch, "_affordable_raw_graph_seed", lambda **k: None)
+    if not scheduled:
+        monkeypatch.setattr(
+            graph_dispatch, "_read_or_refresh_exact_graph", lambda **k: None
+        )
+        monkeypatch.setattr(
+            graph_dispatch, "_affordable_raw_graph_seed", lambda **k: None
+        )
     if observe_type == "trace":
         module, view = trace_views, trace_views.TraceView()
     else:
@@ -750,6 +757,42 @@ def test_window_overlay_work_bound_is_non_retryable(stores, monkeypatch):
     assert response.data["code"] == "tag_filter_too_broad"
 
 
+@pytest.mark.parametrize("too_broad", [True, False])
+def test_scheduled_tag_graph_reports_terminal_error_in_request(
+    stores, monkeypatch, too_broad
+):
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    manual("alpha", ["wanted"])
+    if too_broad:
+        lifetime_assignments(names=("wanted",), count=6)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 2)
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_affordable_raw_graph_seed",
+        lambda **_: graph_dispatch._GraphReadUnaffordable(estimated_rows=None),
+    )
+    scheduled = []
+
+    def cache(**kw):
+        if kw.get("schedule_on_miss") is not False:
+            scheduled.append(kw)
+            return kw["pending_payload"]
+        return None
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", cache)
+    response = post_graph(
+        stores, monkeypatch, "trace", leaf("tag", "wanted"), scheduled=True
+    )
+    if too_broad:
+        assert response.status_code == 400, response.data
+        assert response.data["code"] == "tag_filter_too_broad"
+        assert not scheduled
+    else:
+        assert response.status_code == 200, response.data
+        assert len(scheduled) == 1
+
+
 def test_window_overlay_deadline_before_work_bound_is_retryable(stores, monkeypatch):
     seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
     manual("alpha", ["wanted"])
@@ -826,11 +869,166 @@ def _walk_until_deadline(monkeypatch, *, spent_on_page, failure):
     return raised.value.code
 
 
+@pytest.mark.parametrize(
+    "history,expected",
+    [(9, "tag_source_unavailable"), (12, "tag_overlay_budget_exceeded")],
+)
+def test_deadline_after_eight_pages_probes_actual_history(
+    stores, monkeypatch, history, expected
+):
+    """A stalled ClickHouse page is not itself evidence of too much PG history."""
+    import time
+
+    lifetime_assignments(names=("wanted",), count=history * 3 // 2 + 1)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 1)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 10)
+    deadline = ReadDeadline.start(60_000)
+    calls = {"n": 0}
+
+    def stalled(_sql, _params, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 9:
+            object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise ReadDeadlineExceeded("read deadline exceeded")
+        return SimpleNamespace(data=[])
+
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.read_tag_overlay(
+            project_ids=(PROJECT,),
+            trace_ids=None,
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=stalled,
+        )
+    assert raised.value.code == expected
+
+
+def test_matching_walk_does_not_charge_unwalked_suppression_history(
+    stores, monkeypatch
+):
+    import time
+
+    lifetime_assignments(names=("wanted",), count=14)  # nine matching rows
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="trace",
+                trace_id=f"other-{n}",
+                span_id="",
+                start_hour=TRACE_ASSIGNMENT_HOUR,
+                observation_type="",
+                service_name="",
+                manual_tags=[{"name": "other", "color": "#123456"}],
+            )
+            for n in range(12)
+        ]
+    )
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 1)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 10)
+    deadline = ReadDeadline.start(60_000)
+    calls = {"n": 0}
+
+    def stalled(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 9:
+            object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise ReadDeadlineExceeded("read deadline exceeded")
+        return SimpleNamespace(data=[])
+
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.graph_tag_overlay_params(
+            "test",
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=stalled,
+        )
+    assert raised.value.code == "tag_source_unavailable"
+
+
+@pytest.mark.parametrize(
+    "history,expected",
+    [(9, "tag_source_unavailable"), (12, "tag_overlay_budget_exceeded")],
+)
+def test_expired_curated_read_checks_suppression_history(
+    stores, monkeypatch, history, expected
+):
+    """A stall before suppression paging uses the same history-only rule."""
+    import time
+
+    lifetime_assignments(names=("other",), count=history)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 1)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 10)
+    deadline = ReadDeadline.start(60_000)
+
+    def stalled(*_args, **_kwargs):
+        object.__setattr__(deadline, "started", time.monotonic() - 61)
+        raise ReadDeadlineExceeded("read deadline exceeded")
+
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.graph_tag_overlay_params(
+            "test",
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=stalled,
+        )
+    assert raised.value.code == expected
+
+
+@pytest.mark.unit
+def test_failed_history_probe_is_not_too_broad(monkeypatch):
+    from django.db.models import Q
+
+    def broken(**_kwargs):
+        raise RuntimeError("probe unavailable")
+
+    monkeypatch.setattr(effective_tags, "application_postgres_reads", broken)
+    assert not effective_tags._history_exceeds_graph_cap(Q(project_id=PROJECT))
+
+
+@pytest.mark.unit
+def test_later_leaf_deadline_probes_preceding_leaf(monkeypatch):
+    import time
+
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        EffectiveTagGraphCompiler,
+        GraphTagFilterTooBroadError,
+    )
+
+    calls = {"n": 0}
+    compiler = EffectiveTagGraphCompiler(
+        project_id=PROJECT, observe_type="trace", window_start=BEGIN, window_end=END
+    )
+
+    def overlay(prefix, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            object.__setattr__(compiler._deadline, "started", time.monotonic() - 61)
+            raise TagReadUnavailable("tag_source_unavailable")
+        return {f"{prefix}_names": ["wanted"]}, 0
+
+    monkeypatch.setattr(effective_tags, "graph_tag_overlay_params", overlay)
+    monkeypatch.setattr(
+        effective_tags, "_history_exceeds_graph_cap", lambda *_args, **_kwargs: True
+    )
+    config = {"filter_op": "equals", "filter_value": "wanted"}
+    compiler.requirement(column_id="tag", config=config, filter_index=0)
+    with pytest.raises(GraphTagFilterTooBroadError):
+        compiler.requirement(column_id="tag", config=config, filter_index=1)
+
+
 @pytest.mark.unit
 def test_deadline_after_eight_dead_pages_is_too_broad_not_retryable(monkeypatch):
-    """On a real stack a page costs ~165 ms, so the 5 s deadline, not the page
-    bound, ends a long walk. Once eight full pages of history were scanned,
-    retrying cannot help: the answer is the non-retryable "too broad"."""
+    """Only a proven history over the cap makes a deep deadline terminal."""
+    monkeypatch.setattr(effective_tags, "_history_exceeds_graph_cap", lambda *_: True)
     code = _walk_until_deadline(
         monkeypatch,
         spent_on_page=effective_tags.MAX_WINDOW_OVERLAY_PAGES + 1,
@@ -851,6 +1049,7 @@ def test_deadline_after_eight_dead_pages_is_too_broad_not_retryable(monkeypatch)
 def test_early_deadline_or_outage_in_the_walk_stays_retryable(
     monkeypatch, spent_on_page, failure
 ):
+    monkeypatch.setattr(effective_tags, "_history_exceeds_graph_cap", lambda *_: True)
     code = _walk_until_deadline(
         monkeypatch, spent_on_page=spent_on_page, failure=failure
     )
@@ -858,8 +1057,21 @@ def test_early_deadline_or_outage_in_the_walk_stays_retryable(
 
 
 @pytest.mark.unit
+def test_deadline_after_eight_pages_without_over_cap_proof_stays_retryable(monkeypatch):
+    monkeypatch.setattr(effective_tags, "_history_exceeds_graph_cap", lambda *_: False)
+    code = _walk_until_deadline(
+        monkeypatch,
+        spent_on_page=effective_tags.MIN_SCANNED_PAGES_FOR_TOO_BROAD + 1,
+        failure=ReadDeadlineExceeded("read deadline exceeded"),
+    )
+    assert code == "tag_source_unavailable"
+
+
+@pytest.mark.unit
 def test_suppression_walk_deadline_after_eight_pages_is_too_broad(monkeypatch):
     import time
+
+    monkeypatch.setattr(effective_tags, "_history_exceeds_graph_cap", lambda *_: True)
 
     deadline = ReadDeadline.start(60_000)
     monkeypatch.setattr(

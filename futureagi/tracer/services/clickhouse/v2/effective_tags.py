@@ -51,9 +51,8 @@ _ASSIGNMENT_PAGE_SIZE = 1000
 # deadline (a page plus its ClickHouse liveness reads took ~165 ms on the e2e
 # stack, so 64 pages could never finish before the deadline).
 MAX_GRAPH_OVERLAY_SCAN_PAGES = 24
-# A deadline hit after this many full pages of history is also "too broad":
-# the history, not a transient slowdown, used the budget, so a retry cannot
-# succeed. Earlier deadline hits and outages stay retryable.
+# Only probe history after a substantial walk; time spent on reads does not
+# itself prove that the project exceeds the history cap.
 MIN_SCANNED_PAGES_FOR_TOO_BROAD = 8
 # Dense curated suppression fallbacks budget pages with window-live hits only.
 MAX_WINDOW_OVERLAY_PAGES = 8
@@ -356,42 +355,65 @@ def graph_tag_overlay_params(
     if not project_ids or (window_start is None) != (window_end is None):
         raise TagReadUnavailable("tag_scope_required")
     reader = execute or (graph_overlay_executor() if window_start is not None else None)
-    overlay = read_tag_overlay(
-        project_ids=project_ids,
-        trace_ids=None,
-        values=values,
-        deadline=deadline,
-        window_start=window_start,
-        window_end=window_end,
-        execute=reader,
-    )
-    if overlay.unmatched_trace_assignments:
-        # Only window-live traces can be in the graph: older curated tags
-        # their assignments hide must not spend the suppression budget.
-        overlay.assigned |= legacy_suppressions(
-            reader or graph_overlay_executor(),
+    phase = 0  # matching assignment walk; suppression uses a different PG predicate
+    try:
+        overlay = read_tag_overlay(
             project_ids=project_ids,
+            trace_ids=None,
             values=values,
             deadline=deadline,
             window_start=window_start,
             window_end=window_end,
+            execute=reader,
+            classify_deadline=False,
         )
-    trace_keys, span_keys, assigned = overlay.keys(values)
-    params = {
-        f"{prefix}_projects": project_ids,
-        f"{prefix}_scoped": 0,
-        f"{prefix}_traces": (_UNSCOPED_TRACE,),
-        f"{prefix}_trace_keys": trace_keys,
-        f"{prefix}_span_keys": span_keys,
-        f"{prefix}_assigned_keys": assigned,
-    }
-    rendered = (
-        _literal_bytes(trace_keys)
-        + _literal_bytes(span_keys)
-        + _literal_bytes(assigned)
-        + _literal_bytes(project_ids)
-    )
-    return params, rendered
+        if overlay.unmatched_trace_assignments:
+            phase = 1
+            # Only window-live traces can be in the graph: older curated tags
+            # their assignments hide must not spend the suppression budget.
+            overlay.assigned |= legacy_suppressions(
+                reader or graph_overlay_executor(),
+                project_ids=project_ids,
+                values=values,
+                deadline=deadline,
+                window_start=window_start,
+                window_end=window_end,
+                classify_deadline=False,
+            )
+        trace_keys, span_keys, assigned = overlay.keys(values)
+        params = {
+            f"{prefix}_projects": project_ids,
+            f"{prefix}_scoped": 0,
+            f"{prefix}_traces": (_UNSCOPED_TRACE,),
+            f"{prefix}_trace_keys": trace_keys,
+            f"{prefix}_span_keys": span_keys,
+            f"{prefix}_assigned_keys": assigned,
+        }
+        rendered = (
+            _literal_bytes(trace_keys)
+            + _literal_bytes(span_keys)
+            + _literal_bytes(assigned)
+            + _literal_bytes(project_ids)
+        )
+        return params, rendered
+    except TagReadUnavailable as error:
+        # The same deadline covers every phase, not just the two paged walks:
+        # a slow curated read or sparse assignment lookup is classified by
+        # the leaf's actual PG history, never by time or scanned page count.
+        if error.code != "tag_overlay_budget_exceeded" and window_start is not None:
+            try:
+                deadline.remaining_ms()
+            except ReadDeadlineExceeded:
+                assert window_end is not None
+                grace = ReadDeadline.start(500)
+                # An unwalked suppression history cannot make a stalled
+                # matching walk terminal (and vice versa).
+                predicate = _graph_history_predicates(
+                    project_ids, values, window_start, window_end
+                )[phase]
+                if _history_exceeds_graph_cap(predicate, grace=grace):
+                    raise TagReadUnavailable("tag_overlay_budget_exceeded") from error
+        raise
 
 
 def canonical_root_sql(prefix: str) -> str:
@@ -518,10 +540,67 @@ def _read_assignments(predicate: Q, *, deadline: ReadDeadline) -> list[dict[str,
     return records
 
 
+def _history_exceeds_graph_cap(
+    predicate: Q, *, grace: ReadDeadline | None = None
+) -> bool:
+    """Prove that a leaf has more history than the bounded graph walk admits.
+
+    The request deadline is already spent. Use a fresh, short PostgreSQL wall
+    for the one-row existence probe; a timeout or DB outage proves nothing.
+    """
+    grace = grace or ReadDeadline.start(500)
+    try:
+        with application_postgres_reads(
+            connection=connection,
+            atomic=partial(transaction.atomic, using="default"),
+            check_request=grace.remaining_ms,
+            statement_timeout_ms=grace.remaining_ms,
+        ):
+            cap = MAX_GRAPH_OVERLAY_SCAN_PAGES * _ASSIGNMENT_PAGE_SIZE
+            found = bool(
+                list(
+                    EntityTagAssignment.objects.using("default")
+                    .filter(predicate)
+                    .order_by("pk")
+                    .values_list("pk", flat=True)[cap : cap + 1]
+                )
+            )
+            grace.remaining_ms()
+            return found
+    except Exception:  # noqa: BLE001 - an advisory probe cannot justify a 400
+        # Includes DB outages, timeout, configuration errors and a broken
+        # connection wrapper. Only a successful existence read is proof.
+        return False
+
+
+def _graph_history_predicates(
+    project_ids: tuple[str, ...],
+    values: tuple[str, ...] | None,
+    window_start: datetime,
+    window_end: datetime,
+) -> tuple[Q, Q]:
+    """Walked names and curated suppressions both have independent histories."""
+    names = _names_predicate(values)
+    hour_start, hour_end = _hours(_utc(window_start), _utc(window_end))
+    matching = (
+        Q(project_id__in=project_ids, entity_kind__in=("trace", "span"))
+        & names
+        & (
+            Q(entity_kind="trace")
+            | Q(entity_kind="span", start_hour__gte=hour_start, start_hour__lt=hour_end)
+        )
+    )
+    return matching, _unmatched_trace_predicate(project_ids, names)
+
+
 def _too_broad_after_deadline(
-    error: TagReadUnavailable, *, scanned_pages: int, deadline: ReadDeadline
+    error: TagReadUnavailable,
+    *,
+    scanned_pages: int,
+    deadline: ReadDeadline,
+    predicate: Q,
 ) -> TagReadUnavailable:
-    """Map a deadline hit deep into a windowed history walk to "too broad"."""
+    """Only a proven over-cap history turns a spent deadline into a 400."""
     if (
         error.code == "tag_overlay_budget_exceeded"
         or scanned_pages < MIN_SCANNED_PAGES_FOR_TOO_BROAD
@@ -530,7 +609,8 @@ def _too_broad_after_deadline(
     try:
         deadline.remaining_ms()
     except ReadDeadlineExceeded:
-        return TagReadUnavailable("tag_overlay_budget_exceeded")
+        if _history_exceeds_graph_cap(predicate):
+            return TagReadUnavailable("tag_overlay_budget_exceeded")
     return error
 
 
@@ -609,6 +689,7 @@ def read_tag_overlay(
     window_start: datetime | None = None,
     window_end: datetime | None = None,
     execute: Callable[..., Any] | None = None,
+    classify_deadline: bool = True,
 ) -> TagOverlay:
     """Resolve UI assignments for one leaf scope.
 
@@ -646,8 +727,8 @@ def read_tag_overlay(
         # A graph's trace witness needs a live root in the window. Span
         # assignments additionally need their exact latest physical identity.
         # Page PostgreSQL first; only live keys count against SQL bind limits.
-        # Scanned rows have their own work bound. A deadline hit after enough
-        # full pages is the same answer; earlier hits stay retryable.
+        # Scanned rows have their own work bound. A deadline alone does not
+        # prove a history is over that bound.
         scanned = 0
         try:
             for page_number, page in enumerate(
@@ -719,8 +800,10 @@ def read_tag_overlay(
                 overlay.keys(values)
                 scanned = page_number
         except TagReadUnavailable as error:
+            if not classify_deadline:
+                raise
             raise _too_broad_after_deadline(
-                error, scanned_pages=scanned, deadline=deadline
+                error, scanned_pages=scanned, deadline=deadline, predicate=predicate
             ) from None
         return overlay
     for record in _read_assignments(predicate, deadline=deadline):
@@ -765,6 +848,7 @@ def legacy_suppressions(
     settings: dict[str, Any] | None = None,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
+    classify_deadline: bool = True,
 ) -> set[tuple[str, str]]:
     """Trace assignments that hide a curated tag the leaf would otherwise match.
 
@@ -877,10 +961,10 @@ def legacy_suppressions(
                 raise TagReadUnavailable(over_budget)
             scanned = page_number
     except TagReadUnavailable as error:
-        if not live_roots:
+        if not live_roots or not classify_deadline:
             raise
         raise _too_broad_after_deadline(
-            error, scanned_pages=scanned, deadline=deadline
+            error, scanned_pages=scanned, deadline=deadline, predicate=unmatched
         ) from None
     return suppressed
 
