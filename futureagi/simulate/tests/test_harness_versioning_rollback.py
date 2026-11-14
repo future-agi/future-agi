@@ -643,8 +643,9 @@ class TestSuiteRollBack:
         assert created
         assert run.suite_version_id == s1.id
         assert run.environment_version_id == environment.environment_version_id
-        assert run.payload["metadata"]["authoring_object_key"] == (
-            environment.payload["metadata"]["authoring_object_key"]
+        assert (
+            run.payload["metadata"]["authoring_object_key"]
+            == (environment.payload["metadata"]["authoring_object_key"])
         )
 
     def test_a_failure_mid_way_changes_nothing(

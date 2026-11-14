@@ -294,7 +294,10 @@ postgres:
     port: 5432
     # -- [PG_READ_DB] database on the replica. Empty: `postgres.database`.
     database: ""
-    # -- [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it.
+    # -- [READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's "Read replica" section has the tested list.
+    # A `feature:` key moves one listing to the replica. A model name moves
+    # every read the router decides for that model, including a re-read of a
+    # row written a moment ago, so an unaudited model reads stale rows.
     optIn: []
   bundled:
     image:

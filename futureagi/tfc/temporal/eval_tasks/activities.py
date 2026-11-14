@@ -175,7 +175,8 @@ def _run_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.run_entry import run_entry
 
         with eval_ch_guardrails():
-            entry = EvalLogger.objects.filter(id=entry_id).first()
+            # Primary: the workflow claimed this entry moments ago.
+            entry = EvalLogger.objects.using("default").filter(id=entry_id).first()
             if entry is None:
                 return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
             if _task_paused(entry.eval_task_id):
@@ -229,12 +230,19 @@ def _fail_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
 
-        entry = EvalLogger.objects.filter(
-            id=entry_id, status=EvalEntryStatus.RUNNING
-        ).first()
+        # Primary: the claim this fences on was written moments ago.
+        entry = (
+            EvalLogger.objects.using("default")
+            .filter(id=entry_id, status=EvalEntryStatus.RUNNING)
+            .first()
+        )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
-        config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+        # Primary, as run_entry reads it: stamp the hash of the config the
+        # failed run used, not an older one a lagging replica still holds.
+        config = CustomEvalConfig.objects.using("default").get(
+            id=entry.custom_eval_config_id
+        )
         landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
@@ -286,7 +294,10 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                     "entry_id": str(entry_id),
                     "status": str(EvalEntryStatus.PENDING),
                 }
-            config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+            # Primary, as run_entry reads it, for the hash stamped below.
+            config = CustomEvalConfig.objects.using("default").get(
+                id=entry.custom_eval_config_id
+            )
             mark_terminal(
                 entry,
                 EvalEntryStatus.ERRORED,
@@ -399,7 +410,9 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
         )
         project = task.project
         org = getattr(project, "organization", None)
-        eval_count = task.evals.count()
+        # Primary: the workflow reads its labels as it starts, right after the
+        # request that set the task's evals.
+        eval_count = task.evals.using("default").count()
         config_summary = (
             f"row_type={task.row_type}, sampling={task.sampling_rate}, "
             f"limit={task.spans_limit}, evals={eval_count}"

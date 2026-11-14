@@ -54,13 +54,13 @@ def _drop_tracer_pg_tables():
     """Simulate the org-wide drop inside the test transaction."""
     with connection.cursor() as cursor:
         cursor.execute(
-            "DROP TABLE IF EXISTS "
-            + ", ".join(_DROPPED_TABLES)
-            + " CASCADE"
+            "DROP TABLE IF EXISTS " + ", ".join(_DROPPED_TABLES) + " CASCADE"
         )
 
 
-def _seed_ch_root(project, trace_id, *, status="OK", parent="", input_=None, output=None):
+def _seed_ch_root(
+    project, trace_id, *, status="OK", parent="", input_=None, output=None
+):
     """Seed ONE CH root span for ``trace_id`` (no PG Trace row).
 
     The span carries an UNSAVED ``Trace`` so ``seed_ch_span`` reads its FK from
@@ -118,7 +118,9 @@ def seeded_cluster(db, project):
     )
     ErrorClusterTraces.objects.create(cluster=cluster, trace_id=trace_id)
 
-    _seed_ch_root(project, trace_id, input_={"prompt": "fail"}, output={"response": "bad"})
+    _seed_ch_root(
+        project, trace_id, input_={"prompt": "fail"}, output={"response": "bad"}
+    )
     _seed_ch_root(
         project, success_trace_id, input_={"prompt": "ok"}, output={"response": "good"}
     )

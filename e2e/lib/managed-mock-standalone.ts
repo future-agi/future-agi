@@ -37,6 +37,7 @@ export function validateStandaloneAppEnvironment(env: Record<string, string>, ev
 export function standaloneMockStack(evalBackground: boolean): MockStack {
   return {
     project: 'futureagi-e2e-standalone',
+    extraNetworks: { app: ['link-public'] },
     services: ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse'],
     // docker-compose.yml maps code-executor to the in-app sandbox; the overlay adds
     // the agentcc-gateway alias for flows that register the Distributed gateway URL.

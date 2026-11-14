@@ -347,7 +347,7 @@ contract an external datastore has to meet:
   `server_reset_query_always=1`,
   `ignore_startup_parameters=extra_float_digits,search_path`); the bootstrap
   job always connects directly. `postgres.readReplica` routes opted-in reads
-  to a replica.
+  to a replica (see [Read replica](#read-replica)).
 - Connections: every backend thread and every worker activity slot may hold
   one. Keep `max_connections` above
   `backend pods × backend.granian.workers × backend.granian.threads` plus,
@@ -382,6 +382,61 @@ fiCollector:
   extraVolumes: *pgCaVolume
   extraVolumeMounts: *pgCaMount
 ```
+
+#### Read replica
+
+`postgres.readReplica` adds a streaming replica, or a pooler in front of one,
+as a second database for the backend and workers. Nothing reads from it until
+`optIn` (`READ_REPLICA_OPT_IN`) names something:
+
+- A `feature:` key moves one listing (projects, dashboards, datasets, saved
+  views and the like; each app's `db_routing.py` declares its keys) to the
+  replica.
+- A model class name moves every read the app does not pin for that model,
+  including a re-read of a row written a moment ago. A `transaction.atomic()`
+  block does not keep reads on the primary, and an `on_commit` callback can run
+  before the replica has the commit, so code that reads its own write of an
+  opted-in model has to read the primary (`.using("default")`). Only list
+  models whose code has been checked for that.
+
+The models checked and tested this way (TH-3119), with the feature keys, are
+the rollout candidate below. Try it in staging before production. Watch the
+error tracker, and also check that a new eval task and an Instant eval run
+produce results: a read that misses a fresh write can finish work with
+nothing to do and raise no error. List and detail pages can show data a few
+seconds old while the replica catches up. Reads that must see a fresh write
+stay on the primary, so they shed no load. This is not a complete list; the
+main eval paths are: the eval-task logs, the eval-task engine, the span
+evaluation scan and the experiment eval runner it starts, an eval config
+opened, edited, deleted or re-run (and the evaluation that re-run starts), the
+SDK's eval config check, a task's eval list on its detail page, the Ask page's
+list of a project's eval configs, an Instant eval task's questions when the
+run is started or read, feedback on an eval result and its recalculate, and
+the config check in front of an eval result's details, and the error
+localizer's write-back onto an eval result. Span and trace ingestion, tag and
+annotation writes (including the SDK's bulk annotation update), monitors,
+project versions, demo trace publication and the dataset copy of eval results
+also read their fresh rows from the primary.
+
+```yaml
+postgres:
+  readReplica:
+    enabled: true
+    host: pgbouncer-read
+    optIn: [ObservationSpan, Trace, EvalLogger, EndUser, CustomEvalConfig,
+      ErrorMemory, TraceAnnotation, EvalTaskLogger, TraceErrorAnalysisTask,
+      "feature:project_list", "feature:org_config_bulk",
+      "feature:eval_group_list", "feature:dashboard_list",
+      "feature:saved_view_list", "feature:dataset_list",
+      "feature:replay_session_list", "feature:custom_eval_config_list",
+      "feature:project_version_ids"]
+```
+
+Pods read the value when they start, so a change takes effect as the backend
+and worker pods restart. To roll back, set `optIn` to the previous list (the
+feature keys only), or to `[]` (or `enabled: false`) to read everything from
+the primary again. Other model names, and the user, organization and
+membership models in particular, need the same review first.
 
 ### ClickHouse
 
@@ -1328,7 +1383,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `postgres.readReplica.host` | `""` | [PGBOUNCER_READ_HOST] host of the replica, or of its pooler. Same user and password as the primary. |
 | `postgres.readReplica.port` | `5432` | [PGBOUNCER_READ_PORT] |
 | `postgres.readReplica.database` | `""` | [PG_READ_DB] database on the replica. Empty: `postgres.database`. |
-| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it. |
+| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's "Read replica" section has the tested list. |
 | `postgres.bundled.image.registry` | `"docker.io"` | Registry of the bundled PostgreSQL image. |
 | `postgres.bundled.image.repository` | `"library/postgres"` | Repository of the bundled PostgreSQL image. Debian-based, like the compose setups, so data directories are interchangeable. |
 | `postgres.bundled.image.tag` | `"16.15-trixie"` | Tag of the bundled PostgreSQL image: an exact 16.x release on Debian (the compose setups run `postgres:16`, also Debian). |

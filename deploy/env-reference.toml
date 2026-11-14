@@ -1763,7 +1763,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["READ_REPLICA_OPT_IN"]
     default = "empty: nothing reads from the replica"
     setups = ["S", "D", "H"]
-    text = "Model class names and `feature:` keys routed to the replica, comma-separated. Helm: `postgres.readReplica.optIn`."
+    text = "`feature:` keys and model class names routed to the replica, comma-separated; read at startup. A model name routes every ordinary read of that model, including re-reads of a row just written, so list only audited models: the Helm chart README's \"Read replica\" section has the tested list. Helm: `postgres.readReplica.optIn`."
 
     [[part.section.row]]
     keys = ["PG_DIRECT_HOST", "PG_DIRECT_PORT"]
@@ -2001,6 +2001,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`80,443`"
     setups = ["S"]
     text = "TCP ports code evals in the built-in sandbox may connect to, comma-separated; they can listen on none. Landlock enforces it where the Docker host runs Linux 6.7 or later; on older kernels evals reach every port, and the app's log says so at start. A malformed list stops the sandbox. The nsjail sandbox (`sandbox` profile) does not apply it. See [INSTALLATION.md](repo:INSTALLATION.md#code-evals-and-the-sandbox)."
+
+    [[part.section.row]]
+    keys = ["LINK_EVAL_ALLOWED_HOSTS"]
+    default = "empty (deny all)"
+    setups = ["S", "D"]
+    text = "Exact comma-separated hostnames that contains_valid_link and no_invalid_links may validate with HEAD. No schemes, ports, paths, credentials or wildcards. Private, internal, metadata and non-global addresses remain forbidden even when listed, and redirects are not followed. Only HTTP 200 passes. Link-free text makes no DNS or HTTP requests. Common filename extensions are ignored unless the link has an explicit http(s) scheme or www prefix. The checks share a five-second budget and accept at most 20 http(s) links. Links with any other scheme, and scheme-relative //host links, are never requested and are not resolved as https: no_invalid_links fails them and contains_valid_link does not count them. This is evaluator policy, not a general code-executor firewall. Applies to the executor service, not the worker-local fallback; that fallback cannot enable network checks. Recreate the executor after changes. Existing installations receive the YAML change through seed_system_evals version 31; independently copied custom evals and legacy Python evaluators are not rewritten."
 
     [[part.section.row]]
     keys = ["CODE_EXECUTOR_LOCAL_FALLBACK"]

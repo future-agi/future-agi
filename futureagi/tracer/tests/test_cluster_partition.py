@@ -40,9 +40,10 @@ def _norm(sql: str) -> str:
 def _run(embedding=(0.1, 0.2), category="Context Handling Failures"):
     db = MagicMock()
     db.execute_read.return_value = []
-    with patch(
-        "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-    ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+    with (
+        patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db),
+        patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+    ):
         find_nearest_centroid(list(embedding), "proj-1", category)
     return db.execute_read.call_args_list[-1]
 
@@ -73,8 +74,8 @@ class TestCategoryPartitionEnabled:
         priced at 4.5% of issues because distillation stabilised the phrase."""
         a = _norm(_run(category="Context Handling Failures").args[0])
         b = _run(category="Poor Information Retrieval")
-        assert a == _norm(b.args[0])          # same SQL text...
-        assert b.args[1]["family"] == "Poor Information Retrieval"   # ...different bind
+        assert a == _norm(b.args[0])  # same SQL text...
+        assert b.args[1]["family"] == "Poor Information Retrieval"  # ...different bind
 
 
 class TestCategoryPartitionDisabled:
