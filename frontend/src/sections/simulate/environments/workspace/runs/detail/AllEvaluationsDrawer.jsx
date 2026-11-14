@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Checkbox,
-  CircularProgress,
   FormControlLabel,
   IconButton,
   Stack,
@@ -35,6 +34,7 @@ import {
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
@@ -152,9 +152,7 @@ export default function AllEvaluationsDrawer({
     <SideDrawer open={open} onClose={onClose} width={520}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ p: 3, pb: 1 }}>
-          <Typography
-            sx={{ typography: "m2", fontWeight: 500, pr: 4 }}
-          >
+          <Typography sx={{ typography: "m2", fontWeight: 500, pr: 4 }}>
             All Evaluations
           </Typography>
           <Stack
@@ -187,9 +185,7 @@ export default function AllEvaluationsDrawer({
 
         <Box sx={{ flex: 1, overflowY: "auto", px: 3 }}>
           {isPending ? (
-            <Stack alignItems="center" sx={{ py: 6 }}>
-              <CircularProgress size={22} />
-            </Stack>
+            <LoadingScreen compact />
           ) : isError && configsData === undefined ? (
             <EmptyState
               title="Couldn’t load evaluations"

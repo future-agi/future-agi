@@ -182,14 +182,14 @@ const DetailInfo = ({ label, value }) => {
     <Box sx={{ display: "flex" }}>
       <Typography
         component="span"
-        fontSize="13px"
+        fontSize="12px"
         fontWeight={600}
         color="text.disabled"
         sx={{ minWidth: "130px" }}
       >
         {label}
       </Typography>
-      <Typography color="text.primary" fontSize={13}>
+      <Typography color="text.primary" fontSize={12}>
         {value}
       </Typography>
     </Box>

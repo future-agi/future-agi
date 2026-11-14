@@ -37,6 +37,11 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   SERVICES=(app postgres clickhouse mock-llm mock-google code-executor link-canary link-worker-canary)
 fi
 
+# Telemetry registration from an E2E stack always goes to loopback, whatever
+# the caller's shell exports (Compose prefers exported values over the env file).
+export FUTURE_AGI_TELEMETRY_DISABLED=true
+export FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9
+
 BUILD_TARGETS="backend|frontend|collector|executor|all|standalone|standalone-app"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }

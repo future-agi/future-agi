@@ -55,6 +55,7 @@ services:
       BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
@@ -79,6 +80,7 @@ services:
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
@@ -99,6 +101,7 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
@@ -117,6 +120,7 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
@@ -130,6 +134,8 @@ services:
     cpus: 0.5
     environment:
       FUTURE_AGI_E2E_FIXTURE: sql-workbench
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       CH_HOST: clickhouse
@@ -151,6 +157,8 @@ services:
       # Root compose never passes the flag to peerdb-init, so the setup script
       # attempts the retired tracer_observation_span mirror.
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   mock-llm:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
@@ -167,6 +175,57 @@ services:
     ports:
       - "127.0.0.1:28081:8080"
     restart: "no"
+  # Literal values, not ${...} defaults: a value exported in the caller's shell
+  # takes precedence over the env file, and these services must keep sending
+  # telemetry registration to loopback. The services above set the same pair.
+  postgres-schema-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  clickhouse-native-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  clickhouse-cdc-bootstrap:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  peerdb-temporal-init:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  serving:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-default:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-s:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-l:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-tasks-xl:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-trace-ingestion:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-agent-compass:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-simulation-runner:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
 
   # Dedicated executor selection/fallback policy reuses the executor harness.
   # Its only networks are internal: no default route to real destinations.
@@ -215,6 +274,7 @@ services:
     entrypoint: ["python"]
     command: ["/srv/server.py"]
     environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
     volumes:
       - ./e2e/stack/mock-google/server.py:/srv/server.py:ro
