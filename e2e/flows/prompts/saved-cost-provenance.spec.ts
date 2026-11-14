@@ -161,7 +161,7 @@ test(
       );
       await testInfo.attach("initial-source", {
         contentType: "image/png",
-        body: await page.screenshot(),
+        body: await page.screenshot({ animations: "disabled" }),
       });
     });
     await test.step("UI: reload retains exact estimate and source", async () => {
@@ -174,7 +174,7 @@ test(
       );
       await testInfo.attach("reload-source", {
         contentType: "image/png",
-        body: await page.screenshot(),
+        body: await page.screenshot({ animations: "disabled" }),
       });
     });
     await test.step("UI and API: restore all three saved versions in comparison", async () => {
@@ -239,7 +239,7 @@ test(
       ).toHaveCount(0);
       await testInfo.attach("comparison-source", {
         contentType: "image/png",
-        body: await page.screenshot(),
+        body: await page.screenshot({ animations: "disabled" }),
       });
       await testInfo.attach("comparison", {
         contentType: "application/json",
