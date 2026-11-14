@@ -943,20 +943,16 @@ def _apply_receipt_to_call(
     else:
         metadata["harness_grading_status"] = "failed"
         failure = body.get("failure") or {}
-        metadata["harness_grading_error"] = (
-            "Required evaluation coverage was incomplete "
-            f"({coverage['executed']}/{coverage['expected']} executed"
-            + (
-                f", {coverage['unmeasured']} not measured"
-                if coverage.get("unmeasured")
-                else ""
-            )
-            + "). "
-            + (
-                f"The trial ended with {failure.get('code') or failure.get('message')}."
-                if failure
-                else "This is a grading failure, not an agent failure."
-            )
+        metadata[
+            "harness_grading_error"
+        ] = "Required evaluation coverage was incomplete " f"({coverage['executed']}/{coverage['expected']} executed" + (
+            f", {coverage['unmeasured']} not measured"
+            if coverage.get("unmeasured")
+            else ""
+        ) + "). " + (
+            f"The trial ended with {failure.get('code') or failure.get('message')}."
+            if failure
+            else "This is a grading failure, not an agent failure."
         )
     update_fields = [
         "status",
@@ -1497,7 +1493,13 @@ def _ingest_hosted_transcript(
                 metadata.pop(WORLD_ACTIONS_KEY, None)
             trial = {
                 key: _entries(world.get(key))
-                for key in ("state_changes", "decisions", "approvals", "usage", "shared_records")
+                for key in (
+                    "state_changes",
+                    "decisions",
+                    "approvals",
+                    "usage",
+                    "shared_records",
+                )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
             # The limits the trial ran with, so the record says which applied.

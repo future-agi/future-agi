@@ -1008,7 +1008,8 @@ def worker_states(
     refused past its worker-action deadline (`past_deadline`, by worker id, or a refused call of its own) and that did
     not come back is `deadline_passed`: a refusal is the world seeing it, and says only that its later world calls
     were refused, never that its execution was stopped. A worker with no event at all is `not_observed`; one with a
-    hand-off still out takes the trial's own ending. Every partial event stays; no return is invented."""
+    hand-off still out takes the trial's own ending. Every partial event stays; no return is invented.
+    """
     events = timeline["events"]
     handed: dict[str, list[str]] = {}
     for event in events:
@@ -1108,7 +1109,9 @@ def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
     return "infrastructure" if failure.get("domain") not in (None, "agent") else "ended"
 
 
-CUT_SHORT_STATES = frozenset({"deadline_passed", "no_return", "cancel_requested", "cancelled", "infrastructure"})
+CUT_SHORT_STATES = frozenset(
+    {"deadline_passed", "no_return", "cancel_requested", "cancelled", "infrastructure"}
+)
 _TERMINAL_JOB_STATES = ("completed", "failed", "canceled")
 
 
@@ -1117,7 +1120,9 @@ def _job_for_call(call: CallExecution) -> HostedHarnessJob | None:
     from simulate.models import HostedHarnessExecution, HostedHarnessJob
 
     execution = (
-        HostedHarnessExecution.objects.select_related("job").filter(call_execution=call).first()
+        HostedHarnessExecution.objects.select_related("job")
+        .filter(call_execution=call)
+        .first()
     )
     if execution is not None:
         return execution.job
@@ -1128,7 +1133,9 @@ def _job_for_call(call: CallExecution) -> HostedHarnessJob | None:
     )
 
 
-def worker_cleanup(call: CallExecution, job: HostedHarnessJob | None, worker: Mapping[str, Any]) -> dict | None:
+def worker_cleanup(
+    call: CallExecution, job: HostedHarnessJob | None, worker: Mapping[str, Any]
+) -> dict | None:
     """What happened to a cut-short worker's process when the call ended, from the attempt that ran it.
 
     Never "stopped" for a worker alone: the harness cannot stop one worker inside the app's process. Computed when
@@ -1147,23 +1154,35 @@ def worker_cleanup(call: CallExecution, job: HostedHarnessJob | None, worker: Ma
     if attempt is None:
         return {"status": "unknown", "at": None}
     if attempt.cleanup_verified_at is not None:
-        return {"status": "stopped_with_sandbox", "at": attempt.cleanup_verified_at.isoformat()}
+        return {
+            "status": "stopped_with_sandbox",
+            "at": attempt.cleanup_verified_at.isoformat(),
+        }
     if attempt.terminal_event_received and job.state in _TERMINAL_JOB_STATES:
         # The guest ended on its own and nothing confirmed the sandbox went.
         return {"status": "unknown", "at": None}
     # The attempt is live, or the cancel window is open with cleanup pending.
-    ended = call.completed_at.isoformat() if getattr(call, "completed_at", None) else None
+    ended = (
+        call.completed_at.isoformat() if getattr(call, "completed_at", None) else None
+    )
     return {"status": "still_running", "at": ended}
 
 
 def served_workers(call: CallExecution, timeline: Mapping[str, Any]) -> dict[str, Any]:
     """The stored workers record as served: a stored `cancel_requested` the job has since confirmed reads
-    `cancelled`, and each cut-short worker carries its cleanup. The stored record is never rewritten."""
-    workers = [dict(one) for one in timeline.get("workers") or [] if isinstance(one, Mapping)]
+    `cancelled`, and each cut-short worker carries its cleanup. The stored record is never rewritten.
+    """
+    workers = [
+        dict(one) for one in timeline.get("workers") or [] if isinstance(one, Mapping)
+    ]
     if not any(one.get("state") in CUT_SHORT_STATES for one in workers):
         return {**timeline, "workers": workers}
     job = _job_for_call(call)
-    ending = trial_ending(call, job) if any(one.get("state") == "cancel_requested" for one in workers) else None
+    ending = (
+        trial_ending(call, job)
+        if any(one.get("state") == "cancel_requested" for one in workers)
+        else None
+    )
     for worker in workers:
         if worker.get("state") == "cancel_requested" and ending == "cancelled":
             worker["state"] = "cancelled"
@@ -1466,11 +1485,11 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         "collection": (
             "unavailable"
             if unavailable
-            else "partial"
-            if partial
-            else "complete"
-            if (spans or traced_calls)
-            else "no_evidence"
+            else (
+                "partial"
+                if partial
+                else "complete" if (spans or traced_calls) else "no_evidence"
+            )
         ),
     }
     if not timeline["workers"] and not any(

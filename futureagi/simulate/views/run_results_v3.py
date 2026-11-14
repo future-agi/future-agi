@@ -783,7 +783,9 @@ class SharedRecordActionSerializer(serializers.Serializer):
 
 
 class SharedRecordSerializer(serializers.Serializer):
-    key = serializers.CharField(help_text="What the calls named, as argument=value; never a database identity.")
+    key = serializers.CharField(
+        help_text="What the calls named, as argument=value; never a database identity."
+    )
     argument = serializers.CharField()
     value = serializers.CharField()
     actions = SharedRecordActionSerializer(many=True)
@@ -813,7 +815,9 @@ class TrialStateSerializer(serializers.Serializer):
 
 
 class CleanupSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=("stopped_with_sandbox", "still_running", "unknown"))
+    status = serializers.ChoiceField(
+        choices=("stopped_with_sandbox", "still_running", "unknown")
+    )
     at = serializers.CharField(allow_null=True)
 
 
@@ -1370,7 +1374,11 @@ class CallExecutionV3WorkersView(APIView):
             timeline.get("messages", []),
             turns_cut=bool(timeline.get("messages_omitted")),
         )
-        return Response(CallWorkersResponseSerializer({**served_workers(call, timeline), **steps}).data)
+        return Response(
+            CallWorkersResponseSerializer(
+                {**served_workers(call, timeline), **steps}
+            ).data
+        )
 
 
 class RunAnalyticsV3View(APIView):
@@ -1448,9 +1456,7 @@ def _csv_rows(
             verdict = (
                 "passed"
                 if goal["passed"] is True
-                else "failed"
-                if goal["passed"] is False
-                else "inconclusive"
+                else "failed" if goal["passed"] is False else "inconclusive"
             )
             sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(

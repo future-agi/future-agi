@@ -2603,7 +2603,8 @@ def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
 )
 def test_a_worker_subject_the_harness_accepts_is_accepted_on_the_receipt(subject):
     """The harness keeps a worker's id as its source names it, spaces included; one refused subject would refuse the
-    whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue)."""
+    whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue).
+    """
     from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
 
     goal = {
@@ -3143,7 +3144,9 @@ def _cut_short_run(user, workspace, storage, settings, key):
     settings.HARNESS_VERSIONING_ENABLED = True
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
     run = _create(_environment(user, workspace, f"workers-{key}", storage), key=key)
-    job = HostedHarnessJob.no_workspace_objects.get(test_execution_id=run.test_execution_id)
+    job = HostedHarnessJob.no_workspace_objects.get(
+        test_execution_id=run.test_execution_id
+    )
     job.current_attempt_number = 1
     job.save(update_fields=["current_attempt_number"])
     attempt = HostedHarnessAttempt.no_workspace_objects.create(
@@ -3167,7 +3170,9 @@ def test_user_canceled_receipt_on_a_failed_call_reads_cancel_requested_then_canc
     # Ingested by a platform that did not yet mark a user stop cancelled: the call reads FAILED.
     call.status = CallExecution.CallStatus.FAILED
     call.call_metadata = {
-        "hosted_harness_receipt": {"failure": {"code": "user_canceled", "domain": "platform_sync"}}
+        "hosted_harness_receipt": {
+            "failure": {"code": "user_canceled", "domain": "platform_sync"}
+        }
     }
     job.state = HostedHarnessJob.State.RUNNING
     assert harness_workers.trial_ending(call, job) == "cancel_requested"
@@ -3176,13 +3181,17 @@ def test_user_canceled_receipt_on_a_failed_call_reads_cancel_requested_then_canc
 
 
 @pytest.mark.django_db
-def test_record_call_workers_and_the_view_pick_the_execution_s_job(user, workspace, storage, settings):
+def test_record_call_workers_and_the_view_pick_the_execution_s_job(
+    user, workspace, storage, settings
+):
     from simulate.models import HostedHarnessExecution
 
     job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "jb")
     # Without an execution row, the job of the call's test execution.
     assert harness_workers._job_for_call(call) == job
-    HostedHarnessExecution.objects.update_or_create(call_execution=call, defaults={"job": job})
+    HostedHarnessExecution.objects.update_or_create(
+        call_execution=call, defaults={"job": job}
+    )
     assert harness_workers._job_for_call(call) == job
 
 
@@ -3194,7 +3203,10 @@ def test_cleanup_stopped_with_sandbox_when_verified(user, workspace, storage, se
     attempt.cleanup_verified_at = timezone.now()
     attempt.save(update_fields=["cleanup_verified_at"])
     cleanup = harness_workers.worker_cleanup(call, job, {"state": "cancelled"})
-    assert cleanup == {"status": "stopped_with_sandbox", "at": attempt.cleanup_verified_at.isoformat()}
+    assert cleanup == {
+        "status": "stopped_with_sandbox",
+        "at": attempt.cleanup_verified_at.isoformat(),
+    }
 
 
 @pytest.mark.django_db
@@ -3202,14 +3214,24 @@ def test_cleanup_still_running_while_the_attempt_lives_or_the_cancel_window_is_o
     user, workspace, storage, settings
 ):
     job, attempt, call = _cut_short_run(user, workspace, storage, settings, "sr")
-    assert harness_workers.worker_cleanup(call, job, {"state": "no_return"})["status"] == "still_running"
+    assert (
+        harness_workers.worker_cleanup(call, job, {"state": "no_return"})["status"]
+        == "still_running"
+    )
     attempt.terminal_stage = "canceled"
     attempt.save(update_fields=["terminal_stage"])
-    assert harness_workers.worker_cleanup(call, job, {"state": "cancel_requested"})["status"] == "still_running"
+    assert (
+        harness_workers.worker_cleanup(call, job, {"state": "cancel_requested"})[
+            "status"
+        ]
+        == "still_running"
+    )
 
 
 @pytest.mark.django_db
-def test_cleanup_unknown_when_the_guest_ended_without_verified_cleanup(user, workspace, storage, settings):
+def test_cleanup_unknown_when_the_guest_ended_without_verified_cleanup(
+    user, workspace, storage, settings
+):
     from simulate.models import HostedHarnessJob
 
     job, attempt, call = _cut_short_run(user, workspace, storage, settings, "uk")
@@ -3223,14 +3245,18 @@ def test_cleanup_unknown_when_the_guest_ended_without_verified_cleanup(user, wor
 
 
 @pytest.mark.django_db
-def test_a_worker_that_returned_or_never_ran_has_no_cleanup(user, workspace, storage, settings):
+def test_a_worker_that_returned_or_never_ran_has_no_cleanup(
+    user, workspace, storage, settings
+):
     job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "nc")
     for state in ("completed", "failed", "not_observed"):
         assert harness_workers.worker_cleanup(call, job, {"state": state}) is None
 
 
 @pytest.mark.django_db
-def test_old_record_without_cleanup_serves_as_is(user, workspace, storage, settings, auth_client):
+def test_old_record_without_cleanup_serves_as_is(
+    user, workspace, storage, settings, auth_client
+):
     from simulate.services.harness_workers import WORKERS_KEY
     from simulate.services.scoring_status import locked_call_metadata_update
 
@@ -3239,13 +3265,19 @@ def test_old_record_without_cleanup_serves_as_is(user, workspace, storage, setti
         **worker_timeline(SPANS, DECLARED, run_key=RUN),
         "collected_at": "2026-10-31T12:00:00Z",
     }
-    locked_call_metadata_update(call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True)
+    locked_call_metadata_update(
+        call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True
+    )
     found = auth_client.get(f"/simulate/v3/call-executions/{call.id}/workers/")
     assert found.status_code == 200, found.content
     for worker in found.json()["workers"]:
         stored = next(one for one in timeline["workers"] if one["id"] == worker["id"])
         # Only a cut-short worker gains a computed cleanup; nothing else is added.
         if stored.get("state") in harness_workers.CUT_SHORT_STATES:
-            assert worker["cleanup"]["status"] in {"stopped_with_sandbox", "still_running", "unknown"}
+            assert worker["cleanup"]["status"] in {
+                "stopped_with_sandbox",
+                "still_running",
+                "unknown",
+            }
         else:
             assert "cleanup" not in worker

@@ -50,7 +50,11 @@ def _attempt(**fields):
 def clock(monkeypatch):
     now = {"t": 0.0}
     monkeypatch.setattr(gateway_module.time, "monotonic", lambda: now["t"])
-    monkeypatch.setattr(gateway_module.time, "sleep", lambda seconds: now.__setitem__("t", now["t"] + seconds))
+    monkeypatch.setattr(
+        gateway_module.time,
+        "sleep",
+        lambda seconds: now.__setitem__("t", now["t"] + seconds),
+    )
     cache.clear()
     return now
 
@@ -75,25 +79,36 @@ def test_cancel_waits_for_the_guest_seal_then_deletes(monkeypatch, clock):
 
 
 @pytest.mark.django_db
-def test_cancel_seal_runs_after_the_signal_and_before_the_sandbox_is_deleted(organization, monkeypatch):
+def test_cancel_seal_runs_after_the_signal_and_before_the_sandbox_is_deleted(
+    organization, monkeypatch
+):
     from unittest.mock import patch
 
     from simulate.services.hosted_harness import create_hosted_job
     from simulate.tests.test_hosted_harness_gateway import _Daytona, _payload
 
     payload = _payload()
-    payload["source"] = {"kind": "remote", "endpoint": "https://agent.example.com", "visibility": "public"}
-    job, _ = create_hosted_job(organization, payload, idempotency_key="cancel-seal-order")
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="cancel-seal-order"
+    )
     client = _Daytona()
     gateway = _gateway()
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
     with patch(
-        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire", return_value=(b"archive", "")
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
     ):
         gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr("simulate.services.phone_telephony.cleanup_hosted_phone_rooms", lambda _: None)
+    monkeypatch.setattr(
+        "simulate.services.phone_telephony.cleanup_hosted_phone_rooms", lambda _: None
+    )
     timeouts = []
     original_exec = client.sandbox.process.exec
 
@@ -103,8 +118,14 @@ def test_cancel_seal_runs_after_the_signal_and_before_the_sandbox_is_deleted(org
 
     monkeypatch.setattr(client.sandbox.process, "exec", exec_recording)
     order = []
-    monkeypatch.setattr(gateway, "_await_guest_seal", lambda _attempt: order.append("seal"))
-    monkeypatch.setattr(gateway, "_delete_and_record", lambda _attempt, **_kwargs: order.append("delete") or job)
+    monkeypatch.setattr(
+        gateway, "_await_guest_seal", lambda _attempt: order.append("seal")
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda _attempt, **_kwargs: order.append("delete") or job,
+    )
 
     gateway.cancel(job, reason="user_canceled")
 
@@ -122,8 +143,13 @@ def test_cancel_deletes_after_the_seal_timeout(monkeypatch, clock, caplog):
 
     # The platform cap after the env read stays strictly above the guest's own bound.
     monkeypatch.setenv("HARNESS_CANCEL_SEAL_SECONDS", "999")
-    assert gateway_module._cancel_seal_seconds() == gateway_module._CANCEL_SEAL_CAP_SECONDS
-    assert gateway_module._cancel_seal_seconds() > gateway_module._GUEST_CANCEL_SEAL_SECONDS
+    assert (
+        gateway_module._cancel_seal_seconds() == gateway_module._CANCEL_SEAL_CAP_SECONDS
+    )
+    assert (
+        gateway_module._cancel_seal_seconds()
+        > gateway_module._GUEST_CANCEL_SEAL_SECONDS
+    )
     assert gateway_module._CANCEL_SIGNAL_TIMEOUT_SECONDS == 10
 
 

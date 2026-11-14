@@ -18,7 +18,10 @@ def test_user_canceled_receipt_marks_the_call_cancelled() -> None:
         "status": "errored",
         "failure": {"code": "user_canceled", "domain": "platform_sync"},
         # The call genuinely started and ended: still cancelled, never completed.
-        "call": {"started_at": "2026-11-14T10:00:00.000Z", "ended_at": "2026-11-14T10:00:40.000Z"},
+        "call": {
+            "started_at": "2026-11-14T10:00:00.000Z",
+            "ended_at": "2026-11-14T10:00:40.000Z",
+        },
     }
     assert ingestion._call_lifecycle_status(body) == CallExecution.CallStatus.CANCELLED
     other = {**body, "failure": {"code": "call_failed", "domain": "infrastructure"}}
@@ -37,7 +40,9 @@ def test_artifact_upload_and_receipt_after_cancel_keep_the_transcript() -> None:
     ingestion._assert_current_attempt(attempt)
 
 
-def test_shared_records_and_bypass_notice_are_kept_and_served(organization, workspace) -> None:
+def test_shared_records_and_bypass_notice_are_kept_and_served(
+    organization, workspace
+) -> None:
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
     from simulate.tests.test_harness_call_actors import _ingest
     from simulate.views.run_results_v3 import TrialStateSerializer
@@ -48,8 +53,18 @@ def test_shared_records_and_bypass_notice_are_kept_and_served(organization, work
             "argument": "order_id",
             "value": "1042",
             "actions": [
-                {"who": "worker:order_lookup", "tool": "list_refunds", "outcome": "committed", "write": None},
-                {"who": "worker:refund", "tool": "issue_refund", "outcome": "committed", "write": True},
+                {
+                    "who": "worker:order_lookup",
+                    "tool": "list_refunds",
+                    "outcome": "committed",
+                    "write": None,
+                },
+                {
+                    "who": "worker:refund",
+                    "tool": "issue_refund",
+                    "outcome": "committed",
+                    "write": True,
+                },
             ],
             "committed_writes": 1,
             "truncated": False,
@@ -68,7 +83,11 @@ def test_shared_records_and_bypass_notice_are_kept_and_served(organization, work
         CallExecution.SimulationCallType.VOICE,
         {
             "messages": [],
-            "world_actors": {"actions": [], "state_changes": [], "shared_records": shared},
+            "world_actors": {
+                "actions": [],
+                "state_changes": [],
+                "shared_records": shared,
+            },
             "notices": [notice, {**notice, "workers": [1]}],
         },
         metadata,
