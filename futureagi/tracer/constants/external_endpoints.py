@@ -9,7 +9,9 @@ class ObservabilityRoutes(str, Enum):
     BLAND_CALLS_URL = "https://api.bland.ai/v1/calls"
     BLAND_ME_URL = "https://api.bland.ai/v1/me"
     # {account_sid} interpolated at fetch time (Twilio's API is account-scoped).
-    TWILIO_CALLS_URL = "https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
+    TWILIO_CALLS_URL = (
+        "https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
+    )
 
     ## Assistant endpoints
     VAPI_ASSISTANT_URL = "https://api.vapi.ai/assistant"

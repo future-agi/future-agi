@@ -51,6 +51,7 @@ def _clean_seeded_node_templates(request):
         request.getfixturevalue("db")
         NodeTemplate.no_workspace_objects.all().delete()
 
+
 # Store original APIView.initial for patching
 _original_apiview_initial = APIView.initial
 _REQUEST_INJECTION_ACTIVE = False

@@ -332,16 +332,26 @@ def test_content_hydration_preserves_microsecond_root_version_and_tombstone(
     builder.start_date, builder.end_date = builder.parse_time_range(builder.filters)
     query, params = builder.build_content_query(
         ["trace-cross-version", "trace-tombstoned"],
-        root_identities=builder.content_root_identities_for_rows([
-            {"project_id": project_id, "trace_id": trace_id, "root_span_id": span_id,
-             "start_time": start, "_root_observation_type": "span", "_root_service_name": "",
-             "_root_start_hour": start.replace(minute=0, second=0, microsecond=0),
-             "_root_version": version}
-            for trace_id, span_id, start, version in [
-                ("trace-cross-version", "selected-root", selected_time, 2),
-                ("trace-tombstoned", "tombstoned-root", tombstone_time, 1),
+        root_identities=builder.content_root_identities_for_rows(
+            [
+                {
+                    "project_id": project_id,
+                    "trace_id": trace_id,
+                    "root_span_id": span_id,
+                    "start_time": start,
+                    "_root_observation_type": "span",
+                    "_root_service_name": "",
+                    "_root_start_hour": start.replace(
+                        minute=0, second=0, microsecond=0
+                    ),
+                    "_root_version": version,
+                }
+                for trace_id, span_id, start, version in [
+                    ("trace-cross-version", "selected-root", selected_time, 2),
+                    ("trace-tombstoned", "tombstoned-root", tombstone_time, 1),
+                ]
             ]
-        ]),
+        ),
     )
     result = ch_client.execute(
         query,
@@ -502,7 +512,8 @@ def test_span_bulk_resolution_replays_exact_123456_microsecond_identity(
                 "trace-shared",
                 "span-shared",
                 second + timedelta(microseconds=123456),
-                "span", "",
+                "span",
+                "",
             )
         ],
     )

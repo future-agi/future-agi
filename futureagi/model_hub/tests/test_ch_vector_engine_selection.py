@@ -66,7 +66,9 @@ def test_create_table_single_node_emits_plain_replacing_mergetree(captured_sql_c
     assert "ON CLUSTER" not in sql
 
 
-def test_create_table_clustered_emits_replicated_engine_and_on_cluster(captured_sql_client):
+def test_create_table_clustered_emits_replicated_engine_and_on_cluster(
+    captured_sql_client,
+):
     _force_clustered(captured_sql_client, clustered=True)
 
     captured_sql_client.create_table("ground_truths")
@@ -154,7 +156,9 @@ def test_create_table_clustered_keeps_required_columns(captured_sql_client):
         "value Nullable(String)",
         "deleted UInt8 DEFAULT 0",
     ):
-        assert column_signature in sql, f"missing column in CREATE TABLE: {column_signature}"
+        assert column_signature in sql, (
+            f"missing column in CREATE TABLE: {column_signature}"
+        )
 
 
 def test_create_table_order_by_preserved(captured_sql_client):
@@ -181,7 +185,8 @@ def test_is_clustered_cached_per_process(captured_sql_client):
     assert first is True and second is True
     # Only one system.clusters probe across both calls.
     probes = [
-        c for c in captured_sql_client.client.execute.call_args_list
+        c
+        for c in captured_sql_client.client.execute.call_args_list
         if "system.clusters" in c.args[0]
     ]
     assert len(probes) == 1

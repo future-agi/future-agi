@@ -157,7 +157,11 @@ class LicenseSnapshot:
             return base
 
         # ACTIVE or GRACE — check active window then grace window.
-        if base == LicenseState.ACTIVE and self.expires_at and current >= self.expires_at:
+        if (
+            base == LicenseState.ACTIVE
+            and self.expires_at
+            and current >= self.expires_at
+        ):
             if self.grace_ends_at and current < self.grace_ends_at:
                 return LicenseState.GRACE
             return LicenseState.EXPIRED

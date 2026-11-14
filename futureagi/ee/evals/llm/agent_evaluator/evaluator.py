@@ -96,7 +96,7 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 # one event with a typed error code and safe diagnostics; parsers and the agent
 # loop propagate the cause instead of logging it again or inventing a verdict.
 USER_FACING_EVAL_FAILED = (
-    "Evaluation failed. Please try again. If the problem persists, " "contact support."
+    "Evaluation failed. Please try again. If the problem persists, contact support."
 )
 
 
@@ -1041,7 +1041,7 @@ class AgentEvaluator:
         # Inject few-shot feedback examples into the rendered prompt
         if few_shots:
             few_shot_texts = []
-            for block in (few_shots if isinstance(few_shots, list) else [few_shots]):
+            for block in few_shots if isinstance(few_shots, list) else [few_shots]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     few_shot_texts.append(block["text"])
                 elif isinstance(block, str):

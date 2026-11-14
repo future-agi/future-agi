@@ -301,9 +301,7 @@ def _member_sub_goals() -> Subquery:
             Value([], output_field=JSONField()),
             output_field=JSONField(),
         )
-    )[
-        :1
-    ]
+    )[:1]
     return Subquery(member, output_field=JSONField())
 
 

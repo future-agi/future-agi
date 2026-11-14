@@ -142,9 +142,7 @@ def test_jinja_for_loop_over_populated_list():
     nest_dotted_value(out, ["spans", "0", "kind"], "A")
     nest_dotted_value(out, ["spans", "1", "kind"], "B")
     nest_dotted_value(out, ["spans", "2", "kind"], "C")
-    rendered = _render(
-        "{% for s in spans %}[{{ s.kind }}]{% endfor %}", **out
-    )
+    rendered = _render("{% for s in spans %}[{{ s.kind }}]{% endfor %}", **out)
     assert rendered == "[A][B][C]"
 
 
