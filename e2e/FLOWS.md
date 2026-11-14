@@ -1604,7 +1604,7 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
-### GW-E2E-005 — a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events
+### GW-E2E-006 — a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events
 
 **Goal:** A platform engineer sees why the gateway disabled a webhook that kept failing, turns it back on, and deletes it without leaving events to deliver
 

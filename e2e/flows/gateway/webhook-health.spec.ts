@@ -28,10 +28,10 @@ const UI_READY = 60_000;
 type Created = { result: { id: string } };
 type Key = { result: { gateway_key_id: string } };
 
-test('GW-E2E-005: a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events', {
+test('GW-E2E-006: a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'GW-E2E-005',
+    id: 'GW-E2E-006',
     area: 'gateway',
     userGoal: 'A platform engineer sees why the gateway disabled a webhook that kept failing, turns it back on, and deletes it without leaving events to deliver',
     steps: [
