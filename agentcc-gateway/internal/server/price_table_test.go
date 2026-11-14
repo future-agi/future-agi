@@ -16,8 +16,10 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// The name comes from the provider that served the request, whatever its ID:
-// the org's own instance first, else the config.yaml provider.
+// The name comes from the provider that serves the request, whatever its ID:
+// the org's own enabled provider first, else the config.yaml provider. The
+// org's name comes from its config, so it is the same before and after the
+// org's first request builds its provider.
 func TestPriceTableNameComesFromTheProvider(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers["vertex_ai_global"] = config.ProviderConfig{BaseURL: "https://aiplatform.googleapis.com/v1/projects/p/locations/global", APIFormat: "gemini"}
@@ -27,27 +29,46 @@ func TestPriceTableNameComesFromTheProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating registry: %v", err)
 	}
-	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenant.NewStore(), nil)
-	// An org provider with an ID config.yaml does not have. The IP literal
-	// passes the base URL check without a lookup; nothing is sent to it.
-	orgCfg := &tenant.ProviderConfig{APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "gemini"}
-	if _, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("org-1", "team-gemini", orgCfg.APIKey, orgCfg); err != nil {
-		t.Fatalf("creating org provider: %v", err)
-	}
+	// IP literals pass the base URL check without a lookup; nothing is sent.
+	teamGemini := &tenant.ProviderConfig{APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "gemini"}
+	store := tenant.NewStore()
+	store.Set("org-1", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+		"team-gemini": teamGemini,
+		"team-vertex": {APIKey: "org-key", Enabled: true, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini"},
+		// Layered onto config.yaml's Vertex upstream: the org states no base_url.
+		"vertex_ai_global": {APIKey: "org-key", Enabled: true},
+		"team-openai":      {APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.4.4", APIFormat: "openai"},
+		// Disabled: requests go to config.yaml's provider of that ID.
+		"google": {APIKey: "org-key", Enabled: false, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini"},
+	}})
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), store, nil)
 
-	for _, tc := range []struct{ orgID, providerID, want string }{
+	cases := []struct{ orgID, providerID, want string }{
 		{"", "vertex_ai_global", "vertex_ai"},
 		{"", "google", "gemini"},
 		{"", "openai", ""},
 		{"org-1", "team-gemini", "gemini"},
+		{"org-1", "team-vertex", "vertex_ai"},
+		{"org-1", "vertex_ai_global", "vertex_ai"},
+		{"org-1", "team-openai", ""},
 		{"org-1", "google", "gemini"},
 		{"org-2", "team-gemini", ""},
 		{"", "missing", ""},
-	} {
-		if got := srv.PriceTableName(tc.orgID, tc.providerID); got != tc.want {
-			t.Errorf("PriceTableName(%q, %q) = %q, want %q", tc.orgID, tc.providerID, got, tc.want)
+	}
+	check := func(when string) {
+		t.Helper()
+		for _, tc := range cases {
+			if got := srv.PriceTableName(tc.orgID, tc.providerID); got != tc.want {
+				t.Errorf("%s: PriceTableName(%q, %q) = %q, want %q", when, tc.orgID, tc.providerID, got, tc.want)
+			}
 		}
 	}
+	check("before the org's first request")
+	// What the org's first request through team-gemini does.
+	if _, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("org-1", "team-gemini", teamGemini.APIKey, teamGemini); err != nil {
+		t.Fatalf("creating org provider: %v", err)
+	}
+	check("after the org's first request")
 }
 
 // The table lists gemini-4-argon only as "gemini/…" and "vertex_ai/…". A

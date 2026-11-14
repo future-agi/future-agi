@@ -1,11 +1,14 @@
 package modeldb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -470,4 +473,73 @@ func TestSync_EntriesWithNoRateDoNotCount(t *testing.T) {
 			t.Errorf("dall-e-3 pricing = %+v, want the bundled price", p)
 		}
 	})
+}
+
+// credentialURL rewrites a test server URL to carry a password and a token in
+// the query string, the two places a catalogue URL holds a credential.
+func credentialURL(serverURL string) string {
+	return "http://bob:hunter2@" + strings.TrimPrefix(serverURL, "http://") + "/catalogue.json?token=s3cret"
+}
+
+// captureLogs sends the default logger to a buffer for one test.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+func assertNoCredential(t *testing.T, where, s string) {
+	t.Helper()
+	for _, secret := range []string{"hunter2", "s3cret"} {
+		if strings.Contains(s, secret) {
+			t.Errorf("%s carries the credential %q: %s", where, secret, s)
+		}
+	}
+}
+
+func TestSync_CredentialsNeverReachLogsOrInfo(t *testing.T) {
+	t.Run("good fetch", func(t *testing.T) {
+		logs := captureLogs(t)
+		f := newFakeCatalogue(t, catalogueJSON(60, 1e-6))
+		s, _, c := newTestSyncer(credentialURL(f.URL), 100)
+
+		s.syncOnce(context.Background(), time.Second)
+
+		info := c.Info()
+		if info.Source != SourceFetched {
+			t.Fatalf("precondition: fetch did not load: %+v", info)
+		}
+		assertNoCredential(t, "info.url", info.URL)
+		assertNoCredential(t, "log", logs.String())
+	})
+	t.Run("unreachable fetch", func(t *testing.T) {
+		logs := captureLogs(t)
+		f := newFakeCatalogue(t, "")
+		f.Close() // connection refused: the error carries the URL
+		s, _, c := newTestSyncer(credentialURL(f.URL), 100)
+
+		s.syncOnce(context.Background(), time.Second)
+
+		info := c.Info()
+		if info.LastError == "" {
+			t.Fatal("precondition: the fetch did not fail")
+		}
+		assertNoCredential(t, "info.last_error", info.LastError)
+		assertNoCredential(t, "log", logs.String())
+	})
+}
+
+// "At least half" of an odd count rounds up: 61 of 121, not 60.
+func TestSync_HalfOfBundledRoundsUp(t *testing.T) {
+	f := newFakeCatalogue(t, catalogueJSON(60, 1e-6))
+	s, _, c := newTestSyncer(f.URL, 121)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if info := c.Info(); info.Source != SourceBundled || info.LastError == "" {
+		t.Errorf("a fetch of 60 against 121 bundled was accepted: %+v", info)
+	}
 }

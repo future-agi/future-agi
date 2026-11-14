@@ -11,6 +11,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // The price table keys Perplexity's models under the provider
@@ -87,4 +88,70 @@ func TestGetModel_ProviderKeyedModelShowsItsEntry(t *testing.T) {
 		got[id] = m
 	}
 	checkListedFacts(t, srv, got)
+}
+
+// An org's Gemini provider of any name shows gemini-4-argon's price, which the
+// table keys only as "gemini/…" and "vertex_ai/…", from the org's config: the
+// listing is the same before the org's first request builds the provider and
+// after it.
+func TestListModels_OrgProviderPriceStableAcrossFirstRequest(t *testing.T) {
+	const orgKey = "sk-agentcc-org-gemini"
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "org-user", Key: orgKey, Owner: "user", KeyType: "byok", Metadata: map[string]string{"org_id": "org-1"}}}
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	// The IP literal passes the base URL check without a lookup; nothing is sent to it.
+	pc := &tenant.ProviderConfig{APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "gemini", Models: []string{"gemini-4-argon"}}
+	store := tenant.NewStore()
+	store.Set("org-1", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{"team-gemini": pc}})
+	db := testModelDBPtr()
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, db, store, nil)
+	srv.ready.Store(true)
+
+	if _, ok := db.Load().Get("gemini-4-argon"); ok {
+		t.Fatal("the table now lists gemini-4-argon bare; pick a model it lists only under a provider")
+	}
+	entry, ok := db.Load().Get("gemini/gemini-4-argon")
+	if !ok {
+		t.Fatal("the table no longer lists gemini/gemini-4-argon")
+	}
+	argon := func(when string) models.EnrichedModelObject {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer "+orgKey)
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", when, w.Code, w.Body.String())
+		}
+		var resp models.EnrichedModelListResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s: parsing response: %v", when, err)
+		}
+		for _, m := range resp.Data {
+			if m.ID == "gemini-4-argon" {
+				return m
+			}
+		}
+		t.Fatalf("%s: gemini-4-argon not listed: %s", when, w.Body.String())
+		return models.EnrichedModelObject{}
+	}
+
+	before := argon("before the first request")
+	if p := before.Pricing; p == nil || math.Abs(p.InputPerMTokens-entry.Pricing.InputPerMTok()) > 1e-9 {
+		t.Errorf("before the first request: pricing = %+v, want gemini/gemini-4-argon's %v per M in", p, entry.Pricing.InputPerMTok())
+	}
+	// What the org's first request through team-gemini does.
+	if _, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("org-1", "team-gemini", pc.APIKey, pc); err != nil {
+		t.Fatalf("creating org provider: %v", err)
+	}
+	after := argon("after the first request")
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(b) != string(a) {
+		t.Errorf("listing changed after the first request:\nbefore %s\nafter  %s", b, a)
+	}
 }

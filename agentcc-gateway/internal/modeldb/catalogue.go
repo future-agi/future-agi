@@ -24,8 +24,11 @@ type CatalogueInfo struct {
 
 // Catalogue owns the layers under the live ModelDB: bundled, overlaid by
 // fetched (fetched wins on matching keys), then config overrides. A bundled
-// model the fetch lacks stays, so an older snapshot cannot remove a model. It is the only writer of the shared ModelDB pointer,
-// so a fetch and a config reload each rebuild from the other's latest input.
+// model the fetch lacks stays, so a fetch cannot remove a bundled model. Each
+// accepted fetch replaces the previous one, so a model only an earlier fetch
+// held goes when the next accepted fetch lacks it. It is the only writer of
+// the shared ModelDB pointer, so a fetch and a config reload each rebuild from
+// the other's latest input.
 type Catalogue struct {
 	mu        sync.Mutex
 	models    map[string]*ModelInfo // bundled overlaid by the last good fetch

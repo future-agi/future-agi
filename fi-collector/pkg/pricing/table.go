@@ -143,19 +143,28 @@ func statesTokenPrice(entry json.RawMessage) bool {
 }
 
 // overlay returns a table of t's entries with other's laid over them: other
-// wins on a matching key and t's other entries stay.
+// wins on a matching key and t's other entries stay. An entry from other
+// replaces t's whole entry, provider included: a fetched entry with no
+// litellm_provider leaves no provider, so ProviderPrefixedCost cannot pair the
+// new price with the old provider.
 func (t *Table) overlay(other *Table) *Table {
 	merged := &Table{
 		prices:    make(map[string]modelPrice, len(t.prices)+len(other.prices)),
 		providers: make(map[string]string, len(t.providers)+len(other.providers)),
 		Skipped:   other.Skipped,
 	}
-	for _, src := range []*Table{t, other} {
-		for k, v := range src.prices {
-			merged.prices[k] = v
-		}
-		for k, v := range src.providers {
-			merged.providers[k] = v
+	for k, v := range t.prices {
+		merged.prices[k] = v
+	}
+	for k, v := range t.providers {
+		merged.providers[k] = v
+	}
+	for k, v := range other.prices {
+		merged.prices[k] = v
+		if p, ok := other.providers[k]; ok {
+			merged.providers[k] = p
+		} else {
+			delete(merged.providers, k)
 		}
 	}
 	return merged

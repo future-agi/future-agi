@@ -2,10 +2,12 @@ package pricing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -35,6 +37,7 @@ const (
 type Syncer struct {
 	pricer   *Pricer
 	url      string
+	logURL   string // url with credentials masked, for logs
 	interval time.Duration
 	client   *http.Client
 	base     *Table // the table the collector started with
@@ -56,7 +59,20 @@ func NewSyncer(p *Pricer, base *Table, url string, interval time.Duration, log *
 			"configured", interval, "minimum", MinSyncInterval)
 		interval = MinSyncInterval
 	}
-	return &Syncer{pricer: p, url: url, interval: interval, client: &http.Client{}, base: base, log: log}
+	return &Syncer{pricer: p, url: url, logURL: maskURL(url), interval: interval, client: &http.Client{}, base: base, log: log}
+}
+
+// maskURL hides a password and every query value, where a catalogue URL
+// would carry a credential, so the URL can be logged.
+func maskURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<unparseable>"
+	}
+	if u.RawQuery != "" {
+		u.RawQuery = "REDACTED"
+	}
+	return u.Redacted()
 }
 
 // Run syncs once with a short timeout, then on every interval, until ctx ends.
@@ -80,12 +96,12 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 	defer cancel()
 	table, err := s.fetch(ctx)
 	if err != nil {
-		s.log.Warn("pricing catalogue sync failed; keeping the table in use", "url", s.url, "err", err)
+		s.log.Warn("pricing catalogue sync failed; keeping the table in use", "url", s.logURL, "err", err)
 		return
 	}
 	merged := s.base.overlay(table)
 	s.pricer.SetTable(merged)
-	s.log.Info("pricing catalogue loaded", "source", "fetched", "url", s.url,
+	s.log.Info("pricing catalogue loaded", "source", "fetched", "url", s.logURL,
 		"fetched_entries", table.Len(), "entries", merged.Len())
 }
 
@@ -96,6 +112,11 @@ func (s *Syncer) fetch(ctx context.Context) (*Table, error) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// A *url.Error carries the whole URL, and this error is logged.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = s.logURL
+		}
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
@@ -113,7 +134,7 @@ func (s *Syncer) fetch(ctx context.Context) (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	if floor := max(minFetchedEntries, s.base.usable/2); table.usable < floor {
+	if floor := max(minFetchedEntries, (s.base.usable+1)/2); table.usable < floor {
 		return nil, fmt.Errorf("catalogue has %d entries, fewer than the %d required (entries without a token price do not count)", table.usable, floor)
 	}
 	return table, nil

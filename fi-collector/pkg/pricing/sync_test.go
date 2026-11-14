@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,6 +110,43 @@ func TestSync_FetchedWinsOnMatchingKey(t *testing.T) {
 
 	if got := cost(p, "gpt-4o"); got != 0.01 {
 		t.Errorf("gpt-4o cost = %v, want 0.01 (fetched price)", got)
+	}
+}
+
+// A fetched entry replaces the starting entry's provider too. Without it the
+// prefix fallback would price "openai/gpt-4o" at the fetched rate under a
+// provider the fetched entry never stated.
+func TestSync_FetchedEntryReplacesProvider(t *testing.T) {
+	cases := []struct {
+		name       string
+		entry      string
+		wantOpenAI bool
+		wantAzure  bool
+	}{
+		{"no provider", `{"input_cost_per_token":5e-6,"output_cost_per_token":5e-6}`, false, false},
+		{"other provider", `{"litellm_provider":"azure","input_cost_per_token":5e-6,"output_cost_per_token":5e-6}`, false, true},
+		{"same provider", `{"litellm_provider":"openai","input_cost_per_token":5e-6,"output_cost_per_token":5e-6}`, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeCatalogue(t, withEntry(tableJSON(60, 1e-6), "gpt-4o", tc.entry))
+			s, p := newTestSyncer(t, f.URL, 100)
+			if !priced(p, "openai/gpt-4o") {
+				t.Fatal("starting table does not price openai/gpt-4o")
+			}
+
+			s.syncOnce(context.Background(), time.Second)
+
+			if got := priced(p, "openai/gpt-4o"); got != tc.wantOpenAI {
+				t.Errorf("openai/gpt-4o priced = %v, want %v", got, tc.wantOpenAI)
+			}
+			if got := priced(p, "azure/gpt-4o"); got != tc.wantAzure {
+				t.Errorf("azure/gpt-4o priced = %v, want %v", got, tc.wantAzure)
+			}
+			if got := cost(p, "gpt-4o"); got != 0.01 {
+				t.Errorf("gpt-4o cost = %v, want the fetched 0.01", got)
+			}
+		})
 	}
 }
 
@@ -391,4 +430,53 @@ func negativePrices(n int) string {
 		out += fmt.Sprintf(`"fetched-%d":{"input_cost_per_token":-1,"output_cost_per_token":-1}`, i)
 	}
 	return out + "}"
+}
+
+// A catalogue URL can carry a password or a token in its query string; the
+// logs must carry neither, on a good fetch or a failed one.
+func TestSync_CredentialsNeverReachLogs(t *testing.T) {
+	credentialURL := func(serverURL string) string {
+		return "http://bob:hunter2@" + strings.TrimPrefix(serverURL, "http://") + "/catalogue.json?token=s3cret"
+	}
+	cases := []struct {
+		name   string
+		closed bool
+	}{
+		{"good fetch", false},
+		{"unreachable fetch", true}, // the client error carries the URL
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeCatalogue(t, tableJSON(60, 1e-6))
+			if tc.closed {
+				f.Close()
+			}
+			var logs bytes.Buffer
+			base := startingTable(t, 100)
+			s := NewSyncer(New(base, nil), base, credentialURL(f.URL), time.Hour, slog.New(slog.NewTextHandler(&logs, nil)))
+
+			s.syncOnce(context.Background(), time.Second)
+
+			if logs.Len() == 0 {
+				t.Fatal("precondition: the sync logged nothing")
+			}
+			for _, secret := range []string{"hunter2", "s3cret"} {
+				if strings.Contains(logs.String(), secret) {
+					t.Errorf("log carries the credential %q: %s", secret, logs.String())
+				}
+			}
+		})
+	}
+}
+
+// "At least half" of an odd count rounds up: 61 of 121 usable, not 60.
+func TestSync_HalfOfStartingRoundsUp(t *testing.T) {
+	f := newFakeCatalogue(t, tableJSON(60, 1e-6))
+	s, p := newTestSyncer(t, f.URL, 120) // gpt-4o + 120 base = 121 usable
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if priced(p, "fetched-7") {
+		t.Error("a fetch of 60 against 121 starting entries was accepted")
+	}
 }

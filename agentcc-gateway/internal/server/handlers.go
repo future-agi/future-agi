@@ -2439,15 +2439,21 @@ func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models
 
 // priceTableName is the name the price table keys a provider's models under,
 // as the provider that serves an org's request states it: the org's own
-// instance when the org has one, else the config.yaml provider with that ID.
+// provider when the org has that provider enabled, else the config.yaml
+// provider with that ID. The org's name comes from its config, not from a
+// built instance, which exists only after the org's first request through it.
 func (h *Handlers) priceTableName(orgID, providerID string) string {
-	var p providers.Provider
-	if orgID != "" && h.orgProviderCache != nil {
-		p = h.orgProviderCache.Get(orgID, providerID)
+	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
+		if cfg := h.tenantStore.Get(orgID); cfg != nil {
+			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled {
+				return h.orgProviderCache.PriceTableName(providerID, pc)
+			}
+		}
 	}
-	if p == nil && h.registry != nil {
-		p, _ = h.registry.GetProvider(providerID)
+	if h.registry == nil {
+		return ""
 	}
+	p, _ := h.registry.GetProvider(providerID)
 	return providers.PriceTableName(p)
 }
 

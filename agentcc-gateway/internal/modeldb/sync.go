@@ -2,11 +2,15 @@ package modeldb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
 const (
@@ -32,6 +36,7 @@ const (
 type Syncer struct {
 	catalogue      *Catalogue
 	url            string
+	logURL         string // url with credentials removed, for logs and the admin endpoint
 	interval       time.Duration
 	client         *http.Client
 	bundledEntries int
@@ -54,6 +59,7 @@ func NewSyncer(c *Catalogue, url string, interval time.Duration) *Syncer {
 	return &Syncer{
 		catalogue:      c,
 		url:            url,
+		logURL:         models.RedactCredentials(url),
 		interval:       interval,
 		client:         &http.Client{},
 		bundledEntries: len(BundledModels),
@@ -83,11 +89,11 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 	if err != nil {
 		s.catalogue.recordFailure(err)
 		slog.Warn("model catalogue sync failed; keeping the last good catalogue",
-			"url", s.url, "error", err, "source", s.catalogue.Info().Source)
+			"url", s.logURL, "error", err, "source", s.catalogue.Info().Source)
 		return
 	}
-	s.catalogue.Overlay(fetched, s.url)
-	slog.Info("model catalogue loaded", "source", SourceFetched, "url", s.url, "fetched_entries", len(fetched), "entries", s.catalogue.Info().Entries)
+	s.catalogue.Overlay(fetched, s.logURL)
+	slog.Info("model catalogue loaded", "source", SourceFetched, "url", s.logURL, "fetched_entries", len(fetched), "entries", s.catalogue.Info().Entries)
 }
 
 func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
@@ -97,6 +103,12 @@ func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// A *url.Error carries the whole URL, and this error reaches the logs
+		// and the admin endpoint's last_error.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = s.logURL
+		}
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
@@ -114,7 +126,7 @@ func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if floor := max(minFetchedEntries, s.bundledEntries/2); len(models) < floor {
+	if floor := max(minFetchedEntries, (s.bundledEntries+1)/2); len(models) < floor {
 		return nil, fmt.Errorf("catalogue has %d entries, fewer than the %d required", len(models), floor)
 	}
 	return models, nil
