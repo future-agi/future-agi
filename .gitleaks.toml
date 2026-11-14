@@ -14,7 +14,6 @@ paths = [
     '''/test_[^/]+\.py$''',               # test_foo.py at any depth
     '''/test_mcp_server/''',              # MCP server test scaffolding directory
     '''(?i)/templates/.*\.html$''',       # email templates (figmeta + Mailgun placeholders)
-    '''(?i)\.bru$''',                     # Bruno API collection — uses {{env}} vars
     '''docs/.*\.md$''',                   # documentation examples
     '''\.env\.example$''',
 ]

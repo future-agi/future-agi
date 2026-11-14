@@ -23,7 +23,9 @@ def validate_on_startup() -> None:
         logger.warning(
             "license_startup_invalid",
             state=snapshot.state.value,
-            denial_reason=snapshot.denial_reason.value if snapshot.denial_reason else None,
+            denial_reason=snapshot.denial_reason.value
+            if snapshot.denial_reason
+            else None,
         )
     elif snapshot.is_usable:
         logger.info(
