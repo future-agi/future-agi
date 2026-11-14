@@ -134,7 +134,9 @@ test(
       // DevelopDataV2's getRowId is the row id, so each row is addressed by the id it was seeded with.
       for (const id of rowIds.slice(0, 2)) {
         const checkbox = page.locator(`.ag-row[row-id="${id}"] .ag-checkbox-input`).first();
-        await checkbox.check({ force: true, timeout: UI_READY });
+        // AG Grid redraws the cell as it selects the row, so check()'s own read of
+        // the old input can miss it; the selected row below is the assertion.
+        await checkbox.click({ force: true, timeout: UI_READY });
         await expect(page.locator(`.ag-row.ag-row-selected[row-id="${id}"]`).first()).toBeVisible({ timeout: UI_READY });
       }
     });
