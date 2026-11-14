@@ -9,7 +9,8 @@ import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
-function FalconIcon(props) {
+// eslint-disable-next-line react-refresh/only-export-components -- shared with the Skills navigation's assistant button
+export function FalconIcon(props) {
   return (
     <SvgIcon {...props} viewBox="0 0 24 24">
       {/* Falcon spaceship — pointing UP, geometric, matches brand */}
@@ -111,19 +112,64 @@ function useSkillsSurfaces(active) {
   return surfaces;
 }
 
-export default function FalconAIFab() {
-  const { pathname } = useLocation();
-  const theme = useTheme();
-  const phone = useMediaQuery(theme.breakpoints.down("sm"));
-  const skillsRoot = paths.dashboard.skills.root;
-  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
-  const surfaces = useSkillsSurfaces(inSkills);
+// On a phone in Skills the button also steps aside while a form field has
+// focus and while the page scrolls down; it comes back on scroll up, or once
+// scrolling has been idle for a moment. Only vertical scrolls count: tab
+// strips and code blocks scroll sideways.
+const FIELD = 'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="combobox"]';
+const IDLE_MS = 1200;
+function usePhoneQuiet(active) {
+  const [quiet, setQuiet] = useState({ field: false, scrolling: false });
+  useEffect(() => {
+    if (!active) {
+      setQuiet({ field: false, scrolling: false });
+      return undefined;
+    }
+    const tops = new WeakMap();
+    // Seed the usual scrollers, so even a single jump (PageDown, an anchor) reads as a direction.
+    [document.scrollingElement, document.querySelector("main")].forEach((node) => node && tops.set(node, node.scrollTop));
+    let idle = 0;
+    const update = (patch) => setQuiet((current) => (Object.keys(patch).every((key) => current[key] === patch[key]) ? current : { ...current, ...patch }));
+    const focus = () => update({ field: Boolean(document.activeElement?.closest?.(FIELD)) });
+    const scroll = (event) => {
+      const node = event.target === document ? document.scrollingElement : event.target;
+      if (!node || typeof node.scrollTop !== "number") return;
+      const previous = tops.get(node);
+      tops.set(node, node.scrollTop);
+      if (previous === undefined || Math.abs(node.scrollTop - previous) < 4) return;
+      update({ scrolling: node.scrollTop > previous });
+      window.clearTimeout(idle);
+      idle = window.setTimeout(() => update({ scrolling: false }), IDLE_MS);
+    };
+    let later = 0;
+    // On focusout the next element isn't active yet; read it a tick later.
+    const blur = () => { window.clearTimeout(later); later = window.setTimeout(focus, 0); };
+    focus();
+    document.addEventListener("focusin", focus);
+    document.addEventListener("focusout", blur);
+    document.addEventListener("scroll", scroll, { capture: true, passive: true });
+    return () => {
+      window.clearTimeout(idle);
+      window.clearTimeout(later);
+      document.removeEventListener("focusin", focus);
+      document.removeEventListener("focusout", blur);
+      document.removeEventListener("scroll", scroll, { capture: true });
+    };
+  }, [active]);
+  return quiet.field || quiet.scrolling;
+}
+
+/**
+ * Opens Falcon AI the way the floating button and Cmd+K do: the sidebar when
+ * the deployment allows it, otherwise the full page with its upsell. Skills
+ * uses it for the assistant button in its navigation row.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- the hook belongs with the button it mirrors
+export function useOpenFalconAI() {
   const navigate = useNavigate();
   const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
-  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
-
-  const openFalconAI = useCallback(() => {
+  return useCallback(() => {
     if (!falconAllowed) {
       // Full page shows the capability upsell for unlicensed deployments.
       navigate("/dashboard/falcon-ai");
@@ -131,6 +177,18 @@ export default function FalconAIFab() {
     }
     toggleSidebar();
   }, [falconAllowed, navigate, toggleSidebar]);
+}
+
+export default function FalconAIFab() {
+  const { pathname } = useLocation();
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
+  const skillsRoot = paths.dashboard.skills.root;
+  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
+  const surfaces = useSkillsSurfaces(inSkills && phone);
+  const quiet = usePhoneQuiet(inSkills && phone);
+  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
+  const openFalconAI = useOpenFalconAI();
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
@@ -152,11 +210,16 @@ export default function FalconAIFab() {
   // Hide FAB when sidebar is open
   if (isSidebarOpen) return null;
 
-  // Skills: the FAB sits 16px from the edges and above any sticky task footer
-  // (published height or measured, whichever is larger). On a phone it steps
-  // aside while a footer, dialog, drawer or menu is open. Elsewhere it keeps
-  // its original placement.
-  if (inSkills && phone && (surfaces.footer || surfaces.overlay)) return null;
+  // Skills, from sm up: no floating button. The same action sits in the Skills
+  // navigation row (SkillsWorkspaceLayout), so nothing floats over content;
+  // Cmd+K above stays mounted.
+  if (inSkills && !phone) return null;
+  // Skills on a phone: the FAB sits 16px from the edges and above any sticky
+  // task footer (published height or measured, whichever is larger). It steps
+  // aside while a footer, dialog, drawer or menu is open, while a field has
+  // focus and while the page scrolls down. Elsewhere it keeps its original
+  // placement.
+  if (inSkills && (surfaces.footer || surfaces.overlay || quiet)) return null;
   const placement = inSkills
     ? {
         bottom: `calc(max(var(--skills-sticky-footer-height, 0px), ${surfaces.footerHeight}px) + 16px)`,

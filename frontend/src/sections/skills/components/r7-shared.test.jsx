@@ -10,6 +10,7 @@ import { enqueueSnackbar } from 'notistack';
 import { RUN_STATUS } from 'src/utils/runStatus';
 import IdentityChip from './IdentityChip';
 import VersionIdentityRow from './VersionIdentityRow';
+import VersionLabel from './VersionLabel';
 import ObjectHeader from './ObjectHeader';
 import PeoplePicker from './PeoplePicker';
 import TechnicalDetails from './TechnicalDetails';
@@ -401,8 +402,68 @@ describe('header identity', () => {
     expect(screen.getByText('Production v1')).toBeVisible();
     expect(screen.getByText('Latest v2')).toBeVisible();
     expect(screen.getByText('Your draft (from v2)')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Copy full Digest' })).toBeVisible();
+    // UX iteration 3 (SH3): no raw digest in the row; the viewed version's full digest is one keystroke away.
+    expect(screen.queryByText(/abababab/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Digest')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'v2, show full version digest' })).toHaveAttribute('aria-haspopup', 'dialog');
   });
+  it('reads "Viewing vN" without a picker and opens the full digest from the version label', async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<VersionIdentityRow viewing={{ number: 2, digest }} production={{ number: 1 }} />);
+    const label = screen.getByRole('button', { name: 'v2, show full version digest' });
+    expect(label).toHaveTextContent('v2');
+    expect(screen.queryByText(/abababab/)).not.toBeInTheDocument();
+    label.focus();
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'Full version digest of v2' });
+    expect(within(dialog).getByText(digest)).toBeVisible();
+    const copy = within(dialog).getByRole('button', { name: 'Copy full digest' });
+    await waitFor(() => expect(copy).toHaveFocus());
+    await user.keyboard('{Enter}');
+    expect(write).toHaveBeenCalledWith(digest);
+    expect(enqueueSnackbar).toHaveBeenCalledWith('Copied');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(label).toHaveFocus();
+  });
+});
+
+describe('VersionLabel', () => {
+  it('shows the full digest on hover and copies the complete value from the popover', async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<VersionLabel number={3} digest={digest} label="candidate" suffix="· 41 min ago" />);
+    const label = screen.getByRole('button', { name: 'v3, show full candidate digest' });
+    expect(label).toHaveTextContent('v3 · 41 min ago');
+    await user.hover(label);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(digest);
+    await user.click(label);
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Copy full digest' }));
+    expect(write).toHaveBeenCalledWith(digest);
+    expect(write.mock.calls[0][0]).toHaveLength(digest.length);
+  });
+  it('keeps the full value selectable when copying fails', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('Not allowed'));
+    render(<VersionLabel number={1} digest={digest} />);
+    await user.click(screen.getByRole('button', { name: 'v1, show full version digest' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Copy full digest' }));
+    expect(await screen.findByText("Couldn't copy. Select the full value above.")).toBeVisible();
+    expect(within(screen.getByRole('dialog')).getByText(digest)).toHaveStyle({ userSelect: 'all' });
+  });
+  it('renders plain text and no trigger when no digest is reported', () => {
+    render(<VersionLabel number={4} />);
+    expect(screen.getByText('v4')).toBeVisible();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    cleanup();
+    render(<VersionLabel compact number={4} />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
+describe('header identity, layout', () => {
   it('keeps the breadcrumb even when a caller hides direct breadcrumb children, and truncates the middle crumb', () => {
     render(<MemoryRouter><ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: 'none' } }} crumbs={[{ label: 'Reviews', to: '/dashboard/skills/reviews' }, { label: 'support-agent', to: '/x' }, { label: 'v2' }]} title="support-agent" /></MemoryRouter>);
     const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });

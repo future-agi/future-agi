@@ -7,6 +7,10 @@ import { shortDigest } from '../utils/format';
 import './skillIcons';
 
 // Presentation only: never use the shortened text for comparisons or payloads.
+// For a version, prefer VersionLabel ("v2", full digest on hover or Enter):
+// since UX iteration 3 (SH3) no digest is primary content in headers or
+// tables. Keep this chip for records whose short form is what people need,
+// inside TechnicalDetails or other secondary places.
 export default function IdentityChip({ value, label, kind = 'digest', length = 12, inline = false }) {
   const [failedValue, setFailedValue] = useState(null);
   const present = typeof value === 'string' && value.length > 0;

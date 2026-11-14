@@ -36,7 +36,9 @@ export default function ObjectHeader({ crumbs = [], title, purpose, badge, ident
     {/* Actions are buttons only and sit vertically centred against the title block. */}
     <PageHeader title={title} description={purpose} badge={badge} actions={actions} sx={{ mb: 0, flexDirection: { xs: 'column', sm: 'row' }, alignItems: { xs: 'flex-start', sm: 'center' }, flexWrap: 'wrap', gap: 1.5, '& > .MuiStack-root': { minWidth: 0, maxWidth: 1, ml: { xs: 0 } }, '& > .MuiStack-root:last-of-type': { flexWrap: 'wrap', rowGap: 1 }, '& h1': { whiteSpace: 'normal', overflowWrap: 'anywhere' } }} />
     {identity}
-    {tabs && <Box ref={tabsRef} sx={{ minWidth: 0 }}>{tabStrip}</Box>}
+    {/* Measured (UX iteration 3, SH1): the panel's first line sat 4px under the
+        strip at 390 against 12px at 1440 and up; the phone margin evens it out. */}
+    {tabs && <Box ref={tabsRef} sx={{ minWidth: 0, mb: { xs: 1, sm: 0 } }}>{tabStrip}</Box>}
   </Stack>;
 }
 

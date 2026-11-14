@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
@@ -12,6 +12,7 @@ vi.mock('src/api/skills/context-campaigns', () => ({ campaignsContractReady: () 
 vi.mock('src/api/skills/r3-spend', () => ({ spendPolicyReady: () => api.ready, useSkillsSpendPolicy: () => api.query, useUpdateSkillsSpendPolicy: () => ({ mutateAsync: api.save }) }));
 vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => api.org }));
 vi.mock('src/contexts/WorkspaceContext', () => ({ useWorkspace: () => api.workspace }));
+vi.mock('src/sections/falcon-ai/components/FalconAIFab', () => ({ useOpenFalconAI: () => () => undefined, FalconIcon: () => null }));
 const policy = { revision: 0, enabled: false, periodLimitUsd: null, startsAt: '2026-11-01', endsAt: '2026-12-01', knownEstimateUsd: '0', committedUsd: '0', remainingUsd: null, unknownReservedUsd: '0', priorPeriodUnknownUsd: '0' };
 const mount = () => render(<HelmetProvider><MemoryRouter initialEntries={[paths.dashboard.skills.root]}><Routes>
   <Route path="/dashboard/skills" element={<SkillsWorkspaceLayout />}>
@@ -68,6 +69,20 @@ it('reads a saved allowance in dollars and states the conclusion first', () => {
   fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '' } });
   expect(screen.getByText('Monthly limit in USD. To block paid runs, untick the box below.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Save', exact: true })).toHaveAccessibleDescription('Enter an amount.');
+});
+it('names the page once, under a Skills breadcrumb, with one disclosure for how usage is counted', () => {
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
+  const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
+  expect(within(crumbs).getByRole('link', { name: 'Skills' })).toHaveAttribute('href', paths.dashboard.skills.root);
+  expect(within(crumbs).getByText('Workspace allowance')).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('heading', { name: 'Workspace allowance' })).toBeVisible();
+  expect(screen.queryByText('Spending allowance')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Accounting details' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'How usage is counted' })).toHaveAttribute('aria-expanded', 'false');
+  // Two controls stay: an amount saved with paid runs off is its own server state. Nothing starts ticked.
+  expect(screen.getByLabelText('Allow paid test runs up to this amount')).not.toBeChecked();
 });
 it('explains an empty field only where leaving it empty keeps paid runs off', () => {
   mount();

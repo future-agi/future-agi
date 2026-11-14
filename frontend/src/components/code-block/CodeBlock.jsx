@@ -10,9 +10,40 @@ import Iconify from "src/components/iconify";
 // The control is one of: a caller's `action` node, a small outlined "Copy"
 // button (`copyLabel`, with `ariaLabel` keeping a caller's accessible name),
 // or the default icon button. Every one floats inside the block, and the
-// code's right padding grows to its width so no line hides beneath it.
+// code's right padding grows to its width so no line ends beneath it.
+// Unwrapped code scrolls sideways. Padding alone doesn't stop a long line
+// painting under the control (overflow shows through the padding box), so
+// while more of a line lies to the right, the code fades out over 24px just
+// before the reserved width and stays hidden beneath the control.
 const EDGE = 6;
 const GAP = 8;
+const FADE = 24;
+const PAD = 12;
+const LINE = 18;
+
+// Two mask layers (alpha only): in the band beside the control, code fades
+// out over FADE px and stays hidden beneath it; below the band, lines fade
+// over the last FADE px of the block. Either way the fade says "scroll for more".
+function fadeMask(reserve, band) {
+  const beside = `linear-gradient(to right, black calc(100% - ${reserve + FADE}px), transparent calc(100% - ${reserve}px))`;
+  const below = `linear-gradient(to right, black calc(100% - ${FADE}px), transparent)`;
+  const layers = {
+    image: `${beside}, ${below}`,
+    size: `100% ${band}px, 100% calc(100% - ${band}px)`,
+    position: "left top, left bottom",
+    repeat: "no-repeat",
+  };
+  return {
+    WebkitMaskImage: layers.image,
+    maskImage: layers.image,
+    WebkitMaskSize: layers.size,
+    maskSize: layers.size,
+    WebkitMaskPosition: layers.position,
+    maskPosition: layers.position,
+    WebkitMaskRepeat: layers.repeat,
+    maskRepeat: layers.repeat,
+  };
+}
 
 export default function CodeBlock({
   code,
@@ -26,7 +57,9 @@ export default function CodeBlock({
 }) {
   const [copied, setCopied] = useState(false);
   const [reserve, setReserve] = useState(null);
+  const [more, setMore] = useState(false);
   const controlRef = useRef(null);
+  const preRef = useRef(null);
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   const copy = () => {
@@ -37,17 +70,41 @@ export default function CodeBlock({
     timer.current = setTimeout(() => setCopied(false), 1500);
   };
   const floating = Boolean(action || copyLabel);
-  // Measure the floating control so the code never runs under it.
+  // Measure the control (width to reserve, height of the band it covers) so
+  // the code never runs under it.
   useEffect(() => {
     const node = controlRef.current;
-    if (!floating || !node) return undefined;
-    const measure = () => setReserve(Math.ceil(node.getBoundingClientRect().width) + EDGE + GAP);
+    if (!node) return undefined;
+    const measure = () => {
+      const box = node.getBoundingClientRect();
+      // The band ends on a line boundary (12px padding, 18px lines), so no line is half hidden.
+      const lines = Math.ceil(Math.max(0, box.height + EDGE - PAD) / LINE);
+      const next = { width: Math.ceil(box.width) + EDGE + GAP, band: PAD + lines * LINE };
+      setReserve((current) => (current && current.width === next.width && current.band === next.band ? current : next));
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
   }, [floating]);
+  // Track whether more of a line lies to the right (unwrapped code only).
+  useEffect(() => {
+    const pre = preRef.current;
+    if (wrap || !pre) return undefined;
+    const check = () => setMore(pre.scrollLeft + pre.clientWidth < pre.scrollWidth - 1);
+    check();
+    pre.addEventListener("scroll", check, { passive: true });
+    let observer;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(check);
+      observer.observe(pre);
+    }
+    return () => {
+      pre.removeEventListener("scroll", check);
+      observer?.disconnect();
+    };
+  }, [wrap, code, reserve]);
 
   let control;
   if (action) control = action;
@@ -107,16 +164,19 @@ export default function CodeBlock({
       </Box>
       <Box
         component="pre"
+        ref={preRef}
         aria-label={label}
         tabIndex={0}
+        data-fade-end={wrap ? undefined : String(more)}
         sx={{
           m: 0,
           p: 1.5,
           // The default icon keeps its 40px; a floating button reserves its measured width.
-          pr: floating ? (reserve ? `${reserve}px` : 12) : 5,
+          pr: floating ? (reserve?.width ? `${reserve.width}px` : 11) : 5,
+          ...(!wrap && more && fadeMask(floating ? reserve?.width || 88 : 40, reserve?.band || PAD + 2 * LINE)),
           fontFamily: "monospace",
           fontSize: 12,
-          lineHeight: "18px",
+          lineHeight: `${LINE}px`,
           color: "text.primary",
           overflowX: "auto",
           whiteSpace: wrap ? "pre-wrap" : "pre",

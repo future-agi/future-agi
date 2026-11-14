@@ -11,6 +11,7 @@ import TextDiff from './TextDiff';
 import ChecksList from './ChecksList';
 import { SKILLS_NAV_ICON } from './skillIcons';
 import { buildDiffRows } from './diffRows';
+import { boundaryTarget, centreActiveTab, scrollTabsSx } from './tabStrip';
 
 // Shared dialogs require the product theme; their interaction boundary is enough
 // here, while real shared-dialog tests cover focus trapping and close buttons.
@@ -177,6 +178,9 @@ vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ enabled: n
 vi.mock('src/api/skills/r3-spend', () => ({ spendPolicyReady: () => navigation.allowance }));
 vi.mock('src/api/skills/context-campaigns', () => ({ campaignsContractReady: () => navigation.contract, useContextCampaignAvailability: () => ({ data: { enabled: navigation.campaigns } }) }));
 vi.mock('../contexts/ContextLibraryView', () => ({ useContextAuthoring: () => ({ bindings: navigation.bindings }) }));
+// The assistant's open action needs the app's capability query; its own behaviour is covered in production-routes.test.jsx.
+const assistant = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock('src/sections/falcon-ai/components/FalconAIFab', () => ({ useOpenFalconAI: () => assistant.open, FalconIcon: () => null }));
 vi.mock('./SkillsProductionProvider', async () => {
   const { default: Types } = await import('prop-types');
   function Provider({ children }) { return children; }
@@ -217,6 +221,11 @@ describe('Skills workspace navigation', () => {
     mountNavigation();
     await user.tab();
     expect(screen.getByRole('tab', { name: 'Skills' })).toHaveFocus();
+    await user.tab();
+    // From sm up the assistant sits just left of More (UX iteration 3, SH2).
+    expect(screen.getByRole('button', { name: 'Falcon AI (⌘K)' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(assistant.open).toHaveBeenCalledOnce();
     await user.tab();
     const trigger = screen.getByRole('button', { name: 'More Skills pages' });
     expect(trigger).toHaveFocus();
@@ -264,5 +273,83 @@ describe('Skills workspace navigation', () => {
     await act(async () => resolve({ default: () => <p>Loaded destination</p> }));
     expect(await screen.findByText('Loaded destination')).toBeVisible();
     expect(screen.getByRole('navigation', { name: 'Skills navigation' })).toBe(shell);
+  });
+});
+
+// A tab strip with fixed geometry: tabs laid out left to right with the given
+// widths, inside a scroller `width` px wide (jsdom has no layout).
+function fakeStrip({ widths, selected, scrollLeft = 0, width, arrows = false }) {
+  const root = document.createElement('div');
+  root.className = 'MuiTabs-root';
+  const scroller = document.createElement('div');
+  scroller.className = 'MuiTabs-scroller';
+  const flex = document.createElement('div');
+  scroller.appendChild(flex);
+  if (arrows) root.appendChild(Object.assign(document.createElement('div'), { className: 'MuiTabs-scrollButtons' }));
+  root.appendChild(scroller);
+  if (arrows) root.appendChild(Object.assign(document.createElement('div'), { className: 'MuiTabs-scrollButtons' }));
+  let x = 0;
+  widths.forEach((w, index) => {
+    const tab = document.createElement('button');
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(index === selected));
+    const left = x;
+    tab.getBoundingClientRect = () => ({ left: left - scroller.scrollLeft, right: left + w - scroller.scrollLeft, width: w });
+    flex.appendChild(tab);
+    x += w;
+  });
+  let offset = scrollLeft;
+  Object.defineProperty(scroller, 'scrollLeft', { get: () => offset, set: (value) => { offset = value; }, configurable: true });
+  Object.defineProperty(scroller, 'scrollWidth', { value: x, configurable: true });
+  // With arrows, each visible arrow takes 32px from the scroller.
+  Object.defineProperty(scroller, 'clientWidth', { get: () => width - (arrows && offset > 1 ? 32 : 0) - (arrows && offset + width < x ? 32 : 0), configurable: true });
+  scroller.getBoundingClientRect = () => ({ left: 0, right: scroller.clientWidth });
+  scroller.scrollTo = vi.fn(({ left }) => { offset = left; });
+  return { root, scroller };
+}
+const lefts = [0, 100, 190, 250, 330, 420];
+const widths = [100, 90, 60, 80, 90, 80];
+
+describe('object tab alignment', () => {
+  it('scrolls the least that shows the selected tab whole, with the first visible tab on the left edge', () => {
+    const { root, scroller } = fakeStrip({ widths, selected: 4, width: 300 });
+    centreActiveTab(root);
+    // Centring would have used 225 and cut a label on both sides; 190 is the "Tests"-style boundary.
+    expect(scroller.scrollTo).toHaveBeenCalledWith({ left: 190 });
+    expect(lefts).toContain(scroller.scrollLeft);
+    expect(scroller.scrollLeft + 300).toBeGreaterThanOrEqual(420);
+    expect(scroller.getAttribute('data-fade-start')).toBe('true');
+    expect(scroller.getAttribute('data-fade-end')).toBe('true');
+  });
+  it('moves an unaligned strip to the nearest boundary that keeps the selection whole', () => {
+    const { scroller } = fakeStrip({ widths, selected: 1, scrollLeft: 225, width: 300 });
+    expect(boundaryTarget(scroller, scroller.querySelectorAll('[role="tab"]')[1])).toBe(100);
+  });
+  it('leaves an aligned strip alone while the selected tab is fully visible', () => {
+    const { root, scroller } = fakeStrip({ widths, selected: 3, scrollLeft: 190, width: 300 });
+    centreActiveTab(root);
+    expect(scroller.scrollTo).not.toHaveBeenCalled();
+  });
+  it('counts the scroll arrows that appear once the strip has moved', () => {
+    const { root, scroller } = fakeStrip({ widths, selected: 3, width: 326, arrows: true });
+    centreActiveTab(root);
+    expect(scroller.scrollTo).toHaveBeenCalledWith({ left: 100 });
+    // Both arrows now show: 326 - 64 = 262px of strip, and the selected tab (250 to 330) fits.
+    expect(scroller.clientWidth).toBe(262);
+    expect(330 - scroller.scrollLeft).toBeLessThanOrEqual(scroller.clientWidth);
+  });
+  it('fades exactly the label cut at an edge, and no whole tab at a boundary', () => {
+    const { root, scroller } = fakeStrip({ widths, selected: 3, scrollLeft: 190, width: 300 });
+    centreActiveTab(root);
+    const fade = scroller.style.getPropertyValue('--tab-fade');
+    // Left edge on a tab boundary: nothing faded there.
+    expect(fade).toMatch(/^linear-gradient\(to right, black 0px, /);
+    // The last tab (420 to 500) shows 70px: the whole fragment sits under the fade.
+    expect(fade).toContain('black calc(100% - 70px)');
+    expect(fade).toContain('transparent 100%');
+  });
+  it('snaps tabs to their start edge', () => {
+    expect(scrollTabsSx['& .MuiTabs-scroller']).toMatchObject({ scrollSnapType: 'x mandatory' });
+    expect(scrollTabsSx['& .MuiTabs-scroller .MuiTab-root']).toEqual({ scrollSnapAlign: 'start' });
   });
 });
