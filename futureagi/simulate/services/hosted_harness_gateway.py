@@ -1211,6 +1211,9 @@ def attach_platform_simulator_secret_refs(
 # The decision whether a run exports to the agent's hidden simulation project is made once, at
 # launch, and shipped in job.json; the sandbox repeats none of it. It never fails a launch.
 _EXPORT_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"
+# The listed snapshots whose hook can also measure an agent that traces nothing itself. An
+# older hook would put our key on any exporter the agent aims at its own traces endpoint.
+_MEASURE_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS"
 _EXPORT_SECRET_PURPOSE = "observability_export"
 # Only the endpoints name where a customer's spans go; their headers are merged by the hook.
 _OTEL_EXPORT_NAMES = frozenset(
@@ -1222,8 +1225,9 @@ _INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
 _INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
 _INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
 # Refusals that fire on every launch that was never meant to export: unbound, from an
-# unlisted snapshot, a hosted agent, observability off or no instrumentation. They log at info
-# so the reasons someone running the platform can act on stand out at warning.
+# unlisted snapshot, a hosted agent, a traced agent with observability off, or an
+# instrumentation the sandbox cannot measure. They log at info so the reasons someone running the
+# platform can act on stand out at warning.
 _QUIET_EXPORT_REASONS = frozenset(
     {
         "not_bound",
@@ -1300,6 +1304,10 @@ def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
     return agent
 
 
+def _listed_snapshots(setting: str) -> set[str]:
+    return {name.strip() for name in getattr(settings, setting) if name.strip()}
+
+
 def _decide_observability_export(
     job: HostedHarnessJob,
     payload: Mapping[str, Any],
@@ -1308,28 +1316,35 @@ def _decide_observability_export(
     allowed_domains: Iterable[str],
     max_egress_domains: int | None,
 ) -> _ExportPlan:
-    listed = {
-        name.strip()
-        for name in os.environ.get(_EXPORT_SNAPSHOTS_SETTING, "").split(",")
-        if name.strip()
-    }
-    if selected_snapshot not in listed:
+    if selected_snapshot not in _listed_snapshots(_EXPORT_SNAPSHOTS_SETTING):
         raise _ExportRefused("snapshot_unsupported")
 
     agent = _bound_agent_definition(job, payload)
 
-    provider = agent.observability_provider
-    if provider is None or provider.deleted or not provider.enabled:
-        raise _ExportRefused("observability_off")
-    # The row only gates the export: spans go to the hidden project, never to this one.
-    project = provider.project
-    if project.deleted or project.organization_id != job.organization_id:
-        raise _ExportRefused("observability_off")
-    from simulate.services.agent_setup import agent_summary
+    from simulate.services.agent_setup import launched_agent_summary
 
-    summary = agent_summary(agent.id)
+    # The setup of the version this run launches decides, not the newest one's: a traced
+    # older version keeps its own observability switch when a newer one traces nothing.
+    summary = launched_agent_summary(agent.id, agent_version_id=job.agent_version_id)
     if summary.kind != "source":
         raise _ExportRefused("not_source")
+    # Decided before the hidden project or the key is made: on a snapshot that cannot measure,
+    # an agent that traces nothing exports nothing, as before.
+    if summary.instrumentation == "none" and selected_snapshot not in _listed_snapshots(
+        _MEASURE_SNAPSHOTS_SETTING
+    ):
+        raise _ExportRefused("not_instrumented")
+    # A traced agent exports what its own setup records, prompts and replies included, so its
+    # observability switch still decides. An untraced agent is measured whatever the switch
+    # says: the sandbox records its models, tokens and timing only, never prompts or replies.
+    if summary.instrumentation != "none":
+        provider = agent.observability_provider
+        if provider is None or provider.deleted or not provider.enabled:
+            raise _ExportRefused("observability_off")
+        # The row only gates the export: spans go to the hidden project, never to this one.
+        project = provider.project
+        if project.deleted or project.organization_id != job.organization_id:
+            raise _ExportRefused("observability_off")
     from tracer.services.simulation_project import ensure_simulation_project
 
     # A failure to make the project escapes to the guard, which logs the exception's class.
@@ -1369,8 +1384,11 @@ def _decide_observability_export(
     elif instrumentation == "traceai":
         if declared & (_OTEL_EXPORT_NAMES | {"FI_BASE_URL"}):
             raise _ExportRefused("customer_configuration")
-    else:
+    elif instrumentation != "none":
         raise _ExportRefused("not_instrumented")
+    # An agent that traces nothing itself is measured by the sandbox: its model SDKs'
+    # instrumentors export, through a provider of the sandbox's own, to a name no agent reads,
+    # so an endpoint the agent set for its own exporters is left as it is.
     # A customer value under one of our names would be overwritten by the sandbox key.
     if any(alias.startswith(_INGEST_ALIAS_PREFIX) for alias in declared):
         raise _ExportRefused("customer_configuration")
@@ -1454,8 +1472,35 @@ def _mark_is_acceptable(mark: Any) -> bool:
     return True
 
 
+# A model base URL the agent declares under a provider's or an LLM name. Its host is where the
+# agent's model calls go, so the sandbox counts a request there outside a measured SDK call as a
+# model call it did not measure. Other URLs (a database, a tool's API) are not model hosts.
+_MODEL_BASE_URL_ALIAS = re.compile(
+    r"(?:[A-Z0-9]+_)*(?:OPENAI|AZURE_OPENAI|ANTHROPIC|LLM|MODEL|GEMINI|GOOGLE_GENAI|MISTRAL"
+    r"|GROQ|COHERE|DEEPSEEK|OPENROUTER|LITELLM|TOGETHER|FIREWORKS|XAI|PERPLEXITY)"
+    r"_(?:API_)?(?:BASE_URL|BASE|ENDPOINT|URL|HOST)"
+)
+
+
+def _model_hosts(
+    secrets_map: Mapping[str, Any], simulator_env: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
+    the platform's model gateway, and the host of any model base URL the agent declares."""
+    hosts = {_hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))}
+    hosts.update(
+        _hostname_from_url(value)
+        for alias, value in secrets_map.items()
+        if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
+    )
+    return tuple(sorted(host for host in hosts if host))
+
+
 def _simulation_mark(
-    job: Any, plan: _ExportPlan | None = None
+    job: Any,
+    plan: _ExportPlan | None = None,
+    *,
+    model_hosts: Iterable[str] = (),
 ) -> tuple[dict[str, str], bool]:
     """The environment dictionary for this run, and whether it may be used.
 
@@ -1477,6 +1522,7 @@ def _simulation_mark(
             collector_url=plan.collector_url,
             export=plan.export,
             instrumentation=plan.instrumentation,
+            model_hosts=model_hosts,
         )
     except Exception:  # noqa: BLE001 - the mark never fails a launch
         structlog_logger.warning(
@@ -2548,7 +2594,9 @@ class HostedHarnessGateway:
             allowed_domains=allowed_domains,
             max_egress_domains=self.client.max_egress_domains,
         )
-        simulation_mark, mark_accepted = _simulation_mark(job, export_plan)
+        simulation_mark, mark_accepted = _simulation_mark(
+            job, export_plan, model_hosts=_model_hosts(secrets_map, simulator_env)
+        )
         if not mark_accepted:
             # A guest must never get our key without the dictionary that says what to do
             # with it.
