@@ -219,7 +219,7 @@ def _usable_webhook(webhook_id):
     return webhook
 
 
-def _end_run(webhook_id, paused, release_lease, run_token=None):
+def _end_run(webhook_id, paused, release_lease, run_token=None, receiver=None):
     """End a run: a run that stopped on failures pauses the next. A scheduled
     run also releases its lease; a direct call holds none, so it must not free
     the slot of a scheduled run that may be going at the same time.
@@ -227,19 +227,29 @@ def _end_run(webhook_id, paused, release_lease, run_token=None):
     ``run_token`` is the ``last_run_started_at`` the dispatcher stamped for
     this run. A run that outlived its lease (its thread keeps going past the
     activity's timeout) and was dispatched again meanwhile holds a stale one:
-    it then leaves the newer run's lease alone. A run started without one (a
-    run dispatched before this rule existed) releases unconditionally."""
+    it then leaves the newer run's lease and pause alone. A run started
+    without one (dispatched before this rule existed) acts unconditionally.
+
+    ``receiver`` is the (url, secret, headers) the run last posted with. Its
+    pause applies only while they are unchanged: an owner who fixed the
+    receiver while the run was still failing gets the next tick."""
     rows = AgentccWebhook.all_objects.filter(pk=webhook_id)
+    if run_token is not None:
+        rows = rows.filter(last_run_started_at=run_token)
     next_at = None
     if paused:
         streak = rows.values_list("consecutive_failures", flat=True).first()
         next_at = timezone.now() + _pause(streak or 1)
-    rows.update(next_delivery_at=next_at)
+        paused_rows = rows
+        if receiver is not None:
+            url, secret, headers = receiver
+            paused_rows = rows.filter(url=url, secret=secret, headers=headers)
+        if not paused_rows.update(next_delivery_at=next_at):
+            next_at = None
+    else:
+        rows.update(next_delivery_at=None)
     if release_lease:
-        owned = (
-            rows if run_token is None else rows.filter(last_run_started_at=run_token)
-        )
-        owned.update(delivery_lease_until=None)
+        rows.update(delivery_lease_until=None)
     return next_at
 
 
@@ -329,7 +339,15 @@ def deliver_webhook(
         if http is not None:
             http.close()
         paused_until = _end_run(
-            webhook_id, stopped_on_failure, release_lease, run_token
+            webhook_id,
+            stopped_on_failure,
+            release_lease,
+            run_token,
+            receiver=(
+                (webhook.url, webhook.secret, webhook.headers)
+                if webhook is not None
+                else None
+            ),
         )
         logger.info(
             "webhook_events_processed",
@@ -501,13 +519,16 @@ def deliver_webhook_activity(webhook_id, run_started_at=None):
         return deliver_webhook(webhook_id, release_lease=True, run_token=token)
     finally:
         try:
-            dispatch_deliveries()
+            # Not this webhook: its workflow is still running, so the fixed
+            # workflow id would reuse it and strand a fresh lease. The next
+            # tick continues it.
+            dispatch_deliveries(exclude=webhook_id)
         except Exception:
             # The schedule's next tick dispatches instead.
             logger.exception("webhook_delivery_redispatch_failed")
 
 
-def _lease_free_slots(now):
+def _lease_free_slots(now, exclude=None):
     """Under the dispatch lock: lease runs for the webhooks next in turn,
     within the install-wide and per-org caps. Returns (leased ids, listed,
     in flight)."""
@@ -524,6 +545,8 @@ def _lease_free_slots(now):
         for row in order:
             if len(leased) >= free:
                 break
+            if exclude is not None and str(row["webhook_id"]) == str(exclude):
+                continue
             org = row["webhook__organization_id"]
             if per_org > 0 and by_org.get(org, 0) >= per_org:
                 continue
@@ -534,7 +557,7 @@ def _lease_free_slots(now):
     return leased, len(order), running
 
 
-def dispatch_deliveries(now=None):
+def dispatch_deliveries(now=None, exclude=None):
     """Start delivery runs for the webhooks next in turn, within the caps.
 
     A webhook whose run is still going keeps it: its lease keeps it out of
@@ -544,7 +567,7 @@ def dispatch_deliveries(now=None):
     from temporalio.common import WorkflowIDConflictPolicy
 
     now = now or timezone.now()
-    leased, listed, running = _lease_free_slots(now)
+    leased, listed, running = _lease_free_slots(now, exclude=exclude)
     started = 0
     for webhook_id in leased:
         try:

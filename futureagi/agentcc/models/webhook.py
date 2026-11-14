@@ -114,6 +114,9 @@ class AgentccWebhookEvent(BaseModel):
     last_response_code = models.IntegerField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
     next_retry_at = models.DateTimeField(null=True, blank=True)
+    # When it was last queued again by hand (Retry). The pending age limit
+    # counts from the later of this and created_at.
+    requeued_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook_event"

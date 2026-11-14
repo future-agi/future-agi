@@ -285,6 +285,42 @@ class TestAgentccWebhookEvent:
         event.refresh_from_db()
         assert event.status == AgentccWebhookEvent.PENDING
 
+    def test_a_retried_old_event_that_fails_once_backs_off_not_expires(
+        self, auth_client, user, settings
+    ):
+        """Round 3 review: the re-queue time, not the attempt count, anchors
+        the age. A hand-retried old event whose first new attempt fails is
+        backed off and due again, not expired by the next maintenance run."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from agentcc.services.webhook_delivery import _due, _record_attempt
+        from agentcc.services.webhook_hygiene import expire_pending_events
+
+        settings.AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS = 24
+        webhook = _make_webhook(user)
+        event = _make_event(
+            webhook, user, status=AgentccWebhookEvent.DEAD_LETTER, attempts=5
+        )
+        AgentccWebhookEvent.all_objects.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(hours=72)
+        )
+        assert (
+            auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/").status_code
+            == 200
+        )
+        event.refresh_from_db()
+
+        _record_attempt(event, 502, "HTTP 502")  # the first new attempt fails
+
+        assert expire_pending_events() == 0
+        event.refresh_from_db()
+        assert (event.status, event.attempts) == (AgentccWebhookEvent.PENDING, 1)
+        later = event.next_retry_at + timedelta(seconds=1)
+        due = _due(AgentccWebhookEvent.all_objects.filter(pk=event.pk), later)
+        assert list(due.values_list("pk", flat=True)) == [event.pk]
+
     def test_retry_rejects_already_delivered(self, auth_client, user):
         webhook = _make_webhook(user)
         event = _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)

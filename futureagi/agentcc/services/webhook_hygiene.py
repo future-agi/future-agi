@@ -62,11 +62,11 @@ def _events():
 
 def within_pending_age(cutoff):
     """Events still young enough to send: created at or after ``cutoff``, or
-    queued again by hand since then. A manual Retry resets ``attempts`` to 0
-    and sets ``next_retry_at`` to now; an automatic backoff always follows an
-    attempt, so it never makes an event young again. The maintenance run
+    queued again by hand (Retry stamps ``requeued_at``) since then. An
+    automatic backoff never makes an event young again, and a hand-retried
+    event keeps its new age through its own backoffs. The maintenance run
     expires exactly the others."""
-    return Q(created_at__gte=cutoff) | Q(attempts=0, next_retry_at__gte=cutoff)
+    return Q(created_at__gte=cutoff) | Q(requeued_at__gte=cutoff)
 
 
 def in_flight(now):

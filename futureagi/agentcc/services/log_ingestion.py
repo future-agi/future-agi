@@ -406,6 +406,10 @@ def _ingest_org_logs(org, logs):
     objects = []
     entries = []
     for entry in logs:
+        # Everything built from the entry (its row, webhook payloads, alerts,
+        # sessions) uses the cleaned copy: PostgreSQL text and jsonb refuse
+        # NUL, and a refused webhook insert would abort the rest.
+        entry = _strip_nul(entry)
         try:
             obj = AgentccRequestLog(
                 organization=org,

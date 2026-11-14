@@ -1094,3 +1094,121 @@ def test_a_stale_run_does_not_free_a_newer_runs_lease(organization):
 
     webhook.refresh_from_db()
     assert webhook.delivery_lease_until == newer_until
+
+
+@pytest.mark.integration
+def test_a_stale_run_does_not_change_a_newer_runs_pause(organization):
+    """Round 3 review: a run that outlived its lease and ends after a newer
+    run paused the webhook neither clears that pause nor sets its own."""
+    url = "https://hooks.example.com/ok"
+    webhook = _webhook(organization, "re-dispatched", url)
+    _events(webhook, 1)
+    stale = timezone.now() - timedelta(minutes=5)
+    newer_pause = timezone.now() + timedelta(minutes=3)
+    AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+        last_run_started_at=timezone.now(), next_delivery_at=newer_pause
+    )
+
+    with patch(SESSION, return_value=_session({url: 200})), patch(URL_CHECK):
+        deliver_webhook(webhook.pk, release_lease=True, run_token=stale)
+
+    webhook.refresh_from_db()
+    assert webhook.next_delivery_at == newer_pause
+
+
+@pytest.mark.integration
+def test_a_run_against_the_old_receiver_does_not_pause_the_fixed_one(organization):
+    """Round 3 review: the owner fixes the URL while a run is still posting
+    to the old one; that run's failure does not pause the fixed receiver."""
+    old_url, new_url = "https://old.example.com/x", "https://new.example.com/x"
+    webhook = _webhook(organization, "being-fixed", old_url)
+    _events(webhook, 1)
+
+    def post(*args, **kwargs):
+        # The PATCH lands while this POST is in flight.
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            url=new_url, next_delivery_at=None
+        )
+        raise webhook_delivery.http_requests.ConnectionError("refused")
+
+    http = MagicMock()
+    http.post.side_effect = post
+    with patch(SESSION, return_value=http), patch(URL_CHECK):
+        deliver_webhook(webhook.pk)
+
+    webhook.refresh_from_db()
+    assert webhook.next_delivery_at is None
+
+
+@pytest.mark.integration
+def test_a_finishing_run_does_not_redispatch_its_own_webhook(organization):
+    """Round 3 review: the redispatch at the end of a run happens while its
+    workflow still exists, so the fixed workflow id would reuse it and strand
+    a fresh lease. It leaves its own webhook to the next tick and starts the
+    next other one."""
+    from django.test import override_settings
+
+    url_a, url_b = "https://a.example.com/x", "https://b.example.com/x"
+    busy = _webhook(organization, "busy", url_a)
+    other = _webhook(organization, "other", url_b)
+    _events(busy, 5, start_minutes_ago=30)
+    _events(other, 1, start_minutes_ago=20)
+    with override_settings(
+        AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=2,
+        AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0,
+    ):
+        with (
+            patch.object(
+                webhook_delivery.deliver_webhook_activity, "apply_async"
+            ) as start,
+            # A run that ends on its budget with "busy" still holding due
+            # events: it only ends the run and releases its lease.
+            patch.object(
+                webhook_delivery,
+                "deliver_webhook",
+                side_effect=lambda webhook_id, release_lease, run_token: (
+                    webhook_delivery._end_run(webhook_id, False, True, run_token) and {}
+                ),
+            ),
+        ):
+            webhook_delivery.deliver_webhook_activity._original_func(str(busy.pk))
+
+    started = [c.kwargs["args"][0] for c in start.call_args_list]
+    assert started == [str(other.pk)]
+    busy.refresh_from_db()
+    assert busy.delivery_lease_until is None
+
+
+@pytest.mark.integration
+def test_nul_in_a_logged_request_still_creates_its_webhook_event_and_session(
+    organization,
+):
+    """Round 3 review: the webhook payload and the session are built from the
+    cleaned entry too, so a NUL from the caller costs neither."""
+    from agentcc.models import AgentccSession
+
+    webhook = _webhook(organization, "nul", "https://hooks.example.com/x")
+    AgentccAPIKey.objects.create(
+        gateway_key_id="nul-key", name="nul-key", organization=organization
+    )
+
+    stored = ingest_request_logs(
+        [
+            {
+                "request_id": "nul-req",
+                "model": "gpt-4o",
+                "status_code": 200,
+                "auth_key_id": "nul-key",
+                "error_message": "bad\x00byte",
+                "session_id": "sess\x00ion",
+                "metadata": {"note": "a\x00b"},
+            }
+        ]
+    )
+
+    assert stored == 1
+    (event,) = AgentccWebhookEvent.all_objects.filter(webhook=webhook)
+    assert "\x00" not in str(event.payload)
+    assert AgentccSession.no_workspace_objects.filter(
+        organization=organization, session_id="session"
+    ).exists()

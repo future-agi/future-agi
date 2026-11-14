@@ -276,17 +276,21 @@ class AgentccWebhookEventViewSet(
             if not webhook.is_active:
                 return self._gm.bad_request("Enable the webhook before retrying")
 
+            now = timezone.now()
             instance.status = AgentccWebhookEvent.PENDING
             instance.attempts = 0
             # Due now, and the pending age limit counts from this re-queue: an
-            # event retried after the limit is delivered, not expired.
-            instance.next_retry_at = timezone.now()
+            # event retried after the limit is delivered (and backed off on a
+            # failure), not expired.
+            instance.next_retry_at = now
+            instance.requeued_at = now
             instance.last_error = ""
             instance.save(
                 update_fields=[
                     "status",
                     "attempts",
                     "next_retry_at",
+                    "requeued_at",
                     "last_error",
                     "updated_at",
                 ]
