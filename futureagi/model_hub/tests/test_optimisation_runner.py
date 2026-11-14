@@ -44,6 +44,7 @@ def _stored_status(row):
         ({}, 0.0, 4000),
         ({"temperature": 0.6}, 0.6, 4000),
         ({"temperature": 0.0, "max_tokens": 512}, 0.0, 512),
+        ({"temperature": None, "max_tokens": None}, 0.0, 4000),
     ],
 )
 def test_process_optimization_applies_optional_model_settings(

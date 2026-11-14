@@ -515,7 +515,7 @@ class DevelopOptimizer:
             # self.optimize_dataset.criteria_breakdown = self._create_criteria_breakdown()
             # self.optimize_dataset.save()
 
-            config = self.model_config
+            config: dict = self.model_config or {}
             time.time()
 
             model_manager = LiteLLMModelManager(config["model_name"])
