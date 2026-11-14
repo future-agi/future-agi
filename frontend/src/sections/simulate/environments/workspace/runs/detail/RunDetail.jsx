@@ -176,6 +176,7 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)
     .map((label) => ` · ${label}`)

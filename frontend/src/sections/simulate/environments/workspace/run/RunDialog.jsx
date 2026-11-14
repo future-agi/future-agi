@@ -69,6 +69,11 @@ export default function RunDialog({
   const [agentFellBack, setAgentFellBack] = useState(false);
   // A refusal stays shown until the user changes a pick.
   const [dismissedError, setDismissedError] = useState(null);
+  // The run's seed, as typed: empty keeps the environment's.
+  const [seed, setSeed] = useState("");
+  const seedValue = seed.trim() === "" ? null : Number(seed);
+  const seedInvalid =
+    seedValue !== null && !(Number.isSafeInteger(seedValue) && seedValue >= 0);
 
   const options = useMemo(
     () =>
@@ -188,6 +193,7 @@ export default function RunDialog({
     !plan.isLoading &&
     !refusedPlan &&
     !blocked &&
+    !seedInvalid &&
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0);
 
@@ -204,7 +210,7 @@ export default function RunDialog({
   // a new request.
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit?.(picks, runIds, selected);
+    onSubmit?.(picks, runIds, selected, seedValue);
   };
 
   const pickerField = (piece) => (
@@ -282,6 +288,15 @@ export default function RunDialog({
             {line}
           </Typography>
         )}
+        <TextField
+          size="small"
+          label={COPY.seed}
+          value={seed}
+          onChange={(event) => setSeed(event.target.value)}
+          error={seedInvalid}
+          helperText={seedInvalid ? COPY.seedInvalid : COPY.seedHelp}
+          inputProps={{ inputMode: "numeric", "data-testid": "run-seed" }}
+        />
         {drafts?.any && (
           <Alert severity="info" data-testid="run-drafts-note">
             {DRAFTS_COPY.notInRun}
@@ -383,7 +398,7 @@ RunDialog.propTypes = {
   // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
   initialPicks: PropTypes.objectOf(PropTypes.string),
   onClose: PropTypes.func,
-  // (picks, scenarioIds, resolved {agent, environment, suite} version ids).
+  // (picks, scenarioIds, resolved {agent, environment, suite} version ids, seed or null).
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,

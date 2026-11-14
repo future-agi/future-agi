@@ -229,6 +229,8 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      // The seed the run drew its personas and variations from.
+      seed: execution.seed ?? null,
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
