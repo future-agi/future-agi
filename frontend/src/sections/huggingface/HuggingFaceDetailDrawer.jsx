@@ -42,15 +42,6 @@ const HuggingFaceDetailDrawer = ({
     ) {
       setValue("huggingface_dataset_split", splitOptions[0].value);
     }
-
-    const currentRowCount = getValues("num_rows");
-    if (
-      currentRowCount === undefined ||
-      currentRowCount === null ||
-      currentRowCount === ""
-    ) {
-      setValue("num_rows", 1);
-    }
   }, [
     show,
     showNameField,
@@ -60,6 +51,20 @@ const HuggingFaceDetailDrawer = ({
     subsetOptions,
     splitOptions,
   ]);
+
+  useEffect(() => {
+    if (!show) return;
+
+    // Initialize on open, not on options refresh while the user is editing.
+    const currentRowCount = getValues("num_rows");
+    if (
+      currentRowCount === undefined ||
+      currentRowCount === null ||
+      currentRowCount === ""
+    ) {
+      setValue("num_rows", 1);
+    }
+  }, [show, getValues, setValue]);
   const covered = useDrawerCovered(show);
 
   return (

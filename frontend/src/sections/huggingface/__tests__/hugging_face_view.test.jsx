@@ -181,6 +181,33 @@ describe("Hugging Face parent import form", () => {
     await submit(user, true, "alternate", "holdout", 7);
   });
 
+  it.each([true, false])(
+    "preserves a cleared row-count edit during an asynchronous options refresh (existing=%s)",
+    async (existing) => {
+      const client = renderView(existing);
+      const user = await openAndLoad();
+      const rows = screen.getByLabelText(/No. of rows/);
+      await user.clear(rows);
+      const previousResolver = resolveConfigs;
+      act(() => {
+        void client.invalidateQueries({
+          queryKey: ["loadedDataset", sourceId],
+        });
+      });
+      await waitFor(() => expect(resolveConfigs).not.toBe(previousResolver));
+      const refreshed = structuredClone(configs);
+      refreshed.data.result.dataset_info.splits.fresh = ["test"];
+      await act(async () => resolveConfigs(refreshed));
+      await user.click(screen.getByLabelText(/Subset/));
+      expect(
+        await screen.findByText("fresh", { exact: true }),
+      ).toBeInTheDocument();
+      await user.click(screen.getByText("default", { exact: true }));
+      await user.type(rows, "4");
+      await submit(user, existing, "default", "train", 4);
+    },
+  );
+
   it("reinitializes the existing-dataset drawer after cancel and reopen", async () => {
     renderView();
     const user = await openAndLoad();
