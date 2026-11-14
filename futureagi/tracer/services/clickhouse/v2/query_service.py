@@ -96,11 +96,15 @@ class V2AnalyticsQueryService(AnalyticsQueryService):
                 ),
                 enforce_on_server=True,
             )
+            # A window scan (the Users graph, direct counts) budgets only the
+            # assignments live in its window, as graph leaves do; a project's
+            # aged assignments must not make every such read over budget.
             params = prepare_effective_tag_params(
                 super().execute_ch_query,
                 params,
                 deadline=deadline,
                 allow_window_scan=True,
+                window_overlay=True,
             )
             timeout_ms = server_execution_cap_ms = deadline.remaining_ms()
         return super().execute_ch_query(

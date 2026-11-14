@@ -1729,3 +1729,59 @@ def test_window_overlay_walk_does_not_cap_dead_pages(stores, monkeypatch):
     assert overlay.trace_names == {}
     response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
     assert response.status_code == 200, response.data
+
+
+def test_window_scan_does_not_budget_dead_matching_lifetime_assignments(
+    stores, monkeypatch
+):
+    """The Users graph's window scan binds only assignments live in the window.
+
+    Over 2,048 aged assignments carry the filtered name. Bound without the
+    window they exceeded the overlay budget, so the graph could never answer.
+    """
+    from tracer.tests.test_effective_tag_scale import window_count
+
+    tagged_project(stores)
+    lifetime_assignments(names=("wanted",), count=3_200)
+    assert window_count(stores, monkeypatch, "wanted") == 4
+
+
+def _users_graph_over_a_real_overlay(stores, monkeypatch, failure=None):
+    """GET Users graph whose system-metric read is the real window scan."""
+    from tracer.tests import test_user_session_graph_action_deadline as users
+    from tracer.tests.test_effective_tag_scale import window_count
+
+    tagged_project(stores)
+
+    def read(_metric):
+        if failure is not None:
+            raise failure
+        window_count(stores, monkeypatch, "wanted")
+        raise AssertionError("the overlay should be over budget")
+
+    # The helper's system-metric fetch builds its payload here.
+    monkeypatch.setattr(users, "_complete_graph", read)
+    response, _events, _dispatched = users._call_project_user_action(
+        monkeypatch,
+        "get_users_aggregate_graph_data",
+        deadline_values=[60_000, 60_000],
+    )
+    return response
+
+
+def test_users_graph_too_broad_tag_filter_is_a_request_error(stores, monkeypatch):
+    """Live matching assignments over the overlay budget: a 400 with the Tag
+    filter copy, never a 503 that asks the user to retry."""
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    response = _users_graph_over_a_real_overlay(stores, monkeypatch)
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad"
+
+
+def test_users_graph_unavailable_tag_source_stays_retryable(stores, monkeypatch):
+    from tracer.services.entity_tags import TagReadUnavailable
+
+    response = _users_graph_over_a_real_overlay(
+        stores, monkeypatch, failure=TagReadUnavailable("tag_source_unavailable")
+    )
+    assert response.status_code == 503, response.data

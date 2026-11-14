@@ -440,9 +440,12 @@ def test_direct_count_uses_same_effective_relation(stores, monkeypatch):
         timeout_ms=10000,
     )
     assert result.data == [{"count": 1}]
-    # One statement: source and curated tags are evaluated in place, and only
-    # the PostgreSQL assignments are bound before it runs.
-    assert len(calls) == 1
+    # Source and curated tags are evaluated in place. Before the count, one
+    # read finds which PostgreSQL assignments are live in the window, so only
+    # those are bound (the window overlay, as graph leaves have); both run
+    # under the request's deadline.
+    assert len(calls) == 2
+    assert "SELECT DISTINCT" in calls[0][0]
     assert all(call[1]["server_execution_cap_ms"] > 0 for call in calls)
 
 

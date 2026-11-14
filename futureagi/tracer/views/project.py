@@ -1299,7 +1299,21 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
                 )
             )
-        except (BoundedGraphReadError, TagReadUnavailable):
+        except (BoundedGraphReadError, TagReadUnavailable) as exc:
+            if (
+                isinstance(exc, TagReadUnavailable)
+                and exc.code == "tag_overlay_budget_exceeded"
+            ):
+                # Deterministic for this project and filter: a request error
+                # with the Tag filter copy, never a 503 that asks for a retry.
+                too_broad = GraphTagFilterTooBroadError()
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_400_BAD_REQUEST,
+                        too_broad.message,
+                        code=too_broad.code,
+                    )
+                )
             return finish(
                 self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
