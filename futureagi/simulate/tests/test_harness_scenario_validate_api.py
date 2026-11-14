@@ -126,3 +126,51 @@ def test_status_reads_validating_finished_and_failed(
 
     other = _environment(user, workspace, storage, "va-other")
     assert _get(auth_client, other, job_id).status_code == 404
+
+
+def test_validate_one_key_keeps_other_proofs(auth_client, certified):
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.assembly import prove_suite_command
+    from simulate.services.harness_versioning.versions import record_proofs
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+
+    started = _post(auth_client, certified, {"keys": [REFUND_KEYS[0]]})
+
+    assert started.status_code == 202, started.content
+    job = HostedHarnessJob.no_workspace_objects.get(id=started.json()["job_id"])
+    assert job.payload["metadata"]["scenario_keys"] == [REFUND_KEYS[0]]
+    command = prove_suite_command(keys=job.payload["metadata"]["scenario_keys"])
+    assert f"--keys {REFUND_KEYS[0]}" in command
+    # The proving writes only the named key; recording merges it over the pair's other proofs.
+    record_proofs(
+        certified.suite_version,
+        certified.environment_version,
+        {key: PROVED for key in REFUND_KEYS + LOOKUP_KEYS},
+        None,
+    )
+    renewed = {**PROVED, "proved_at": "2026-11-15T00:00:00Z"}
+    record_proofs(
+        certified.suite_version,
+        certified.environment_version,
+        {REFUND_KEYS[0]: renewed},
+        None,
+    )
+    proofs = HarnessSuiteValidation.no_workspace_objects.get(
+        suite_version=certified.suite_version,
+        environment_version=certified.environment_version,
+    ).proofs
+    assert proofs[REFUND_KEYS[0]]["proved_at"] == "2026-11-15T00:00:00Z"
+    assert set(REFUND_KEYS + LOOKUP_KEYS) <= set(proofs)
+
+
+def test_bad_key_is_refused(auth_client, certified):
+    for keys in (["has space"], ["x;rm -rf /"], [], [f"k{n}" for n in range(51)]):
+        refused = _post(auth_client, certified, {"keys": keys})
+        assert refused.status_code == 400, (keys, refused.content)
+    assert not HostedHarnessJob.no_workspace_objects.filter(
+        payload__metadata__scenario_keys__isnull=False
+    ).exists()

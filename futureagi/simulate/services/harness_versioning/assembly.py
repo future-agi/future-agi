@@ -950,12 +950,21 @@ def _deadline_flag(deadline_at: float | None) -> str:
     return f" --deadline-at {int(deadline_at)}" if deadline_at is not None else ""
 
 
-def prove_suite_command(*, deadline_at: float | None = None) -> str:
-    """Prove every scenario of the certified pair into ``SCENARIO_PROOFS_PATH``. The outer
-    timeout is the last resort: the module's own budget writes partial results first."""
+_KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def prove_suite_command(
+    *, deadline_at: float | None = None, keys: list[str] | None = None
+) -> str:
+    """Prove every scenario of the certified pair (or only ``keys``) into ``SCENARIO_PROOFS_PATH``.
+    The outer timeout is the last resort: the module's own budget writes partial results first."""
+    named = [
+        one for one in keys or [] if isinstance(one, str) and _KEY_SHAPE.fullmatch(one)
+    ]
+    keys_flag = f" --keys {','.join(named)}" if named else ""
     return (
         "timeout 1500 python -m fi.alk.harness.prove_suite --authoring /work/authoring "
-        f"--output {SCENARIO_PROOFS_PATH} --budget-seconds 1200{_deadline_flag(deadline_at)} || true; "
+        f"--output {SCENARIO_PROOFS_PATH} --budget-seconds 1200{_deadline_flag(deadline_at)}{keys_flag} || true; "
     )
 
 

@@ -416,9 +416,13 @@ def start_validation(
     *,
     purpose: Purpose,
     move: AgentMove | None = None,
+    scenario_keys: list[str] | None = None,
 ) -> Validation | None:
     """Validate this pairing, unless its bundle is already certified or its last check
     ended on our side for a cause that repeats on the same template.
+
+    ``scenario_keys`` limits a proving of a certified pairing to those cases; a pairing that
+    still has to certify proves every case.
 
     Returns ``None`` when it cannot be validated (see ``can_validate``), as without an
     environment or suite version. A failed bundle
@@ -479,6 +483,7 @@ def start_validation(
                 purpose=purpose,
                 move=move,
                 proving="only",
+                scenario_keys=scenario_keys,
             )
             job_id = job.id
             transaction.on_commit(lambda: _dispatch(job_id))
@@ -636,6 +641,7 @@ def _create_job(
     move: AgentMove | None,
     reading: Literal["before_certify", "only"] | None = None,
     proving: Proving | None = None,
+    scenario_keys: list[str] | None = None,
 ) -> HostedHarnessJob:
     """The environment's job, pinned to the pairing; certifying is all it does, after
     reading the agent version's tools when ``reading`` says so."""
@@ -668,6 +674,8 @@ def _create_job(
         metadata["agent_reading"] = reading
     if proving is not None:
         metadata["scenario_proving"] = proving
+    if scenario_keys:
+        metadata["scenario_keys"] = list(scenario_keys)
     payload.pop("job_id", None)
     payload.pop("run_id", None)
     # One key per check of this bundle, so two requests for the same check make one job,

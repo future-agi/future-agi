@@ -6,6 +6,7 @@ The views stay thin: each action resolves its environment, then calls one functi
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -28,6 +29,8 @@ logger = structlog.get_logger(__name__)
 
 REVISIONS_MAX = 50
 NO_RESULTS = "Validation finished but recorded no results; try again."
+VALIDATE_KEYS_MAX = 50
+_KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 def _error(code: str, message: str, status_code: int) -> HostedHarnessError:
@@ -124,6 +127,18 @@ def validate_scenarios(
     refused; "proofs already exist" never skips one, unless the caller asks with ``if_fresh``."""
     from simulate.services.harness_versioning import validation
 
+    keys = body.get("keys")
+    if keys is not None and (
+        not isinstance(keys, list)
+        or not keys
+        or len(keys) > VALIDATE_KEYS_MAX
+        or not all(isinstance(one, str) and _KEY_SHAPE.fullmatch(one) for one in keys)
+    ):
+        raise _error(
+            "keys_invalid",
+            f"keys must be 1 to {VALIDATE_KEYS_MAX} scenario keys of letters, digits and ._:-",
+            400,
+        )
     agent, environment_version, suite_version = _pair(environment, body)
     if agent is None or environment_version is None or suite_version is None:
         raise _error(
@@ -137,7 +152,7 @@ def validate_scenarios(
             "This agent version can't be validated here: validation is not enabled for it",
             422,
         )
-    if body.get("if_fresh"):
+    if body.get("if_fresh") and keys is None:
         newest = (
             HostedHarnessJob.no_workspace_objects.filter(
                 environment_id=environment.id,
@@ -157,7 +172,12 @@ def validate_scenarios(
                 "finished_at": newest.updated_at.isoformat(),
             }, 200
     started = validation.start_validation(
-        environment, agent, environment_version, suite_version, purpose="prove"
+        environment,
+        agent,
+        environment_version,
+        suite_version,
+        purpose="prove",
+        scenario_keys=keys,
     )
     if started is None:
         raise _error(

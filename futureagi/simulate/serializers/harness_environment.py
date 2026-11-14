@@ -1891,6 +1891,12 @@ class HarnessScenarioValidateSerializer(serializers.Serializer):
         default=False,
         help_text="Answer ready without a new job when the newest proving finished after the pair's last change.",
     )
+    keys = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,
+        max_length=50,
+        help_text="Prove only these scenario keys; the other cases keep their proofs.",
+    )
 
 
 class HarnessScenarioValidateResponseSerializer(serializers.Serializer):

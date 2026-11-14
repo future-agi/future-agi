@@ -78,7 +78,8 @@ export const SCENARIOS_COPY = {
     { value: "archived", label: "Archived" },
     { value: "source_changed", label: "Source changed" },
   ],
-  validate: "Validate scenarios",
+  validate: "Validate all against the environment",
+  validateOne: "Validate scenario against the environment",
   validating: "Validating… (up to 45 min)",
   validationNoResults:
     "Validation finished but recorded no results; try again.",

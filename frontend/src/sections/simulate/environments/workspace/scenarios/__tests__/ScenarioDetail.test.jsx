@@ -3,6 +3,8 @@ import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("src/api/harness/scenarios", () => ({
+  useValidateScenarios: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useScenarioValidation: () => ({ data: undefined }),
   useScenarioRevisions: () => ({
     data: {
       revisions: [

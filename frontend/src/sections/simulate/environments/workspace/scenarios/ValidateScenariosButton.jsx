@@ -9,9 +9,15 @@ import {
 } from "src/api/harness/scenarios";
 import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
-// "Validate scenarios": proves every case of the default pair again. The button stays disabled
-// while the validation runs and the list refreshes when it ends, so each case shows its new state.
-export default function ValidateScenariosButton({ jobId, initialJobId = null }) {
+// "Validate all against the environment": proves every case of the default pair again; with
+// `keys`, only those cases, and the others keep their proofs. The button stays disabled while the
+// validation runs and the list refreshes when it ends, so each case shows its new state.
+export default function ValidateScenariosButton({
+  jobId,
+  initialJobId = null,
+  keys = null,
+  label = SCENARIOS_COPY.validate,
+}) {
   const [validationJobId, setValidationJobId] = useState(initialJobId);
   const [message, setMessage] = useState(null);
   const start = useValidateScenarios(jobId);
@@ -22,7 +28,7 @@ export default function ValidateScenariosButton({ jobId, initialJobId = null }) 
   const onClick = async () => {
     setMessage(null);
     try {
-      const result = await start.mutateAsync({});
+      const result = await start.mutateAsync(keys?.length ? { keys } : {});
       if (result.state === "unavailable") {
         setMessage(result.message);
         return;
@@ -51,7 +57,7 @@ export default function ValidateScenariosButton({ jobId, initialJobId = null }) 
         startIcon={<Iconify icon="solar:shield-check-linear" width={16} />}
         sx={scenarioToolbarButtonSx}
       >
-        {running ? SCENARIOS_COPY.validating : SCENARIOS_COPY.validate}
+        {running ? SCENARIOS_COPY.validating : label}
       </Button>
       {(message || ended) && (
         <Typography role="status" sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -65,4 +71,6 @@ export default function ValidateScenariosButton({ jobId, initialJobId = null }) 
 ValidateScenariosButton.propTypes = {
   jobId: PropTypes.string,
   initialJobId: PropTypes.string,
+  keys: PropTypes.arrayOf(PropTypes.string),
+  label: PropTypes.string,
 };
