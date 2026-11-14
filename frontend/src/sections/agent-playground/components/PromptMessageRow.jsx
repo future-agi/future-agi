@@ -447,16 +447,10 @@ export default function PromptMessageRow({
             onClick={handleAddMessage}
             size="small"
             startIcon={
-              <SvgColor
-                src="/assets/icons/components/ic_add.svg"
-                sx={{ width: 16, height: 16 }}
-              />
+              <SvgColor src="/assets/icons/components/ic_add.svg" width={16} />
             }
             sx={{
-              fontWeight: "fontWeightMedium",
-              padding: theme.spacing(0.75, 3),
-              borderRadius: theme.spacing(0.5),
-              borderColor: "whiteScale.500",
+              borderColor: "divider",
               "& .MuiButton-startIcon": { marginRight: "4px" },
             }}
             disabled={disabled}

@@ -1,6 +1,9 @@
+from datetime import timedelta
+
+from django.conf import settings
 from rest_framework import serializers
 
-from tracer.constants.eval_task_usage import DEFAULT_USAGE_PERIOD, UsagePeriod
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -10,11 +13,30 @@ from tracer.models.eval_task import (
     RunType,
 )
 from tracer.models.project import Project
+from tracer.serializers.eval_sampling import SamplingPolicySerializer
 from tracer.serializers.filters import (
     SortParamListQueryParamField,
     StrictInputSerializer,
     eval_task_filters_field,
     filter_list_query_param_field,
+)
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    policy_task_filters,
+    validate_live_filter_sources,
+    validate_policy,
+)
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
+
+EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE = settings.EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE
+EVAL_TASK_USAGE_MAX_PAGE_SIZE = settings.EVAL_TASK_USAGE_MAX_PAGE_SIZE
+EVAL_TASK_USAGE_MAX_PAGE = settings.EVAL_TASK_USAGE_MAX_PAGE_NUMBER
+EVAL_TASK_LIST_DEFAULT_PAGE_SIZE = settings.EVAL_TASK_LIST_DEFAULT_PAGE_SIZE
+EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE = (
+    settings.EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE
 )
 
 
@@ -26,53 +48,268 @@ class PageSizeQuerySerializer(serializers.Serializer):
     ``ExtendedPageNumberPagination``.
     """
 
-    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
+    page_size = serializers.IntegerField(
+        required=False,
+        default=EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE,
+        min_value=1,
+    )
 
     def validate_page_size(self, value):
-        return min(value, 100)
+        return min(value, EVAL_TASK_USAGE_MAX_PAGE_SIZE)
+
+
+class EvalTaskUsageQuerySerializer(StrictInputSerializer):
+    """Bounded query contract for the task usage chart and log page."""
+
+    eval_task_id = serializers.UUIDField(required=True)
+    period = serializers.ChoiceField(
+        choices=("30m", "1h", "6h", "1d", "7d", "30d", "90d", "180d", "365d"),
+        required=False,
+        default="30d",
+    )
+    eval_id = serializers.UUIDField(required=False)
+    page = serializers.IntegerField(
+        required=False,
+        default=1,
+        min_value=1,
+        max_value=EVAL_TASK_USAGE_MAX_PAGE,
+    )
+    page_size = serializers.IntegerField(
+        required=False,
+        default=EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=EVAL_TASK_USAGE_MAX_PAGE_SIZE,
+    )
+    limit = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=EVAL_TASK_USAGE_MAX_PAGE_SIZE,
+        help_text="Legacy alias for page_size.",
+    )
+    eval_aggregation = serializers.BooleanField(required=False, default=False)
+    span_aggregation = serializers.BooleanField(required=False, default=False)
+    include_summary = serializers.BooleanField(required=False, default=True)
+    start_date = serializers.DateTimeField(required=False)
+    end_date = serializers.DateTimeField(required=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        start_date = attrs.get("start_date")
+        end_date = attrs.get("end_date")
+        is_aggregation = attrs["eval_aggregation"] or attrs["span_aggregation"]
+        if not is_aggregation and (start_date is None) != (end_date is None):
+            raise serializers.ValidationError(
+                "start_date and end_date must be provided together."
+            )
+        if start_date is not None and end_date is not None and start_date >= end_date:
+            raise serializers.ValidationError("start_date must be before end_date.")
+        if (
+            start_date is not None
+            and end_date is not None
+            and end_date - start_date > timedelta(days=366)
+        ):
+            raise serializers.ValidationError(
+                "Evaluation usage date range cannot exceed 366 days."
+            )
+        legacy_limit = attrs.pop("limit", None)
+        if legacy_limit is not None:
+            if "page_size" in self.initial_data:
+                raise serializers.ValidationError(
+                    "Use either page_size or its legacy limit alias, not both."
+                )
+            attrs["page_size"] = legacy_limit
+        return attrs
+
+
+class EvalTaskUsageStatsSerializer(serializers.Serializer):
+    total_runs = serializers.IntegerField(min_value=0)
+    runs_period = serializers.IntegerField(min_value=0)
+    success_count = serializers.IntegerField(
+        min_value=0,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this always equals runs_period."
+        ),
+    )
+    error_count = serializers.IntegerField(
+        min_value=0,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is always 0; failed runs stay in the task logs."
+        ),
+    )
+    pass_rate = serializers.FloatField(
+        min_value=0,
+        max_value=100,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is 100 when runs_period is above 0, otherwise 0."
+        ),
+    )
+    total_runs_is_lower_bound = serializers.BooleanField(required=False)
+    runs_period_is_lower_bound = serializers.BooleanField(required=False)
+
+
+class EvalTaskUsageEvalSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    output_type = serializers.CharField()
+    template_id = serializers.UUIDField(allow_null=True)
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class EvalTaskUsageChartPointSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    calls = serializers.IntegerField(min_value=0)
+    pass_count = serializers.IntegerField(min_value=0)
+    fail_count = serializers.IntegerField(min_value=0)
+    avg_score = serializers.FloatField(allow_null=True)
+    avg_latency_ms = serializers.FloatField(min_value=0)
+
+
+class EvalTaskUsageLogDetailSerializer(serializers.Serializer):
+    detail_complete = serializers.BooleanField()
+    omitted_fields = serializers.ListField(child=serializers.CharField())
+    eval_name = serializers.CharField(allow_null=True, allow_blank=True)
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+    warnings = JsonValueField()
+    output_type = serializers.CharField(allow_null=True, allow_blank=True)
+    target_type = serializers.CharField(allow_null=True, allow_blank=True)
+    span_name = serializers.CharField(allow_null=True, allow_blank=True)
+    span_id = serializers.CharField(allow_null=True, allow_blank=True)
+    trace_id = serializers.CharField(allow_null=True, allow_blank=True)
+    session_id = serializers.CharField(allow_null=True, allow_blank=True)
+    session_name = serializers.CharField(allow_null=True, allow_blank=True)
+    output_bool = serializers.BooleanField(allow_null=True)
+    output_float = serializers.FloatField(allow_null=True)
+    output_str = serializers.CharField(allow_null=True, allow_blank=True)
+    results_explanation = JsonValueField(allow_null=True)
+    error_message = serializers.CharField(allow_null=True, allow_blank=True)
+    input_variables = JsonValueField()
+
+
+class EvalTaskUsageLogSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    input = serializers.CharField(allow_blank=True)
+    result = serializers.CharField(allow_blank=True)
+    score = serializers.FloatField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True)
+    status = serializers.ChoiceField(choices=("success", "error"))
+    source = serializers.CharField()
+    warnings = JsonValueField()
+    created_at = serializers.DateTimeField()
+    span_id = serializers.CharField(allow_null=True, allow_blank=True)
+    trace_id = serializers.CharField(allow_null=True, allow_blank=True)
+    session_id = serializers.CharField(allow_null=True, allow_blank=True)
+    eval_id = serializers.UUIDField(allow_null=True)
+    eval_name = serializers.CharField(allow_null=True, allow_blank=True)
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+    detail = EvalTaskUsageLogDetailSerializer()
+
+
+class EvalTaskUsageLogsSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    results = EvalTaskUsageLogSerializer(many=True)
+    total_pages = serializers.IntegerField(min_value=0)
+    current_page = serializers.IntegerField(min_value=1)
+    has_more = serializers.BooleanField(required=False)
+    count_is_lower_bound = serializers.BooleanField(required=False)
+    page_limit_reached = serializers.BooleanField(required=False)
+
+
+class EvalTaskUsageAggregationMetadataSerializer(serializers.Serializer):
+    query_complete = serializers.BooleanField()
+    sampled = serializers.BooleanField()
+    error = serializers.ChoiceField(choices=("sample_limit",), allow_null=True)
+    provenance = serializers.CharField()
+    row_limit = serializers.IntegerField(min_value=1)
+    rows_scanned = serializers.IntegerField(min_value=0)
+    rows_matched = serializers.IntegerField(min_value=0)
+
+
+class EvalTaskUsageResultSerializer(serializers.Serializer):
+    eval_task_id = serializers.UUIDField()
+    stats = EvalTaskUsageStatsSerializer(required=False)
+    evals = EvalTaskUsageEvalSerializer(many=True, required=False)
+    chart = EvalTaskUsageChartPointSerializer(many=True, required=False)
+    logs = EvalTaskUsageLogsSerializer(required=False)
+    period_requested = serializers.CharField(required=False)
+    period_used = serializers.CharField(required=False)
+    eval_aggregation = JsonValueField(required=False)
+    span_aggregation = JsonValueField(required=False)
+    aggregation_metadata = EvalTaskUsageAggregationMetadataSerializer(required=False)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("complete", "sampled"), required=False
+    )
+    query_sampled = serializers.BooleanField(required=False)
+    error = serializers.ChoiceField(choices=("sample_limit",), required=False)
+    provenance = serializers.CharField(required=False)
+
+
+class EvalTaskUsageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskUsageResultSerializer()
+
+
+class EvalTaskDetailsQuerySerializer(serializers.Serializer):
+    # Not strict: clients (and browsers) add cache-busting query parameters
+    # to this GET; unknown keys are ignored, eval_id must still be a UUID.
+    eval_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskDetailsEvalSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    template_id = serializers.UUIDField(allow_null=True)
+    templateId = serializers.UUIDField(allow_null=True)
+    mapping = serializers.DictField(child=JsonValueField())
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+    config = serializers.DictField(child=JsonValueField())
+    error_localizer = serializers.BooleanField()
+    evalType = serializers.CharField(allow_null=True, allow_blank=True)
+    templateType = serializers.CharField(allow_null=True, allow_blank=True)
+    outputType = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class EvalTaskDetailsSamplingPolicySerializer(SamplingPolicySerializer):
+    class Meta:
+        # A separate response definition keeps request policy schemas strict.
+        swagger_schema_fields = {"x-nullable": True}
+
+
+class EvalTaskDetailsResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    project_id = serializers.UUIDField()
+    project_name = serializers.CharField(allow_null=True, allow_blank=True)
+    status = serializers.ChoiceField(
+        choices=[*EvalTaskStatus.choices, ("", "")], allow_null=True, allow_blank=True
+    )
+    filters_applied = eval_task_filters_field(allow_null=True)
+    created_at = serializers.DateTimeField()
+    evals_applied = EvalTaskDetailsEvalSerializer(many=True)
+    spans_limit = serializers.IntegerField(allow_null=True)
+    sampling_rate = serializers.FloatField(allow_null=True)
+    sampling_policy = EvalTaskDetailsSamplingPolicySerializer(allow_null=True)
+    last_run = serializers.DateTimeField(allow_null=True)
+    run_type = serializers.ChoiceField(
+        choices=[*RunType.choices, ("", "")], allow_null=True, allow_blank=True
+    )
+    row_type = serializers.ChoiceField(choices=RowType.choices)
+
+
+class EvalTaskDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskDetailsResultSerializer()
 
 
 class PaginationQuerySerializer(PageSizeQuerySerializer):
     """Shared query-params validator for eval-log endpoints."""
 
     page = serializers.IntegerField(required=False, default=0, min_value=0)
-
-
-class EvalTaskUsageQuerySerializer(PageSizeQuerySerializer, StrictInputSerializer):
-    """Query contract for ``EvalTaskView.get_usage``."""
-
-    eval_task_id = serializers.UUIDField(required=True)
-    period = serializers.ChoiceField(
-        choices=[(p.value, p.value) for p in UsagePeriod.selectable()],
-        required=False,
-        default=DEFAULT_USAGE_PERIOD.value,
-    )
-    eval_id = serializers.UUIDField(required=False)
-    start_date = serializers.DateTimeField(required=False)
-    end_date = serializers.DateTimeField(required=False)
-    eval_aggregation = serializers.BooleanField(required=False, default=False)
-    span_aggregation = serializers.BooleanField(required=False, default=False)
-    # `page` is owned by ExtendedPageNumberPagination; `page_size` and its
-    # clamp come from PageSizeQuerySerializer.
-
-    def validate(self, attrs):
-        start_date = attrs.get("start_date")
-        end_date = attrs.get("end_date")
-        if start_date and end_date and start_date > end_date:
-            raise serializers.ValidationError(
-                "start_date must not be after end_date."
-            )
-        # A lone bound is meaningful to the aggregation modes, which filter
-        # open-ended. The chart/logs path only reads the pair, so accepting one
-        # there would drop it silently and read as a filter that does nothing.
-        if bool(start_date) != bool(end_date) and not (
-            attrs.get("eval_aggregation") or attrs.get("span_aggregation")
-        ):
-            raise serializers.ValidationError(
-                "start_date and end_date must be sent together unless "
-                "eval_aggregation or span_aggregation is set."
-            )
-        return attrs
 
 
 class EvalTaskListQuerySerializer(StrictInputSerializer):
@@ -82,13 +319,19 @@ class EvalTaskListQuerySerializer(StrictInputSerializer):
     sort_params = SortParamListQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
-        required=False, default=30, min_value=1, max_value=500
+        required=False,
+        default=EVAL_TASK_LIST_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=settings.INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE,
     )
 
 
 class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
     page_size = serializers.IntegerField(
-        required=False, default=10, min_value=1, max_value=500
+        required=False,
+        default=EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=settings.INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE,
     )
 
 
@@ -143,6 +386,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     )
     name = serializers.CharField(min_length=1, max_length=255)
     sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
+    sampling_policy = SamplingPolicySerializer(required=False, allow_null=True)
     spans_limit = serializers.IntegerField(
         min_value=1, max_value=1000000, required=False, allow_null=True
     )
@@ -159,6 +403,15 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     progress = serializers.SerializerMethodField()
     filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
 
+    def validate_filters(self, value):
+        """Never persist a client-selected principal for user-relative filters."""
+
+        request = self.context.get("request")
+        try:
+            return bind_request_my_annotations_principal(request, value)
+        except FilterPrincipalContextError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
     class Meta:
         model = EvalTask
         fields = [
@@ -167,6 +420,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
             "spans_limit",
             "run_type",
@@ -185,23 +439,15 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
             return None
-        from tracer.selectors.eval_tasks.progress import count_by_status
-
-        counts = count_by_status(obj)
-        done = (
-            counts.get("completed", 0)
-            + counts.get("errored", 0)
-            + counts.get("skipped", 0)
+        from tracer.selectors.eval_tasks.progress import (
+            count_by_status,
+            progress_block,
         )
-        remaining = counts.get("pending", 0) + counts.get("running", 0)
-        total = done + remaining
-        percent = round(100.0 * done / total, 2) if total else None
-        return {
-            "dispatched": total,
-            "completed": done,
-            "missing": remaining,
-            "percent": percent,
-        }
+
+        # The arithmetic lives in the selector because the root list route
+        # answers the same question from its own batched query; see
+        # ``progress_block`` for why skipped is counted apart.
+        return progress_block(count_by_status(obj))
 
     def validate_evals(self, value):
         if not value:
@@ -209,9 +455,82 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        existing_policy = getattr(self.instance, "sampling_policy", None)
+        if "sampling_policy" in attrs or (
+            existing_policy is not None
+            and any(key in attrs for key in ("row_type", "project"))
+        ):
+            project = attrs.get("project") or getattr(self.instance, "project", None)
+            try:
+                attrs["sampling_policy"] = validate_policy(
+                    attrs.get("sampling_policy", existing_policy),
+                    row_type=attrs.get(
+                        "row_type", getattr(self.instance, "row_type", RowType.SPANS)
+                    ),
+                    contact_attribute=getattr(
+                        project, "sampling_contact_attribute", ""
+                    ),
+                )
+            except InvalidSamplingPolicy as exc:
+                raise serializers.ValidationError(
+                    {"sampling_policy": str(exc)}
+                ) from exc
         run_type = attrs.get("run_type")
         spans_limit = attrs.get("spans_limit")
-        if run_type == RunType.HISTORICAL and not spans_limit:
+        has_policy = attrs.get(
+            "sampling_policy", getattr(self.instance, "sampling_policy", None)
+        )
+        if (
+            "sampling_policy" in attrs
+            and not has_policy
+            and getattr(self.instance, "run_type", None) == RunType.HISTORICAL
+            and not attrs.get(
+                "spans_limit", getattr(self.instance, "spans_limit", None)
+            )
+        ):
+            raise serializers.ValidationError(
+                {"spans_limit": "Set a row limit before disabling the sampling policy."}
+            )
+        if has_policy:
+            # The policy window is the only event-time range of a policy task:
+            # drop the task form's hidden date window instead of intersecting.
+            stored_filters = getattr(self.instance, "filters", None) or {}
+            current_filters = attrs.get("filters", stored_filters)
+            try:
+                clean_filters = policy_task_filters(current_filters)
+            except InvalidSamplingPolicy as exc:
+                raise serializers.ValidationError({"filters": str(exc)}) from exc
+            if "filters" in attrs or clean_filters != stored_filters:
+                attrs["filters"] = clean_filters
+        if (
+            has_policy
+            and has_policy["mode"] == "live"
+            and attrs.get("run_type", getattr(self.instance, "run_type", None))
+            != RunType.CONTINUOUS
+        ):
+            raise serializers.ValidationError(
+                {
+                    "sampling_policy": "Live percentage policies require a continuous task."
+                }
+            )
+        try:
+            validate_live_filter_sources(
+                has_policy, attrs.get("filters", getattr(self.instance, "filters", {}))
+            )
+        except InvalidSamplingPolicy as exc:
+            raise serializers.ValidationError({"sampling_policy": str(exc)}) from exc
+        if has_policy:
+            project = attrs.get("project") or getattr(self.instance, "project", None)
+            evals = attrs.get("evals")
+            if evals is None and self.instance is not None:
+                evals = self.instance.evals.all()
+            if project is not None and any(
+                config.project_id != project.id for config in (evals or [])
+            ):
+                raise serializers.ValidationError(
+                    {"evals": "Evaluators must belong to the sampling task project."}
+                )
+        if run_type == RunType.HISTORICAL and not spans_limit and not has_policy:
             raise serializers.ValidationError(
                 {"spans_limit": "spans_limit is required for historical runs."}
             )
@@ -231,6 +550,7 @@ class EvalTaskLoggerSerializer(serializers.ModelSerializer):
 
 
 class EditEvalTaskSerializer(serializers.Serializer):
+    sampling_policy = SamplingPolicySerializer(required=False, allow_null=True)
     name = serializers.CharField(
         required=False, allow_blank=False, min_length=1, max_length=255
     )

@@ -1,0 +1,72 @@
+# Google Kubernetes Engine: Cloud SQL for PostgreSQL, Memorystore for Redis,
+# Cloud Storage (through its S3-compatible XML API and HMAC keys), the GKE
+# Gateway controller, and SSD persistent disks. ClickHouse and Temporal run in
+# the cluster from their own charts or operators, installed separately:
+#   ClickHouse: the Altinity operator (or ClickHouse's own); the chart speaks
+#     plain HTTP (8123) and native (9000) to it, so keep it in the cluster.
+#   Temporal: the temporalio/temporal chart, on the same Cloud SQL instance or
+#     its own.
+# Replace every example host and create the Secrets first:
+#
+#   kubectl create secret generic futureagi-postgres --from-literal=password='...'
+#   kubectl create secret generic futureagi-gcs \
+#     --from-literal=access-key='GOOG...' --from-literal=secret-key='...'
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace -f gke.yaml --timeout 20m
+#
+# Not supported: Workload Identity for the bucket (the app signs with HMAC
+# keys), the Cloud SQL Auth Proxy's IAM login (use a password; a private IP
+# with sslMode require works), and Memorystore with in-transit encryption for
+# the LLM gateway (it has no Redis TLS: keep Memorystore's TLS off, or run the
+# gateway with one replica).
+global:
+  # Balanced persistent disks for anything the chart itself stores.
+  storageClass: premium-rwo
+postgres:
+  mode: external
+  existingSecret: futureagi-postgres
+  external:
+    # Cloud SQL private IP.
+    host: 10.10.0.3
+    sslMode: require
+clickhouse:
+  mode: external
+  external:
+    host: clickhouse-futureagi.clickhouse.svc.cluster.local
+redis:
+  mode: external
+  external:
+    # Memorystore for Redis (Standard tier for a replica), private IP.
+    host: 10.10.0.4
+temporal:
+  mode: external
+  external:
+    address: temporal-frontend.temporal.svc.cluster.local:7233
+objectStorage:
+  mode: external
+  backend: gcs
+  bucket: futureagi-uploads-example
+  region: us-central1
+  existingSecret: futureagi-gcs
+# The GKE Gateway controller: a global external Application Load Balancer with
+# a Google-managed certificate on the Gateway (created separately).
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: futureagi-external
+      namespace: futureagi
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+  timeouts:
+    request: 300s
+    # GKE also needs a GCPBackendPolicy with timeoutSec for WebSockets.
+    websocket: 24h
+  # GKE's load balancer ignores readiness probes and health-checks GET / with
+  # the pod's IP as the Host, which the API and the collector fail: a
+  # HealthCheckPolicy per routed Service points it at their health endpoints.
+  gke:
+    healthChecks:
+      enabled: true

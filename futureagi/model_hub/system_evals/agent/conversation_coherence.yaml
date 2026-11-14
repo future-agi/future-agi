@@ -15,7 +15,8 @@ criteria: "You are evaluating whether the conversation flows logically and maint
   \ on the previous one with full consistency.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Conversation
-- Chatbot behaviors
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

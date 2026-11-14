@@ -23,7 +23,6 @@ from ee.evals.localizer.prompts import (
     SYSTEM_PROMPT,
 )
 from PIL import Image
-from pydub import AudioSegment
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     image_bytes_from_url_or_base64,
@@ -94,6 +93,8 @@ def _create_audio_segments(audio_input: Any) -> dict[str, dict[str, Any]]:
             if not isinstance(audio_input, bytes)
             else audio_input
         )
+        from pydub import AudioSegment
+
         audio = AudioSegment.from_file(BytesIO(raw))
         total_ms = len(audio)
         chunk_ms = total_ms / max(1, int(total_ms / max(5000, int(total_ms * 0.1))))
@@ -406,10 +407,10 @@ class ErrorLocalizer:
     @cached_property
     def _llm(self) -> LLM:
         return LLM(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name,
-            temperature=ModelConfigs.VERTEX_GEMINI_2_5_PRO.temperature,
-            max_tokens=ModelConfigs.VERTEX_GEMINI_2_5_PRO.max_tokens,
-            provider=ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider,
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+            temperature=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.temperature,
+            max_tokens=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.max_tokens,
+            provider=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider,
         )
 
     def _accumulate_cost(self, *, stage: str, source: str, contribution: float) -> None:
