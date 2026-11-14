@@ -29,15 +29,15 @@ class JsonHelper:
             try:
                 # Fall back to robust method if simple extraction fails
                 # Remove markdown code block markers and normalize newlines
-                data_string = data_string.replace('```json', '').replace('```', '')
-                data_string = ' '.join(data_string.split())  # Normalize whitespace
+                data_string = data_string.replace("```json", "").replace("```", "")
+                data_string = " ".join(data_string.split())  # Normalize whitespace
                 data_string = data_string.strip()
 
                 # Handle LaTeX equations by escaping backslashes properly
                 # First double-escape already escaped characters
-                data_string = re.sub(r'\\([\\/"bfnrtu])', r'\\\\\\1', data_string)
+                data_string = re.sub(r'\\([\\/"bfnrtu])', r"\\\\\\1", data_string)
                 # Then escape remaining single backslashes
-                data_string = re.sub(r'\\(?![\\])', r'\\\\', data_string)
+                data_string = re.sub(r"\\(?![\\])", r"\\\\", data_string)
 
                 extracted = JsonExtractor.extract_first_json_entity(data_string)
                 if extracted is not None:
@@ -47,6 +47,7 @@ class JsonHelper:
                 return json_string
             except Exception:
                 return data_string
+
     @staticmethod
     def _load_json_from_text(text):
         """
@@ -67,12 +68,14 @@ class JsonHelper:
         response_json = JsonHelper._load_json_from_text(response_json_format)
         return response_json
 
+
 def validate_json(json_data, schema):
     try:
         validate(instance=json_data, schema=schema)
         return True, None
     except jsonschema.exceptions.ValidationError as err:
         return False, str(err)
+
 
 def extract_json_path(json_data, json_path):
     try:
@@ -81,6 +84,7 @@ def extract_json_path(json_data, json_path):
         return [match.value for match in match] if match else None
     except Exception:
         return None
+
 
 # New and improved JsonExtractor
 # - can extract top-level arrays as well
@@ -123,4 +127,3 @@ class JsonExtractor:
                 i += 1
 
         return None
-

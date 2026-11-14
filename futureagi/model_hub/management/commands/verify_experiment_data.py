@@ -36,12 +36,9 @@ class Command(BaseCommand):
         errors = []
         warnings = []
 
-        edt_prefetch_qs = (
-            ExperimentDatasetTable.all_objects.filter(deleted=False)
-            .annotate(
-                active_col_count=Count("columns", filter=Q(columns__deleted=False))
-            )
-        )
+        edt_prefetch_qs = ExperimentDatasetTable.all_objects.filter(
+            deleted=False
+        ).annotate(active_col_count=Count("columns", filter=Q(columns__deleted=False)))
 
         experiments = (
             ExperimentsTable.all_objects.filter(deleted=False)
@@ -58,9 +55,7 @@ class Command(BaseCommand):
         total = experiments.count()
         self.stdout.write(f"Checking {total} experiments...")
 
-        valid_eval_ids = set(
-            UserEvalMetric.all_objects.values_list("id", flat=True)
-        )
+        valid_eval_ids = set(UserEvalMetric.all_objects.values_list("id", flat=True))
 
         for exp in tqdm(
             experiments.iterator(chunk_size=500),
