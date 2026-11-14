@@ -205,9 +205,9 @@ class TestWorkspaceAccessEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_beta.id),
         )
-        assert (
-            resp.status_code == status.HTTP_403_FORBIDDEN
-        ), f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        assert resp.status_code == status.HTTP_403_FORBIDDEN, (
+            f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        )
 
     def test_member_cannot_access_unauthorized_workspace(self, member_user, ws_alpha):
         """Member with access to ws_beta CANNOT read ws_alpha."""
@@ -218,9 +218,9 @@ class TestWorkspaceAccessEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
         )
-        assert (
-            resp.status_code == status.HTTP_403_FORBIDDEN
-        ), f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        assert resp.status_code == status.HTTP_403_FORBIDDEN, (
+            f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        )
 
     def test_admin_can_access_any_workspace_in_org(self, admin_user, ws_beta):
         """Admin has global access — can access ws_beta even without explicit membership."""
@@ -231,9 +231,9 @@ class TestWorkspaceAccessEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_beta.id),
         )
-        assert (
-            resp.status_code == status.HTTP_200_OK
-        ), f"Admin should access any workspace in their org, got {resp.status_code}"
+        assert resp.status_code == status.HTTP_200_OK, (
+            f"Admin should access any workspace in their org, got {resp.status_code}"
+        )
 
     def test_level_admin_with_legacy_member_role_can_list_all_org_workspaces(
         self, org_a, ws_alpha, ws_beta
@@ -273,9 +273,9 @@ class TestWorkspaceAccessEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
         )
-        assert (
-            resp.status_code == status.HTTP_200_OK
-        ), f"Viewer should access their own workspace, got {resp.status_code}"
+        assert resp.status_code == status.HTTP_200_OK, (
+            f"Viewer should access their own workspace, got {resp.status_code}"
+        )
 
     def test_no_workspace_header_uses_membership_workspace(self, member_user, ws_beta):
         """Without X-Workspace-Id, user lands on their membership workspace."""
@@ -288,9 +288,9 @@ class TestWorkspaceAccessEnforcement:
         assert resp.status_code == status.HTTP_200_OK
         data = resp.data
         # Should resolve to ws_beta (their only membership)
-        assert data.get("default_workspace_id") == str(
-            ws_beta.id
-        ), f"Expected ws_beta ({ws_beta.id}), got {data.get('default_workspace_id')}"
+        assert data.get("default_workspace_id") == str(ws_beta.id), (
+            f"Expected ws_beta ({ws_beta.id}), got {data.get('default_workspace_id')}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +321,9 @@ class TestCrossOrgAccessEnforcement:
         if resp.status_code == status.HTTP_200_OK:
             # If 200, the org resolved must be org B (user's own org), not org A
             org_data = resp.data.get("organization", {})
-            assert org_data.get("id") != str(
-                org_a.id
-            ), "User from org B must NOT see org A data"
+            assert org_data.get("id") != str(org_a.id), (
+                "User from org B must NOT see org A data"
+            )
 
     def test_user_cannot_switch_to_other_org_workspace(
         self, org_b_user, ws_alpha, org_a
@@ -342,7 +342,9 @@ class TestCrossOrgAccessEnforcement:
             status.HTTP_403_FORBIDDEN,
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
-        ), f"Cross-org workspace switch should fail, got {resp.status_code}: {resp.data}"
+        ), (
+            f"Cross-org workspace switch should fail, got {resp.status_code}: {resp.data}"
+        )
 
     def test_user_stays_in_own_org_without_explicit_header(self, org_b_user, org_b):
         """Without X-Organization-Id, user stays in their own org."""
@@ -383,7 +385,9 @@ class TestWorkspaceSwitchEnforcement:
         assert resp.status_code in (
             status.HTTP_403_FORBIDDEN,
             status.HTTP_404_NOT_FOUND,
-        ), f"Viewer should not switch to unauthorized workspace, got {resp.status_code}: {resp.data}"
+        ), (
+            f"Viewer should not switch to unauthorized workspace, got {resp.status_code}: {resp.data}"
+        )
 
     def test_viewer_can_switch_to_authorized_workspace(
         self, viewer_user, ws_alpha, ws_beta
@@ -399,9 +403,9 @@ class TestWorkspaceSwitchEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
         )
-        assert (
-            resp.status_code == status.HTTP_200_OK
-        ), f"Viewer with membership should switch, got {resp.status_code}: {resp.data}"
+        assert resp.status_code == status.HTTP_200_OK, (
+            f"Viewer with membership should switch, got {resp.status_code}: {resp.data}"
+        )
 
     def test_admin_can_switch_to_any_workspace(self, admin_user, ws_beta, ws_alpha):
         """Admin can switch to any workspace in their org."""
@@ -414,9 +418,9 @@ class TestWorkspaceSwitchEnforcement:
             **_auth_header(token),
             HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
         )
-        assert (
-            resp.status_code == status.HTTP_200_OK
-        ), f"Admin should switch to any workspace, got {resp.status_code}: {resp.data}"
+        assert resp.status_code == status.HTTP_200_OK, (
+            f"Admin should switch to any workspace, got {resp.status_code}: {resp.data}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +462,9 @@ class TestMemberListAccessEnforcement:
             # Verify the data belongs to org B, not org A
             results = resp.data.get("result", {}).get("results", [])
             for member in results:
-                assert (
-                    member.get("email") != "admin@futureagi.com"
-                ), "Org B user should NOT see org A members"
-                assert (
-                    member.get("email") != "viewer@futureagi.com"
-                ), "Org B user should NOT see org A members"
+                assert member.get("email") != "admin@futureagi.com", (
+                    "Org B user should NOT see org A members"
+                )
+                assert member.get("email") != "viewer@futureagi.com", (
+                    "Org B user should NOT see org A members"
+                )

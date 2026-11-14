@@ -643,8 +643,9 @@ class TestReRuns:
         s2 = environment.suite_version
         assert (s2.version_number, s2.origin, s2.parent_id) == (2, "backfill", s1.id)
         assert environment.environment_version.version_number == 1
-        assert authoring_content_digest(changed) in (
-            environment.environment_version.documents["authoring_revisions"]
+        assert (
+            authoring_content_digest(changed)
+            in (environment.environment_version.documents["authoring_revisions"])
         )
 
 
@@ -1861,8 +1862,9 @@ class TestOutcomes:
             environment.environment_version_id,
             environment.suite_version_id,
         ) == defaults
-        assert authoring_content_digest(body) in (
-            environment.suite_version.documents["authoring_revisions"]
+        assert (
+            authoring_content_digest(body)
+            in (environment.suite_version.documents["authoring_revisions"])
         )
 
     def test_an_archive_back_to_older_content_moves_the_default_back(
@@ -2213,8 +2215,9 @@ class TestReReviewFindings:
 
         environment.refresh_from_db()
         assert result.outcome == "appended"
-        assert authoring_content_digest(changed) in (
-            environment.suite_version.documents["authoring_revisions"]
+        assert (
+            authoring_content_digest(changed)
+            in (environment.suite_version.documents["authoring_revisions"])
         )
 
     def test_the_agent_fill_skips_versions_that_are_not_active(

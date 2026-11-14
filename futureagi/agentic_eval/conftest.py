@@ -21,6 +21,7 @@ def pytest_configure(config):
 
     try:
         import django
+
         django.setup()
     except RuntimeError:
         pass  # Already set up (e.g. running under the root conftest)

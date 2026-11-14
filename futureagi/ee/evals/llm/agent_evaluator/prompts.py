@@ -64,11 +64,11 @@ EXPLORE_TRACE_ACTIONS_MENU: str = (
     "\n"
     "**Actions:**\n"
     "- `keys` — top-level fields\n"
-    "- `get` query=\"path.to.field\" — read a specific value\n"
-    "- `search` query=\"text\" — substring search\n"
+    '- `get` query="path.to.field" — read a specific value\n'
+    '- `search` query="text" — substring search\n'
     "- `summary` — counts, errors, latencies\n"
-    "- `list_trace_spans` query=\"<trace_id>\" — span metadata (no input/output)\n"
-    "- `span_detail` query=\"<span_id>\" — FULL span: input, output, span_attributes\n"
+    '- `list_trace_spans` query="<trace_id>" — span metadata (no input/output)\n'
+    '- `span_detail` query="<span_id>" — FULL span: input, output, span_attributes\n'
     "- `errors` / `slow_spans` / `span_tree` — trace-level only\n"
     "\n"
     "**Recommended traversal:**\n"
@@ -81,7 +81,7 @@ TRAVERSAL_BY_ROOT: dict[str, str] = {
         "- Trace: your loaded context already includes a "
         "`spans` list with each span's `id`, `name`, "
         "`observation_type`, and `status`. Call `span_detail` "
-        "query=\"<id>\" directly on every span whose "
+        'query="<id>" directly on every span whose '
         "input/output you need to read. Do NOT skip drilling "
         "just because the per-span metadata looks small.\n"
     ),
@@ -89,24 +89,22 @@ TRAVERSAL_BY_ROOT: dict[str, str] = {
         "- Session: your loaded context already includes "
         "`traces[N].spans[M]` with concrete span IDs. For each "
         "trace you care about, iterate its `spans` list and "
-        "call `span_detail` query=\"<id>\" to read the actual "
+        'call `span_detail` query="<id>" to read the actual '
         "user messages and agent responses. Drill into "
         "multiple traces if judging multi-turn behavior. "
         "NEVER conclude content is missing without calling "
         "`span_detail` on the span IDs already provided.\n"
     ),
     "span": (
-        "- Span: `keys` → `get` query=\"input\" or \"output\" → "
+        '- Span: `keys` → `get` query="input" or "output" → '
         "`search` for specific text patterns.\n"
     ),
     "call": (
-        "- Call: `keys` → `get` query=\"transcript\" / "
-        "\"call_summary\" / \"ended_reason\" → `search` for "
+        '- Call: `keys` → `get` query="transcript" / '
+        '"call_summary" / "ended_reason" → `search` for '
         "specific phrases.\n"
     ),
-    "row": (
-        "- Row: `keys` → `get` query=\"<column_name>\" → `search`\n"
-    ),
+    "row": ('- Row: `keys` → `get` query="<column_name>" → `search`\n'),
 }
 
 
@@ -114,19 +112,19 @@ TRAVERSAL_BY_ROOT: dict[str, str] = {
 # distinct from TRAVERSAL_BY_ROOT which is the verbose recipe).
 EXPLICIT_PATH_BY_ROOT: dict[str, str] = {
     "span": (
-        "  Path: `keys` → `get` query=\"input\" / "
-        "\"output\" / \"span_attributes\" → `search` for "
+        '  Path: `keys` → `get` query="input" / '
+        '"output" / "span_attributes" → `search` for '
         "specific phrases. Span input/output is right here, "
         "no further drill needed.\n"
     ),
     "call": (
-        "  Path: `keys` → `get` query=\"transcript\" / "
-        "\"call_summary\" / \"ended_reason\" → `search` for "
+        '  Path: `keys` → `get` query="transcript" / '
+        '"call_summary" / "ended_reason" → `search` for '
         "specific phrases. The voice/chat transcript is in "
         "the loaded context.\n"
     ),
     "row": (
-        "  Path: `keys` → `get` query=\"<column_name>\" → "
+        '  Path: `keys` → `get` query="<column_name>" → '
         "`search` for specific text. Dataset row columns "
         "are at the top level of the loaded context.\n"
     ),
@@ -139,7 +137,7 @@ EXPLICIT_PATH_BY_ROOT: dict[str, str] = {
 LARGE_DATA_EXPLORATION_TEMPLATE: str = (
     "## Data Available for Exploration\n"
     "The data is available via the `explore_trace` tool.\n"
-    "Use `eval_id: \"{eval_id}\"` with these actions:\n"
+    'Use `eval_id: "{eval_id}"` with these actions:\n'
     "- `summary` — get a high-level overview\n"
     "- `errors` — find error spans\n"
     "- `slow_spans` — find performance bottlenecks\n"

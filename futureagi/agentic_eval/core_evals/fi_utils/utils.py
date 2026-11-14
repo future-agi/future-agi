@@ -6,13 +6,15 @@ from pydantic import BaseModel
 
 class PreserveUndefined(Undefined):
     """Custom Jinja2 Undefined that preserves undefined variables as {{variable}} instead of raising errors."""
+
     def __str__(self):
-        return f'{{{{{self._undefined_name}}}}}'
+        return f"{{{{{self._undefined_name}}}}}"
 
 
 class CustomModelConfig(BaseModel):
     completion_config: list[dict[str, Any]]
     env_config: list[dict[str, Any]]
+
 
 """
 For azure, this config looks like this:
@@ -28,5 +30,3 @@ For azure, this config looks like this:
     "env_config": []
 }
 """
-
-

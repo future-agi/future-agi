@@ -16,7 +16,7 @@ def infer_eval_result_column_data_type(eval_template) -> str:
             else DataTypeChoices.TEXT.value
         )
 
-    output_type = ((getattr(eval_template, "config", None) or {}).get("output") or "")
+    output_type = (getattr(eval_template, "config", None) or {}).get("output") or ""
 
     return {
         "reason": DataTypeChoices.TEXT.value,
