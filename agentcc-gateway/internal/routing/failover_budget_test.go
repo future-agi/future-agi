@@ -129,6 +129,55 @@ func TestFailoverRefusalsDoNotSpendAttempts(t *testing.T) {
 	}
 }
 
+func TestFailoverAdmissionExclusionProvenance(t *testing.T) {
+	for _, scenario := range []string{"all-excluded", "open-and-excluded", "upstream-exclusion"} {
+		t.Run(scenario, func(t *testing.T) {
+			router := budgetRouter(t)
+			registry := NewCircuitBreakerRegistry(config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}, nil)
+			fo := NewFailover(config.FailoverConfig{Enabled: true, MaxAttempts: 1}, router, nil, registry)
+			unavailable := models.ErrForbidden("synthetic model unavailable")
+			upstream := ExcludeTarget(unavailable)
+			var admitted, called []string
+			if scenario == "open-and-excluded" {
+				recordAdmittedFailure(t, registry.Get("b"), errors.New("synthetic failure"))
+			}
+			fo = fo.WithAdmission(func(_ context.Context, id string) (*ProbeLease, error) {
+				admitted = append(admitted, id)
+				if scenario == "upstream-exclusion" && id == "a" {
+					lease, allowed := registry.Get(id).Acquire()
+					if !allowed {
+						t.Fatal("a was not admitted")
+					}
+					return lease, nil
+				}
+				if scenario == "open-and-excluded" && id == "b" {
+					return nil, CircuitOpenError()
+				}
+				return nil, ExcludeTarget(unavailable)
+			})
+			result, err := fo.Execute(context.Background(), "model", func(_ context.Context, id, _ string) error {
+				called = append(called, id)
+				return upstream
+			})
+			switch scenario {
+			case "all-excluded":
+				if err != unavailable || result != nil || len(called) != 0 || !reflect.DeepEqual(admitted, []string{"a", "b", "c", "d"}) {
+					t.Fatalf("all excluded: result=%+v err=%v admitted=%v called=%v", result, err, admitted, called)
+				}
+			case "open-and-excluded":
+				var apiErr *models.APIError
+				if result != nil || !errors.As(err, &apiErr) || apiErr.Code != "all_providers_unavailable" || len(called) != 0 {
+					t.Fatalf("mixed refusals: result=%+v err=%v called=%v", result, err, called)
+				}
+			case "upstream-exclusion":
+				if result != nil || err != upstream || !reflect.DeepEqual(called, []string{"a"}) || !reflect.DeepEqual(admitted, []string{"a"}) {
+					t.Fatalf("upstream outcome became admission: result=%+v err=%v admitted=%v called=%v", result, err, admitted, called)
+				}
+			}
+		})
+	}
+}
+
 func TestFailoverSelectionExhaustedReturnsUnavailable(t *testing.T) {
 	router := budgetRouter(t)
 	for _, id := range []string{"a", "b", "c", "d"} {

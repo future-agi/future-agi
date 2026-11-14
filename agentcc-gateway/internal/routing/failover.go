@@ -29,6 +29,16 @@ type Failover struct {
 	breakerScope string
 }
 
+// targetExclusion is an admission-only decision that leaves the target out of
+// this traversal without acquiring a lease or spending an attempt.
+type targetExclusion struct{ exhausted error }
+
+func (e *targetExclusion) Error() string { return e.exhausted.Error() }
+
+// ExcludeTarget marks an admission decision and the error to report if no
+// eligible target remains. Errors returned by provider calls are not admissions.
+func ExcludeTarget(exhausted error) error { return &targetExclusion{exhausted: exhausted} }
+
 // FailoverCallFunc is called for each failover attempt.
 // providerID is the provider to use, modelOverride overrides the model name.
 type FailoverCallFunc func(ctx context.Context, providerID string, modelOverride string) error
@@ -156,6 +166,8 @@ func (f *Failover) ExecuteStream(ctx context.Context, model string, call Failove
 func (f *Failover) execute(ctx context.Context, model string, call FailoverCallFunc, transfer bool) (*FailoverResult, *ProbeLease, error) {
 	excluded := make(map[string]bool)
 	var lastErr error
+	var exclusionErr error
+	var circuitRefused bool
 	var originalProvider string
 
 	// Refused targets are excluded, but only admitted provider calls spend the
@@ -179,6 +191,9 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 		if err != nil {
 			if lastErr != nil {
 				return nil, nil, lastErr // Return the actual provider error, not "no targets"
+			}
+			if exclusionErr != nil && !circuitRefused {
+				return nil, nil, exclusionErr
 			}
 			if len(excluded) > 0 || f.router.TargetCount(model) > 0 {
 				return nil, nil, ProvidersUnavailableError(fmt.Sprintf("all providers for model %q are unavailable", model))
@@ -209,6 +224,13 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 		}
 		if admissionErr != nil {
 			if IsCircuitOpen(admissionErr) {
+				circuitRefused = true
+				excluded[result.Target.ProviderID] = true
+				continue
+			}
+			var policy *targetExclusion
+			if f.admit != nil && errors.As(admissionErr, &policy) {
+				exclusionErr = policy.exhausted
 				excluded[result.Target.ProviderID] = true
 				continue
 			}

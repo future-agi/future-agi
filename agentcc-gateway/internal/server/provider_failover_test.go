@@ -14,6 +14,87 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
+// A route may list an operator target before the org's eligible target.
+// Refusing the first target must leave the attempt available for the second.
+func TestOrgOnlyFailoverTargetEligibility(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, scenario := range []string{"override-b", "no-override", "only-a", "locked-a"} {
+			t.Run(fmt.Sprintf("%s/stream=%t", scenario, stream), func(t *testing.T) {
+				var operatorACalls, operatorBCalls, orgBCalls atomic.Int64
+				operatorA := adaptiveUpstream(t, false, 0, &operatorACalls)
+				operatorB := adaptiveUpstream(t, false, 0, &operatorBCalls)
+				orgB := adaptiveUpstream(t, false, 0, &orgBCalls)
+				cfg := config.DefaultConfig()
+				cfg.Providers = map[string]config.ProviderConfig{
+					"a": {BaseURL: operatorA.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+					"b": {BaseURL: operatorB.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+				}
+				cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}}}
+				cfg.Routing = config.RoutingConfig{
+					DefaultStrategy: "least-latency",
+					Targets: map[string][]config.RoutingTargetConfig{
+						"adaptive-sample": {{Provider: "a"}, {Provider: "b"}},
+					},
+					Failover:       config.FailoverConfig{Enabled: true, MaxAttempts: 1},
+					ProviderLock:   config.ProviderLockConfig{Enabled: true},
+					CircuitBreaker: config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour},
+				}
+				if scenario == "only-a" {
+					cfg.Routing.Targets["adaptive-sample"] = []config.RoutingTargetConfig{{Provider: "a"}}
+				}
+				srv, gateway := adaptiveServer(t, cfg)
+				// Seed the strategy before the request to make a the first target.
+				srv.handlers.registry.Router().RecordLatency("a", time.Millisecond)
+				srv.handlers.registry.Router().RecordLatency("b", 2*time.Millisecond)
+				store := tenant.NewStore()
+				orgConfig := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{}}
+				if scenario != "no-override" && scenario != "only-a" {
+					orgConfig.Providers["b"] = &tenant.ProviderConfig{Enabled: true, APIKey: "synthetic-org-key", Models: []string{"adaptive-sample"}}
+				}
+				store.Set("synthetic-org", orgConfig)
+				orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
+					"b": {BaseURL: orgB.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+				}, false)
+				t.Cleanup(orgCache.EvictAll)
+				srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
+				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+				headers := make(http.Header)
+				if scenario == "locked-a" {
+					headers = http.Header{"X-Agentcc-Provider-Lock": {"a"}}
+				}
+				status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-probe", stream, headers)
+				switch scenario {
+				case "override-b":
+					if status != http.StatusOK || !strings.Contains(body, "synthetic response") || orgBCalls.Load() != 1 {
+						t.Fatalf("eligible b not used: status=%d body=%s org_b_calls=%d", status, body, orgBCalls.Load())
+					}
+				case "no-override", "only-a":
+					if status != http.StatusForbidden || !strings.Contains(body, "not available for this API key") {
+						t.Fatalf("no eligible target: status=%d body=%s", status, body)
+					}
+				case "locked-a":
+					if status != http.StatusOK || !strings.Contains(body, "synthetic response") || operatorACalls.Load() != 1 {
+						t.Fatalf("locked a changed: status=%d body=%s calls=%d", status, body, operatorACalls.Load())
+					}
+				}
+				if scenario != "locked-a" && operatorACalls.Load() != 0 {
+					t.Fatalf("unselected a called: %d", operatorACalls.Load())
+				}
+				if operatorBCalls.Load() != 0 || (scenario != "override-b" && orgBCalls.Load() != 0) {
+					t.Fatalf("unexpected b calls: operator=%d org=%d", operatorBCalls.Load(), orgBCalls.Load())
+				}
+				wantSamples := int64(0)
+				if scenario == "locked-a" {
+					wantSamples = 1
+				}
+				if health := srv.handlers.healthMonitor.GetHealth("a"); health.ErrorCount != 0 || health.RequestCount != wantSamples || health.CircuitState != "closed" {
+					t.Fatalf("a breaker outcome: %+v; want samples=%d", health, wantSamples)
+				}
+			})
+		}
+	}
+}
+
 func TestAdaptiveOperatorBreakerWithTenantProviders(t *testing.T) {
 	for _, strategy := range []string{"adaptive", "round-robin"} {
 		for _, stream := range []bool{false, true} {

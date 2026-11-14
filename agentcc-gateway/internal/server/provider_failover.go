@@ -34,7 +34,7 @@ func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.Reque
 		// Preserve the existing explicit provider-lock entry policy. Ordinary
 		// org-primary traversal cannot introduce an operator credential.
 		if h.orgProvidersOnly(callCtx, rc) && rc.Metadata["provider_locked"] != "true" && p == base {
-			return nil, h.unavailableModelError(rc, rc.Model)
+			return nil, routing.ExcludeTarget(h.unavailableModelError(rc, rc.Model))
 		}
 		resolved[id] = p
 		return h.admitProvider(callCtx, registry, rc, id, p)
