@@ -94,6 +94,14 @@ func TestErrorFromCanonical(t *testing.T) {
 			wantType:   "timeout_error",
 			wantCode:   "gateway_timeout",
 		},
+		{
+			// An upstream's own gateway_timeout, passed on as a 502.
+			name:       "upstream_gateway_timeout_as_502",
+			apiErr:     &models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeGatewayTimeout, Code: "gateway_timeout", Message: "upstream timed out"},
+			wantStatus: http.StatusBadGateway,
+			wantType:   "api_error",
+			wantCode:   "gateway_timeout",
+		},
 	}
 
 	for _, tc := range tests {

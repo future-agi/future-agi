@@ -103,6 +103,9 @@ func TestOtherErrorsKeepTheirTypes(t *testing.T) {
 		{models.ErrRequestTimeout("deadline passed before the call"), "api_error"},
 		// A 504 that is not the gateway's own timeout keeps api_error.
 		{&models.APIError{Status: http.StatusGatewayTimeout, Type: models.ErrTypeUpstream, Code: "provider_504", Message: "upstream 504"}, "api_error"},
+		// An upstream that reported its own gateway_timeout, passed on as the
+		// gateway's 502, is not this gateway's timeout.
+		{&models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeGatewayTimeout, Code: "upstream_gateway_timeout", Message: "upstream timed out"}, "api_error"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.apiErr.Code, func(t *testing.T) {

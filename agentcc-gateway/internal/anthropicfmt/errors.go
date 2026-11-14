@@ -54,10 +54,11 @@ func StreamErrorEvent(apiErr *models.APIError) []byte {
 }
 
 // ErrorType is the Anthropic error type for a gateway error. The gateway's
-// own timeout is timeout_error; anything else is typed by its status, so a
-// 504 an upstream passed on stays api_error.
+// own timeout, a 504 of type gateway_timeout, is timeout_error; anything else
+// is typed by its status. So a 504 an upstream passed on stays api_error, and
+// so does an upstream's own gateway_timeout, which reaches here as a 502.
 func ErrorType(apiErr *models.APIError) string {
-	if apiErr.Type == models.ErrTypeGatewayTimeout {
+	if apiErr.Type == models.ErrTypeGatewayTimeout && apiErr.Status == http.StatusGatewayTimeout {
 		return timeoutErrorType
 	}
 	return MapStatusToErrorType(apiErr.Status)

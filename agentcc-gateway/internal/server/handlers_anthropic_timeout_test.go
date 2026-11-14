@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -227,6 +228,35 @@ func keyRestrictedGateway(t *testing.T, upstreamURL string) string {
 	ts := httptest.NewServer(srv.httpServer.Handler)
 	t.Cleanup(ts.Close)
 	return ts.URL
+}
+
+// A GPT upstream that answers its own 504 gateway_timeout reaches the
+// gateway as a provider error, a 502: that is not this gateway's timeout.
+func TestMessagesUpstreamGatewayTimeoutIsNotOurs(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		io.WriteString(w, `{"error":{"message":"upstream timed out","type":"gateway_timeout","code":"gateway_timeout"}}`)
+	}))
+	t.Cleanup(upstream.Close)
+	gateway := streamingGateway(t, upstream.URL)
+
+	for _, route := range []streamRoute{translatedRoute, nonStreaming(translatedRoute)} {
+		t.Run(route.name, func(t *testing.T) {
+			resp, body := postStream(t, gateway, route, nil)
+
+			if resp.StatusCode != http.StatusBadGateway {
+				t.Errorf("status = %d, want 502\n%s", resp.StatusCode, body)
+			}
+			if payload := decodeAnthropicError(t, body); payload.Error.Type != "api_error" {
+				t.Errorf("error.type = %q, want api_error\n%s", payload.Error.Type, body)
+			}
+		})
+	}
 }
 
 func TestDeadlineAsTimeout(t *testing.T) {
