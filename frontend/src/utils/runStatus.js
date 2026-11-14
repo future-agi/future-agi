@@ -44,7 +44,6 @@ export const RUN_STATUS = {
   active: { role: "success", label: "Active" },
   sealed: { role: "neutral", label: "Sealed" },
   inactive: { role: "neutral", label: "Inactive" },
-  disabled: { role: "danger", label: "Disabled" },
   suggested: { role: "discovery", label: "Suggested" },
   new: { role: "discovery", label: "New" },
   resolved: { role: "success", label: "Resolved" },

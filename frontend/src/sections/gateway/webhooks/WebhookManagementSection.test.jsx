@@ -47,7 +47,9 @@ describe("WebhookManagementSection", () => {
     const statusCell = within(row()).getByText("Disabled").closest("td");
     expect(statusCell).toHaveTextContent(webhook.disabled_reason);
     expect(statusCell).toHaveTextContent(/hour ago/);
-    expect(runStatusOf("disabled").role).toBe("danger");
+    // The danger role is the webhook row's own; a "disabled" status elsewhere
+    // (a provider's health, for one) keeps its neutral look.
+    expect(runStatusOf("disabled").role).toBe("neutral");
   });
 
   it("enables an auto-disabled endpoint and confirms success", async () => {

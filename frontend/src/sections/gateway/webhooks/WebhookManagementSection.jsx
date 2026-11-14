@@ -344,15 +344,18 @@ const WebhookManagementSection = () => {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <StatusBadge
-                            status={
-                              wh.is_active
-                                ? "active"
-                                : wh.disabled_reason
-                                  ? "disabled"
-                                  : "inactive"
-                            }
-                          />
+                          {!wh.is_active && wh.disabled_reason ? (
+                            // Turned off by the delivery health check, not by a person.
+                            <StatusBadge
+                              status="disabled"
+                              label="Disabled"
+                              role="danger"
+                            />
+                          ) : (
+                            <StatusBadge
+                              status={wh.is_active ? "active" : "inactive"}
+                            />
+                          )}
                           {!wh.is_active && wh.disabled_reason && (
                             <Typography
                               variant="s3"
