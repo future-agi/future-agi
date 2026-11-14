@@ -302,6 +302,11 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		factor := p.aliasCostFactor(rc)
 		cost *= factor
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
+		if source == CostSourceProviderReported && cost > 0 && cost < 0.0000005 {
+			// Six places would round the vendor's non-zero cost to "0.000000",
+			// which every reader of "cost" takes for a vendor-stated $0.
+			rc.Metadata["cost"] = strconv.FormatFloat(cost, 'f', -1, 64)
+		}
 		rc.Metadata["cost_source"] = source
 		if catalogueOK {
 			rc.Metadata[MetadataCatalogue] = fmt.Sprintf("%.6f", catalogue*factor)
@@ -332,8 +337,13 @@ func (p *Plugin) aliasCostFactor(rc *models.RequestContext) float64 {
 
 // reportedVendor is the vendor whose stated cost the plugin may record for
 // rc, or "" when rc is priced from the catalogue.
+//
+// A cache hit never has one. Its response still carries the usage the vendor
+// reported for the request that filled the cache, but no vendor served this
+// one, so it is priced as cache hits were before vendor costs were read: from
+// the catalogue, on the cached usage (an exact hit skips this plugin).
 func (p *Plugin) reportedVendor(rc *models.RequestContext) string {
-	if p.reportedVendors == nil || rc.Provider == "" {
+	if p.reportedVendors == nil || rc.Provider == "" || servedFromCache(rc) {
 		return ""
 	}
 	return p.reportedVendors(rc)
@@ -551,4 +561,10 @@ func decisionModelNames(rc *models.RequestContext) []string {
 		}
 	}
 	return names
+}
+
+// servedFromCache reports whether rc's response came from a cache or another
+// short-circuiting plugin rather than from a provider.
+func servedFromCache(rc *models.RequestContext) bool {
+	return rc.Flags.CacheHit || rc.Flags.ShortCircuited || strings.HasPrefix(rc.Metadata["cache_status"], "hit")
 }
