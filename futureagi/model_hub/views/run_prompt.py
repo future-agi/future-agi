@@ -113,6 +113,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
+    MediaToolUnavailable,
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
@@ -677,6 +678,9 @@ def process_list_content(
             # Handle other media types
             try:
                 processed_content.append(handle_media(item, model_name))
+            except MediaToolUnavailable:
+                # The original audio_url item is not a provider input format.
+                raise
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
                 # Keep original item if processing fails
@@ -2316,7 +2320,10 @@ class RetrieveRunPromptOptionsView(APIView):
                 organization_id=getattr(self.request, "organization", None)
                 or self.request.user.organization.id,
             )
-            available_models = model_manager.models
+            available_models = []
+            for model in model_manager.models:
+                assert isinstance(model, dict)
+                available_models.append(model.copy())
 
             # Get provider status
             providers = LiteLlmModelProvider.get_choices()
