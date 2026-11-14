@@ -176,6 +176,8 @@ class HarnessSuiteVersion(_HarnessPieceVersion):
         max_length=71, db_index=True, blank=True, default=""
     )
     scenario_count = models.PositiveSmallIntegerField(default=0)
+    # Active or candidate at the lifecycle's deploy: its cases validated before proofs were recorded.
+    lifecycle_legacy = models.BooleanField(default=False)
     authored_against = models.ForeignKey(
         HarnessEnvironmentVersion,
         on_delete=models.SET_NULL,
