@@ -176,6 +176,14 @@ def _pins(job):
     return (job.agent_version_id, job.environment_version_id, job.suite_version_id)
 
 
+def _proved(environment, suite=None, keys=()):
+    """A validation of the pair (the defaults, or ``suite`` on them) that proved ``keys``
+    and left the pair partly proved, so a run sends those cases and still warns."""
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment, environment.environment_version, suite, keys=list(keys))
+
+
 def _post_run(auth_client, environment, body, key="api", path=None):
     with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
         return auth_client.post(
@@ -219,6 +227,7 @@ class TestNoPicks:
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, "pk-202", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
 
         response = _post_run(
             auth_client, environment, {"scenario_ids": [_key(NAMES[0])], "trials": 1}
@@ -641,6 +650,7 @@ class TestPickedRun:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-miss-on", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
 
         run = _create(environment, VersionPicks(suite_version_id=s1.id), [ONLY_IN_S1])
 
@@ -657,6 +667,7 @@ class TestPickedRun:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-miss-202", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
 
         response = _post_run(
             auth_client,
@@ -781,6 +792,7 @@ class TestIdempotentRepeat:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-same", storage)
+        _proved(environment, _suite(environment, 1), [ONLY_IN_S1])
         picks = VersionPicks(suite_version_id=_suite(environment, 1).id)
         run = _create(environment, picks, [ONLY_IN_S1], key="same")
         row = HarnessAssembledBundle._base_manager.get(id=run.assembled_bundle_id)
@@ -850,6 +862,7 @@ class TestIdempotentRepeat:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-other", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
         body = {"scenario_ids": [_key(NAMES[0])], "trials": 1}
         first = _post_run(auth_client, environment, body, key="same")
         assert first.status_code == 202, first.content
@@ -881,6 +894,7 @@ class TestIdempotentRepeat:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-202", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
         body = {
             "scenario_ids": [ONLY_IN_S1],
             "trials": 1,
@@ -1171,6 +1185,7 @@ class TestRunPlan:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-plan-failed", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
         row = _ready(
             environment,
             environment.agent_version_id,
@@ -1195,6 +1210,7 @@ class TestRunPlan:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-plan-failed-pick", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
         row = _ready(
             environment,
             environment.agent_version_id,

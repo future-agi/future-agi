@@ -148,6 +148,13 @@ def _suite(
     cache.clear()
 
 
+def _proved_on(environment, environment_version, suite_version=None):
+    """Every member proved on this pair, as a validation that certifies and proves writes it."""
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment, environment_version, suite_version)
+
+
 def _select(environment, keys=None, *, trials=1, pairing=None):
     return harness_readiness.selection_report(
         pairing or _pairing(environment), keys=keys, trials=trials

@@ -1198,9 +1198,12 @@ class TestEditsCarryNoProof:
             environment, _authoring(NAMES, proofs=proofs), origin="chat"
         )
 
-        assert not HarnessSuiteValidation.no_workspace_objects.filter(
+        # A chat's own proofs file is never read; the cases it left unchanged carry their
+        # proofs (section 4.10), and the case it added has none.
+        validation = HarnessSuiteValidation.no_workspace_objects.get(
             suite_version=second.suite
-        ).exists()
+        )
+        assert set(validation.proofs) == {_key(name) for name in NAMES[:2]}
 
     def test_a_contract_change_reuses_s1_without_proving_it_again(
         self, user, workspace, storage

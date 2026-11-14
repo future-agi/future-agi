@@ -643,8 +643,9 @@ class TestSuiteRollBack:
         assert created
         assert run.suite_version_id == s1.id
         assert run.environment_version_id == environment.environment_version_id
-        assert run.payload["metadata"]["authoring_object_key"] == (
-            environment.payload["metadata"]["authoring_object_key"]
+        assert (
+            run.payload["metadata"]["authoring_object_key"]
+            == (environment.payload["metadata"]["authoring_object_key"])
         )
 
     def test_a_failure_mid_way_changes_nothing(
@@ -719,6 +720,9 @@ class TestEnvironmentRollBack:
         move_default(environment, "environment", e1.id, expected_default_id=e2.id)
         environment.refresh_from_db()
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        from simulate.tests.harness_validation import prove_every_pair
+
+        prove_every_pair(environment)
 
         run = _run(environment, VersionPicks(environment_version_id=e2.id))
 
