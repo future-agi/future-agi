@@ -182,7 +182,7 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
 def _select_fallback_pricing(
-    token_usage: dict, fallback_pricing: Optional[dict]
+    token_usage: dict, fallback_pricing: dict | None
 ) -> tuple[dict, str]:
     """
     Choose a fallback pricing dict based on the token_usage fields.
@@ -353,7 +353,11 @@ def calculate_total_cost(
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
     - TTS: Character-based pricing (input characters)
-    - STT: Time-based pricing (audio seconds/minutes)
+    - Per-1k-character: explicit input/output character counts for each priced side
+    - STT: Time-based pricing (input_per_minute or per_minute_audio)
+
+    Missing character counts and unsupported/placeholder rates use a labelled
+    estimate. Token counts are never converted to character counts.
 
     Args:
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
@@ -403,8 +407,7 @@ def calculate_total_cost(
     # stamp a detectable source so downstream can distinguish a real $0.
     if not recognized and pricing_source == "available_models":
         logger.warning(
-            f"Unrecognized pricing structure for model '{model_name}', "
-            f"using fallback pricing instead of $0: {pricing}",
+            "model_pricing_fallback_required",
             model=model_name,
             pricing=pricing,
         )
