@@ -942,9 +942,7 @@ class ClusterAnalysisAgent:
                             "turn": turn + 1,
                         },
                     )
-                    messages.append(
-                        _tool_message(tool_call.id, tool_name, result)
-                    )
+                    messages.append(_tool_message(tool_call.id, tool_name, result))
 
                 self._compact_old_tool_results(messages)
 
