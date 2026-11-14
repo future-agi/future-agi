@@ -66,6 +66,15 @@ class ToolEvalAgent:
                 provider=provider,
             )
 
+    @property
+    def vapi_service(self):
+        """Create the default service only when a legacy VAPI path needs it."""
+        if not hasattr(self, "_vapi_service"):
+            from ee.voice.services.vapi_service import VapiService
+
+            self._vapi_service = VapiService()
+        return self._vapi_service
+
     def evaluate_tool_calls(
         self, messages: list[TranscriptMessage]
     ) -> Dict[str, Any]:
@@ -271,7 +280,7 @@ class ToolEvalAgent:
         if not vapi_data:
             # Fetch from VAPI API if not stored
             try:
-                vapi_data = self.vapi_service.get_call(
+                vapi_data = self.vapi_service.fetch_call(
                     call_execution.service_provider_call_id
                 )
             except Exception as e:
@@ -304,10 +313,12 @@ class ToolEvalAgent:
 
             # Use provided API key or fall back to default vapi_service
             if api_key:
+                from ee.voice.services.vapi_service import VapiService
+
                 vapi_service = VapiService(api_key=api_key)
-                vapi_data = vapi_service.get_call(vapi_call_id)
             else:
-                vapi_data = self.vapi_service.get_call(vapi_call_id)
+                vapi_service = self.vapi_service
+            vapi_data = vapi_service.fetch_call(vapi_call_id)
 
             # Extract messages from artifact
             artifact = vapi_data.get("artifact", {})
