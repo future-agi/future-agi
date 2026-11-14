@@ -34,7 +34,9 @@ describe("vite config vendor chunks", () => {
     ["@emotion/react", "mui"],
     ["@emotion/styled", "mui"],
     ["@sentry/react", "sentry"],
-    ["@sentry-internal/replay", "sentry"],
+    ["@sentry/core", "sentry"],
+    ["@sentry-internal/replay", "sentry-replay"],
+    ["@sentry-internal/replay-canvas", "sentry-replay"],
     ["ag-grid-community", "grid"],
     ["ag-grid-enterprise", "grid"],
     ["ag-grid-react", "grid"],
@@ -93,6 +95,20 @@ describe("vite config vendor chunks", () => {
     expect(
       vendorChunkFor(moduleId("quill", "node_modules/eventemitter3/index.js")),
     ).toBeUndefined();
+  });
+
+  it("matches the innermost scoped package in Windows paths", async () => {
+    const { vendorChunkFor } = await loadConfig();
+    expect(
+      vendorChunkFor(
+        "C:\\app\\node_modules\\@sentry\\react\\node_modules\\@sentry\\core\\build\\esm\\index.js",
+      ),
+    ).toBe("sentry");
+    expect(
+      vendorChunkFor(
+        "C:\\app\\node_modules\\@sentry-internal\\replay\\build\\esm\\index.js",
+      ),
+    ).toBe("sentry-replay");
   });
 
   it("matches Windows paths", async () => {

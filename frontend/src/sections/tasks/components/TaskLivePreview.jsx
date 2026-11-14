@@ -255,6 +255,8 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const endDate = useWatch({ control, name: "endDate" });
   const evalsDetails = useWatch({ control, name: "evalsDetails" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
+  const samplingPolicy = useWatch({ control, name: "samplingPolicy" });
+  const runType = useWatch({ control, name: "runType" });
   const isCursorPreview = isTaskPreviewCursorRowType(rowType);
   // The create form starts with `spans`, then resolves simulator projects to
   // `voiceCalls`. Reuse TaskConfigPanel's cached project-detail query and do
@@ -930,11 +932,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
 
   return (
     <Box
+      aria-label="Matching row workspace"
       sx={{
         display: "flex",
         flexDirection: "column",
         height: "100%",
         overflow: "hidden",
+        minWidth: 0,
       }}
     >
       {/* ── Header ── */}
@@ -954,7 +958,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               fontWeight={600}
               sx={{ fontSize: "12px" }}
             >
-              Live Preview
+              Matching row
             </Typography>
             {projectId && (
               <Chip
@@ -976,11 +980,27 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "12px", display: "block" }}
+          sx={{ display: "block" }}
         >
           {projectId
-            ? "Browse a row matching your current filters"
+            ? samplingPolicy
+              ? "Filter-matching row — not sampled membership"
+              : "Browse a row matching your current filters"
             : "Select a project to preview matching rows"}
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block" }}
+        >
+          {/* Only group picking has a Preview sample button. A percentage is
+              applied when a historical task runs, or to each batch of new
+              data as it arrives. */}
+          {samplingPolicy
+            ? "Test on this row checks evaluator mappings only. To see how many groups and rows are picked, use Preview sample in Data to evaluate."
+            : runType === "continuous"
+              ? "Test on this row checks evaluator mappings only. Rows are sampled as new data arrives."
+              : "Test on this row checks evaluator mappings only. Rows are sampled when the task runs."}
         </Typography>
       </Box>
 

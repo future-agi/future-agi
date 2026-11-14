@@ -228,9 +228,12 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             #       project_version winner scores — a P1 regression risk.
             # Deferred: shape-preservation refactor is out of scope for the
             # bulk migration chunk. Tracked as a follow-up.
+            # The winner is persisted: include newly written spans and eval results.
+            # EvalLogger subqueries inherit this outer query's primary alias.
             # Build the base query with all necessary annotations
             base_query = (
-                ObservationSpan.objects.filter(project=project)
+                ObservationSpan.objects.using("default")
+                .filter(project=project)
                 .values("project_version_id")
                 .annotate(
                     avg_latency_ms=Coalesce(
@@ -255,15 +258,18 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             project_config = project.config or get_default_project_version_config()
             # Add annotations for each eval metric dynamically
 
+            # This independent query also needs primary, including its ID subquery.
             # Get all eval configs from the project version
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project=project
+            eval_configs = (
+                CustomEvalConfig.objects.using("default")
+                .filter(
+                    id__in=EvalLogger.objects.filter(observation_span__project=project)
+                    .values("custom_eval_config_id")
+                    .distinct(),
+                    deleted=False,
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
+                .select_related("eval_template")
+            )
 
             # Add annotations for each eval metric dynamically
             for config in eval_configs:

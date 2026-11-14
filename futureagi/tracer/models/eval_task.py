@@ -63,6 +63,7 @@ class EvalTask(BaseModel):
     name = models.CharField(max_length=255, blank=True, null=True)
     filters = models.JSONField(default=dict, blank=True, null=True)
     sampling_rate = models.FloatField(default=100.0, blank=True, null=True)
+    sampling_policy = models.JSONField(default=None, blank=True, null=True)
     last_run = models.DateTimeField(blank=True, null=True)
     spans_limit = models.IntegerField(default=1000, blank=True, null=True)
     run_type = models.CharField(

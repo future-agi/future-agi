@@ -1352,6 +1352,34 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "scoped by the list view's project ids; shared by filtering and hydration"
             ),
         ),
+        "SessionListQueryBuilder._member_trace_usage_select": filed(
+            PROJECT_SET,
+            why=(
+                "per-trace usage reducer over the latest live member rows a caller "
+                "supplies (the list's physical replay or the sampling snapshot); "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._session_usage_rollup_select": filed(
+            PROJECT_SET,
+            why=(
+                "session roll-up over per-trace usage rows a caller supplies; "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._snapshot_session_usage_select": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            why=(
+                "child-aware session usage over the sampling snapshot; only "
+                "SamplingQuery._source reaches it, through the session builder it "
+                "creates for the previewed or stored EvalTask's project. Task "
+                "creation resolves Project.objects, which excludes hidden projects, "
+                "and simulation creates no EvalTask. The read is fenced by the "
+                "builder's project_where like every list read"
+            ),
+            row="tracer.EvalTask",
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,
@@ -1871,6 +1899,43 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_backfill_hashes": _EVAL_LOG_BACKFILL,
         "_backfill_status": _EVAL_LOG_BACKFILL,
         "backfill_blank_completed_status": _EVAL_LOG_BACKFILL,
+    },
+    "tracer.services.eval_tasks.sampling.query": {
+        "SamplingQuery._source": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_SPAN_EVAL_TASKS,
+            why=(
+                "shared sampling source: preview builds an unsaved EvalTask from "
+                "Project.objects through the scoped project queryset; reconciliation, "
+                "pending proofs and frozen audit populations use the stored EvalTask's "
+                "project. Task creation resolves Project.objects, which excludes "
+                "hidden projects, and simulation creates no EvalTask. The audit also "
+                "rechecks the visible project manager before reading. Span tasks "
+                "include children; query parameters always bind that task's project"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "live_scan_windows": filed(
+            ROW_DRIVEN,
+            why=(
+                "arrival-day discovery called only by reconcile_policy for the "
+                "stored EvalTask's project; simulation never creates that task row"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
+    "tracer.services.eval_tasks.sampling.unit_scope": {
+        "physical_unit_scope": filed(
+            ROW_DRIVEN,
+            why=(
+                "member expansion and first-admission proof fragments of "
+                "SamplingQuery._source, used only with persisted cohort members or "
+                "live candidates of an EvalTask. The caller binds sp_project from "
+                "that task, never from a unit id; simulation makes no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
     },
     "tracer.services.grouping.feature_store": {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
@@ -3000,7 +3065,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]

@@ -155,7 +155,7 @@ def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> None:
         # all_objects: include soft-deleted so a deletion mirrors as is_deleted=1
         # (default `objects` excludes deleted → a delete would never propagate).
         manager = getattr(Trace, "all_objects", Trace.objects)
-        rows = [_trace_to_row(t) for t in manager.filter(id__in=ids)]
+        rows = [_trace_to_row(t) for t in manager.using("default").filter(id__in=ids)]
         if not rows:
             return
         _get_client().insert("traces", rows, column_names=list(_TRACE_COLUMNS))
