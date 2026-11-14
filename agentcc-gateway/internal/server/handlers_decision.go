@@ -128,7 +128,7 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	// platform's own internal-key traffic (the Jev evaluator judging traces).
 	var guardrailContent json.RawMessage
 	if h.decisionInputGuardrailsApply(rc, orgCfg) {
-		content, apiErr := decisionGuardrailContent(req.Body, h.maxBodySize)
+		content, apiErr := decisionGuardrailContent(req.Body, h.decisionBodyLimit())
 		if apiErr != nil {
 			models.WriteError(w, apiErr)
 			return
@@ -269,26 +269,29 @@ const maxDecisionTextDepth = 64
 // error filter), in body order, so the same body gives the same text.
 // Strings are decoded (\uXXXX escapes included), object keys inside a value
 // are text too ({"<criterion>": "<description>"}), and numbers are kept as
-// written. The body is validated, then scanned once in place: no tree and no
-// per-value garbage, so memory is the text plus a little per escaped string.
-// Text deeper than maxDecisionTextDepth, or longer than maxText bytes (when
-// maxText > 0), is refused. It is never used to build or rewrite the
-// upstream body.
-func decisionGuardrailContent(body []byte, maxText int64) (json.RawMessage, *models.APIError) {
+// written. The body is validated, then scanned once in place, and the parts
+// are written straight into the content as one JSON string (no tree, no
+// per-value garbage, no second copy). The content is not HTML-escaped, so it
+// is the text plus its quotes and JSON escapes. Text deeper than
+// maxDecisionTextDepth, or content longer than maxContent bytes (when
+// maxContent > 0) as the guardrails receive it, is refused. It is never used
+// to build or rewrite the upstream body.
+func decisionGuardrailContent(body []byte, maxContent int64) (json.RawMessage, *models.APIError) {
 	if !json.Valid(body) || firstNonSpace(body) != '{' {
 		return nil, models.ErrBadRequest("invalid_json", "request body must be a single JSON object")
 	}
-	s := decisionTextScan{b: body, maxText: maxText}
+	s := decisionTextScan{b: body, maxContent: maxContent}
+	s.content.WriteByte('"')
 	if err := s.read(); err != nil {
 		if errors.Is(err, errDecisionTextTooLarge) {
 			return nil, models.ErrBadRequest("decision_text_too_large", fmt.Sprintf(
-				"The decision's text for the gateway's guardrails is longer than %d bytes. Send less text.", maxText))
+				"The decision's text for the gateway's guardrails is longer than %d bytes as JSON. Send less text.", maxContent))
 		}
 		return nil, models.ErrBadRequest("decision_too_deep", fmt.Sprintf(
 			"A decision field is nested more than %d levels deep, too deep for the gateway's guardrails to check. Flatten it.", maxDecisionTextDepth))
 	}
-	content, _ := json.Marshal(s.text.String())
-	return content, nil
+	s.content.WriteByte('"')
+	return s.content.Bytes(), nil
 }
 
 var (
@@ -306,14 +309,15 @@ func firstNonSpace(b []byte) byte {
 }
 
 // decisionTextScan reads a decision body that json.Valid has accepted, in
-// place, and writes the guardrail text into one builder, one part per line.
-// Because the body is valid JSON, the scan needs no syntax checks of its own.
+// place, and writes the guardrail text, one part per line, as the body of a
+// JSON string. Because the body is valid JSON, the scan needs no syntax
+// checks of its own.
 type decisionTextScan struct {
-	b       []byte
-	i       int
-	text    strings.Builder
-	wrote   bool // a part, possibly empty, has been written
-	maxText int64
+	b          []byte
+	i          int
+	content    bytes.Buffer // the opening quote, then the escaped parts
+	wrote      bool         // a part, possibly empty, has been written
+	maxContent int64        // counts the closing quote still to come
 }
 
 func (s *decisionTextScan) space() {
@@ -533,20 +537,58 @@ func (s *decisionTextScan) skip() {
 	}
 }
 
+// write appends one part, a valid UTF-8 text, JSON-escaped and after a "\n"
+// separator when it is not the first. The cap counts the encoded bytes, the
+// closing quote included.
 func (s *decisionTextScan) write(part []byte) error {
 	sep := 0
 	if s.wrote {
-		sep = 1
+		sep = 2
 	}
-	if s.maxText > 0 && int64(s.text.Len()+sep+len(part)) > s.maxText {
+	if s.maxContent > 0 && int64(s.content.Len()+sep+jsonEscapedLen(part)+1) > s.maxContent {
 		return errDecisionTextTooLarge
 	}
-	if sep == 1 {
-		s.text.WriteByte('\n')
+	if sep != 0 {
+		s.content.WriteString(`\n`)
 	}
-	s.text.Write(part)
+	writeJSONEscaped(&s.content, part)
 	s.wrote = true
 	return nil
+}
+
+// jsonEscapes is how writeJSONEscaped writes a byte that needs an escape
+// inside a JSON string; "" for a byte written as it is. HTML characters are
+// not escaped: the content goes to the guardrails, never into a page.
+var jsonEscapes = func() (e [256]string) {
+	const hex = "0123456789abcdef"
+	for c := range 0x20 {
+		e[c] = `\u00` + string(hex[c>>4]) + string(hex[c&0xf])
+	}
+	e['\b'], e['\f'], e['\n'], e['\r'], e['\t'] = `\b`, `\f`, `\n`, `\r`, `\t`
+	e['"'], e['\\'] = `\"`, `\\`
+	return e
+}()
+
+func jsonEscapedLen(part []byte) int {
+	n := len(part)
+	for _, c := range part {
+		if esc := jsonEscapes[c]; esc != "" {
+			n += len(esc) - 1
+		}
+	}
+	return n
+}
+
+func writeJSONEscaped(buf *bytes.Buffer, part []byte) {
+	start := 0
+	for i, c := range part {
+		if esc := jsonEscapes[c]; esc != "" {
+			buf.Write(part[start:i])
+			buf.WriteString(esc)
+			start = i + 1
+		}
+	}
+	buf.Write(part[start:])
 }
 
 // checkDecisionProviderACL enforces a key's allowed providers. The auth plugin

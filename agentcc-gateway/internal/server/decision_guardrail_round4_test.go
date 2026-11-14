@@ -68,7 +68,7 @@ func TestDecisionGuardrailContentIsNotHTMLEscaped(t *testing.T) {
 	if apiErr != nil {
 		t.Fatal(apiErr)
 	}
-	if len(content) != len(state)+2 || bytes.Contains(content, []byte(`<`)) {
+	if len(content) != len(state)+2 || bytes.Contains(content, []byte(`\u003c`)) {
 		t.Fatalf("content is %d bytes for %d bytes of text, starts %.20q", len(content), len(state), content)
 	}
 	if guardrailText(t, content) != state {
