@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import structlog
 from django.db import transaction
 from django.utils import timezone
@@ -159,6 +161,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                 return self._gm.bad_request(
                     "Provide either key_ids or project_ids, not both"
                 )
+            save: Callable[[], AgentccGuardrailPolicy]
             if key_ids is not None:
                 serializer = AgentccGuardrailPolicySerializer(
                     instance,
@@ -191,13 +194,14 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                         }
                     )
 
-                def save():
+                def save_projects():
                     instance.applied_projects = project_ids
                     instance.applied_keys = []
                     instance.scope = "project"
                     instance.save()
                     return instance
 
+                save = save_projects
                 new_scope = "project"
             policy, synced = self._save_and_push(
                 org, save, old_scope=instance.scope, new_scope=new_scope
