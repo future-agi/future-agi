@@ -1,6 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
+
+/** Fetch a fresh authenticated attachment without caching file contents. */
+export const useDownloadKnowledgeBaseFile = () =>
+  useMutation({
+    mutationFn: async ({ kbId, fileId }) => {
+      const response = await axios.get(endpoints.knowledge.downloadFile(kbId), {
+        params: { file_id: fileId },
+        responseType: "blob",
+      });
+      return response.data;
+    },
+    retry: false,
+  });
 
 export const useKnowledgeBaseList = (search_text, options, newPayload = {}) => {
   const payload = {};

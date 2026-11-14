@@ -164,7 +164,7 @@ const GenerateResult = ({
             overflow: "auto",
             maxHeight: "95%",
             position: "relative",
-            fontSize: "0.8125rem",
+            fontSize: "0.75rem",
           }}
         >
           {loading ? (

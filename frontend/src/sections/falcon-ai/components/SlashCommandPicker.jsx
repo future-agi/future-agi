@@ -208,7 +208,7 @@ function CommandRow({ cmd, isSelected, onSelect }) {
       <Typography
         sx={{
           fontFamily: "'SF Mono', 'Fira Code', monospace",
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 600,
           color: "text.primary",
           minWidth: 90,

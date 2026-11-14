@@ -1228,7 +1228,7 @@ export default function AskRunView({
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ mt: 0.5, fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+            sx={{ mt: 0.5, fontSize: 12, fontVariantNumeric: "tabular-nums" }}
           >
             {metaLine.join(" · ")}
           </Typography>

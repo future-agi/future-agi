@@ -223,7 +223,8 @@ def usage_aggregate_sql(
         capture = (
             ", arrayExists(s -> s.10, usage_spans), "
             "arrayCount(s -> s.4 = 'llm', billable_usage_spans)"
-            if source_summary is not None else ""
+            if source_summary is not None
+            else ""
         )
         return f"""
             arrayMap(usage_spans ->

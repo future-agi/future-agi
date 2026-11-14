@@ -291,26 +291,30 @@ async def _cancel_workflow_async(
 async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -> bool:
     """Cancel a workflow with retries on transient errors.
 
-    Transient errors (h2 protocol, timeout, connection reset) should be retried
-    because failing to cancel means workflows keep running and overwrite the
-    CANCELLED status in DB.
+    Transient RPC failures (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED,
+    ABORTED) are retried, because failing to cancel means workflows keep
+    running and overwrite the CANCELLED status in DB. Retry decisions use the
+    Temporal RPC status, never the exception message; any other error returns
+    False at once.
     """
-    last_error = None
+    from temporalio.service import RPCError, RPCStatusCode
+
+    retryable_statuses = {
+        RPCStatusCode.UNAVAILABLE,
+        RPCStatusCode.DEADLINE_EXCEEDED,
+        RPCStatusCode.RESOURCE_EXHAUSTED,
+        RPCStatusCode.ABORTED,
+    }
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             handle = client.get_workflow_handle(workflow_id)
             await handle.cancel()
             logger.info(f"Cancelled workflow: {workflow_id}")
             return True
-        except Exception as e:
+        except RPCError as e:
             last_error = e
-            error_msg = str(e).lower()
-            # Transient errors worth retrying
-            # TODO: Adding raw strings for now. Need to find better and reliable mechanisms
-            is_transient = any(
-                s in error_msg
-                for s in ["timeout", "h2 protocol", "connection reset", "unavailable"]
-            )
+            is_transient = e.status in retryable_statuses
             if is_transient and attempt < max_retries - 1:
                 wait = (attempt + 1) * 2  # 2s, 4s
                 logger.warning(
@@ -321,6 +325,12 @@ async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -
                 continue
             # Non-transient or final attempt
             logger.warning(f"Could not cancel workflow {workflow_id}: {e}")
+            return False
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "workflow_cancel_failed", workflow_id=workflow_id, error=str(e)
+            )
             return False
 
     logger.warning(

@@ -253,7 +253,7 @@ const AllActionForm = ({
 
       trackEvent(Events.workspaceSendInviteClicked, {
         [PropertyName.click]: "click",
-        emails: variables?.emails,
+        invite_count: variables?.emails?.length ?? 0,
         orgLevel: variables?.org_level,
       });
       refetchData();

@@ -72,6 +72,7 @@ def allow_advanced_api_entitlements():
             )
         yield
 
+
 QUEUE_URL = "/model-hub/annotation-queues/"
 LABEL_URL = "/model-hub/annotations-labels/"
 
@@ -79,8 +80,6 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
 
 
 def _create_queue(auth_client, name="Test Queue", **extra):
@@ -1001,7 +1000,8 @@ class TestExportToDataset:
         # Second annotator
         second = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=second,
+            queue_id=queue_id,
+            user=second,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1423,7 +1423,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer (auth_client) can approve
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1462,7 +1463,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer can request changes
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1533,7 +1535,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer can approve
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1559,4 +1562,3 @@ class TestReviewWorkflow:
         item.refresh_from_db()
         assert item.reviewed_by == user
         assert item.reviewed_at is not None
-

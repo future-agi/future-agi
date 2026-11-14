@@ -152,7 +152,7 @@ const DrawerHeader = ({
         >
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",
@@ -164,7 +164,7 @@ const DrawerHeader = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",
               whiteSpace: "nowrap",

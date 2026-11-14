@@ -197,7 +197,7 @@ def test_account_blocked(base: str) -> None:
         code = result.get("error_code", "")
         if code == "LOGIN_TOO_MANY_ATTEMPTS":
             triggered = True
-            check(f"LOGIN_TOO_MANY_ATTEMPTS triggered on attempt {i+1}", True)
+            check(f"LOGIN_TOO_MANY_ATTEMPTS triggered on attempt {i + 1}", True)
             check("blocked flag present", result.get("blocked") is True)
             check("block_time present", "block_time" in result)
             last_resp = resp

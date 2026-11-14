@@ -25,7 +25,7 @@ const ConnectorCard = ({ title, icon, onClick }) => {
       onClick={onClick}
     >
       <Box alt="logo" component="img" src={icon} width={28} height={28} />
-      <Typography sx={{ fontSize: 13, fontWeight: 600 }} color="text.primary">
+      <Typography sx={{ fontSize: 12, fontWeight: 600 }} color="text.primary">
         {title}
       </Typography>
     </Section>

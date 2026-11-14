@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import { getAgentFormValues } from "./common";
+import { agentDefinitionEventFields } from "./agentDefinitionEventFields";
 import { useMutation } from "@tanstack/react-query";
 import logger from "src/utils/logger";
 import {
@@ -237,11 +238,10 @@ export const useAgentSubmit = ({
         payload.description = data.description ?? "";
       }
 
-      const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.updateAgentDefClicked, {
         [PropertyName.id]: agentDefinitionId,
         [PropertyName.source]: "agent_def",
-        [PropertyName.formFields]: safePayload,
+        [PropertyName.formFields]: agentDefinitionEventFields(payload),
       });
 
       const response = await mutateAsync(payload);

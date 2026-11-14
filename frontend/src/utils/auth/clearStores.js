@@ -1,11 +1,10 @@
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
-import { resetAgentPlaygroundStore } from "src/sections/agent-playground/store/agent-playground-store";
 import { resetWorkflowRunStore } from "src/sections/agent-playground/store/workflow-run-store";
 import { resetGlobalVariablesDrawerStore } from "src/sections/agent-playground/store/global-variables-drawer-store";
 import { resetTemplateLoadingStore } from "src/sections/agent-playground/store/template-loading-store";
 import { useAgentDetailsStore } from "src/sections/agents/store/agentDetailsStore";
 import { resetPromptState } from "src/sections/workbench-v2/store/usePromptStore";
-import { resetGraphStore } from "src/components/GraphBuilder/store/graphStore";
+import { resetUserStore } from "./userStoreResets";
 import { resetAllStates as resetDevelopDetailStates } from "src/sections/develop-detail/states";
 import logger from "src/utils/logger";
 import { resetAllStores } from "src/utils/zustand";
@@ -35,7 +34,7 @@ export const resetAllUserStores = () => {
 
   const resets = [
     ["falcon", () => useFalconStore.getState().resetAll()],
-    ["agent-playground", resetAgentPlaygroundStore],
+    ["agent-playground", () => resetUserStore("agent-playground")],
     ["workflow-run", resetWorkflowRunStore],
     ["global-variables-drawer", resetGlobalVariablesDrawerStore],
     ["template-loading", resetTemplateLoadingStore],
@@ -44,7 +43,7 @@ export const resetAllUserStores = () => {
       () => useAgentDetailsStore.getState().resetAgentDetails(),
     ],
     ["prompt", resetPromptState],
-    ["graph-builder", resetGraphStore],
+    ["graph-builder", () => resetUserStore("graph-builder")],
     ["develop-detail", resetDevelopDetailStates],
   ];
 

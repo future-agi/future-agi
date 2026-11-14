@@ -6,10 +6,13 @@ from html.parser import HTMLParser
 import httpx
 import structlog
 
+from tfc.utils.ssrf_guard import safe_fetch
+
 logger = structlog.get_logger(__name__)
 
 URL_PATTERN = re.compile(r'https?://[^\s<>"\']+')
 MAX_CONTENT_LENGTH = 50000
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -43,16 +46,24 @@ def extract_urls(text):
 
 
 def fetch_url_content(url, timeout=15):
-    """Fetch a URL and extract readable text content."""
+    """Fetch public HTTP(S) content through the IP-pinned, redirect-safe guard."""
     try:
-        resp = httpx.get(
+        resp = safe_fetch(
             url,
+            method="GET",
             timeout=timeout,
-            follow_redirects=True,
-            max_redirects=5,
+            total_timeout=timeout,
+            max_bytes=MAX_RESPONSE_BYTES,
             headers={"User-Agent": "FalconAI/1.0"},
         )
         resp.raise_for_status()
+        # Preserve HTTPX's charset decoding, without any HTTPX network I/O.
+        # safe_fetch already decompresses; do not forward Content-Encoding.
+        response_text = httpx.Response(
+            resp.status_code,
+            headers={"Content-Type": resp.headers.get("content-type", "")},
+            content=resp.content,
+        ).text
 
         content_type = (
             resp.headers.get("content-type", "").split(";")[0].strip().lower()
@@ -60,18 +71,18 @@ def fetch_url_content(url, timeout=15):
 
         # JSON
         if "json" in content_type:
-            return f"[URL: {url}]\n```json\n{resp.text[:MAX_CONTENT_LENGTH]}\n```"
+            return f"[URL: {url}]\n```json\n{response_text[:MAX_CONTENT_LENGTH]}\n```"
 
         # Plain text / markdown
         if "text/plain" in content_type or "text/markdown" in content_type:
-            return f"[URL: {url}]\n{resp.text[:MAX_CONTENT_LENGTH]}"
+            return f"[URL: {url}]\n{response_text[:MAX_CONTENT_LENGTH]}"
 
         # Jupyter notebook (.ipynb)
         if url.endswith(".ipynb") or "nbviewer" in url:
             try:
                 import json
 
-                nb = json.loads(resp.text)
+                nb = json.loads(response_text)
                 cells_text = []
                 for cell in nb.get("cells", []):
                     source = "".join(cell.get("source", []))
@@ -90,15 +101,15 @@ def fetch_url_content(url, timeout=15):
         # HTML
         if "html" in content_type:
             extractor = HTMLTextExtractor()
-            extractor.feed(resp.text)
+            extractor.feed(response_text)
             text = extractor.get_text()
             return f"[URL: {url}]\n{text[:MAX_CONTENT_LENGTH]}"
 
         # GitHub raw files
         if "raw.githubusercontent.com" in url:
-            return f"[GitHub: {url}]\n```\n{resp.text[:MAX_CONTENT_LENGTH]}\n```"
+            return f"[GitHub: {url}]\n```\n{response_text[:MAX_CONTENT_LENGTH]}\n```"
 
-        return f"[URL: {url}]\n{resp.text[:MAX_CONTENT_LENGTH]}"
+        return f"[URL: {url}]\n{response_text[:MAX_CONTENT_LENGTH]}"
     except Exception as e:
         logger.warning("url_fetch_failed", url=url, error=str(e))
         return f"[Failed to fetch URL: {url} — {str(e)}]"

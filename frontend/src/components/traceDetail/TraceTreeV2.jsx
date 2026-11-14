@@ -397,7 +397,7 @@ const TreeNodeRow = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: isSelected ? 600 : 500,
               lineHeight: "16px",
               color: "text.primary",

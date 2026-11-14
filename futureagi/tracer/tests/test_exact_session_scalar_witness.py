@@ -87,8 +87,13 @@ def test_witness_only_prunes_complete_physical_identity_replay():
     assert params["snapshot_scan_end_date"] == END.replace(
         minute=0, second=0
     ) + timedelta(hours=1)
-    assert "latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)" in sql
-    assert "latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)" in sql
+    assert (
+        "latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)"
+        in sql
+    )
+    assert (
+        "latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)" in sql
+    )
 
     original, _ = _source(enabled=False)
     # Neither root discovery, complete alias groups, nor all-root metrics is

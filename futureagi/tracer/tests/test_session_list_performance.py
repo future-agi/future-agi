@@ -217,10 +217,12 @@ class TestSpanAttributesProcessingStress:
         rows = [
             {
                 "session_id": f"session-{session}",
-                "span_attributes_raw": json.dumps({
-                    f"key_{key}": f"value_{session}_{root}_{key}"
-                    for key in range(keys_per_attr)
-                }),
+                "span_attributes_raw": json.dumps(
+                    {
+                        f"key_{key}": f"value_{session}_{root}_{key}"
+                        for key in range(keys_per_attr)
+                    }
+                ),
             }
             for session in range(num_sessions)
             for root in range(attrs_per_session)

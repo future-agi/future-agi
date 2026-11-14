@@ -260,9 +260,7 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = self._error_response_body(
-            result, status_code=HTTP_400_BAD_REQUEST
-        )
+        response = self._error_response_body(result, status_code=HTTP_400_BAD_REQUEST)
         return Response(response, status=HTTP_400_BAD_REQUEST)
 
     def usage_limit_response(self, check_result):
@@ -362,9 +360,7 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        message = (
-            "The request requires authentication. Please login to continue."
-        )
+        message = "The request requires authentication. Please login to continue."
         response = self._error_response_body(
             message,
             status_code=HTTP_401_UNAUTHORIZED,
@@ -386,9 +382,7 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = self._error_response_body(
-            result, status_code=status_code, code=code
-        )
+        response = self._error_response_body(result, status_code=status_code, code=code)
         return Response(response, status=status_code)
 
     def detect_delimiter(self, file):

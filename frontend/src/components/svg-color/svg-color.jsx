@@ -1,6 +1,6 @@
 import { Box } from "@mui/material";
 import { forwardRef, useEffect, useRef } from "react";
-import { mergeRefs } from "src/utils/utils";
+import { mergeRefs } from "src/utils/mergeRefs";
 import PropTypes from "prop-types";
 
 // Design system: icons default to 16px. Illustrations pass their own size.

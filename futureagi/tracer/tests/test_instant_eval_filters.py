@@ -571,8 +571,7 @@ def test_reading_more_of_a_run_still_answering_is_refused_before_any_work(
     response = _control(auth_client, observe_project, task.id, "read_more", more=7)
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["result"]["message"] == (
-        "This run stopped before reading every row. Resume it to read the rest "
-        "first."
+        "This run stopped before reading every row. Resume it to read the rest first."
     )
     run = InstantEvalRun.objects.get(eval_task=task)
     assert run.rows_requested == 7 and len(started) == starts

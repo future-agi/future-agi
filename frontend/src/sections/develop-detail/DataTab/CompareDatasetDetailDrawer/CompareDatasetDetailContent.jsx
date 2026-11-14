@@ -10,6 +10,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -52,7 +53,7 @@ export const StatusCellRenderer = (props) => {
         sx={{
           marginLeft: theme.spacing(1),
           color: theme.palette.error.main,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         Error

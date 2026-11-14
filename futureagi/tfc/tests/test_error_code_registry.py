@@ -48,6 +48,12 @@ UNKNOWN = "An unknown error occurred."
             "FILTER_VALUE_INVENTORY_TOO_BROAD",
             "Too many values to browse exactly. Enter a more specific search.",
         ),
+        (
+            ApiErrorCode.API_KEY_EXPIRED,
+            "api_key_expired",
+            "API_KEY_EXPIRED",
+            "API key has expired",
+        ),
     ],
 )
 def test_registered_code_and_message(code, wire, message_key, message):

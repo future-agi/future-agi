@@ -456,7 +456,7 @@ const ResultsTab = ({ experimentId, experiment }) => {
                     <TableCell>
                       <Typography
                         variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "13px" }}
+                        sx={{ fontFamily: "monospace", fontSize: "12px" }}
                       >
                         {formatDateTime(r.created_at)}
                       </Typography>

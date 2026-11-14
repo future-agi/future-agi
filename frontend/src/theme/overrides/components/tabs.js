@@ -6,7 +6,7 @@ export function tabs(theme) {
   return {
     MuiTabs: {
       styleOverrides: {
-        // Design system tabs: 32px underline tabs, 13px/500, accent underline.
+        // Design system tabs: 32px underline tabs, 12px/500, accent underline.
         // A full-width hairline under every horizontal tab row (the tab rail).
         // Drawn as an inset shadow so the 2px indicator sits on top of it.
         // Screens that draw their own line opt out with boxShadow: "none".

@@ -89,12 +89,14 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// Build cache key.
-	namespace := rc.Metadata["cache_namespace"]
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := cacheNamespace(rc)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
+	if p.semanticStore != nil {
+		// Fixed now so ProcessResponse stores under it even on force-refresh or
+		// after later plugins rewrite rc.Request.
+		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
+	}
 
 	// Edge cache: check conditional request (If-None-Match → 304).
 	if p.edgeHandler != nil && p.edgeHandler.IsEnabled() {
@@ -140,7 +142,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Request.Model); result != nil {
+			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
 				rc.Response = result.Response
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
@@ -194,7 +196,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			p.semanticStore.Set(key, vec, rc.Request.Model, rc.Response, ttl)
+			// Store under the partition the lookup used: later plugins (PII
+			// remediation, fallback model rewrites) may have changed rc.Request.
+			partition := rc.Metadata["cache_semantic_partition"]
+			if partition == "" {
+				partition = semanticPartition(cacheNamespace(rc), rc.Request)
+			}
+			p.semanticStore.Set(key, vec, partition, rc.Response, ttl)
 		}
 	}
 
@@ -256,6 +264,69 @@ func extractLastUserMessage(req *models.ChatCompletionRequest) string {
 		return string(msg.Content)
 	}
 	return ""
+}
+
+// cacheNamespace is the x-agentcc-cache-namespace of the request, or "default".
+func cacheNamespace(rc *models.RequestContext) string {
+	if ns := rc.Metadata["cache_namespace"]; ns != "" {
+		return ns
+	}
+	return "default"
+}
+
+// semanticPartition scopes semantic cache entries. Only the last user
+// message's text is compared by similarity, so everything else must match
+// exactly. The partition is the exact-match cache key (namespace, model, every
+// message, and the options that key covers) of the request with that compared
+// text replaced by a placeholder: other instructions, earlier turns, further
+// content parts (images, extra text), where the text sits among them, the
+// speaker name, tools or response_format that differ never share an entry,
+// however similar the question.
+func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
+	ctx := *req
+	ctx.Messages = append([]models.Message(nil), req.Messages...)
+	for i := len(ctx.Messages) - 1; i >= 0; i-- {
+		if ctx.Messages[i].Role == "user" {
+			ctx.Messages[i].Content = withoutComparedText(ctx.Messages[i].Content)
+			break
+		}
+	}
+	return req.Model + "|ctx=" + BuildCacheKey(namespace, &ctx)
+}
+
+// withoutComparedText replaces in a user message's content the text that
+// extractLastUserMessage vectorizes with a placeholder, keeping every other
+// part and the position of that text among them. It picks the same branch
+// (string, parts, raw) as extractLastUserMessage.
+func withoutComparedText(content json.RawMessage) json.RawMessage {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return json.RawMessage(`""`)
+	}
+	var typed []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(content, &typed) == nil && json.Unmarshal(content, &parts) == nil {
+		for i, tp := range typed {
+			if tp.Type != "text" || tp.Text == "" {
+				continue
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(parts[i], &fields) != nil {
+				break
+			}
+			// Parts that parse have string text, so the placeholder cannot
+			// match a part of another request, an empty text part included.
+			fields["text"] = json.RawMessage(`true`)
+			parts[i], _ = json.Marshal(fields)
+			b, _ := json.Marshal(parts)
+			return b
+		}
+	}
+	// extractLastUserMessage vectorizes the raw content: keep all of it.
+	return content
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
