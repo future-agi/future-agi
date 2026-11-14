@@ -430,18 +430,25 @@ The Distributed `agentcc-gateway` and `frontend` images can serve HTTPS
 without a proxy. Keep their existing HTTP ports during migration, then turn
 HTTP off after clients move. The dashboard still calls the **API separately**:
 serve the API over HTTPS yourself and set `VITE_HOST_API=https://api.example.com`
-and `AGENTCC_GATEWAY_PUBLIC_URL=https://gateway.example.com` on the backend
-(and workers if they use it). Native backend TLS and an API proxy inside nginx
-are not supplied.
+and `AGENTCC_GATEWAY_PUBLIC_URL=https://gateway.example.com` on the backend,
+`serving` and every worker service. Native backend TLS and an API proxy inside
+nginx are not supplied.
 
 Create a **local override** alongside the root Distributed Compose file
 (do not change that file). Mount each certificate **directory**, not individual
 files: replacing a file atomically or kubelet swapping Secret symlinks will
 not update a single-file bind mount. Put a full chain in `tls.crt` and the
-matching key in `tls.key`; protect the private key. For example:
+matching key in `tls.key`; protect the private key, but keep it readable by
+the user each image reads it as: the gateway runs as uid and gid 65532
+(`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
+and the frontend's nginx master reads its key as root before it starts the
+workers. For example:
 
 ```yaml
 # docker-compose.native-tls.yml, next to docker-compose.distributed.yml
+x-gateway-urls: &gateway-urls
+  environment:
+    AGENTCC_GATEWAY_PUBLIC_URL: https://gateway.example.com
 services:
   agentcc-gateway:
     ports:
@@ -470,21 +477,29 @@ services:
       FRONTEND_TLS_KEY_FILE: /run/futureagi-tls/tls.key
       FRONTEND_TLS_RELOAD_INTERVAL: "30"
       VITE_HOST_API: https://api.example.com
-  backend:
-    environment:
-      AGENTCC_GATEWAY_PUBLIC_URL: https://gateway.example.com
-  worker:
-    environment:
-      AGENTCC_GATEWAY_PUBLIC_URL: https://gateway.example.com
+  # Every service of docker-compose.distributed.yml that calls the gateway.
+  backend: *gateway-urls
+  serving: *gateway-urls
+  worker: *gateway-urls
+  worker-default: *gateway-urls
+  worker-tasks-s: *gateway-urls
+  worker-tasks-l: *gateway-urls
+  worker-tasks-xl: *gateway-urls
+  worker-sql-workbench: *gateway-urls
+  worker-exact-aggregation: *gateway-urls
+  worker-trace-ingestion: *gateway-urls
+  worker-agent-compass: *gateway-urls
+  worker-simulation-runner: *gateway-urls
 ```
 
 Run `docker compose -f docker-compose.distributed.yml -f docker-compose.native-tls.yml up -d`
 from the repository root. The existing Compose ports still publish HTTP; to
 remove them later, use a dedicated override that replaces the `ports` list
 (`!override` requires Docker Compose v2.24.4 or newer), set the two
-`*_HTTP_ENABLED` variables to `false`, and update both the backend and
-workers' `AGENTCC_INTERNAL_URL` and `AGENTCC_GATEWAY_INTERNAL_URL` to
-`https://agentcc-gateway:8443`. Mount a CA bundle directory and set
+`*_HTTP_ENABLED` variables to `false`, and add `AGENTCC_INTERNAL_URL` and
+`AGENTCC_GATEWAY_INTERNAL_URL` set to `https://agentcc-gateway:8443` to the
+`x-gateway-urls` environment, so every service above calls the gateway over
+HTTPS (they all set the HTTP URLs through `x-backend-env`). Mount a CA bundle directory and set
 `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to the bundle file for in-cluster
 trust; it replaces the image's trust store, so include the public roots
 (e.g. append the issuing CA to the system bundle) when the backend also
