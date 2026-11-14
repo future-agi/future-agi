@@ -48,6 +48,13 @@ def test_writer_stamps_owner_project(monkeypatch, path, feedback):
 
     monkeypatch.setattr(eval_utils, "log_and_deduct_cost_for_api_request", capture)
     monkeypatch.setattr(eval_utils.CustomEvalConfig.objects, "get", lambda **_: config)
+    # The span writer reads the config from the primary (TH-3119); patch that
+    # read too so no path reaches the database.
+    monkeypatch.setattr(
+        eval_utils.CustomEvalConfig.objects,
+        "using",
+        lambda *_: SimpleNamespace(get=lambda **_: config),
+    )
     monkeypatch.setattr(eval_utils, "_stamp_eval_version", lambda *_: None)
     monkeypatch.setattr(
         eval_utils, "_inject_ground_truth", lambda run_params, *_, **__: run_params

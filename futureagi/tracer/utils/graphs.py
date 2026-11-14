@@ -381,7 +381,6 @@ class GraphEngine:
         filtered_objects = []
 
         for i in range(len(count)):
-
             if req_objects is not None and len(req_objects) > 0:
                 filtered_objects = [
                     req_object

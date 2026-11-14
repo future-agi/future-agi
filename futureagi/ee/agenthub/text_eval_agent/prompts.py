@@ -35,7 +35,7 @@ text_template_cot_response_prompt_whole = """
         """
 
 
-text_template_plan_prompt="""
+text_template_plan_prompt = """
 Task: You are tasked with generating a detailed plan to evaluate how much of a given output is relevant to a given input and past conversation (if given) based on specific judging criteria. Follow these steps carefully to create the plan:
 
 1. First, review the Judging Criteria:
@@ -108,7 +108,6 @@ After completing your analysis, provide your final judgment and explanation. You
 
 Remember to be objective and base your evaluation solely on the provided chat history and evaluation criteria. Do not introduce external information or make assumptions beyond what is presented in the task.
 """
-
 
 
 generic_text_template_plan_prompt = """
@@ -201,7 +200,7 @@ Remain objective and base your evaluation solely on the provided output and crit
 """
 
 
-#2nd version
+# 2nd version
 
 generic_text_template_plan_prompt = """
 Task: Create a structured evaluation plan to assess output relevance based on specific judging criteria.

@@ -12,6 +12,7 @@ from typing import Any
 import structlog
 
 from simulate.models.test_execution import CallExecution
+
 try:
     from ee.voice.services.types.voice import TranscriptMessage
 except ImportError:

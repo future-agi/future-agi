@@ -11,7 +11,9 @@ from rest_framework import serializers
 from tracer.utils.helper import validate_filters_helper
 
 
-def _filter(col_id, *, filter_type, filter_op, filter_value=None, col_type="SPAN_ATTRIBUTE"):
+def _filter(
+    col_id, *, filter_type, filter_op, filter_value=None, col_type="SPAN_ATTRIBUTE"
+):
     return {
         "column_id": col_id,
         "filter_config": {
@@ -58,7 +60,14 @@ class TestValidateFiltersHelper:
 
     def test_span_attr_number_between_valid(self):
         out = validate_filters_helper(
-            [_filter("n", filter_type="number", filter_op="between", filter_value=["1", "2"])]
+            [
+                _filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="between",
+                    filter_value=["1", "2"],
+                )
+            ]
         )
         assert len(out) == 1
 
@@ -84,20 +93,40 @@ class TestValidateFiltersHelper:
     def test_span_attr_op_not_allowed_for_type(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("n", filter_type="number", filter_op="contains", filter_value="abc")]
+                [
+                    _filter(
+                        "n",
+                        filter_type="number",
+                        filter_op="contains",
+                        filter_value="abc",
+                    )
+                ]
             )
 
     def test_span_attr_legacy_equal_to_rejected(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("n", filter_type="number", filter_op="equal_to", filter_value="42")]
+                [
+                    _filter(
+                        "n",
+                        filter_type="number",
+                        filter_op="equal_to",
+                        filter_value="42",
+                    )
+                ]
             )
 
     def test_span_attr_legacy_not_in_between_rejected(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("n", filter_type="number", filter_op="not_in_between",
-                         filter_value=["1", "2"])]
+                [
+                    _filter(
+                        "n",
+                        filter_type="number",
+                        filter_op="not_in_between",
+                        filter_value=["1", "2"],
+                    )
+                ]
             )
 
     def test_span_attr_legacy_is_rejected(self):
@@ -109,7 +138,14 @@ class TestValidateFiltersHelper:
     def test_span_attr_between_wrong_arity(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("n", filter_type="number", filter_op="between", filter_value=["1"])]
+                [
+                    _filter(
+                        "n",
+                        filter_type="number",
+                        filter_op="between",
+                        filter_value=["1"],
+                    )
+                ]
             )
 
     def test_span_attr_in_empty_list_rejected(self):
@@ -127,20 +163,38 @@ class TestValidateFiltersHelper:
     def test_span_attr_number_non_numeric_value_rejected(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("n", filter_type="number", filter_op="equals", filter_value="abc")]
+                [
+                    _filter(
+                        "n",
+                        filter_type="number",
+                        filter_op="equals",
+                        filter_value="abc",
+                    )
+                ]
             )
 
     def test_span_attr_boolean_string_true_rejected(self):
         """Strict: only native booleans. String forms must 400 at the serializer."""
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("b", filter_type="boolean", filter_op="equals", filter_value="true")]
+                [
+                    _filter(
+                        "b",
+                        filter_type="boolean",
+                        filter_op="equals",
+                        filter_value="true",
+                    )
+                ]
             )
 
     def test_span_attr_boolean_int_one_rejected(self):
         with pytest.raises(serializers.ValidationError):
             validate_filters_helper(
-                [_filter("b", filter_type="boolean", filter_op="equals", filter_value=1)]
+                [
+                    _filter(
+                        "b", filter_type="boolean", filter_op="equals", filter_value=1
+                    )
+                ]
             )
 
     def test_non_span_attribute_filters_passthrough(self):
@@ -148,7 +202,14 @@ class TestValidateFiltersHelper:
         (they have less-strict downstream handling). Ensure we don't accidentally
         reject them."""
         out = validate_filters_helper(
-            [_filter("model", filter_type="text", filter_op="equals",
-                     filter_value="gpt-4", col_type="SYSTEM_METRIC")]
+            [
+                _filter(
+                    "model",
+                    filter_type="text",
+                    filter_op="equals",
+                    filter_value="gpt-4",
+                    col_type="SYSTEM_METRIC",
+                )
+            ]
         )
         assert len(out) == 1

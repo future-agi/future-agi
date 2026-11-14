@@ -56,11 +56,13 @@ def _run(issues, distiller):
         captured["texts"] = list(texts)
         return [[1.0, 0.0] for _ in texts]
 
-    with patch("tracer.utils.trace_scanner.get_unclustered_issues", return_value=issues), \
-         patch("tracer.utils.trace_scanner.distill_scan_briefs", side_effect=distiller), \
-         patch("tracer.utils.trace_scanner.embed_texts", side_effect=_embed), \
-         patch("tracer.utils.trace_scanner.find_nearest_centroid", return_value=None), \
-         patch("tracer.utils.trace_scanner.create_cluster", return_value="C1"):
+    with (
+        patch("tracer.utils.trace_scanner.get_unclustered_issues", return_value=issues),
+        patch("tracer.utils.trace_scanner.distill_scan_briefs", side_effect=distiller),
+        patch("tracer.utils.trace_scanner.embed_texts", side_effect=_embed),
+        patch("tracer.utils.trace_scanner.find_nearest_centroid", return_value=None),
+        patch("tracer.utils.trace_scanner.create_cluster", return_value="C1"),
+    ):
         cluster_issues("p1")
     return captured.get("texts")
 
@@ -77,6 +79,7 @@ def test_embeds_the_distilled_phrase_not_the_raw_brief(issues):
 def test_two_briefs_differing_only_by_ticker_embed_identically(issues):
     """One bug, two tickers. Raw briefs are distinct strings and seed two
     clusters; that is the 96%-distinct-briefs fragmentation in miniature."""
+
     def distiller(items):
         for i in items:
             i.distilled = CANON

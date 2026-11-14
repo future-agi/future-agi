@@ -362,19 +362,19 @@ class TestCreateDatasetFromHuggingFaceE2E:
 
         if response.status_code == status.HTTP_200_OK:
             # Verify rows dict has integer keys (before JSON serialization)
-            assert (
-                0 in captured_rows or "0" in captured_rows
-            ), "Rows dict should have key 0 (integer or string)"
-            assert (
-                1 in captured_rows or "1" in captured_rows
-            ), "Rows dict should have key 1 (integer or string)"
+            assert 0 in captured_rows or "0" in captured_rows, (
+                "Rows dict should have key 0 (integer or string)"
+            )
+            assert 1 in captured_rows or "1" in captured_rows, (
+                "Rows dict should have key 1 (integer or string)"
+            )
 
             # The actual keys should be integers at this point
             # (before Temporal JSON serialization)
             if 0 in captured_rows:
-                assert isinstance(
-                    list(captured_rows.keys())[0], int
-                ), "View should create rows with integer keys"
+                assert isinstance(list(captured_rows.keys())[0], int), (
+                    "View should create rows with integer keys"
+                )
         else:
             # Print response for debugging
             print(f"Response: {response.status_code} - {response.json()}")
@@ -430,7 +430,12 @@ class TestHuggingFaceListFeatureCompat:
         from datasets import Features
 
         features = Features.from_dict(
-            {"tags": {"feature": {"dtype": "string", "_type": "Value"}, "_type": "List"}}
+            {
+                "tags": {
+                    "feature": {"dtype": "string", "_type": "Value"},
+                    "_type": "List",
+                }
+            }
         )
 
         assert "tags" in features

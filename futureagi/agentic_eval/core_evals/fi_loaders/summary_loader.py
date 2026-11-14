@@ -8,6 +8,7 @@ from .base_loader import BaseLoader
 
 class SummaryDataPoint(TypedDict):
     """Data point for an LLM generated summary."""
+
     document: str
     response: str  # summary
 
@@ -68,14 +69,12 @@ class SummaryLoader(BaseLoader):
         Load data from Fi API.
         By default, this will fetch the last 10 inferences from the API.
         """
-        self._raw_dataset = FiApiService.fetch_inferences(
-            filters=filters, limit=limit
-        )
+        self._raw_dataset = FiApiService.fetch_inferences(filters=filters, limit=limit)
         for raw_dataset in self._raw_dataset:
             raw_dataset_dict = asdict(raw_dataset)
             processed_instance = {
-                "document": raw_dataset_dict['context'],
-                "response": raw_dataset_dict['prompt_response'],
+                "document": raw_dataset_dict["context"],
+                "response": raw_dataset_dict["prompt_response"],
             }
             self._processed_dataset.append(processed_instance)
         return self._processed_dataset

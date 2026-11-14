@@ -26,6 +26,7 @@ stdout. Exit codes:
     1 — usage error (bad flags, missing inputs)
     2 — at least one layer failed
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,7 +49,7 @@ from psycopg.rows import dict_row
 
 # Reuse the adapter so Layer B's "expected" matches what the backfill actually wrote.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from adapter import (                                     # noqa: E402
+from adapter import (  # noqa: E402
     CH_INSERT_COLUMNS,
     adapt,
     row_to_tuple,
@@ -74,9 +75,13 @@ def _configure_logging() -> None:
 # ─── PG / CH client helpers ───────────────────────────────────────────────────
 def _pg_conn(args) -> psycopg.Connection:
     conn = psycopg.connect(
-        host=args.pg_host, port=args.pg_port, user=args.pg_user,
-        password=args.pg_pass, dbname=args.pg_db,
-        autocommit=True, row_factory=dict_row,
+        host=args.pg_host,
+        port=args.pg_port,
+        user=args.pg_user,
+        password=args.pg_pass,
+        dbname=args.pg_db,
+        autocommit=True,
+        row_factory=dict_row,
     )
     conn.execute("SET TIME ZONE 'UTC'")
     return conn
@@ -84,16 +89,25 @@ def _pg_conn(args) -> psycopg.Connection:
 
 def _ch_client(args) -> clickhouse_connect.driver.Client:
     return clickhouse_connect.get_client(
-        host=args.ch_host, port=args.ch_http_port,
-        username=args.ch_user, password=args.ch_pass,
-        database=args.ch_db, send_receive_timeout=300,
+        host=args.ch_host,
+        port=args.ch_http_port,
+        username=args.ch_user,
+        password=args.ch_pass,
+        database=args.ch_db,
+        send_receive_timeout=300,
     )
 
 
 # ─── Layer A — count parity ──────────────────────────────────────────────────
-def layer_a_counts(pg, ch, *, projects: list[str] | None,
-                   since: datetime | None, until: datetime | None,
-                   max_diff_examples: int = 50) -> dict[str, Any]:
+def layer_a_counts(
+    pg,
+    ch,
+    *,
+    projects: list[str] | None,
+    since: datetime | None,
+    until: datetime | None,
+    max_diff_examples: int = 50,
+) -> dict[str, Any]:
     pf, params = "", {}
     if projects:
         pf = "AND s.project_id = ANY(%(projects)s)"
@@ -108,7 +122,8 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
 
     log.info("layer_a_pg_query")
     with pg.cursor() as cur:
-        cur.execute(f"""
+        cur.execute(
+            f"""
             SELECT s.project_id::text AS project_id,
                    date_trunc('day', s.start_time) AS day,
                    count(*) AS n
@@ -116,7 +131,9 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
             WHERE s.deleted = false AND s.start_time IS NOT NULL {pf} {tf}
             GROUP BY 1, 2
             ORDER BY 2, 1
-        """, params)
+        """,
+            params,
+        )
         pg_buckets: dict[tuple[str, datetime], int] = {}
         for r in cur.fetchall():
             day = r["day"]
@@ -132,8 +149,9 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
     ch_filter_parts = ["is_deleted = 0"]
     ch_params: dict[str, Any] = {}
     if projects:
-        ch_filter_parts.append("project_id IN (" + ",".join(
-            f"toUUID('{p}')" for p in projects) + ")")
+        ch_filter_parts.append(
+            "project_id IN (" + ",".join(f"toUUID('{p}')" for p in projects) + ")"
+        )
     if since:
         ch_filter_parts.append("start_time >= %(since)s")
         ch_params["since"] = since
@@ -150,7 +168,8 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
     #   - `GROUP BY 1, 2` (positional) — empty when WHERE references a column
     #     whose `toString()` appears in the SELECT.
     # Reproduced both in DECISIONS #020. Explicit `GROUP BY toString(project_id), toStartOfDay(start_time)` works.
-    rows = ch.query(f"""
+    rows = ch.query(
+        f"""
         SELECT toString(project_id) AS project_id_str,
                toStartOfDay(start_time) AS day,
                count() AS n
@@ -158,7 +177,9 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
         WHERE {ch_where}
         GROUP BY toString(project_id), toStartOfDay(start_time)
         ORDER BY toStartOfDay(start_time), toString(project_id)
-    """, parameters=ch_params).result_rows
+    """,
+        parameters=ch_params,
+    ).result_rows
     ch_buckets: dict[tuple[str, datetime], int] = {}
     for row in rows:
         # CH's SELECT name aliases (AS project_id, AS day) don't propagate to
@@ -176,11 +197,15 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
         pn = pg_buckets.get(k, 0)
         cn = ch_buckets.get(k, 0)
         if pn != cn:
-            diffs.append({
-                "project_id": k[0],
-                "day": k[1].isoformat(),
-                "pg": pn, "ch": cn, "delta": cn - pn,
-            })
+            diffs.append(
+                {
+                    "project_id": k[0],
+                    "day": k[1].isoformat(),
+                    "pg": pn,
+                    "ch": cn,
+                    "delta": cn - pn,
+                }
+            )
 
     status = "pass" if not diffs else "fail"
     return {
@@ -193,8 +218,14 @@ def layer_a_counts(pg, ch, *, projects: list[str] | None,
 
 
 # ─── Layer B — sampled deep-equal ────────────────────────────────────────────
-def _sample_pg_ids(pg, *, sample_size: int, projects: list[str] | None,
-                   since: datetime | None, until: datetime | None) -> list[str]:
+def _sample_pg_ids(
+    pg,
+    *,
+    sample_size: int,
+    projects: list[str] | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[str]:
     pf, params = "", {"n": sample_size}
     if projects:
         pf = "AND s.project_id = ANY(%(projects)s)"
@@ -211,12 +242,15 @@ def _sample_pg_ids(pg, *, sample_size: int, projects: list[str] | None,
         # few hundred million" — PG uses a sort-by-random which is O(N log N)
         # but only materializes the random column for filtered rows. If this
         # becomes too slow at prod scale, swap to TABLESAMPLE BERNOULLI.
-        cur.execute(f"""
+        cur.execute(
+            f"""
             SELECT s.id FROM tracer_observation_span s
             WHERE s.deleted = false AND s.start_time IS NOT NULL {pf} {tf}
             ORDER BY random()
             LIMIT %(n)s
-        """, params)
+        """,
+            params,
+        )
         return [r["id"] for r in cur.fetchall()]
 
 
@@ -232,7 +266,11 @@ def _normalize_for_compare(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, datetime):
-        v = value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        v = (
+            value.astimezone(timezone.utc)
+            if value.tzinfo
+            else value.replace(tzinfo=timezone.utc)
+        )
         return v.isoformat(timespec="microseconds")
     if isinstance(value, uuid.UUID):
         return str(value)
@@ -245,7 +283,9 @@ def _normalize_for_compare(value: Any) -> Any:
     return value
 
 
-def _diff_rows(expected: dict[str, Any], actual: dict[str, Any]) -> list[dict[str, Any]]:
+def _diff_rows(
+    expected: dict[str, Any], actual: dict[str, Any]
+) -> list[dict[str, Any]]:
     diffs = []
     for col in CH_INSERT_COLUMNS:
         if col in _JSON_COLUMNS:
@@ -279,13 +319,13 @@ def _diff_rows(expected: dict[str, Any], actual: dict[str, Any]) -> list[dict[st
             # synthetic insert, CH will hand it back as `"1"`).
             e_norm = _stringify_leaves(_flatten_dotted_keys(e_dict))
             a_norm = _stringify_leaves(_flatten_dotted_keys(a_dict))
-            if e_norm is _NULL_LEAF: e_norm = {}
-            if a_norm is _NULL_LEAF: a_norm = {}
+            if e_norm is _NULL_LEAF:
+                e_norm = {}
+            if a_norm is _NULL_LEAF:
+                a_norm = {}
             jd = _json_structural_diff(e_norm, a_norm, prefix="$", limit=10)
             if jd:
-                diffs.append({"field": col,
-                              "diff_count": len(jd),
-                              "diff_paths": jd})
+                diffs.append({"field": col, "diff_count": len(jd), "diff_paths": jd})
             continue
 
         e = _normalize_for_compare(expected.get(col))
@@ -304,8 +344,9 @@ def _canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, default=str)
 
 
-def _json_structural_diff(e: Any, a: Any, *, prefix: str = "$",
-                          limit: int = 10) -> list[dict[str, Any]]:
+def _json_structural_diff(
+    e: Any, a: Any, *, prefix: str = "$", limit: int = 10
+) -> list[dict[str, Any]]:
     """Walk two normalized JSON-like Python objects in parallel; return at most
     `limit` real divergences with their JSONPath. Treats element-wise equality
     of leaves (after _stringify_leaves) as the success criterion, and same
@@ -319,30 +360,49 @@ def _json_structural_diff(e: Any, a: Any, *, prefix: str = "$",
         if len(out) >= limit:
             return
         if type(x) is not type(y):
-            out.append({"path": p, "kind": "type_mismatch",
-                        "exp": type(x).__name__, "act": type(y).__name__})
+            out.append(
+                {
+                    "path": p,
+                    "kind": "type_mismatch",
+                    "exp": type(x).__name__,
+                    "act": type(y).__name__,
+                }
+            )
             return
         if isinstance(x, dict):
             kx, ky = set(x.keys()), set(y.keys())
             if kx != ky:
                 missing = sorted(kx - ky)[:5]
                 extra = sorted(ky - kx)[:5]
-                out.append({"path": p, "kind": "key_mismatch",
-                            "missing_in_actual": missing, "extra_in_actual": extra})
+                out.append(
+                    {
+                        "path": p,
+                        "kind": "key_mismatch",
+                        "missing_in_actual": missing,
+                        "extra_in_actual": extra,
+                    }
+                )
                 return
             for k in sorted(kx):
                 walk(f"{p}.{k}", x[k], y[k])
         elif isinstance(x, list):
             if len(x) != len(y):
-                out.append({"path": p, "kind": "list_len",
-                            "exp": len(x), "act": len(y)})
+                out.append(
+                    {"path": p, "kind": "list_len", "exp": len(x), "act": len(y)}
+                )
                 return
             for i in range(len(x)):
                 walk(f"{p}[{i}]", x[i], y[i])
         else:
             if x != y:
-                out.append({"path": p, "kind": "value",
-                            "exp": _short(x, 80), "act": _short(y, 80)})
+                out.append(
+                    {
+                        "path": p,
+                        "kind": "value",
+                        "exp": _short(x, 80),
+                        "act": _short(y, 80),
+                    }
+                )
 
     walk(prefix, e, a)
     return out
@@ -382,7 +442,7 @@ def _ch_select_expr_for(col: str) -> str:
 _CH_SELECT_COLUMNS_SQL = ", ".join(_ch_select_expr_for(c) for c in CH_INSERT_COLUMNS)
 
 
-_NULL_LEAF = object()                                              # sentinel to drop
+_NULL_LEAF = object()  # sentinel to drop
 
 
 # CH 25.x typed JSON auto-detects ISO-8601 strings and stores them as
@@ -393,6 +453,7 @@ _NULL_LEAF = object()                                              # sentinel to
 #   ISO:           "2025-10-08T17:51:11.479Z" / "2025-10-08T17:51:11.479+00:00"
 #   CH-readback:   "2025-10-08 17:51:11.479000000"
 import re
+
 _ISO_DT = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$"
 )
@@ -453,7 +514,7 @@ def _stringify_leaves(v: Any) -> Any:
     if v is None:
         return _NULL_LEAF
     if isinstance(v, bool):
-        return "true" if v else "false"                            # match JSON serialization
+        return "true" if v else "false"  # match JSON serialization
     if isinstance(v, int):
         return str(v)
     if isinstance(v, float):
@@ -468,7 +529,7 @@ def _stringify_leaves(v: Any) -> Any:
         for x in v:
             y = _stringify_leaves(x)
             if y is _NULL_LEAF:
-                continue                                           # drop nulls inside arrays
+                continue  # drop nulls inside arrays
             out_l.append(y)
         return out_l
     if isinstance(v, dict):
@@ -476,29 +537,29 @@ def _stringify_leaves(v: Any) -> Any:
         for k, x in v.items():
             y = _stringify_leaves(x)
             if y is _NULL_LEAF:
-                continue                                           # drop null-valued keys
+                continue  # drop null-valued keys
             if isinstance(y, (dict, list)) and len(y) == 0:
-                continue                                           # drop empty containers
+                continue  # drop empty containers
             out_d[k] = y
         return out_d
     # Strings: pass through, but canonicalize ISO-8601 / CH-readback
     # DateTime forms so the two storage shapes compare equal.
     if isinstance(v, str):
         # Also handle CH's 9-digit-nanosecond readback by truncating to 6.
-        if len(v) >= 21 and " " in v and "." in v:                 # quick prefilter
+        if len(v) >= 21 and " " in v and "." in v:  # quick prefilter
             try:
                 # CH readback: '2025-10-08 17:51:11.479000000'
                 head, _, frac = v.partition(".")
                 if frac and frac.isdigit() and len(frac) > 6:
                     v_norm = f"{head}.{frac[:6]}"
-                    return v_norm                                  # canonical CH shape
+                    return v_norm  # canonical CH shape
             except Exception:
                 pass
         canon = _canonical_dt_string(v)
         if canon is not None:
             return canon
         return v
-    return v                                                       # other types pass through
+    return v  # other types pass through
 
 
 def _flatten_dotted_keys(d: Any) -> Any:
@@ -524,27 +585,40 @@ def _flatten_dotted_keys(d: Any) -> Any:
             cur[parts[-1]] = v2
         else:
             if k in out and isinstance(out[k], dict) and isinstance(v2, dict):
-                out[k] = {**out[k], **v2}                          # merge dotted-then-named conflicts
+                out[k] = {**out[k], **v2}  # merge dotted-then-named conflicts
             else:
                 out[k] = v2
     return out
 
 
-def layer_b_deep_equal(pg, ch, *, sample_size: int, projects: list[str] | None,
-                       since: datetime | None, until: datetime | None,
-                       max_diff_examples: int = 25,
-                       max_diff_fields_per_row: int = 10) -> dict[str, Any]:
+def layer_b_deep_equal(
+    pg,
+    ch,
+    *,
+    sample_size: int,
+    projects: list[str] | None,
+    since: datetime | None,
+    until: datetime | None,
+    max_diff_examples: int = 25,
+    max_diff_fields_per_row: int = 10,
+) -> dict[str, Any]:
     log.info("layer_b_sampling_ids", sample_size=sample_size)
-    ids = _sample_pg_ids(pg, sample_size=sample_size, projects=projects,
-                        since=since, until=until)
+    ids = _sample_pg_ids(
+        pg, sample_size=sample_size, projects=projects, since=since, until=until
+    )
     if not ids:
-        return {"status": "skip", "sampled": 0, "reason": "no rows matched sampling filter"}
+        return {
+            "status": "skip",
+            "sampled": 0,
+            "reason": "no rows matched sampling filter",
+        }
 
     log.info("layer_b_loaded_ids", count=len(ids))
 
     # Fetch PG rows for these ids (full row with all columns the adapter expects)
     with pg.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT s.id, s.project_id, s.project_version_id, s.trace_id, s.parent_span_id,
                    s.name, s.observation_type, s.operation_name,
                    s.start_time, s.end_time,
@@ -564,7 +638,9 @@ def layer_b_deep_equal(pg, ch, *, sample_size: int, projects: list[str] | None,
             FROM tracer_observation_span s
             LEFT JOIN tracer_trace t ON t.id = s.trace_id
             WHERE s.id = ANY(%(ids)s)
-        """, {"ids": ids})
+        """,
+            {"ids": ids},
+        )
         pg_rows = {r["id"]: r for r in cur.fetchall()}
 
     # Fetch CH rows for the same ids. We chunk the IN list so each FINAL scan
@@ -591,7 +667,7 @@ def layer_b_deep_equal(pg, ch, *, sample_size: int, projects: list[str] | None,
     for sid in ids:
         pg_row = pg_rows.get(sid)
         if pg_row is None:
-            continue                                                # was deleted concurrently; skip
+            continue  # was deleted concurrently; skip
         ch_row = ch_rows.get(sid)
         if ch_row is None:
             missing_in_ch.append(sid)
@@ -623,6 +699,7 @@ def layer_b_deep_equal(pg, ch, *, sample_size: int, projects: list[str] | None,
 # These are the queries the product dashboard + eval surfaces actually run.
 # When we change something that affects their semantics, we want a failure
 # here — that's the point.
+
 
 @dataclass
 class ParityQuery:
@@ -714,9 +791,9 @@ _DEFAULT_QUERIES: list[ParityQuery] = [
 ]
 
 
-def _build_scope_fragments(projects: list[str] | None,
-                           since: datetime | None,
-                           until: datetime | None) -> tuple[str, dict, str, dict]:
+def _build_scope_fragments(
+    projects: list[str] | None, since: datetime | None, until: datetime | None
+) -> tuple[str, dict, str, dict]:
     """Build matching WHERE-clause fragments for PG and CH that apply the
     --project-id / --since / --until scope filters used by Layers A and B.
     Returns (pg_fragment, pg_params, ch_fragment, ch_params).
@@ -728,8 +805,9 @@ def _build_scope_fragments(projects: list[str] | None,
     if projects:
         pg_parts.append("AND s.project_id = ANY(%(_projects)s)")
         pg_params["_projects"] = projects
-        ch_parts.append("AND project_id IN ("
-                        + ",".join(f"toUUID('{p}')" for p in projects) + ")")
+        ch_parts.append(
+            "AND project_id IN (" + ",".join(f"toUUID('{p}')" for p in projects) + ")"
+        )
     if since:
         pg_parts.append("AND s.start_time >= %(_since)s")
         pg_params["_since"] = since
@@ -771,13 +849,20 @@ def _normalize_rows(rows: list[tuple], tolerance: float) -> list[tuple]:
     return [tuple(_normalize_value(c, tolerance) for c in row) for row in rows]
 
 
-def layer_c_queries(pg, ch, *, queries: list[ParityQuery] | None = None,
-                    projects: list[str] | None = None,
-                    since: datetime | None = None, until: datetime | None = None,
-                    max_row_examples: int = 20) -> dict[str, Any]:
+def layer_c_queries(
+    pg,
+    ch,
+    *,
+    queries: list[ParityQuery] | None = None,
+    projects: list[str] | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    max_row_examples: int = 20,
+) -> dict[str, Any]:
     qs = queries or _DEFAULT_QUERIES
     pg_scope, pg_scope_params, ch_scope, ch_scope_params = _build_scope_fragments(
-        projects, since, until)
+        projects, since, until
+    )
     results: list[dict[str, Any]] = []
     all_pass = True
     for q in qs:
@@ -786,7 +871,9 @@ def layer_c_queries(pg, ch, *, queries: list[ParityQuery] | None = None,
         with pg.cursor() as cur:
             cur.execute(pg_sql, {**q.pg_params, **pg_scope_params})
             pg_rows = [tuple(r.values()) for r in cur.fetchall()]
-        ch_rows = ch.query(ch_sql, parameters={**q.ch_params, **ch_scope_params}).result_rows
+        ch_rows = ch.query(
+            ch_sql, parameters={**q.ch_params, **ch_scope_params}
+        ).result_rows
 
         pg_norm = _normalize_rows(pg_rows, q.tolerance)
         ch_norm = _normalize_rows([tuple(r) for r in ch_rows], q.tolerance)
@@ -794,14 +881,16 @@ def layer_c_queries(pg, ch, *, queries: list[ParityQuery] | None = None,
         match = pg_norm == ch_norm
         if not match:
             all_pass = False
-        results.append({
-            "name": q.name,
-            "match": match,
-            "pg_row_count": len(pg_rows),
-            "ch_row_count": len(ch_rows),
-            "pg_sample": pg_norm[:max_row_examples],
-            "ch_sample": ch_norm[:max_row_examples],
-        })
+        results.append(
+            {
+                "name": q.name,
+                "match": match,
+                "pg_row_count": len(pg_rows),
+                "ch_row_count": len(ch_rows),
+                "pg_sample": pg_norm[:max_row_examples],
+                "ch_sample": ch_norm[:max_row_examples],
+            }
+        )
 
     return {
         "status": "pass" if all_pass else "fail",
@@ -814,39 +903,62 @@ def layer_c_queries(pg, ch, *, queries: list[ParityQuery] | None = None,
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 def _build_argparser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     # PG
     p.add_argument("--pg-host", default="127.0.0.1")
     p.add_argument("--pg-port", type=int, default=5432)
     p.add_argument("--pg-user", default=os.environ.get("PG_USER", "user"))
     p.add_argument("--pg-pass", default=os.environ.get("PG_PASSWORD", "password"))
-    p.add_argument("--pg-db",   default=os.environ.get("PG_DB", "tfc"))
+    p.add_argument("--pg-db", default=os.environ.get("PG_DB", "tfc"))
     # CH 25.3
     p.add_argument("--ch-host", default="127.0.0.1")
     p.add_argument("--ch-http-port", type=int, default=19001)
     p.add_argument("--ch-user", default="default")
     p.add_argument("--ch-pass", default=os.environ.get("CH_PASSWORD", ""))
-    p.add_argument("--ch-db",   default="default")
+    p.add_argument("--ch-db", default="default")
     # Scope filters
-    p.add_argument("--project-id", action="append", default=None,
-                   help="Limit validation to this project (repeatable)")
-    p.add_argument("--since", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc),
-                   help="Only spans where start_time >= this (ISO8601)")
-    p.add_argument("--until", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc),
-                   help="Only spans where start_time < this (ISO8601)")
+    p.add_argument(
+        "--project-id",
+        action="append",
+        default=None,
+        help="Limit validation to this project (repeatable)",
+    )
+    p.add_argument(
+        "--since",
+        type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc),
+        help="Only spans where start_time >= this (ISO8601)",
+    )
+    p.add_argument(
+        "--until",
+        type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc),
+        help="Only spans where start_time < this (ISO8601)",
+    )
     # Layer selection
     p.add_argument("--all", action="store_true", help="Run all three layers")
     p.add_argument("--counts", action="store_true", help="Run Layer A only")
     p.add_argument("--deep", action="store_true", help="Run Layer B only")
     p.add_argument("--queries", action="store_true", help="Run Layer C only")
-    p.add_argument("--sample-size", type=int, default=1000,
-                   help="Layer B sample size (default 1000)")
-    p.add_argument("--seed", type=int, default=None,
-                   help="RNG seed for reproducible Layer B samples")
+    p.add_argument(
+        "--sample-size",
+        type=int,
+        default=1000,
+        help="Layer B sample size (default 1000)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for reproducible Layer B samples",
+    )
     # Output
-    p.add_argument("--report", type=Path, default=None,
-                   help="Write JSON report to this file (otherwise stdout)")
+    p.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Write JSON report to this file (otherwise stdout)",
+    )
     return p
 
 
@@ -881,38 +993,57 @@ def main(argv: list[str] | None = None) -> int:
     if args.all or args.counts:
         log.info("layer_a_start")
         ta = time.time()
-        ra = layer_a_counts(pg, ch, projects=args.project_id,
-                            since=args.since, until=args.until)
+        ra = layer_a_counts(
+            pg, ch, projects=args.project_id, since=args.since, until=args.until
+        )
         ra["elapsed_sec"] = round(time.time() - ta, 2)
         report["layers"]["counts"] = ra
         if ra["status"] == "fail":
             overall_pass = False
-        log.info("layer_a_done", **{k: v for k, v in ra.items() if k != "diff_examples"})
+        log.info(
+            "layer_a_done", **{k: v for k, v in ra.items() if k != "diff_examples"}
+        )
 
     if args.all or args.deep:
         log.info("layer_b_start")
         tb = time.time()
-        rb = layer_b_deep_equal(pg, ch, sample_size=args.sample_size,
-                                projects=args.project_id,
-                                since=args.since, until=args.until)
+        rb = layer_b_deep_equal(
+            pg,
+            ch,
+            sample_size=args.sample_size,
+            projects=args.project_id,
+            since=args.since,
+            until=args.until,
+        )
         rb["elapsed_sec"] = round(time.time() - tb, 2)
         report["layers"]["deep_equal"] = rb
         if rb["status"] == "fail":
             overall_pass = False
-        log.info("layer_b_done", **{k: v for k, v in rb.items()
-                                    if k not in ("diff_examples", "missing_examples")})
+        log.info(
+            "layer_b_done",
+            **{
+                k: v
+                for k, v in rb.items()
+                if k not in ("diff_examples", "missing_examples")
+            },
+        )
 
     if args.all or args.queries:
         log.info("layer_c_start")
         tc = time.time()
-        rc = layer_c_queries(pg, ch, projects=args.project_id,
-                             since=args.since, until=args.until)
+        rc = layer_c_queries(
+            pg, ch, projects=args.project_id, since=args.since, until=args.until
+        )
         rc["elapsed_sec"] = round(time.time() - tc, 2)
         report["layers"]["queries"] = rc
         if rc["status"] == "fail":
             overall_pass = False
-        log.info("layer_c_done", status=rc["status"], matched=rc["queries_matched"],
-                 mismatched=rc["queries_mismatched"])
+        log.info(
+            "layer_c_done",
+            status=rc["status"],
+            matched=rc["queries_matched"],
+            mismatched=rc["queries_mismatched"],
+        )
 
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     report["elapsed_sec"] = round(time.time() - t0, 2)
@@ -921,7 +1052,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2, default=str))
-        log.info("report_written", path=str(args.report), status=report["overall_status"])
+        log.info(
+            "report_written", path=str(args.report), status=report["overall_status"]
+        )
     else:
         print(json.dumps(report, indent=2, default=str))
 

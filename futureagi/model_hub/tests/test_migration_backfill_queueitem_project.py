@@ -116,8 +116,11 @@ def test_stamps_all_tracer_kinds_from_ch(organization, workspace, user):
         scope={span_id: SpanScope(project_id=str(project.id), trace_id=trace_id)},
         roots={trace_id: (f"root-{trace_id}", str(project.id))},
     )
-    with mock.patch(GET_READER, return_value=reader), mock.patch(
-        SESSION_FIELDS, return_value={session_id: {"project_id": str(project.id)}}
+    with (
+        mock.patch(GET_READER, return_value=reader),
+        mock.patch(
+            SESSION_FIELDS, return_value={session_id: {"project_id": str(project.id)}}
+        ),
     ):
         _run_backfill()
 
@@ -137,8 +140,9 @@ def test_unresolvable_source_left_null(organization, workspace, user):
         observation_span_id=f"span-{uuid.uuid4().hex[:12]}",
     )
 
-    with mock.patch(GET_READER, return_value=_fake_reader()), mock.patch(
-        SESSION_FIELDS, return_value={}
+    with (
+        mock.patch(GET_READER, return_value=_fake_reader()),
+        mock.patch(SESSION_FIELDS, return_value={}),
     ):
         _run_backfill()
 
@@ -166,8 +170,9 @@ def test_project_in_other_org_left_null(organization, workspace, user):
     reader = _fake_reader(
         scope={span_id: SpanScope(project_id=str(other_project.id), trace_id=None)}
     )
-    with mock.patch(GET_READER, return_value=reader), mock.patch(
-        SESSION_FIELDS, return_value={}
+    with (
+        mock.patch(GET_READER, return_value=reader),
+        mock.patch(SESSION_FIELDS, return_value={}),
     ):
         _run_backfill()
 
@@ -212,8 +217,9 @@ def test_rerun_is_idempotent(organization, workspace, user):
     reader = _fake_reader(
         scope={span_id: SpanScope(project_id=str(project.id), trace_id=None)}
     )
-    with mock.patch(GET_READER, return_value=reader) as get_reader_mock, mock.patch(
-        SESSION_FIELDS, return_value={}
+    with (
+        mock.patch(GET_READER, return_value=reader) as get_reader_mock,
+        mock.patch(SESSION_FIELDS, return_value={}),
     ):
         _run_backfill()
         first_calls = get_reader_mock.call_count
