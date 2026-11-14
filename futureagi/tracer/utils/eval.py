@@ -2132,12 +2132,16 @@ def _persist_eval_logger(logger_kwargs):
 
 
 def _write_eval_logger(
-    logger_kwargs, observation_span, custom_eval_config, eval_task_id
+    logger_kwargs, observation_span, custom_eval_config, eval_task_id, *, strict=False
 ):
     """Write composite eval results to EvalLogger.
 
     Composite evals return a logger_kwargs dict from _execute_composite_on_span
     but don't persist it internally (single evals do this in _execute_evaluation).
+
+    ``strict`` re-raises a failed write. The eval-task engine passes it: there
+    the write lands on the entry it is running, and a swallowed failure would
+    leave that entry looking like a completed run with no result.
     """
     logger_kwargs.pop("value", None)
     logger_kwargs.pop("log_id", None)
@@ -2149,6 +2153,8 @@ def _write_eval_logger(
         _persist_eval_logger(logger_kwargs)
     except Exception as e:
         logger.error(f"Failed to write composite eval logger: {e}")
+        if strict:
+            raise
 
 
 def _redirect_retired_eval_task_activity(eval_task_id) -> bool:
