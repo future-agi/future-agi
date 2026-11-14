@@ -103,7 +103,7 @@ export default function ToolCallCard({ toolCall }) {
             fontFamily:
               "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace",
             fontWeight: 500,
-            fontSize: 13,
+            fontSize: 12,
             flex: 1,
             color: "text.secondary",
           }}

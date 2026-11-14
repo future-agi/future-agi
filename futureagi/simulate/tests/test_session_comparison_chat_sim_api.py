@@ -268,9 +268,7 @@ class TestSessionComparisonChatSimAPI:
         def fake_get_reader():
             yield mock_reader
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader", fake_get_reader
-        ):
+        with patch("tracer.services.clickhouse.v2.get_reader", fake_get_reader):
             response = auth_client.get(
                 f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
             )

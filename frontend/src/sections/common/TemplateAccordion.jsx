@@ -150,7 +150,7 @@ const TemplateAccordion = ({ templates, mode }) => {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
         {/* <Iconify icon="solar:calendar-linear" /> */}
-        <Typography fontWeight={500} fontSize="13px">
+        <Typography fontWeight={500} fontSize="12px">
           {templates?.length > 1
             ? `Top ${templates?.length} Templates`
             : "Top Template"}

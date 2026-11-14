@@ -212,7 +212,7 @@ const OutputTypeConfig = ({
                     placeholder="Choice name"
                     sx={{
                       flex: 1,
-                      "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+                      "& .MuiInputBase-root": { fontSize: "12px", height: 30 },
                     }}
                   />
                   <Typography
@@ -357,7 +357,7 @@ const OutputTypeConfig = ({
                   placeholder="Choice name"
                   sx={{
                     flex: 1,
-                    "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+                    "& .MuiInputBase-root": { fontSize: "12px", height: 30 },
                   }}
                 />
                 <Typography
@@ -378,7 +378,7 @@ const OutputTypeConfig = ({
                       [label]: map[e.target.value] ?? 0.5,
                     });
                   }}
-                  sx={{ minWidth: 120, fontSize: "13px", height: 30 }}
+                  sx={{ minWidth: 120, fontSize: "12px", height: 30 }}
                   renderValue={(val) => (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Box

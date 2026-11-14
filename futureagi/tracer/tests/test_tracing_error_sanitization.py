@@ -67,6 +67,8 @@ def test_evaluation_detail_sanitizes_clickhouse_failure():
     )
     view.request = request
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = {
         "project_id": "00000000-0000-0000-0000-000000000001"
     }
@@ -89,6 +91,11 @@ def test_evaluation_detail_sanitizes_clickhouse_failure():
         response = unwrap(ObservationSpanView.get_evaluation_details)(view, request)
 
     assert response.status_code == 503
+    # The canned config row reached the ClickHouse read (it would be a
+    # MagicMock project id if the mock missed the view's primary read).
+    assert analytics.get_eval_detail_ch.call_args.kwargs["project_id"] == (
+        "00000000-0000-0000-0000-000000000001"
+    )
     assert response.data["result"] == (
         "Evaluation details are temporarily unavailable. Please retry."
     )
