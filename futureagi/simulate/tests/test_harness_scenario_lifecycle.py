@@ -342,3 +342,28 @@ def test_counts_call_only_a_run_proof_proved():
         3,
         1,
     )
+
+
+def test_draft_rows_show_their_own_sources(user, workspace, storage):
+    from simulate.services.harness_provider import _with_lifecycle
+
+    environment = _environment(user, workspace, storage, "lc-draft-sources")
+    _suite(environment, _ten())
+    quote = "issues exactly one full refund"
+    lifecycle = {
+        "views": _views(environment),
+        "archived_views": {},
+        "resolve_sources": lambda by_key: {
+            key: [{"kind": "requirement", "quote": quote, "resolved": True}]
+            for key in by_key
+        },
+    }
+
+    added = _with_lifecycle(
+        {"scenario_key": "brand-new", "draft_change": "added"},
+        lifecycle,
+        draft_sources=[{"kind": "requirement", "quote": quote}],
+    )
+
+    assert added["lifecycle"]["reason"] == "in_draft"
+    assert added["lifecycle"]["sources"][0]["quote"] == quote
