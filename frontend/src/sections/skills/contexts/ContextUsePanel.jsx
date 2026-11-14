@@ -7,8 +7,10 @@ import CodeBlock from 'src/components/code-block';
 import Iconify from 'src/components/iconify';
 import { SegmentedTabs } from 'src/components/tabs/tabs';
 import { ReviewState } from '../review/ReleaseReviewBody';
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
+import { useSkillsAccess } from '../utils/access';
 
 const quote = (value) => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 const safeValue = (value) => typeof value === 'string' && value.length > 0 && [...value].every((char) => char.codePointAt(0) >= 32 && char.codePointAt(0) !== 127);
@@ -42,6 +44,8 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
   const [copied, setCopied] = useState(null);
   const [copyError, setCopyError] = useState('');
   const [copyBusy, setCopyBusy] = useState(false);
+  const { isViewer } = useSkillsAccess();
+  const toolName = profileId === 'claude-code' ? 'Claude Code' : 'Codex';
   const profile = qualification?.profiles?.find((item) => item.id === profileId);
   const preview = qualification?.released !== true || profile?.state !== 'verified';
   let command = '';
@@ -54,11 +58,14 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
   const copyCommand = async (text) => {
     setCopyBusy(true); setCopyError(''); setCopied(null);
     try { if (!navigator.clipboard?.writeText) throw new Error('Unavailable'); await navigator.clipboard.writeText(text); setCopied(text); }
-    catch { setCopyError('Could not copy. Copy the command manually; include Environment variables when copying the plan.'); }
+    catch { setCopyError('Could not copy. Select the command and copy it by hand; add the environment variables from Details when you copy the plan.'); }
     finally { setCopyBusy(false); }
   };
   const environment = command.split('\n').filter((line) => /^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
   const visibleCommand = command.split('\n').filter((line) => !/^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
+  const adminRequest = `Please create a read-only key for ${snapshot.name} v${snapshot.version} in Future AGI.`;
+  // Viewers can read the commands but cannot create the key they need, so copying is held back with a reason.
+  const viewerReason = isViewer ? 'Ask a workspace admin for a read-only key, then come back to copy the commands.' : '';
   return <Stack spacing={3} sx={{ minWidth: 0 }}>
     {productionVersion != null && viewingVersion !== productionVersion && <Stack spacing={1}><Typography variant="s1">You’re viewing v{viewingVersion}. {useViewed ? `Installing this non-production version does not change production v${productionVersion}.` : `Install defaults to production v${productionVersion}.`}</Typography><FormControlLabel control={<Switch checked={Boolean(useViewed)} onChange={(event) => onUseViewed?.(event.target.checked)} />} label={`Install viewed v${viewingVersion} instead`} /></Stack>}
     {productionVersion == null && <Typography variant="s3" color="text.secondary">No production version is assigned. This plan installs the viewed version only.</Typography>}
@@ -69,29 +76,39 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
           {onViewFiles && onOpenLinks && <Typography variant="s3" color="text.secondary">·</Typography>}
           {onOpenLinks && <Link component="button" variant="s3" onClick={onOpenLinks}>Open linked skills</Link>}
         </Stack>
-        {preview && <Stack direction="row" spacing={1} alignItems="center"><StatusBadge status="unknown" label="Preview" /><Typography variant="s3" color="text.secondary">Host setup not yet verified for {profileId === 'claude-code' ? 'Claude Code' : 'Codex'}</Typography></Stack>}
-        <Typography variant="s3" color="text.secondary">{preview ? 'Preview installer' : 'Installer'} — writes AGENTS.md and {profileId === 'codex' ? '.agents/skills/' : '.claude/skills/'} only after you review the plan.</Typography>
+        {preview && <Box><StatusBadge status="unknown" label={`Preview: not yet tested with ${toolName}`} /></Box>}
+        <Typography variant="s3" color="text.secondary">{preview ? 'Preview installer. ' : ''}Writes AGENTS.md and {profileId === 'codex' ? '.agents/skills/' : '.claude/skills/'} only after you review the changes.</Typography>
         <Stack spacing={1}>
-          <Typography variant="m3" component="h3">1. Choose your client</Typography>
-          <SegmentedTabs value={profileId} onChange={(_, value) => { setProfileId(value); setCopyError(''); }} aria-label="Choose your client"><Tab value="codex" label="Codex" /><Tab value="claude-code" label="Claude Code" /></SegmentedTabs>
+          <Typography variant="m3" component="h3">1. Choose your tool</Typography>
+          <SegmentedTabs value={profileId} onChange={(_, value) => { setProfileId(value); setCopyError(''); }} aria-label="Choose your tool"><Tab value="codex" label="Codex" /><Tab value="claude-code" label="Claude Code" /></SegmentedTabs>
           <TextField size="small" label="Project directory" value={project} onChange={(event) => { setProject(event.target.value); setCopyError(''); }} helperText="Existing local instructions are never silently replaced." />
         </Stack>
         <Stack spacing={1}>
-          <Typography variant="m3" component="h3">2. Set a read-only key</Typography>
-          <Typography variant="s3" color="text.secondary">Use a read-only key for this version. Set FI_CONTEXT_CREDENTIAL securely in your terminal; never paste it into the command.</Typography>
-          <Box id="context-runtime-access" sx={{ minWidth: 0 }}>{isValidElement(runtimeAccess) ? cloneElement(runtimeAccess, { onAvailabilityChange: setHasKey }) : runtimeAccess}</Box>
+          <Typography variant="m3" component="h3">2. Create a read-only key</Typography>
+          <Box id="context-runtime-access" sx={{ minWidth: 0 }}>{isValidElement(runtimeAccess) ? cloneElement(runtimeAccess, { onAvailabilityChange: setHasKey, showHeading: false }) : runtimeAccess}</Box>
         </Stack>
-        <Stack direction="row" spacing={1} alignItems="center"><Typography variant="m3" component="h3">3. Plan and inspect</Typography>{!hasKey && <StatusBadge status="unknown" label="Needs a key" />}</Stack>
+        <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}><Typography variant="m3" component="h3">3. Preview the changes</Typography>{!hasKey && !isViewer && <StatusBadge status="unknown" label="Create a key first" />}</Stack>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
-          <CodeBlock label="Context install plan command" code={visibleCommand} copyLabel="Copy" ariaLabel="Copy plan command" action={<Button aria-label="Copy plan command" variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy} onClick={() => copyCommand(command)}>Copy</Button>} />
-          <TechnicalDetails title="Environment variables"><Typography variant="s3" color="text.secondary">Included when you copy the plan command.</Typography><Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box></TechnicalDetails>
+          {isViewer && <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}>
+            <ActionReason id="context-copy-reason" reason={viewerReason} sx={{ flexBasis: 'auto' }} />
+            <Button variant="outlined" size="small" disabled={copyBusy} onClick={() => copyCommand(adminRequest)}>Copy request for admin</Button>
+          </Stack>}
+          {copied === adminRequest && <Typography variant="s3" role="status">Copied the request for an admin.</Typography>}
+          <CodeBlock label="Context install plan command" code={visibleCommand} copyLabel="Copy" ariaLabel="Copy plan command" action={<Button aria-label="Copy plan command" {...reasonProps('context-copy-reason', viewerReason)} variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy || isViewer} onClick={() => copyCommand(command)}>Copy</Button>} />
+          <TechnicalDetails title="Details">
+            <Stack spacing={1}>
+              <Typography variant="s3" color="text.secondary">Before you run it, set FI_CONTEXT_CREDENTIAL to your read-only key in your terminal. Never paste the key into the command. The flag --allow-preview opts in to the preview setup for {toolName}.</Typography>
+              <Typography variant="s3" color="text.secondary">Environment variables, included when you copy the plan command:</Typography>
+              <Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box>
+            </Stack>
+          </TechnicalDetails>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
           {copyError && <Alert severity="error">{copyError}</Alert>}
           <Stack spacing={1}>
-            <Typography variant="m3" component="h3">4. Apply after you review the plan</Typography>
-            <Typography variant="s3" color="text.secondary">Inspect every file change and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding client before applying. This page does not run commands.</Typography>
-            <CodeBlock label="Context apply command" code={applyCommand} copyLabel="Copy" ariaLabel="Copy apply command" action={<Button aria-label="Copy apply command" variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy} onClick={() => copyCommand(applyCommand)}>Copy</Button>} />
+            <Typography variant="m3" component="h3">4. Install</Typography>
+            <Typography variant="s3" color="text.secondary">Check every file change in the preview and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding tool before installing. This page does not run commands.</Typography>
+            <CodeBlock label="Context apply command" code={applyCommand} copyLabel="Copy" ariaLabel="Copy apply command" action={<Button aria-label="Copy apply command" {...reasonProps('context-copy-reason', viewerReason)} variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy || isViewer} onClick={() => copyCommand(applyCommand)}>Copy</Button>} />
             {copied === applyCommand && <Typography variant="s3" role="status">Copied the apply command.</Typography>}
           </Stack>
         </>}
@@ -105,7 +122,7 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
         {workspaceName && <Typography variant="s1">Workspace: {workspaceName}</Typography>}
         <IdentityChip value={workspaceId} kind="id" label="Workspace" />
         <IdentityChip value={organizationId} kind="id" label="Organization" />
-        <IdentityChip value={snapshot.versionId} kind="id" label="Pinned candidate" />
+        <IdentityChip value={snapshot.versionId} kind="id" label="Version ID" />
         <IdentityChip value={snapshot.digest} label="Digest" />
         <Typography variant="s3">Pinned version. A later release requires a new reviewed plan. Installed files are not proof of model delivery.</Typography>
       </Stack>
