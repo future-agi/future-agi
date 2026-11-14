@@ -4,10 +4,12 @@
 # the resolved values and fails the build on an unknown one.
 #
 #   standard (default)  feature-complete: the dependency set, uv, git,
-#            ffmpeg, NLTK data and untrimmed site-packages of every release
-#            before the variants. Published as futureagi/future-agi:<version>
-#            for Distributed, Helm, the simulation runner and the EE and cloud
-#            images, which `uv pip install` on top of it.
+#            NLTK data and untrimmed site-packages of every release before
+#            the variants. ffmpeg is the minimal LGPL build, as in slim;
+#            FFMPEG_FLAVOR=debian puts Debian's ffmpeg package back.
+#            Published as futureagi/future-agi:<version> for Distributed,
+#            Helm, the simulation runner and the EE and cloud images, which
+#            `uv pip install` on top of it.
 #   slim     the lean build, published as futureagi/future-agi:<version>-slim:
 #            the base of futureagi/standalone (Standalone).
 #
@@ -20,7 +22,7 @@ case "${IMAGE_VARIANT:=standard}" in
         # The groups that were base dependencies before the image-size split
         # (pyproject.toml [project.optional-dependencies]).
         : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer}"
-        : "${FFMPEG_FLAVOR:=debian}"
+        : "${FFMPEG_FLAVOR:=minimal}"
         : "${WITH_GIT:=true}"
         : "${WITH_UV:=true}"
         : "${SLIM_SITE_PACKAGES:=0}"

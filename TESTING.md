@@ -146,11 +146,14 @@ replace the digest in every file it lists in one pull request.
 images are built outside this repository, `FROM futureagi/future-agi:<version>`
 as published, followed by `uv pip install --system -r ee/requirements.txt`
 (every dependency group except `dev`). That install needs the default
-variant's `uv`, and those images rely at run time on its git, Debian ffmpeg,
-NLTK packages and Google API discovery documents. A `-slim` base has none of
+variant's `uv`, and those images rely at run time on its git, ffmpeg (the
+minimal LGPL build, not Debian's package: an overlay that needs other codecs
+installs them itself or builds the base with `FFMPEG_FLAVOR=debian`), NLTK
+packages and Google API discovery documents. A `-slim` base has none of
 them: the install fails with `uv: not found`. The default variant's build
 checks all of these (`futureagi/docker/runtime_smoke.py`), the release checks
-`uv`, git and the dependency groups again before it moves any tag
+`uv`, git, the dependency groups and that ffmpeg is the minimal build again
+before it moves any tag
 (`release-images.yml`), and `scripts/verify-image-contents.sh` checks them on
 a published image. An image built `FROM` another keeps the parent's labels
 until it sets its own: such an overlay should declare `VERSION`, `REVISION`

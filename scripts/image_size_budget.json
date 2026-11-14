@@ -16,7 +16,7 @@
       "image": "futureagi/future-agi",
       "budget_mb": 1015,
       "projected_mb": 882,
-      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, so projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra) until a release measures it. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
+      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, full NLTK data and untrimmed site-packages of the releases before the variants, so projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra) until a release measures it. Since FFMPEG_FLAVOR=minimal became its default (the slim variant's ~9 MB LGPL build instead of Debian's ffmpeg package tree, ~150 MB gzip on v1.41) the image is smaller than this projection; the budget is left until a release measures it. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
     },
     {
       "image": "futureagi/future-agi",

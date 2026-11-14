@@ -372,7 +372,7 @@ class BackendVariants(unittest.TestCase):
         expected = {
             "IMAGE_VARIANT": "standard",
             "EXTRAS": STANDARD_EXTRAS,
-            "FFMPEG_FLAVOR": "debian",
+            "FFMPEG_FLAVOR": "minimal",
             "WITH_GIT": "true",
             "WITH_UV": "true",
             "SLIM_SITE_PACKAGES": "0",
@@ -918,11 +918,16 @@ class VerifyImageContents(unittest.TestCase):
 
     FAKE_DOCKER = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
+if [ -n "$DOCKER_ARGV" ]; then
+  for arg in "$@"; do printf '\037%s' "$arg"; done >> "$DOCKER_LOG"
+  printf '\037\n' >> "$DOCKER_LOG"
+fi
 case "$*" in
   *-slim*"command -v uv"*|*-slim*"command -v git"*) exit 1 ;;
   *-slim*"git --version"*|*-slim*"import daytona"*) exit 1 ;;
   *-slim*omw-1.4*|*-slim*get_static_doc*) exit 1 ;;
-  *COPYING.LGPLv2.1*) case "$*" in *-slim*) exit 0 ;; *) exit 1 ;; esac ;;
+  *"dpkg -s ffmpeg"*) case "$*" in *-debian*) exit 0 ;; *) exit 1 ;; esac ;;
+  *"command -v ffmpeg"*) case "$*" in *-noffmpeg*) exit 1 ;; *) exit 0 ;; esac ;;
   *"test -e /app/backend/ee/cloud"*) exit 1 ;;
 esac
 exit 0
@@ -983,6 +988,40 @@ exit 0
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL: Has uv", proc.stdout)
+
+    def test_the_ffmpeg_checks_follow_the_flavor(self):
+        proc = self.run_script("futureagi/future-agi:v9.9.9")
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        for check in (
+            "ffmpeg can encode mp3 and png",
+            "Ships the ffmpeg LGPL notice",
+            "No Debian ffmpeg package tree",
+        ):
+            self.assertIn(f"PASS: {check}", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:local-debian", OSS_FFMPEG_FLAVOR="debian")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("PASS: Has Debian's ffmpeg package", proc.stdout)
+        self.assertNotIn("LGPL notice", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:local-noffmpeg", OSS_FFMPEG_FLAVOR="none")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("PASS: No ffmpeg (FFMPEG_FLAVOR=none)", proc.stdout)
+        self.assertNotIn("can encode", proc.stdout)
+        # A minimal-flavor check of an image with Debian's ffmpeg fails.
+        proc = self.run_script("futureagi/future-agi:local-debian")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL: No Debian ffmpeg package tree", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:v9.9.9", OSS_FFMPEG_FLAVOR="dev")
+        self.assertEqual(proc.returncode, 2)
+
+    def test_shell_checks_reach_the_image_as_one_script(self):
+        """`sh -c "a | b"` must arrive as one argument; joined with "$*"
+        it ran a bare `a` and piped its (empty) stdout to `b`."""
+        proc = self.run_script("futureagi/future-agi:v9.9.9", DOCKER_ARGV="1")
+        script = (
+            "ffmpeg -hide_banner -encoders | grep -q libmp3lame && "
+            "ffmpeg -hide_banner -encoders | grep -qw png"
+        )
+        self.assertIn(f"\x1f{script}\x1f", proc.docker_log)
 
     def test_an_unknown_variant_is_a_usage_error(self):
         proc = self.run_script("futureagi/future-agi:v9.9.9", OSS_VARIANT="lean")
@@ -1614,6 +1653,22 @@ class Workflows(unittest.TestCase):
         self.assertNotIn("tag-suffix", default)
         for probe in ("uv --version", "git --version", "import daytona, e2b"):
             self.assertIn(probe, default["verify-command"])
+        # The default runs the minimal ffmpeg build, never Debian's package
+        # tree. `! cmd` cannot fail `sh -e`, so absence checks must exit.
+        for probe in (
+            "ffmpeg -hide_banner -version",
+            "ffprobe -hide_banner -version",
+            "COPYING.LGPLv2.1",
+            "if dpkg -s ffmpeg",
+            "^libav(codec|format|filter|device)",
+        ):
+            self.assertIn(probe, default["verify-command"])
+        self.assertNotRegex(default["verify-command"], r"(?m)^\s*!\s")
+        # The ffmpeg compile is the slim variant's; reuse its caches.
+        for arch in ("amd64", "arm64"):
+            self.assertIn(
+                f"build-cache:backend-slim-{arch}", default["cache-from-extra"]
+            )
         self.assertEqual(slim["tag-suffix"], "-slim")
         self.assertEqual(slim["build-args"].split(), ["IMAGE_VARIANT=slim"])
         # futureagi/standalone is FROM the -slim digest; nothing else is.
