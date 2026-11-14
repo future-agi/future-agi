@@ -127,8 +127,8 @@ def _rendered_bytes(roots: TraceNameRootSet) -> int:
 def resolve_trace_name_root_sets(
     filters: Iterable[dict[str, Any]] | None,
     *,
-    start: datetime,
-    end: datetime,
+    start: datetime | None,
+    end: datetime | None,
     execute: Callable[[str, dict[str, Any]], Sequence[Any]],
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,

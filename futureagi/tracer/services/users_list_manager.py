@@ -644,7 +644,7 @@ class UsersListManager:
         # request over its frozen window (``use_trace_name_root_sets``): every
         # certification over that same window binds them.
         self._trace_name_root_sets: TraceNameRootSets | None = None
-        self._trace_name_root_sets_window: tuple[datetime, datetime] | None = None
+        self._trace_name_root_sets_window: tuple[datetime | None, ...] | None = None
         # Per page user, each native leaf's decision keyed by filter index.
         self._native_dimension_matches_by_user: dict[str, dict[int, bool]] = {}
         self._unqualified_attribute_fallback_used = False
