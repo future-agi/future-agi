@@ -80,7 +80,7 @@ func TestRealtimeMissingBlockingImplementation(t *testing.T) {
 			rc := models.AcquireRequestContext()
 			defer rc.Release()
 			rc.Metadata["org_id"] = "org"
-			if _, err := plugin.BindRealtime(rc); err == nil || err.Code != "realtime_guardrail_unsupported" {
+			if _, err := plugin.BindRealtime(rc, RealtimeTextBoth); err == nil || err.Code != "realtime_guardrail_unsupported" {
 				t.Fatalf("missing implementation must refuse, got %v", err)
 			}
 		})
@@ -109,9 +109,9 @@ func TestRealtimePostStageTextIsOnlyTheResponse(t *testing.T) {
 	}
 }
 
-// Speech and transcription relays bind the key's policies too: an Enforce
-// policy's blocking check blocks the matching text; a Monitor policy's check
-// only logs; another key of the org gets neither.
+// Speech and transcription relays bind the key's Enforce policies too: a
+// blocking check blocks the matching text. A Monitor policy binds nothing, so
+// it cannot change speech traffic; another key of the org gets neither.
 func TestRealtimeBindsKeyPolicies(t *testing.T) {
 	blocked := realtimeTestCheck{"blocklist", func(_ context.Context, in *CheckInput) *CheckResult {
 		if string(in.Request.Messages[0].Content) == `"forbidden words"` {
@@ -135,7 +135,7 @@ func TestRealtimeBindsKeyPolicies(t *testing.T) {
 		for k, v := range extra {
 			rc.Metadata[k] = v
 		}
-		bound, err := plugin.BindRealtime(rc)
+		bound, err := plugin.BindRealtime(rc, RealtimeTextBoth)
 		if err != nil {
 			t.Fatalf("bind: %v", err)
 		}
@@ -154,10 +154,10 @@ func TestRealtimeBindsKeyPolicies(t *testing.T) {
 			t.Fatalf("clean text: %v", err)
 		}
 	})
-	t.Run("monitor only logs", func(t *testing.T) {
+	t.Run("monitor binds nothing, so the relay installs no filter", func(t *testing.T) {
 		bound := bind(t, "monitor", "key_a", nil)
-		if !bound.Has(StagePre) || bound.Blocking(StagePre) {
-			t.Fatalf("monitor: has=%v blocking=%v; want a log-only rule", bound.Has(StagePre), bound.Blocking(StagePre))
+		if bound.Has(StagePre) || bound.Has(StagePost) {
+			t.Fatalf("monitor: has pre=%v post=%v; a Monitor policy must not change speech traffic", bound.Has(StagePre), bound.Has(StagePost))
 		}
 		if err := bound.Check(context.Background(), StagePre, "forbidden words"); err != nil {
 			t.Fatalf("monitor key policy blocked: %v", err)
@@ -175,3 +175,70 @@ func TestRealtimeBindsKeyPolicies(t *testing.T) {
 		}
 	})
 }
+
+// A key policy's check binds only in a direction the session reads as text, so
+// enforcing a pre-stage check on a key skips transcription sessions instead of
+// making the speech handler refuse them. Org checks still bind in both.
+func TestRealtimeKeyPolicyReadableDirections(t *testing.T) {
+	pass := func(_ context.Context, _ *CheckInput) *CheckResult { return &CheckResult{Pass: true} }
+	registry := map[string]Guardrail{
+		"pre-check":  realtimeTestCheck{"pre-check", pass},
+		"post-check": realtimeStageCheck{realtimeTestCheck{"post-check", pass}, StagePost},
+	}
+	block := func() map[string]*tenant.GuardrailCheck {
+		return map[string]*tenant.GuardrailCheck{
+			"pre-check":  {Enabled: true, Action: "block", ConfidenceThreshold: 0.5},
+			"post-check": {Enabled: true, Action: "block", ConfidenceThreshold: 0.5},
+		}
+	}
+	bind := func(t *testing.T, readable RealtimeText, orgChecks map[string]*tenant.GuardrailCheck) *RealtimePolicy {
+		t.Helper()
+		store := tenant.NewStore()
+		store.Set("org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{
+			Checks: orgChecks,
+			KeyPolicies: []*tenant.KeyGuardrailPolicy{{
+				ID: "pol", Name: "pol", Mode: "enforce", KeyIDs: []string{"key_a"}, Checks: block(),
+			}},
+		}})
+		rc := models.AcquireRequestContext()
+		t.Cleanup(rc.Release)
+		rc.Metadata["org_id"] = "org"
+		rc.Metadata["auth_key_id"] = "key_a"
+		bound, err := NewPlugin(nil, registry, nil, nil, store).BindRealtime(rc, readable)
+		if err != nil {
+			t.Fatalf("bind: %v", err)
+		}
+		return bound
+	}
+	for _, tc := range []struct {
+		name              string
+		readable          RealtimeText
+		wantPre, wantPost bool
+	}{
+		{"transcription reads only post", RealtimeText{StagePost: true}, false, true},
+		{"synthesis reads only pre", RealtimeText{StagePre: true}, true, false},
+		{"turns reads neither", RealtimeText{}, false, false},
+		{"both", RealtimeTextBoth, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bound := bind(t, tc.readable, nil)
+			if bound.Blocking(StagePre) != tc.wantPre || bound.Blocking(StagePost) != tc.wantPost {
+				t.Fatalf("blocking pre=%v post=%v, want pre=%v post=%v",
+					bound.Blocking(StagePre), bound.Blocking(StagePost), tc.wantPre, tc.wantPost)
+			}
+		})
+	}
+	t.Run("org checks still bind in an unreadable direction", func(t *testing.T) {
+		bound := bind(t, RealtimeText{StagePost: true}, block())
+		if !bound.Blocking(StagePre) {
+			t.Fatal("an org pre-stage block check must still bind, so the handler refuses the session")
+		}
+	})
+}
+
+type realtimeStageCheck struct {
+	realtimeTestCheck
+	stage Stage
+}
+
+func (c realtimeStageCheck) Stage() Stage { return c.stage }

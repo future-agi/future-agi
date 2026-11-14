@@ -29,9 +29,19 @@ type RealtimePolicy struct {
 	model    string
 }
 
+// RealtimeText names the directions in which a realtime session carries text
+// the relay can read: index StagePre is the client's text before the vendor
+// (synthesis input), StagePost the vendor's text after it (transcripts).
+type RealtimeText [2]bool
+
+// RealtimeTextBoth reads text in both directions.
+var RealtimeTextBoth = RealtimeText{StagePre: true, StagePost: true}
+
 // BindRealtime uses the same authenticated org/key/request policy precedence as chat
-// and resolves configured checks before opening the speech session.
-func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePolicy, *models.APIError) {
+// and resolves configured checks before opening the speech session. readable
+// limits which key-policy checks are bound; org checks and static rules are
+// bound in both directions, and the caller refuses blocking ones it cannot read.
+func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext, readable RealtimeText) (*RealtimePolicy, *models.APIError) {
 	merged, requested, err := p.resolvePolicy(rc)
 	if err != nil {
 		return nil, err
@@ -39,7 +49,7 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 	bound := &RealtimePolicy{metadata: maps.Clone(rc.Metadata), model: rc.Model}
 	if requested == policy.RequestPolicyDisabled {
 		// A request override never turns off the key's own policies, as on chat.
-		if err := p.bindRealtimeKeyPolicies(bound, rc); err != nil {
+		if err := p.bindRealtimeKeyPolicies(bound, rc, readable); err != nil {
 			return nil, err
 		}
 		return bound, validateRealtimeRules(bound)
@@ -131,7 +141,7 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 			}
 		}
 	}
-	if err := p.bindRealtimeKeyPolicies(bound, rc); err != nil {
+	if err := p.bindRealtimeKeyPolicies(bound, rc, readable); err != nil {
 		return nil, err
 	}
 	if err := validateRealtimeRules(bound); err != nil {
@@ -140,13 +150,23 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 	return bound, nil
 }
 
-// bindRealtimeKeyPolicies adds the checks of the key policies that apply to
-// the session's key, after the org checks, in the order chat runs them. An
-// Enforce policy's checks keep their action; a Monitor policy's checks only
-// log, so they never block or end the session. Neither the key's static
-// overrides nor an X-Guardrail-Policy header change them: on chat, too, key
-// policies cannot be weakened.
-func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *models.RequestContext) *models.APIError {
+// bindRealtimeKeyPolicies adds the checks of the key's Enforce policies that
+// apply to the session's key, after the org checks, in the order chat runs
+// them, and keeps each check's action.
+//
+// Two kinds of key-policy check are left out instead of changing the session:
+//   - Monitor policies. Any bound rule installs the relay's hold/refuse filter,
+//     which holds text until a unit completes and closes the session on frames
+//     it cannot parse. A Monitor policy must never change traffic, so it does
+//     not run on speech relays at all.
+//   - Checks for a direction the session carries no readable text in (a
+//     pre-stage check on transcription, a post-stage check on synthesis).
+//     Org checks refuse such sessions; a key policy is skipped, so enforcing a
+//     chat check on a key does not stop that key's speech sessions.
+//
+// Neither the key's static overrides nor an X-Guardrail-Policy header change
+// the bound checks: on chat, too, key policies cannot be weakened.
+func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *models.RequestContext, readable RealtimeText) *models.APIError {
 	if p.tenantStore == nil {
 		return nil
 	}
@@ -160,21 +180,23 @@ func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *mod
 		timeout = time.Duration(org.Guardrails.TimeoutMs) * time.Millisecond
 	}
 	for _, pol := range sortedKeyPolicies(org.Guardrails.KeyPoliciesFor(rc.Metadata["auth_key_id"])) {
-		monitor := strings.EqualFold(pol.Mode, "monitor")
+		if strings.EqualFold(pol.Mode, "monitor") {
+			continue
+		}
 		for _, name := range sortedCheckNames(pol.Checks) {
 			check := pol.Checks[name]
 			if check == nil || !check.Enabled {
 				continue
 			}
 			action := parseAction(check.Action)
-			if monitor {
-				action = ActionLog
-			}
 			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
 			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
 				if action == ActionBlock {
 					return realtimeUnsupported("configured guardrail implementation or stage is unavailable")
 				}
+				continue
+			}
+			if !readable[g.Stage()] {
 				continue
 			}
 			bound.rules[g.Stage()] = append(bound.rules[g.Stage()], resolvedRule{
