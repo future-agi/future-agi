@@ -48,6 +48,7 @@ def execution_with_chat_metrics(db, organization, workspace):
                 },
             )
         )
+    # Match timestamps because the existing ordering separates otherwise equal groups.
     CallExecution.objects.filter(id=calls[1].id).update(created_at=calls[0].created_at)
     return execution, calls
 
