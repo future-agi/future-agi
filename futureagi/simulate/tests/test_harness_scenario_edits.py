@@ -186,6 +186,8 @@ def _a_sub_goal(environment, name):
 
 def test_control_edit_needs_reproof(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ed-control")
+    # A built case names the sub-goals it checks; a control may only fail one of those.
+    _amend_with(auth_client, environment, NAMES[0], "sub_goals", ["refunded"])
     control = {
         "name": "refunds_twice",
         "why": "refunds the order twice",
@@ -252,3 +254,20 @@ def test_amend_to_empty_sources_is_refused(user, workspace, storage, auth_client
 
     assert refused["receipts"][0]["outcome"] == "refused"
     assert refused["receipts"][0]["why"] == NO_SOURCES
+
+
+def test_amend_to_a_blank_assumption_is_refused(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "ed-blank-assumption")
+
+    refused = _amend_with(
+        auth_client,
+        environment,
+        NAMES[0],
+        "sources",
+        [{"kind": "assumption", "quote": "  ", "supports": ""}],
+    )
+
+    assert refused["receipts"][0]["outcome"] == "refused"
+    assert refused["receipts"][0]["why"] == (
+        "sources[0]: an assumption source says what was assumed"
+    )
