@@ -6,6 +6,7 @@ import QueueDetailView from "../queue-detail-view";
 const mocks = vi.hoisted(() => ({
   assignItems: vi.fn(),
   navigate: vi.fn(),
+  viewerRoles: ["manager"],
   queryClient: {
     removeQueries: vi.fn(),
     invalidateQueries: vi.fn(),
@@ -62,8 +63,8 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
       id: "queue-1",
       name: "Bulk Queue",
       status: "active",
-      viewer_role: "manager",
-      viewer_roles: ["manager"],
+      viewer_role: mocks.viewerRoles[0],
+      viewer_roles: mocks.viewerRoles,
       annotators: [
         {
           user_id: "manager-1",
@@ -154,7 +155,12 @@ vi.mock("../queue-analytics-tab", () => ({
 }));
 
 vi.mock("../queue-agreement-tab", () => ({
-  default: () => null,
+  default: ({ canViewSubmissions }) => (
+    <div
+      data-testid="agreement-tab"
+      data-can-view-submissions={String(canViewSubmissions)}
+    />
+  ),
 }));
 
 vi.mock("../automation-rules-tab", () => ({
@@ -164,6 +170,7 @@ vi.mock("../automation-rules-tab", () => ({
 describe("QueueDetailView bulk assignment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.viewerRoles = ["manager"];
     mocks.assignItems.mockImplementation((_payload, options) => {
       options?.onSuccess?.();
     });
@@ -219,4 +226,25 @@ describe("QueueDetailView bulk assignment", () => {
     expect(screen.getByLabelText("Item 1")).toBeVisible();
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [["manager"], "true"],
+    [["reviewer", "annotator"], "true"],
+    [["reviewer"], "true"],
+    [["annotator"], "false"],
+  ])(
+    "tells the Agreement tab whether viewer roles %j can view submissions",
+    async (roles, expected) => {
+      mocks.viewerRoles = roles;
+      const user = userEvent.setup();
+      render(<QueueDetailView />);
+
+      await user.click(screen.getByRole("tab", { name: /agreement/i }));
+
+      expect(screen.getByTestId("agreement-tab")).toHaveAttribute(
+        "data-can-view-submissions",
+        expected,
+      );
+    },
+  );
 });
