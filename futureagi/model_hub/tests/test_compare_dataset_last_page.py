@@ -64,6 +64,7 @@ def _run_compare_dataset_pipeline(prepare_fn, row_count, monkeypatch, tmp_path):
     return uploaded_pages, metadata
 
 
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "prepare_fn",
     [
