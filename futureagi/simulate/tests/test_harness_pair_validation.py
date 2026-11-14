@@ -1,4 +1,5 @@
 import json
+import re
 from unittest.mock import patch
 
 import pytest
@@ -293,6 +294,12 @@ class TestDispatch:
         assert _row(environment).state == "pending"
 
 
+def _without_deadline(command):
+    """A validation's command with its job-specific deadline taken out."""
+    assert re.search(r" --deadline-at \d+", command)
+    return re.sub(r" --deadline-at \d+", "", command)
+
+
 class TestLaunch:
     def test_a_validation_runs_only_the_certify_command(
         self, user, workspace, storage, gateway
@@ -303,7 +310,7 @@ class TestLaunch:
         _launch(gateway, job)
 
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert _without_deadline(command) == assembly.certify_command(prove=True)
         certify = json.loads(
             gateway.client.sandbox.fs.uploads[assembly.CERTIFY_JOB_PATH]
         )
@@ -1943,7 +1950,9 @@ class TestAgentReading:
 
         assert _job_metadata(job)["agent_reading"] == "before_certify"
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.agent_reading_command() + assembly.certify_command()
+        assert _without_deadline(command) == (
+            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        )
 
     def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
         environment = _not_built_with(
@@ -1958,7 +1967,7 @@ class TestAgentReading:
 
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert _without_deadline(command) == assembly.certify_command(prove=True)
 
     def test_a_certified_unread_pairing_starts_a_reading_only_check(
         self, user, workspace, storage, gateway
@@ -2071,7 +2080,7 @@ class TestAgentReading:
 
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert _without_deadline(command) == assembly.certify_command(prove=True)
 
 
 def _recorded(domain, *, code="spawn_failed", process="tool-proxy", message=None):

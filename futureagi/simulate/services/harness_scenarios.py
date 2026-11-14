@@ -913,9 +913,12 @@ def pair_scenarios(
     # soft-deleted even when history points at it, so old Runs retain their foreign key
     # while active-suite reads and new Run selection no longer expose it.
     if prune:
+        # An archived row keeps its identity, runs and evidence: it is never pruned.
         HostedHarnessScenario.no_workspace_objects.filter(job=job).exclude(
             scenario_key__in=seen
-        ).update(deleted=True, deleted_at=timezone.now())
+        ).exclude(archived_at__isnull=False).update(
+            deleted=True, deleted_at=timezone.now()
+        )
     return pairs
 
 

@@ -2487,13 +2487,16 @@ class HostedHarnessGateway:
         from simulate.services.harness_versioning import assembly as bundle_cache
         from simulate.services.harness_versioning.validation import (
             certify_only,
+            check_deadline,
+            proves_scenarios,
+            proving_only,
             reading_only,
             reads_agent,
         )
 
         validation = certify_only(job)
-        # A certified pairing's check only reads its agent version's tools.
-        only_reading = validation and reading_only(job)
+        # A certified pairing's check only reads its agent version's tools, or only proves its scenarios.
+        only_reading = validation and (reading_only(job) or proving_only(job))
         if validation and not only_reading and bundle_cache.assembled_bundle_ready(job):
             # Certified meanwhile, by a run or another validation: nothing to launch.
             return self._complete_without_sandbox(job, endpoint_base_url)
@@ -2856,12 +2859,20 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
+            deadline_at = check_deadline(job).timestamp() if validation else None
             if certify:
-                bundle_command = bundle_cache.certify_command()
+                # A run's own certify on a cache miss never proves: its proofs would be discarded.
+                bundle_command = bundle_cache.certify_command(
+                    prove=validation and proves_scenarios(job), deadline_at=deadline_at
+                )
                 if reads_agent(job):
                     bundle_command = (
                         bundle_cache.agent_reading_command() + bundle_command
                     )
+            elif validation and proving_only(job):
+                bundle_command = (
+                    bundle_cache.prove_suite_command(deadline_at=deadline_at) + "true"
+                )
             elif only_reading:
                 bundle_command = bundle_cache.agent_reading_command() + "true"
             elif assembled is not None:
@@ -4926,6 +4937,55 @@ class HostedHarnessGateway:
                 "harness tool routing not kept attempt=%s", attempt.id, exc_info=True
             )
 
+    def _keep_scenario_proofs(self, attempt: HostedHarnessAttempt) -> None:
+        """Record the proofs this validation made of every scenario, read before the sandbox is
+        deleted. Never raises: without a readable file the lifecycle stays as it was."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+        from simulate.services.harness_versioning.validation import proves_scenarios
+        from simulate.services.harness_versioning.versions import record_proofs
+
+        job = attempt.job
+        if not proves_scenarios(job):
+            return
+        recorded = False
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            proofs = bundle_cache.scenario_proofs(sandbox)
+            if (
+                proofs is not None
+                and job.suite_version_id
+                and job.environment_version_id
+            ):
+                record_proofs(job.suite_version, job.environment_version, proofs, job)
+                recorded = True
+            else:
+                logger.warning(
+                    "harness_scenario_proofs_unread job=%s reason=no_file", job.id
+                )
+        except Exception:  # noqa: BLE001 - the lifecycle stays as it was
+            logger.warning(
+                "harness_scenario_proofs_unread job=%s", job.id, exc_info=True
+            )
+        try:
+            with transaction.atomic():
+                locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                    id=job.id
+                )
+                payload = dict(locked.payload or {})
+                payload["metadata"] = {
+                    **(payload.get("metadata") or {}),
+                    "scenario_proofs_recorded": recorded,
+                }
+                locked.payload = payload
+                locked.save(update_fields=["payload", "updated_at"])
+        except Exception:  # noqa: BLE001 - the status endpoint then reads "not recorded"
+            logger.warning(
+                "harness_scenario_proofs_flag_unsaved job=%s", job.id, exc_info=True
+            )
+
     def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
         """Store the tools a validation read for its agent version, before its sandbox
         is deleted. Never raises: an unread version stays unread."""
@@ -4966,6 +5026,7 @@ class HostedHarnessGateway:
 
         if bundle_cache.assembled_bundle_ready(attempt.job):
             self._keep_tool_routing(attempt)
+            self._keep_scenario_proofs(attempt)
             attempt.terminal_stage = "completed"
             attempt.terminal_failure = None
         else:

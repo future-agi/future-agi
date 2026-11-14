@@ -924,6 +924,41 @@ def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
     }
 
 
+SCENARIO_PROOFS_PATH = "/work/authoring/scenario-proofs.json"
+SCENARIO_PROOFS_MAX_KEYS = 5000
+
+
+def scenario_proofs(sandbox: Any) -> dict[str, Any] | None:
+    """The proofs a validation made of every scenario, ``{key: entry}``; ``None`` when the
+    file is absent or unreadable, which reads as "no new proofs"."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                SCENARIO_PROOFS_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a job that proved nothing writes none
+        logger.info("harness_scenario_proofs_unread", error=type(exc).__name__)
+        return None
+    if not isinstance(document, dict):
+        return None
+    kept = [(key, value) for key, value in document.items() if isinstance(value, dict)]
+    return dict(kept[:SCENARIO_PROOFS_MAX_KEYS])
+
+
+def _deadline_flag(deadline_at: float | None) -> str:
+    return f" --deadline-at {int(deadline_at)}" if deadline_at is not None else ""
+
+
+def prove_suite_command(*, deadline_at: float | None = None) -> str:
+    """Prove every scenario of the certified pair into ``SCENARIO_PROOFS_PATH``. The outer
+    timeout is the last resort: the module's own budget writes partial results first."""
+    return (
+        "timeout 1500 python -m fi.alk.harness.prove_suite --authoring /work/authoring "
+        f"--output {SCENARIO_PROOFS_PATH} --budget-seconds 1200{_deadline_flag(deadline_at)} || true; "
+    )
+
+
 AGENT_READING_PATH = "/work/reading/agent.json"
 
 
@@ -959,19 +994,21 @@ def agent_reading(sandbox: Any) -> dict[str, Any] | None:
     return document
 
 
-def certify_command() -> str:
+def certify_command(*, prove: bool = False, deadline_at: float | None = None) -> str:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
     Certifying writes ``/work/runtime-validation.json`` itself once the bundle is in place
-    and never fetches a provider profile.
+    and never fetches a provider profile. With ``prove`` it also proves every scenario before
+    sealing, into ``SCENARIO_PROOFS_PATH``.
     """
+    proving = f" --prove-scenarios{_deadline_flag(deadline_at)}" if prove else ""
     return (
         "if [ -f /work/authoring/scenarios.json ]; then "
         f"cp /work/authoring/scenarios.json {SUITE_INDEX_PATH}; fi && "
         "python -m "
         "fi.alk.harness.hosted_authoring_entrypoint "
         f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        "--certify-only --bundle-output /work/bundle "
+        f"--certify-only --bundle-output /work/bundle{proving} "
         "&& rm -rf /work/authoring/environment-bundle "
         "&& cp -a /work/bundle /work/authoring/environment-bundle"
     )

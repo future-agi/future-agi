@@ -45,7 +45,8 @@ from simulate.services.hosted_harness import (
 logger = structlog.get_logger(__name__)
 
 # `save`: the reviewed changes a Validate composed, checked before Save makes them the defaults.
-Purpose = Literal["agent_move", "recheck", "save"]
+Purpose = Literal["agent_move", "recheck", "save", "prove"]
+Proving = Literal["with_certify", "only"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
 # A check still running this long after it was asked for is stopped. A slow worker or
@@ -287,6 +288,19 @@ def reading_only(job: HostedHarnessJob) -> bool:
     return ((job.payload or {}).get("metadata") or {}).get("agent_reading") == "only"
 
 
+def proving_only(job: HostedHarnessJob) -> bool:
+    """Whether a validation job only proves the scenarios of a pairing already certified."""
+    return ((job.payload or {}).get("metadata") or {}).get("scenario_proving") == "only"
+
+
+def proves_scenarios(job: HostedHarnessJob) -> bool:
+    """Whether a validation job proves every scenario, after certifying or on its own."""
+    return ((job.payload or {}).get("metadata") or {}).get("scenario_proving") in (
+        "with_certify",
+        "only",
+    )
+
+
 def unread(agent_version: AgentVersion, runtime: Any) -> bool:
     """A version whose tools no build has read, started in our sandbox from source."""
     from simulate.services.agent_setup import stored_agent
@@ -329,7 +343,22 @@ def can_validate(environment: HostedHarnessJob, agent_version_id: Any) -> bool:
 
 
 def live_validation(bundle_id: Any) -> HostedHarnessJob | None:
-    """The validation job still certifying this bundle, if any."""
+    """The validation job still certifying this bundle, if any. A prove-only job re-proves a
+    bundle already certified, so a run during it is safe and it is not counted here."""
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(
+            assembled_bundle_id=bundle_id,
+            state__in=_LIVE_STATES,
+            payload__metadata__certify_only=True,
+        )
+        .exclude(payload__metadata__scenario_proving="only")
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def live_check(bundle_id: Any) -> HostedHarnessJob | None:
+    """Any validation job still live on this bundle, prove-only jobs included."""
     return (
         HostedHarnessJob.no_workspace_objects.filter(
             assembled_bundle_id=bundle_id,
@@ -435,6 +464,26 @@ def start_validation(
         certified = (
             bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
         )
+        if certified and purpose == "prove":
+            # A person pressing Validate after a fix needs a new proof, never the certified shortcut.
+            live = live_check(bundle.id)
+            if live is not None:
+                return Validation("validating", bundle, purpose, live)
+            job = _create_job(
+                locked,
+                runtime,
+                agent_version,
+                environment_version,
+                suite_version,
+                bundle,
+                purpose=purpose,
+                move=move,
+                proving="only",
+            )
+            job_id = job.id
+            transaction.on_commit(lambda: _dispatch(job_id))
+            logger.info("harness_pair_scenario_proving_started", **_check_log(job))
+            return Validation("validating", bundle, purpose, job)
         if certified and read and live_validation(bundle.id) is None:
             job = _create_job(
                 locked,
@@ -490,6 +539,7 @@ def start_validation(
             purpose=purpose,
             move=move,
             reading="before_certify" if read else None,
+            proving="with_certify",
         )
         job_id = job.id
         transaction.on_commit(lambda: _dispatch(job_id))
@@ -585,6 +635,7 @@ def _create_job(
     purpose: Purpose,
     move: AgentMove | None,
     reading: Literal["before_certify", "only"] | None = None,
+    proving: Proving | None = None,
 ) -> HostedHarnessJob:
     """The environment's job, pinned to the pairing; certifying is all it does, after
     reading the agent version's tools when ``reading`` says so."""
@@ -615,6 +666,8 @@ def _create_job(
         metadata["validation_move"] = move
     if reading is not None:
         metadata["agent_reading"] = reading
+    if proving is not None:
+        metadata["scenario_proving"] = proving
     payload.pop("job_id", None)
     payload.pop("run_id", None)
     # One key per check of this bundle, so two requests for the same check make one job,
