@@ -13,7 +13,7 @@ export default function RolloutInstructions({ inventory = false, version }) {
     <Typography component="pre" variant="s1" sx={{ m: 0, p: 1.5, bgcolor: 'background.default', border: 1, borderColor: 'divider', borderRadius: 1, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: 1, userSelect: 'all' }}>{inventory ? inventoryCommand : planCommand(version)}</Typography>
     <Typography variant="s3" color="text.secondary">{inventory ? 'This reads the repositories you list and changes no files.' : 'Run this in the repository folder. It plans the change on your machine and writes nothing. Each repository records its plan with a read-only key, then you review it here. Set CONTEXT_NAME to the context name first.'}{!inventory && !Number.isInteger(version) && ' Set VERSION to the release this repository needs.'}</Typography>
     <Link href={ROLLOUT_DOCS_URL} target="_blank" rel="noopener noreferrer" variant="s1">{inventory ? 'Prepare a repository inventory' : 'Plan and submit repository changes'}</Link>
-    <TechnicalDetails title="Technical details"><Stack spacing={1}>
+    <TechnicalDetails title="Command details"><Stack spacing={1}>
       {inventory
         ? <Typography variant="s3">List each repository&apos;s repository_id and project path in repositories.json.</Typography>
         : <Typography variant="s3">Submit the generated plan with the SDK&apos;s record_plan call, using a scoped context credential that can read but not write.</Typography>}
