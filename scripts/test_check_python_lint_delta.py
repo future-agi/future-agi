@@ -275,6 +275,12 @@ WORKFLOW = ROOT / ".github" / "workflows" / "python-lint.yml"
 LINT_PATHS = (
     "futureagi/**/*.py",
     "futureagi/pyproject.toml",
+    "futureagi/**/pyproject.toml",
+    "futureagi/**/ruff.toml",
+    "futureagi/**/.ruff.toml",
+    "pyproject.toml",
+    "ruff.toml",
+    ".ruff.toml",
     "scripts/check_python_lint_delta.py",
     "scripts/test_check_python_lint_delta.py",
     "scripts/lint-staged-python.sh",
@@ -362,7 +368,13 @@ class WorkflowTests(unittest.TestCase):
         )
         summary = job_block(self.text, "python-lint-pass")
         self.assertRegex(summary, r"(?m)^    name: Python Lint Pass\s*$")
-        self.assertRegex(summary, r"(?m)^    needs: \[changes, ruff-delta\]\s*$")
+        self.assertRegex(
+            summary, r"(?m)^    needs: \[changes, ruff-delta, ruff-self-test\]\s*$"
+        )
+        self.assertRegex(
+            summary,
+            r"(?m)^          SELF_TEST: \$\{\{ needs\.ruff-self-test\.result \}\}\s*$",
+        )
         # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
         self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
         # The script below reads these; wired to anything else, its test proves nothing.
@@ -390,12 +402,29 @@ class WorkflowTests(unittest.TestCase):
             'git show "${trusted_ref}:.github/workflows/python-lint.yml"', ruff
         )
         self.assertIn(
-            'python3 -I "$gate" --base "$base" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
+            'python3 -I "$gate" --base "$base" "${config_ref_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
             ruff,
         )
+        self.assertIn('if grep -q -- "--config-ref" "$gate"; then', ruff)
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
-        # The self-test runs only when the branch carries it.
-        self.assertIn("if [ -f scripts/test_check_python_lint_delta.py ]; then", ruff)
+        # No head-provided executable runs before the reporting step in this job.
+        self.assertNotIn("scripts/test_check_python_lint_delta.py", ruff)
+        self.assertNotIn("Install ruff for head self-tests", ruff)
+        self.assertNotIn("Self-test the gate", ruff)
+        self.assertLess(
+            ruff.index("actions/checkout@v4"), ruff.index("Report new violations")
+        )
+        self.assertNotRegex(
+            ruff.split("      - name: Report new violations", 1)[0], r"(?m)^\s*run:"
+        )
+        self.assertIn(
+            "if [ -f scripts/test_check_python_lint_delta.py ]; then",
+            job_block(self.text, "ruff-self-test"),
+        )
+        self.assertIn(
+            "python3 -I scripts/test_check_python_lint_delta.py",
+            job_block(self.text, "ruff-self-test"),
+        )
 
     def test_nothing_turns_a_failure_into_a_pass(self):
         # continue-on-error on any job or step can report a real failure as
@@ -408,28 +437,29 @@ class WorkflowTests(unittest.TestCase):
     def test_the_summary_fails_closed(self):
         script = run_script(job_block(self.text, "python-lint-pass"))
         cases = [
-            # (changes result, python output, ruff-delta result, passes)
-            ("success", "true", "success", True),
-            ("success", "false", "skipped", True),
-            ("success", "true", "failure", False),
-            ("success", "true", "cancelled", False),
-            # Skipped although Python changed, or without an answer from changes.
-            ("success", "true", "skipped", False),
-            ("success", "", "skipped", False),
-            ("success", "false", "failure", False),
-            ("failure", "", "skipped", False),
-            ("cancelled", "", "skipped", False),
-            ("skipped", "", "skipped", False),
-            ("failure", "true", "success", False),
-            # A changes job that set its output and then did not succeed.
-            ("failure", "false", "skipped", False),
-            ("cancelled", "false", "skipped", False),
-            ("skipped", "false", "skipped", False),
+            # (changes result, python output, gate result, test result, passes)
+            ("success", "true", "success", "success", True),
+            ("success", "false", "skipped", "skipped", True),
+            ("success", "true", "failure", "success", False),
+            ("success", "true", "success", "failure", False),
+            ("success", "true", "success", "cancelled", False),
+            ("success", "true", "cancelled", "success", False),
+            ("success", "true", "skipped", "success", False),
+            ("success", "true", "success", "skipped", False),
+            ("success", "", "skipped", "skipped", False),
+            ("success", "false", "failure", "skipped", False),
+            ("success", "false", "skipped", "failure", False),
+            ("success", "false", "success", "success", False),
+            ("failure", "", "skipped", "skipped", False),
+            ("cancelled", "", "skipped", "skipped", False),
+            ("skipped", "", "skipped", "skipped", False),
+            ("failure", "true", "success", "success", False),
+            ("failure", "false", "skipped", "skipped", False),
         ]
         with tempfile.TemporaryDirectory(prefix="lint-summary-test-") as tmp:
             path = Path(tmp) / "summary.sh"
             path.write_text(script)
-            for changes, python, ruff, passes in cases:
+            for changes, python, ruff, self_test, passes in cases:
                 # The shell GitHub runs a step's script with.
                 proc = subprocess.run(
                     ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
@@ -441,9 +471,12 @@ class WorkflowTests(unittest.TestCase):
                         "CHANGES": changes,
                         "PYTHON_CHANGED": python,
                         "RUFF": ruff,
+                        "SELF_TEST": self_test,
                     },
                 )
-                with self.subTest(changes=changes, python=python, ruff=ruff):
+                with self.subTest(
+                    changes=changes, python=python, ruff=ruff, self_test=self_test
+                ):
                     self.assertEqual(
                         proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr
                     )
@@ -525,9 +558,12 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def gate(self, base):
+    def gate(self, base, config_ref=None):
+        args = [sys.executable, "-I", str(SCRIPT), "--base", base]
+        if config_ref is not None:
+            args.extend(["--config-ref", config_ref])
         proc = subprocess.run(
-            [sys.executable, "-I", str(SCRIPT), "--base", base],
+            args,
             cwd=self.repo,
             check=False,
             capture_output=True,
@@ -695,6 +731,653 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
             proc.stdout + proc.stderr,
         )
 
+    def test_new_exclusion_cannot_hide_a_new_finding(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/hidden.py"
+        self.write(path, 'print("new")\n')
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace(
+                'exclude = ["migrations"]', 'exclude = ["migrations", "hidden.py"]'
+            ),
+        )
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+        )
+
+    def test_nested_config_cannot_hide_a_new_finding(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        for config_name, config_text in (
+            ("ruff.toml", 'exclude = ["hidden.py"]\n'),
+            (".ruff.toml", 'exclude = ["hidden.py"]\n'),
+            ("pyproject.toml", '[tool.ruff]\nexclude = ["hidden.py"]\n'),
+        ):
+            with self.subTest(config=config_name):
+                path = "futureagi/app/hidden.py"
+                self.write(path, 'print("new")\n')
+                self.write("futureagi/app/" + config_name, config_text)
+                self.commit()
+                code, found, proc = self.gate(base)
+                self.assertEqual(
+                    (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+                )
+                self.git("reset", "--hard", base)
+
+    def test_full_head_tree_keeps_relative_import_resolution(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"accounts.services.token_service.issue_sos_tokens" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/accounts/__init__.py", "")
+        self.write("futureagi/accounts/services/__init__.py", "")
+        self.write(
+            "futureagi/accounts/services/token_service.py",
+            "def issue_sos_tokens():\n    pass\n",
+        )
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            config.replace("Use another API.", "Use a reviewed API."),
+        )
+        path = "futureagi/accounts/services/new.py"
+        self.write(
+            path,
+            "from .token_service import issue_sos_tokens\n\n\nissue_sos_tokens()\n",
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "TID251"), found, proc.stdout)
+
+    def test_full_head_tree_keeps_first_party_import_classification(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "I"]'
+        )
+        config = config.replace("line-length = 88", 'line-length = 88\nsrc = ["."]')
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/tfc/__init__.py", "")
+        self.write("futureagi/tfc/utils/__init__.py", "")
+        self.write(
+            "futureagi/tfc/utils/general_methods.py",
+            "class GeneralMethods:\n    pass\n",
+        )
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml", config.replace('"app/cli.py"', '"app/other.py"')
+        )
+        path = "futureagi/app/new.py"
+        self.write(
+            path,
+            'import django\nfrom tfc.utils.general_methods import GeneralMethods\n\n__all__ = ["GeneralMethods", "django"]\n',
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "I001"), found, proc.stdout)
+
+    def test_renaming_config_away_still_uses_base_settings(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        base = self.commit()
+        self.git("mv", "futureagi/pyproject.toml", "futureagi/pyproject.toml.disabled")
+        path = "futureagi/app/new.py"
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 1, "TID251"), found, proc.stdout)
+
+    def test_non_table_tool_or_ruff_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        for content in ('tool = "x"\n', '[tool]\nruff = "x"\n'):
+            with self.subTest(content=content):
+                self.write("futureagi/app/pyproject.toml", content)
+                self.write("futureagi/app/new.py", 'print("new")\n')
+                self.commit()
+                code, _, proc = self.gate(base)
+                self.assertEqual(code, 2, proc.stdout + proc.stderr)
+                self.assertIn("title=Python lint gate", proc.stdout)
+                self.assertNotIn("Traceback", proc.stderr)
+                self.git("reset", "--hard", base)
+
+    def banned_config(self):
+        return (
+            CONFIG.replace(
+                'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+            )
+            + "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+            + '"library.old_api" = { msg = "Use another API." }\n'
+        )
+
+    def assert_gate_stopped(self, base, path):
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertIn(path, proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_committed_configs_only_include_backend_ancestors(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/.ruff.toml", "line-length = 88\n")
+        self.write("ruff.toml", "line-length = 88\n")
+        self.write("other/pyproject.toml", "[tool.ruff]\nline-length = 88\n")
+        self.write("other/deep/.ruff.toml", "line-length = 88\n")
+        ref = self.commit()
+        self.assertEqual(
+            gate.committed_configs(self.repo, ref),
+            {
+                "ruff.toml": b"line-length = 88\n",
+                "futureagi/pyproject.toml": CONFIG.encode(),
+                "futureagi/app/.ruff.toml": b"line-length = 88\n",
+            },
+        )
+
+    def test_outside_config_entries_do_not_affect_later_backend_changes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        original = self.commit()
+        for kind in ("extend", "symlink", "non_utf8", "non_table", "gitlink"):
+            with self.subTest(kind=kind):
+                self.git("reset", "--hard", original)
+                self.git("clean", "-fdx")
+                if kind == "extend":
+                    self.write(
+                        "sdk/pyproject.toml", '[tool.ruff]\nextend = "elsewhere.toml"\n'
+                    )
+                elif kind == "symlink":
+                    (self.repo / "docs").mkdir(exist_ok=True)
+                    (self.repo / "docs/ruff.toml").symlink_to(
+                        "../futureagi/pyproject.toml"
+                    )
+                elif kind == "non_utf8":
+                    folder = os.fsencode(self.repo) + b"/docs"
+                    os.makedirs(folder, exist_ok=True)
+                    with open(folder + b"/caf\xe9.txt", "wb") as fh:
+                        fh.write(b"x\n")
+                elif kind == "non_table":
+                    self.write("frontend/tool/pyproject.toml", 'tool = "x"\n')
+                else:
+                    self.write("docs/placeholder", "x\n")
+                    self.git("add", "-A")
+                    self.git(
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        "160000," + self.git("rev-parse", "HEAD") + ",docs/ruff.toml",
+                    )
+                before = self.commit()
+                self.write("futureagi/app/ok.py", "VALUE = 1\n")
+                self.commit()
+                code, found, proc = self.gate(before)
+                self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+                self.git("reset", "--hard", before)
+                self.write("futureagi/app/new.py", 'print("new")\n')
+                self.commit()
+                code, found, proc = self.gate(before)
+                self.assertEqual(
+                    (code, found),
+                    (1, [("futureagi/app/new.py", 1, "T201")]),
+                    proc.stdout + proc.stderr,
+                )
+
+    def test_non_utf8_config_name_in_scope_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        folder = os.fsencode(self.repo) + b"/futureagi/\xffdir"
+        os.mkdir(folder)
+        with open(folder + b"/ruff.toml", "wb") as fh:
+            fh.write(b"line-length = 88\n")
+        self.commit()
+        self.assert_gate_stopped(base, "UTF-8")
+
+    def test_config_snapshot_uses_committed_bytes_not_checkout_contents(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace("line-length = 88", "line-length = 99"),
+        )
+        self.assertEqual(
+            gate.committed_configs(self.repo, base)["futureagi/pyproject.toml"],
+            CONFIG.encode(),
+        )
+
+    def test_config_only_symlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("futureagi/alternate.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("alternate.toml")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    def test_root_config_gitlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.git("add", "-A")
+        self.git(
+            "update-index", "--add", "--cacheinfo", "160000," + base + ",ruff.toml"
+        )
+        self.git("commit", "-q", "-m", "c")
+        self.assert_gate_stopped(base, "ruff.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_config_at_root_stops_before_lint(self):
+        config = self.banned_config()
+        self.write("futureagi/pyproject.toml", config)
+        base = self.commit()
+        self.write("cfg.toml", config)
+        self.write("futureagi/cfg.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("/proc/self/cwd/cfg.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_config_with_relative_import_stops_before_lint(self):
+        config = self.banned_config()
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/app/__init__.py", "")
+        self.write("futureagi/app/library.py", "def old_api():\n    pass\n")
+        base = self.commit()
+        self.write("cfg.toml", config)
+        self.write("futureagi/cfg.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("/proc/self/cwd/cfg.toml")
+        self.write(
+            "futureagi/app/new.py", "from .library import old_api\n\nold_api()\n"
+        )
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_nested_pyproject_stops_even_if_root_has_no_ruff_table(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("lax.toml", '[project]\nname = "notes"\n')
+        self.write(
+            "futureagi/lax.toml",
+            '[tool.ruff]\nextend = "../pyproject.toml"\n'
+            '[tool.ruff.lint]\nignore = ["TID251"]\n',
+        )
+        path = self.repo / "futureagi/app/pyproject.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("/proc/self/cwd/lax.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_nested_pyproject_with_another_finding_stops(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("lax.toml", '[project]\nname = "notes"\n')
+        self.write(
+            "futureagi/lax.toml",
+            '[tool.ruff]\nextend = "../pyproject.toml"\n[tool.ruff.lint]\nignore = ["TID251"]\n',
+        )
+        path = self.repo / "futureagi/app/pyproject.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("/proc/self/cwd/lax.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.write("futureagi/printed.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/pyproject.toml")
+
+    def test_config_gitlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.git("add", "-A")
+        self.git(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000," + base + ",futureagi/app/ruff.toml",
+        )
+        self.git("commit", "-q", "-m", "c")
+        self.assert_gate_stopped(base, "futureagi/app/ruff.toml")
+
+    def test_extend_in_base_config_stops_before_lint(self):
+        self.write(
+            "futureagi/pyproject.toml",
+            self.banned_config().replace(
+                "line-length = 88", 'line-length = 88\nextend = "../shared.toml"'
+            ),
+        )
+        self.write("shared.toml", "[tool.ruff]\nline-length = 88\n")
+        base = self.commit()
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    def test_extend_in_head_config_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("futureagi/app/ruff.toml", 'extend = "../pyproject.toml"\n')
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/ruff.toml")
+
+    def test_unparsed_trusted_configs_stop_before_lint(self):
+        cases = (
+            (
+                "ruff.toml",
+                'extend = "lintcfg/shared.toml"\nlint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+            ),
+            ("ruff.toml", '﻿extend = "lintcfg/shared.toml"\n'),
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nextend = "lintcfg/shared.toml"\nlint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+            ),
+            ("ruff.toml", 'extend = "lintcfg/shared.toml"\n'),
+        )
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        original = self.commit()
+        for name, content in cases:
+            with self.subTest(name=name, content=content):
+                self.git("reset", "--hard", original)
+                self.git("clean", "-fdx")
+                self.write("futureagi/model_hub/" + name, content)
+                target = "futureagi/model_hub/lintcfg/shared.toml"
+                self.write(target, 'extend = "../../pyproject.toml"\n')
+                base = self.commit()
+                self.write(
+                    target,
+                    'extend = "../../pyproject.toml"\n[lint]\nignore = ["TID251"]\n',
+                )
+                self.write(
+                    "futureagi/model_hub/new.py",
+                    "from library import old_api\n\nold_api()\n",
+                )
+                self.commit()
+                self.assert_gate_stopped(base, "futureagi/model_hub/" + name)
+
+    def test_unparsed_head_config_stops_its_own_pr(self):
+        # Ruff may accept a config this check cannot read; the PR adding it
+        # fails its own check rather than every later backend PR.
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        path = "futureagi/model_hub/ruff.toml"
+        self.write(
+            path,
+            'lint.per-file-ignores = {\n  "unused.py" = ["E501"],\n}\n',
+        )
+        self.write("futureagi/model_hub/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_config_with_byte_order_mark_is_read(self):
+        self.write("futureagi/pyproject.toml", "\ufeff" + self.banned_config())
+        base = self.commit()
+        self.write(
+            "futureagi/app/new.py",
+            "from library import old_api\n\nold_api()\n",
+        )
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn("TID251", proc.stdout)
+        self.assertNotIn("not parseable", proc.stdout)
+
+    def test_tip_settings_judge_stale_branch_and_preserve_old_findings(self):
+        path = "futureagi/app/new.py"
+        self.write("futureagi/pyproject.toml", CONFIG)
+        old = self.commit()
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        tip = self.commit()
+        self.git("checkout", "-q", "-b", "stale", old)
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(old, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "TID251")]), proc.stdout + proc.stderr
+        )
+        self.git("checkout", "-q", "-B", "control", old)
+        self.write(path, 'print("new")\n')
+        self.commit()
+        code, found, proc = self.gate(old, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+        )
+        self.git("checkout", "-q", "-B", "old_finding", old)
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        before = self.commit()
+        self.write(path, "from library import old_api\n\nold_api()\n\nVALUE = 1\n")
+        self.commit()
+        code, found, proc = self.gate(before, tip)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_tip_settings_in_merged_side_branch_judge_new_import(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        root = self.commit()
+        self.git("checkout", "-q", "-b", "side", root)
+        weak = self.commit_with_file("futureagi/app/side.py", "VALUE = 1\n")
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.write("futureagi/app/main.py", "VALUE = 1\n")
+        self.commit()
+        self.git("merge", "-q", "--no-ff", "-m", "merge side", "side")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "stale", weak)
+        path = "futureagi/app/new.py"
+        self.write(path, "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, found, proc = self.gate(weak, tip)
+        self.assertEqual(
+            (code, found), (1, [(path, 1, "TID251")]), proc.stdout + proc.stderr
+        )
+
+    def commit_with_file(self, path, content):
+        self.write(path, content)
+        return self.commit()
+
+    def test_symlinked_python_file_outside_backend_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("outside_pkg/real.py", 'print("new")\n')
+        path = "futureagi/app/link.py"
+        self.link(path, "../../outside_pkg/real.py")
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_non_utf8_path_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        folder = os.fsencode(self.repo) + b"/futureagi/\xffdir"
+        os.mkdir(folder)
+        with open(folder + b"/new.py", "wb") as fh:
+            fh.write(b'print("new")\n')
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertIn("UTF-8", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_overlay_stops_at_a_symlinked_config_directory(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/legacy/pyproject.toml", '[project]\nname = "legacy"\n')
+        self.write("futureagi/legacy/old.py", "VALUE = 1\n")
+        base = self.commit()
+
+        for layout in ("deleted", "moved", "extra_finding", "absolute"):
+            with self.subTest(layout=layout):
+                self.git("reset", "--hard", base)
+                self.git("clean", "-fdx")
+                if layout in ("moved", "extra_finding"):
+                    self.git("mv", "futureagi/legacy", "futureagi/legacy_app")
+                else:
+                    self.git("rm", "-r", "-q", "futureagi/legacy")
+                if layout == "absolute":
+                    target = self.repo / "outside"
+                    target.mkdir()
+                else:
+                    target = "../../base/futureagi"
+                (self.repo / "futureagi/legacy").symlink_to(
+                    target, target_is_directory=True
+                )
+                self.write(
+                    "futureagi/pyproject.toml",
+                    config.replace("Use another API.", "Use a reviewed API."),
+                )
+                self.write(
+                    "futureagi/app/new.py", "from library import old_api\n\nold_api()\n"
+                )
+                if layout == "extra_finding":
+                    self.write("futureagi/app/printed.py", 'print("new")\n')
+                self.commit()
+
+                code, _, proc = self.gate(base)
+                self.assertEqual(code, 2, proc.stdout + proc.stderr)
+                self.assertIn("title=Python lint gate", proc.stdout)
+                self.assertIn("futureagi/legacy/pyproject.toml", proc.stdout)
+                self.assertNotIn("Traceback", proc.stderr)
+                if layout == "absolute":
+                    self.assertEqual(list(target.iterdir()), [])
+                self.git("reset", "--hard", base)
+
+    def test_overlay_stops_before_copying_a_nested_config_via_a_symlink(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write(
+            "futureagi/legacy/ruff.toml",
+            'extend = "../pyproject.toml"\n\n[lint]\nignore = ["TID251"]\n',
+        )
+        self.write("futureagi/legacy/old.py", "VALUE = 1\n")
+        base = self.commit()
+
+        self.git("rm", "-r", "-q", "futureagi/legacy")
+        (self.repo / "futureagi/legacy").symlink_to("app", target_is_directory=True)
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("futureagi/legacy/ruff.toml", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_config_parent_replaced_by_a_file_keeps_ordinary_verdicts(self):
+        config = CONFIG.replace(
+            'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+        )
+        config += "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+        config += '"library.old_api" = { msg = "Use another API." }\n'
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/legacy/pyproject.toml", '[project]\nname = "legacy"\n')
+        base = self.commit()
+        for source, expected in (
+            ("VALUE = 1\n", (0, [])),
+            (
+                "from library import old_api\n\nold_api()\n",
+                (1, [("futureagi/app/new.py", 1, "TID251")]),
+            ),
+        ):
+            with self.subTest(source=source):
+                self.git("reset", "--hard", base)
+                self.git("rm", "-r", "-q", "futureagi/legacy")
+                self.write("futureagi/legacy", "replaced\n")
+                self.write("futureagi/app/new.py", source)
+                self.commit()
+                code, found, proc = self.gate(base)
+                self.assertEqual((code, found), expected, proc.stdout + proc.stderr)
+
+    def test_overlay_stops_at_a_symlinked_config_file(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        self.write(
+            "futureagi/alternate.toml",
+            CONFIG.replace("line-length = 88", "line-length = 89"),
+        )
+        (self.repo / "futureagi/pyproject.toml").symlink_to("alternate.toml")
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("futureagi/pyproject.toml", proc.stdout)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_symlinked_python_file_with_config_edit_keeps_its_target(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/real.py", "VALUE = 1\n")
+        base = self.commit()
+        self.write("futureagi/app/real.py", 'print("new")\n')
+        (self.repo / "futureagi/app/link.py").symlink_to("real.py")
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace("line-length = 88", "line-length = 89"),
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn(("futureagi/app/real.py", 1, "T201"), found, proc.stdout)
+        self.assertNotIn("title=Python lint gate", proc.stdout)
+
+    def test_config_edit_and_exact_reformat_keep_old_counts(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/mod.py"
+        self.write(path, "print('old')\n")
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG + "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+            '"library.old_api" = { msg = "Use another API." }\n',
+        )
+        self.format_file(path)
+        self.commit()
+
+        # Both trees use the base settings. A config edit cannot turn this
+        # old finding into a new one just because the formatter changed quotes.
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.write(path, (self.repo / path).read_text() + 'print("new")\n')
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertIn((path, 2, "T201"), found, proc.stdout)
+
+    def test_ordinary_reformat_still_uses_count_comparison(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/app/mod.py"
+        self.write(path, "print('old')\n")
+        base = self.commit()
+        self.format_file(path)
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+        # Non-Ruff metadata in the same TOML file does not change matching.
+        self.write(
+            "futureagi/pyproject.toml", CONFIG + '\n[project]\nname = "example"\n'
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
     def test_formatter_uses_base_config_not_a_changed_head_config(self):
         self.write("futureagi/pyproject.toml", CONFIG)
         path = "futureagi/app/mod.py"
@@ -709,7 +1392,9 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
 
         code, found, proc = self.gate(base)
         self.assertEqual(
-            (code, found), (1, [(path, 1, "T201")]), proc.stdout + proc.stderr
+            (code, found),
+            (1, [(path, 1, "T201"), (path, 1, "FORMAT")]),
+            proc.stdout + proc.stderr,
         )
 
     def test_moved_type_ignore_remains_visible_to_raw_base_comparison(self):
@@ -980,7 +1665,12 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
 
     def run_step(self, name, workflow_version="99.99.99"):
         step = (
-            job_block(WORKFLOW.read_text(), "ruff-delta")
+            job_block(
+                WORKFLOW.read_text(),
+                "ruff-self-test"
+                if name == "Install ruff for head self-tests"
+                else "ruff-delta",
+            )
             .split(f"      - name: {name}\n", 1)[1]
             .split("      - name:", 1)[0]
         )

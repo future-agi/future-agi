@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import "src/global.css";
 import {
   clearChunkReloadAttempt,
   isChunkError,
@@ -95,9 +94,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (window.Appcues) {
-      window.Appcues.page();
-    }
     syncMixpanelSessionReplay(location.pathname);
   }, [location.pathname]);
 

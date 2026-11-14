@@ -370,6 +370,26 @@
 - the access token left in the tab after B signs in resolves to B's user and organization
 - no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
 
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
@@ -907,6 +927,54 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — dataset PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the dataset document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
+### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the experiment document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -1152,10 +1220,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1168,7 +1236,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1370,6 +1438,60 @@
 - one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
 - the picker stays within the viewport at both heights
 
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
+
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
+
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
+
+**Backend state verified:**
+
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -1424,7 +1546,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -1459,6 +1581,52 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
+
+## knowledge-base
+
+### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
+
+**Goal:** A workspace reader downloads an uploaded file with its original filename and exact bytes, while other scopes cannot download it
+
+**Spec:** `flows/knowledge-base/file-download.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic text document
+2. open its knowledge-base file table
+3. click Download on the file row
+4. save the browser download
+5. check foreign-organization, sibling-workspace and anonymous refusals
+
+**Backend state verified:**
+
+- the file list API returns the uploaded file identity and name
+- authorized download returns exactly the uploaded bytes as an attachment with no storage URL
+- foreign-org, sibling-workspace and anonymous requests return refusal without file bytes
 
 ## observe
 
@@ -2369,7 +2537,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 
@@ -2531,6 +2699,27 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2554,6 +2743,30 @@
 - no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
