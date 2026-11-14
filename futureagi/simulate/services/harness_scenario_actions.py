@@ -495,25 +495,10 @@ TEXT_PREVIEW = 2000
 
 
 def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
-    from simulate.services.harness_versioning import archives
+    from simulate.services.harness_scenario_sources import file_bodies
 
-    if not paths or not getattr(version, "archive_object_key", None):
-        return {}
-    wanted = paths | {f"knowledge/{path}" for path in paths}
-    try:
-        members = archives.stream_members(
-            version.archive_object_key, wanted, 1024 * 1024
-        )
-    except Exception:  # noqa: BLE001 - an unreadable archive shows no text
-        logger.warning(
-            "harness_source_changes_archive_unread", version_id=str(version.id)
-        )
-        return {}
     texts: dict[str, str | None] = {}
-    for path in paths:
-        body = members.get(path) or members.get(f"knowledge/{path}")
-        if body is None:
-            continue
+    for path, body in file_bodies(version, paths).items():
         try:
             texts[path] = body.decode("utf-8")[:TEXT_PREVIEW]
         except UnicodeDecodeError:

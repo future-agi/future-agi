@@ -84,6 +84,34 @@ def source_problems(value: object) -> list[str]:
     return problems
 
 
+FILE_READ_LIMIT = 1024 * 1024
+
+
+def file_bodies(version: Any, paths: set[str]) -> dict[str, bytes]:
+    """Each named file of a version's archive, read once (also under ``knowledge/``); a path the
+    archive does not hold, or an unreadable archive, is left out."""
+    from simulate.services.harness_versioning import archives
+
+    if not paths or not getattr(version, "archive_object_key", None):
+        return {}
+    wanted = paths | {f"knowledge/{path}" for path in paths}
+    try:
+        members = archives.stream_members(
+            version.archive_object_key, wanted, FILE_READ_LIMIT
+        )
+    except Exception:  # noqa: BLE001 - an unreadable archive reads as no files
+        logger.warning(
+            "harness_source_files_unread", version_id=str(getattr(version, "id", ""))
+        )
+        return {}
+    found: dict[str, bytes] = {}
+    for path in paths:
+        body = members.get(path) or members.get(f"knowledge/{path}")
+        if body is not None:
+            found[path] = body
+    return found
+
+
 def _rule_match(quote: str, rules: list[str]) -> int | None:
     wanted = normalise(quote)
     return next(
