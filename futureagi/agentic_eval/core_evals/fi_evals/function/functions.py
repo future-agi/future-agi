@@ -3272,21 +3272,21 @@ def calculate_matthews_correlation(output, expected, **kwargs):
             mcc = (tp * tn - fp * fn) / denom
     else:
         # Multiclass MCC using Gorodkin's R_K formula, derived from the full
-        # confusion matrix. The previous formula computed a uniform-prior
-        # chance-corrected accuracy — effectively Cohen's kappa with pe=1/k —
-        # which is neither MCC nor able to reach the [-1, 1] range.
+        # confusion matrix rather than accuracy with a uniform class prior.
         #
         # R_K = (c·s − Σ_k p_k·t_k) / sqrt((s²−Σ_k p_k²)·(s²−Σ_k t_k²))
         # where s = number of samples, c = correctly predicted, and
         # t_k / p_k = the true / predicted count of class k.
         s = len(labels)
-        c = sum(1 for p, l in zip(preds, labels) if p == l)
-        pk = {cat: sum(1 for p in preds if p == cat) for cat in categories}
-        tk = {cat: sum(1 for l in labels if l == cat) for cat in categories}
-        sum_pk2 = sum(v ** 2 for v in pk.values())
-        sum_tk2 = sum(v ** 2 for v in tk.values())
+        c = sum(pred == label for pred, label in zip(preds, labels, strict=True))
+        pk = {cat: sum(1 for pred in preds if pred == cat) for cat in categories}
+        tk = {cat: sum(1 for label in labels if label == cat) for cat in categories}
+        sum_pk2 = sum(v**2 for v in pk.values())
+        sum_tk2 = sum(v**2 for v in tk.values())
         sum_pktk = sum(pk[cat] * tk[cat] for cat in categories)
-        denom = ((s ** 2 - sum_pk2) * (s ** 2 - sum_tk2)) ** 0.5
+        denom = ((s**2 - sum_pk2) * (s**2 - sum_tk2)) ** 0.5
+        # Either constant predictions or constant truth makes this zero.
+        # Raw MCC zero remains a normalized score of 0.5 below.
         mcc = (c * s - sum_pktk) / denom if denom != 0 else 0.0
 
     # Normalize from [-1, 1] to [0, 1]
