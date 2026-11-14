@@ -311,7 +311,7 @@ export default function TestInventoryReview({
             }
           />
         }
-        label="I know of no bundled answer keys or evaluation material"
+        label="The files sent to the model contain no answer keys or grading material."
       />
       <FormControlLabel
         control={
@@ -323,7 +323,7 @@ export default function TestInventoryReview({
             }
           />
         }
-        label="I reviewed the entire inventory and outbound inputs"
+        label="I reviewed every file and input that will be sent to the model."
       />
       <TechnicalDetails title="About diagnostic runs"><Typography variant="s3" color="text.secondary">
         Detection is not proof of independence. A diagnostic run keeps all files

@@ -188,7 +188,8 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('combobox', { name: /^Task model/ }).click();
       await page.getByRole('option', { name: 'gpt-4o-mini', exact: true }).click();
       await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('2');
-      await page.getByRole('textbox', { name: 'Historical reference version (optional)', exact: true }).fill('1');
+      await page.getByRole('combobox', { name: /^Compare with/ }).click();
+      await page.getByRole('option', { name: /^v1( \(production\))?$/ }).click();
       const previewResponse = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/preview/`) && res.request().method() === 'POST');
       await page.getByRole('button', { name: 'Preview whole-context test', exact: true }).click();
       const testPreview = (await (await previewResponse).json()).result;
@@ -197,8 +198,8 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       // the accepted child from its immutable context snapshot, never a DB seed.
       await fake.dispose();
       await fake.register([toolRule(prompt, 0, 'load_skill', { skill_id: handle }), answerRule(prompt, 1, 'approved-response')]);
-      await page.getByRole('checkbox', { name: 'I know of no bundled answer keys or evaluation material', exact: true }).check();
-      await page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.', exact: true }).check();
       await page.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.', exact: true }).check();
       await expect(page.getByRole('button', { name: 'Run whole-context test', exact: true })).toBeEnabled();
       await shot(`whole-context-preview-${parent.name}`);
@@ -220,9 +221,9 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       expect(delivered.some(text => text.includes('policy revision 7.'))).toBe(true);
       expect(delivered.some(text => text.includes('policy revision 9.'))).toBe(wrong === 'model-child');
       events.push({ stage: 'whole-context-test', parent: parent.id, summary, attempts, modelLedger });
-      await expect(page.getByText('Answer: pass', { exact: true })).toHaveCount(2, { timeout: UI_READY });
+      await expect(page.getByText('Answer passed', { exact: true })).toHaveCount(2, { timeout: UI_READY });
       await expect(page.getByRole('button', { name: 'Cancel context test', exact: true })).not.toBeVisible();
-      await page.getByText('Whole-context result', { exact: true }).scrollIntoViewIfNeeded();
+      await page.getByRole('region', { name: 'Latest result' }).scrollIntoViewIfNeeded();
       await shot(`whole-context-result-${parent.name}`);
       await page.goto(`${UI}/${parent.id}/edit`);
       await page.getByRole('button', { name: 'Review changes', exact: true }).click();

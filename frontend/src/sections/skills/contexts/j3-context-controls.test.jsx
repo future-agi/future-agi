@@ -48,8 +48,8 @@ async function prepare() {
   await screen.findByRole('button', { name: 'Run whole-context test' });
 }
 function reviewInventory() {
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I know of no bundled answer keys or evaluation material' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.' }));
 }
 it('uses context semantics, a required without-context baseline, and explicit reviewed provider processing', async () => {

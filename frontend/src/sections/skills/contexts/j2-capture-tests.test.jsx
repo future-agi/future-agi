@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTraceCaptureAction from './ContextTraceCaptureAction';
 import { contextHintFrom, physicalCaptureRef } from './physical-capture-ref';
@@ -97,7 +98,7 @@ it('does not grant capture rights from a context list entry alone', () => {
   expect(state.capture).not.toHaveBeenCalled();
 });
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
-  render(<ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite />);
+  render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite /></MemoryRouter>);
   expect(screen.getByText('Reviewed cases')).toBeVisible();
   fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText(/Application verification is off/)).toBeVisible();
@@ -105,7 +106,7 @@ it('renders context cases while clearly withholding native reproduction and rele
 });
 it('offers application verification only when the deployment has a hosted runtime', () => {
   state.runtime = true;
-  render(<ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite />);
+  render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite /></MemoryRouter>);
   expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
   expect(screen.getByText('Application target')).toBeVisible();
@@ -115,7 +116,7 @@ it('offers application verification only when the deployment has a hosted runtim
 });
 it('does not turn an inaccessible suite into empty successful coverage', () => {
   state.suiteError = true;
-  render(<ContextTestsPanel contextId="context" canWrite />);
+  render(<MemoryRouter><ContextTestsPanel contextId="context" canWrite /></MemoryRouter>);
   expect(screen.getByText('Could not load context regression cases')).toBeVisible();
   expect(screen.queryByText('No regression cases yet')).not.toBeInTheDocument();
 });

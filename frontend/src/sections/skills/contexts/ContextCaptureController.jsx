@@ -29,7 +29,7 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeConte
   const versions = useContextVersions(contextId, 1);
   const skills = contextSkillChoices(inspection.data?.descriptor);
   if (source.isError || suite.isError) return <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm">
-    <DialogTitle>Create context regression case</DialogTitle>
+    <DialogTitle>Save test case</DialogTitle>
     <DialogContent><ErrorState title="Could not load this authorized source" onRetry={() => { source.refetch(); suite.refetch(); }} /></DialogContent>
   </ClosableDialog>;
   // After the reviewed example is saved, the next step is the reproduction on the application.
@@ -56,7 +56,7 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeConte
   return <ContextCaptureDialog open describeSource={describeSource} onClose={onClose} scopeKey={`${access.identity}:${contextId}`}
     state={source.isLoading || suite.isLoading ? 'loading' : source.data && suite.data ? 'ready' : 'unavailable'}
     source={source.data} suiteRevision={suite.data?.revision} canCapture={canCapture}
-    applicationBehavior={skills.length ? { skills } : undefined} renderSaved={renderSaved} onChangeContext={onChangeContext}
+    applicationBehavior={skills.length ? { skills } : undefined} renderSaved={renderSaved} onChangeContext={onChangeContext} contextName={detail.data?.context?.name}
     onPreview={(input) => preview.mutateAsync(input)}
     onAccept={(input, options) => accept.mutateAsync({ ...input, ...options })} />;
 }

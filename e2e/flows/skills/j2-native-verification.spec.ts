@@ -175,18 +175,18 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
 
     // Plan: the recorded v4 reference and the captured failure (historical) are preselected; the responder
     // widens it to candidate v7, production v6 and the neighboring cases.
-    await expect(page.getByLabel('Recorded reference version')).toContainText('v4');
+    await expect(page.getByLabel('Was failing on')).toContainText('v4');
     const group = page.getByRole('group', { name: 'Examples to run' });
-    await expect(group.getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked();
-    await page.getByLabel('Candidate version').click(); await page.getByRole('option', { name: 'v7' }).click();
-    await page.getByLabel('Production version').click(); await page.getByRole('option', { name: 'v6' }).click();
+    await expect(group.getByRole('checkbox', { name: /^Was failing on v/ }).last()).toBeChecked();
+    await page.getByLabel('Test version').click(); await page.getByRole('option', { name: 'v7' }).click();
+    await page.getByRole('combobox', { name: /^Compare with/ }).click(); await page.getByRole('option', { name: 'v6' }).click();
     for (const title of ['Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
     await expect(page.getByText(/Up to 9 runs/)).toBeVisible();
     await shot('J2-native-preview');
     await page.getByRole('checkbox', { name: /I accept up to/ }).check();
     await page.getByRole('button', { name: 'Run on the application', exact: true }).click();
     await expect(page.getByText(/Repair verified:|Repair not verified:|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
-    await expect(page.getByText(/Repair verified: v7 passed 3 of 3 cases/)).toBeVisible();
+    await expect(page.getByText(/Repair verified: v7 passed all 3 cases/)).toBeVisible();
     await shot('J2-native-result');
 
     // Independent evidence.

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -23,6 +23,7 @@ import {
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 import ApplicationBehaviorFields from "../tests/ApplicationBehaviorFields";
 import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
+import { ActionReason, reasonProps } from "../tests/sharedSeams";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
 function ReviewedExample({
@@ -35,6 +36,8 @@ function ReviewedExample({
   applicationBehavior,
   renderSaved,
   describeSource,
+  targetName,
+  onSavedChange,
 }) {
   const [title, setTitle] = useState("");
   const [behavior, setBehavior] = useState({ skillId: "", action: "" });
@@ -83,6 +86,22 @@ function ReviewedExample({
     !(applicationBehavior && behaviorPartial(behavior)) &&
     bytes(prompt) <= 16384 &&
     fixtures.reduce((sum, item) => sum + bytes(item.text), 0) <= 49152;
+  const promptBytes = bytes(prompt);
+  const fixtureBytes = fixtures.reduce((sum, item) => sum + bytes(item.text), 0);
+  // Why Save is unavailable, in the order a reviewer would fix it.
+  const saveReason = !canSave || !onSave ? "You can't save test cases in this workspace."
+    : expired ? "This preview expired. Start a new capture."
+    : suiteChanged ? "Saved test cases changed. Reopen this capture."
+    : locked ? null
+    : !title.trim() ? "Add a title."
+    : !prompt.trim() ? "Add the request."
+    : promptBytes > 16384 ? "Shorten the request to 16 KB."
+    : fixtureBytes > 49152 ? "Shorten the tool results to 48 KB."
+    : !expectation.trim() ? "Add the expected answer."
+    : applicationBehavior && behaviorPartial(behavior) ? "Choose both a skill and an action, or neither."
+    : !reviewed || !shared ? "Confirm both statements above."
+    : null;
+  useEffect(() => { onSavedChange?.(Boolean(operation.result)); }, [operation.result, onSavedChange]);
   const edit = (setter) => (event) => {
     setter(event.target.value);
     setReviewed(false);
@@ -96,8 +115,9 @@ function ReviewedExample({
       <DialogContent>
         <Stack spacing={1.5}>
           <Alert severity="success" role="status">
-            Reviewed example saved: {title}. No comparison was run and no content was published.
+            Reviewed example saved: {title}. Nothing was run or published.
           </Alert>
+          {targetName && <Typography variant="s1">Saved to {targetName}.</Typography>}
           {saved?.action && <Typography variant="s1">Next, reproduce it on the application to confirm the failure and test a fix.</Typography>}
           {saved?.notice}
         </Stack>
@@ -112,13 +132,14 @@ function ReviewedExample({
     <>
       <DialogContent>
         <Stack spacing={1.5}>
-          <Alert severity="info">
-            This replays supplied text, not external actions. The observed
-            failed answer is not an answer key. Saving does not run a model.
-          </Alert>
+          {targetName && <Typography variant="s1">Saving to {targetName}</Typography>}
           {/* Readable provenance first; fingerprints and exact identities are details. */}
           <Typography variant="s1">{describeSource?.(preview) || (preview.recordedContext ? "From a recorded trace" : "From a trace with no recorded context version")}</Typography>
-          {!expired && <Typography variant="s3" color="text.secondary">{expiresIn(preview.expiresAt, now)}</Typography>}
+          <Typography variant="s3" color="text.secondary">
+            {targetName ? "Step 2 of 2 · " : ""}The test case replays this text only; no tools run,
+            and saving doesn&apos;t run a model. Set the expected answer from your policy, not from
+            the failed answer.
+          </Typography>
           <TechnicalDetails title="Source details">
             <Stack spacing={1}>
               <IdentityValue label="Source fingerprint" value={preview.sourceFingerprint} />
@@ -171,7 +192,7 @@ function ReviewedExample({
             onChange={edit(setPrompt)}
             disabled={locked}
             error={bytes(prompt) > 16384}
-            helperText="Remove private or irrelevant text. Maximum 16 KiB UTF-8. Expected answers belong in checks, not here."
+            helperText="Remove private or irrelevant text. Up to 16 KB of text. Put the expected answer in the check below, not here."
           />
           {fixtures.map((fixture, index) => (
             <TextField
@@ -198,7 +219,7 @@ function ReviewedExample({
           {fixtures.reduce((sum, item) => sum + bytes(item.text), 0) >
             49152 && (
             <Alert severity="error">
-              Combined tool results exceed 48 KiB UTF-8.
+              Tool results are over 48 KB of text. Shorten them to save.
             </Alert>
           )}
           <TextField
@@ -249,13 +270,24 @@ function ReviewedExample({
           <OperationFeedback operation={operation} />
         </Stack>
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ flexWrap: "wrap", gap: 1 }}>
+        {!operation.result && (
+          <Stack sx={{ mr: "auto", minWidth: 0 }} spacing={0.25}>
+            <ActionReason id="save-case-reason" reason={saveReason} />
+            {!expired && (
+              <Typography variant="s3" color="text.secondary">
+                {expiresIn(preview.expiresAt, now).replace("Preview expires in", "Time left to save:")}
+              </Typography>
+            )}
+          </Stack>
+        )}
         <Button disabled={operation.busy} onClick={onClose}>
           Close
         </Button>
         {!operation.result && <Button
           variant="contained"
           color="primary"
+          {...reasonProps("save-case-reason", saveReason)}
           disabled={!valid || !onSave}
           onClick={() =>
             operation.run(onSave, {
@@ -302,6 +334,8 @@ ReviewedExample.propTypes = {
   applicationBehavior: PropTypes.object,
   renderSaved: PropTypes.func,
   describeSource: PropTypes.func,
+  targetName: PropTypes.string,
+  onSavedChange: PropTypes.func,
 };
 
 export default function CaseImportDialog({
@@ -318,7 +352,9 @@ export default function CaseImportDialog({
   applicationBehavior,
   renderSaved,
   describeSource,
+  targetName,
 }) {
+  const [saved, setSaved] = useState(false);
   return (
     <ClosableDialog
       open={open}
@@ -328,12 +364,13 @@ export default function CaseImportDialog({
       aria-labelledby="reviewed-example-title"
     >
       <DialogTitle id="reviewed-example-title">
-        Review captured example
+        {saved ? "Test case saved" : "Save test case"}
       </DialogTitle>
       {open && scopeKey && state === "ready" && preview ? (
         <ReviewedExample
           key={`${scopeKey}:${preview.captureId ?? preview.planId}`}
-          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved, describeSource }}
+          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved, describeSource, targetName }}
+          onSavedChange={setSaved}
         />
       ) : (
         <DialogContent>
@@ -360,4 +397,5 @@ CaseImportDialog.propTypes = {
   applicationBehavior: PropTypes.shape({ skills: PropTypes.array.isRequired }),
   renderSaved: PropTypes.func,
   describeSource: PropTypes.func,
+  targetName: PropTypes.string,
 };

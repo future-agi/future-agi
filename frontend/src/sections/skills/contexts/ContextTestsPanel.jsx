@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
+import { Link as RouterLink } from 'react-router-dom';
 import { Alert, Box, Button, Checkbox, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup, MenuItem, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import { useSkillTestingOptions, useSkillV11Scope, isActiveSkillJob } from 'src/api/skills/testing';
 import {
@@ -18,7 +19,10 @@ import TestCaseEditor from '../tests/TestCaseEditor';
 import TestInventoryReview from '../tests/TestInventoryReview';
 import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadReview';
 import ContextNativePanel from './ContextNativePanel';
-import { answerConclusion } from '../utils/conclusions';
+import { When } from '../tests/sharedSeams';
+import { answerConclusion, passedAll } from '../utils/conclusions';
+import { reviewComposerUrl } from '../utils/review-links';
+import { paths } from 'src/routes/paths';
 
 // The one Tests panel for an agent context. One scroll, two sections, each with its own
 // loading, error and empty states so a failure in one never hides the other:
@@ -45,7 +49,7 @@ const providerName = (value) => PROVIDERS[String(value || '').toLowerCase()] || 
 const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] });
 
 
-function RegressionCases({ contextId, version, versions, canWrite, skills, productionVersion, seed, children, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer }) {
+function RegressionCases({ contextId, version, versions, canWrite, skills, productionVersion, seed, children, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
@@ -55,8 +59,9 @@ function RegressionCases({ contextId, version, versions, canWrite, skills, produ
   if (!suite.data) return <EmptyState title="Select an authenticated workspace" description="Regression cases remain scoped to their context and workspace." />;
   const changed = editor && editor.revision !== suite.data.revision;
   return <Stack spacing={1.5}>
-    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} reviewedCases={<Stack spacing={1.5}>
-    <Section title={<Typography component="span" variant="m3">Reviewed cases</Typography>} description={<Typography component="span" variant="s3">To turn a failure into a case, open it in Observe and choose Create context regression case.</Typography>}>
+    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} draftHandoff={draftHandoff} reviewedCases={<Stack spacing={1.5}>
+    <Section title={<Typography component="span" variant="m3">Reviewed cases</Typography>} description={<Typography component="span" variant="s3">To turn a failure into a case, open the trace in Tracing and choose Create context regression case.</Typography>}
+      actions={<Button size="small" variant="outlined" component={RouterLink} to={paths.dashboard.observe} disabled={!canWrite}>Add case from a trace</Button>}>
       {!suite.data.cases.length ? <EmptyState title="No regression cases yet" description="Capture a retained trace, then review its redaction and expected behavior. Working neighboring cases belong in the same suite." /> : <TableContainer>
         <Table size="small" aria-label="Context regression cases"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Example</TableCell><TableCell>Review</TableCell><TableCell>Checks</TableCell><TableCell>Action</TableCell></TableRow></TableHead>
           <TableBody>{suite.data.cases.map((item) => <TableRow key={item.id} hover sx={{ height: ROW_HEIGHT.default }}>
@@ -78,7 +83,7 @@ function RegressionCases({ contextId, version, versions, canWrite, skills, produ
       }} />}
   </Stack>;
 }
-RegressionCases.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array.isRequired, skills: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object };
+RegressionCases.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array.isRequired, skills: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object, draftHandoff: PropTypes.bool };
 
 // Which exact candidate the whole-context section tests: the saved draft or the viewed release.
 // It changes only the whole-context candidate; application verification keeps the viewed release.
@@ -103,40 +108,62 @@ function SavedDraftHandoff({ onOpen, disabled }) {
 }
 SavedDraftHandoff.propTypes = { onOpen: PropTypes.func.isRequired, disabled: PropTypes.bool };
 
-const ARM_LABELS = { without_target: 'Without context', without_context: 'Without context', reference: 'Historical reference', production: 'Production' };
-const armLabel = (variant, subject) => (variant === 'candidate' ? `With ${subject}` : ARM_LABELS[variant] || variant.replaceAll('_', ' '));
-function Results({ contextId, runId, contextName }) {
+const ARM_LABELS = { without_target: 'Without the context', without_context: 'Without the context', production: 'Production' };
+const armLabel = (variant, subject, reference) => (variant === 'candidate' ? subject : variant === 'reference' && reference ? `Compared with v${reference}` : ARM_LABELS[variant] || variant.replaceAll('_', ' '));
+// Every grade goes through the shared status vocabulary; a raw server value never reaches the page.
+const ANSWER_STATUS = { pass: ['passed', 'Answer passed'], fail: ['failed', 'Answer failed'], not_graded: ['not_graded', 'Not graded'] };
+const answerBadge = (verdict, running) => ANSWER_STATUS[verdict] || (running ? ['running', 'Grading'] : ['unknown', 'Not reported']);
+function Results({ contextId, runId, contextName, versions = [], canWrite, onRunApplication, onReady }) {
   const [page, setPage] = useState(1);
   const [attemptId, setAttemptId] = useState(null);
   const run = useContextTestRun(contextId, runId);
   const results = useContextTestResults(contextId, runId, page);
   const attempt = useContextTestAttempt(contextId, runId, attemptId);
   const cancel = useCancelContextTest(contextId, runId);
+  const candidate = run.data?.candidate || {};
+  const rows = results.data?.results || [];
+  const running = isActiveSkillJob(run.data?.status);
+  const complete = Boolean(results.data) && !(results.data.total_pages > 1);
+  const passed = run.data?.status === 'completed' && complete && rows.length > 0 && rows.every((row) => passedAll(row.variants.find((variant) => variant.variant === 'candidate')));
+  // A passing answer check on a published version offers the next step; a draft must be published first.
+  const releasable = passed && Boolean(candidate.version);
+  // While this result offers the release review as the page's primary, the run forms step back.
+  useEffect(() => { onReady?.(releasable); return () => onReady?.(false); }, [onReady, releasable]);
   if (run.isLoading) return <ContentSkeleton />;
   if (run.isError) return <ErrorState title="Context run unavailable" onRetry={run.refetch} />;
   if (!run.data) return null;
-  const candidate = run.data.candidate || {};
   const version = candidate.version ? `v${candidate.version}` : 'the saved draft';
   const subject = contextName ? `${contextName} ${version}` : version;
-  const rows = results.data?.results || [];
+  const versionId = versions.find((item) => Number(item.number) === Number(candidate.version))?.id;
+  const reference = run.data.reference?.version;
   return <Stack spacing={1.5}>
-    <Section title={<Typography component="span" variant="m3">Whole-context result</Typography>} />
-    <Typography variant="m3" component="p" role="status" sx={{ m: 0 }}>{answerConclusion({ status: run.data.status, subject: version, rows, complete: Boolean(results.data) && !(results.data.total_pages > 1) })}</Typography>
-    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap"><StatusBadge status={run.data.status} /><Typography variant="s3" color="text.secondary">A passing answer check is not a release approval.</Typography></Stack>
-    {run.data.reference && <Typography variant="s3">Historical reference v{run.data.reference.version}</Typography>}
-    {isActiveSkillJob(run.data.status) && <Button variant="outlined" disabled={cancel.isPending} onClick={() => cancel.mutate({})}>Cancel context test</Button>}
+    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" sx={{ minWidth: 0 }}>
+      <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+        <Typography variant="s3" color="text.secondary">Answer check · {subject}{reference ? ` vs v${reference}` : ''}</Typography>
+        <Typography variant="m3" component="p" role="status" sx={{ m: 0 }}>{answerConclusion({ status: run.data.status, subject: version, rows, complete })}</Typography>
+      </Stack>
+      {running && <Button size="small" variant="outlined" sx={{ flexShrink: 0 }} disabled={cancel.isPending} onClick={() => cancel.mutate({})}>Cancel context test</Button>}
+    </Stack>
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap><StatusBadge status={run.data.status} />{run.data.created_at && <When value={run.data.created_at} />}</Stack>
     <AuthoringError error={cancel.error} />
     {results.isLoading ? <ContentSkeleton /> : results.isError ? <ErrorState title="Case results unavailable" onRetry={results.refetch} /> : rows.map((row) => <Stack spacing={1} key={row.case_id} sx={{ py: 1, borderBottom: 1, borderColor: 'divider' }}>
-      <Typography variant="m3">{row.title}</Typography>
-      {row.variants.map((variant) => <Stack key={variant.variant} spacing={1}>
-        <Typography variant="s1">{armLabel(variant.variant, subject)}</Typography>
-        {variant.attempts.map((item) => <Stack key={item.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <StatusBadge status={item.status} /><StatusBadge status={item.answer_verdict} label={`Answer: ${item.answer_verdict}`} />
-          <Button variant="text" onClick={() => setAttemptId(item.id)}>Inspect attempt {item.repeat_index + 1}</Button>
-        </Stack>)}
+      <Typography variant="s1" sx={{ fontWeight: 500 }}>{row.title}</Typography>
+      {row.variants.map((variant) => <Stack key={variant.variant} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+        <Typography variant="s1" sx={{ minWidth: 200 }}>{armLabel(variant.variant, subject, reference)}</Typography>
+        {variant.attempts.map((item) => { const [status, label] = answerBadge(item.answer_verdict, running || isActiveSkillJob(item.status)); return <Stack key={item.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+          {item.status !== 'completed' && <StatusBadge status={item.status} />}<StatusBadge status={status} label={label} />
+          <Button size="small" variant="outlined" aria-label={`Inspect ${armLabel(variant.variant, subject, reference)} attempt ${item.repeat_index + 1}`} onClick={() => setAttemptId(item.id)}>Inspect</Button>
+        </Stack>; })}
       </Stack>)}
     </Stack>)}
     {results.data?.total_pages > 1 && <Pagination page={page} count={results.data.total_pages} onChange={(_, value) => { setPage(value); setAttemptId(null); }} />}
+    {releasable && <Stack spacing={1}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+        <Button color="primary" variant="contained" disabled={!canWrite} href={canWrite ? reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: contextName, candidateId: versionId, number: candidate.version, digest: candidate.digest, label: 'production', evidence: [{ source: 'skills_text', sourceId: runId }] }) : undefined}>Request release review for v{candidate.version}</Button>
+        {onRunApplication && <Button variant="outlined" onClick={onRunApplication}>Verify v{candidate.version} on the application</Button>}
+      </Stack>
+      <Typography variant="s3" color="text.secondary">{canWrite ? 'This run stays private until you share it in the release review. An answer check alone doesn\u2019t prove an application repair.' : 'Only a workspace author can request a release review.'}</Typography>
+    </Stack>}
     <TechnicalDetails title="Details">
       <Stack spacing={1}>
         <IdentityChip value={candidate.digest} label="Candidate" /><IdentityChip value={runId} label="Run" kind="id" />
@@ -151,9 +178,9 @@ function Results({ contextId, runId, contextName }) {
     </Stack>)}
   </Stack>;
 }
-Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired, contextName: PropTypes.string };
+Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired, contextName: PropTypes.string, versions: PropTypes.array, canWrite: PropTypes.bool, onRunApplication: PropTypes.func, onReady: PropTypes.func };
 
-function WholeContextTests({ contextName, contextId, candidate, scopeKey, identity, state, source, primary, onStarted }) {
+function WholeContextTests({ contextName, contextId, candidate, scopeKey, identity, state, source, primary, onStarted, versions = [], productionVersion }) {
   const [last] = useState(() => readLastTest(identity));
   const [prompt, setPrompt] = useState(typeof last.prompt === 'string' ? last.prompt : '');
   const [expected, setExpected] = useState(typeof last.expected === 'string' ? last.expected : '');
@@ -176,7 +203,11 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
   const invalidate = () => { setPreview(null); setInventory({ review: emptyReview(), complete: false }); setProviderConsent(false); };
   const change = (setter) => (event) => { setter(event.target.value); invalidate(); };
   const validLimit = /^\d+(\.\d{1,8})?$/.test(limit) && Number(limit) > 0;
-  const validReference = !reference || (/^[1-9]\d*$/.test(reference) && Number.isSafeInteger(Number(reference)));
+  // The comparison is a published version other than the one under test, chosen from the list;
+  // a remembered choice that no longer applies falls back, visibly, to "Without the context".
+  const referenceChoices = versions.filter((item) => candidate?.kind !== 'version' || Number(item.number) !== Number(candidate.version));
+  const comparison = reference && referenceChoices.some((item) => String(item.number) === reference) ? reference : '';
+  const validReference = !comparison || (/^[1-9]\d*$/.test(comparison) && Number.isSafeInteger(Number(comparison)));
   const currentCandidate = candidate && configuration && JSON.stringify(candidate) === JSON.stringify(configuration.candidate);
   const launch = async () => {
     const result = await operation.run((input, extra) => create.mutateAsync({ ...input, ...extra }), { configuration, expectedFingerprint: preview.fingerprint, inventoryReview: inventory.review });
@@ -188,12 +219,12 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
       harness: 'contexts-text-v1.2', candidate,
       cases: { kind: 'ad_hoc', cases: [{ id: crypto.randomUUID(), title: 'Reviewed context regression', source_group_id: 'manual-context-test', prompt, fixtures: [], expected_trigger: null,
         checks: [{ id: crypto.randomUUID(), kind: 'contains', critical: true, config: { text: expected, case_sensitive: false } }], reviewed: reviewedCase }] },
-      baselines: reference ? [{ kind: 'version', version: Number(reference) }] : [{ kind: 'without_context' }], competitors: [],
+      baselines: comparison ? [{ kind: 'version', version: Number(comparison) }] : [{ kind: 'without_context' }], competitors: [],
       model: { model_id: model, temperature: 0, max_output_tokens: 1024 }, judge: null,
       profile: 'quick', repetitions: 1, limits: { max_total_tokens: options.data.limits.profiles.quick.maxTotalTokens, max_estimated_cost_usd: limit }, purpose: 'regression', parent_run_id: null,
     };
     setConfiguration(config);
-    writeLastTest(identity, { prompt, expected, model, limit, reference });
+    writeLastTest(identity, { prompt, expected, model, limit, reference: comparison });
     try { setPreview(await prepare.mutateAsync(config)); } catch { /* The mutation error is rendered below. */ }
   };
   if (options.isLoading || state === 'loading' || source?.isLoading) return <ContentSkeleton />;
@@ -201,7 +232,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
   if (source?.isError) return <ErrorState title="Saved draft unavailable" onRetry={source.onRetry} />;
   return <Stack spacing={2}>
     <Typography variant="s3" color="text.secondary">Test runs are private and don’t change production. You’ll confirm the files sent to the model before anything runs.</Typography>
-    {!candidate ? <Alert severity="warning">Select an exact published release or load your saved draft before testing.</Alert> : <Stack direction="row" spacing={1} alignItems="center"><Typography variant="s3">{candidate.kind === 'draft' ? `Saved draft revision ${candidate.revision}` : `Release v${candidate.version}`}</Typography><IdentityChip value={candidate.digest} label="Candidate" /></Stack>}
+    {!candidate ? <Alert severity="warning">Select a published version or load your saved draft before testing.</Alert> : <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap><Typography variant="s1">{candidate.kind === 'draft' ? `Testing your saved draft (revision ${candidate.revision})` : `Testing v${candidate.version}`}</Typography><IdentityChip value={candidate.digest} label="Digest" /></Stack>}
     <Stack spacing={1.5}>
       <TextField size="small" label="Test request" multiline minRows={3} value={prompt} onChange={(event) => { change(setPrompt)(event); setReviewedCase(false); }} disabled={locked} />
       <TextField size="small" label="Expected answer contains" value={expected} onChange={(event) => { change(setExpected)(event); setReviewedCase(false); }} disabled={locked} helperText="The answer must contain this text." />
@@ -211,11 +242,14 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
           {(options.data?.models || []).map((item) => <MenuItem key={item.modelId} value={item.modelId} disabled={!item.canRun}>{item.modelId}{!item.canRun ? ` · ${item.disabledReason}` : ''}</MenuItem>)}
         </TextField>
         <TextField size="small" label="Maximum estimated cost (USD)" value={limit} onChange={change(setLimit)} disabled={locked} />
-        <TextField size="small" label="Historical reference version (optional)" value={reference} onChange={change(setReference)} disabled={locked} error={!validReference} />
+        <TextField select size="small" label="Compare with" value={comparison} onChange={change(setReference)} disabled={locked} sx={{ minWidth: 200 }} InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }}>
+          <MenuItem value="">Without the context</MenuItem>
+          {referenceChoices.map((item) => <MenuItem key={item.number} value={String(item.number)}>v{item.number}{Number(productionVersion) === Number(item.number) ? ' (production)' : ''}</MenuItem>)}
+        </TextField>
       </Stack>
       <AuthoringError error={prepare.error || operation.error} />
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview whole-context test</Button>
-      <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : !prompt.trim() || !expected.trim() ? 'Add a request and the answer text to check.' : !reviewedCase ? 'Tick the reviewed-case acknowledgment to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Enter a valid published reference version.' : 'Preview the files before starting the test.'}</Typography>
+      <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : !prompt.trim() || !expected.trim() ? 'Add a request and the answer text to check.' : !reviewedCase ? 'Tick the reviewed-case acknowledgment to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Choose a published version to compare with.' : 'Preview the files before starting the test.'}</Typography>
     </Stack>
     {preview && <Stack spacing={1.5}>
       <Typography variant="m3">Up to {preview.attemptCount} runs · at most ${(Math.ceil(Number(preview.estimate.upperBoundUsd) * 100) / 100).toFixed(2)}</Typography>
@@ -230,7 +264,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
 
   </Stack>;
 }
-WholeContextTests.propTypes = { contextName: PropTypes.string, primary: PropTypes.bool, onStarted: PropTypes.func.isRequired, contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string, source: PropTypes.object };
+WholeContextTests.propTypes = { versions: PropTypes.array, productionVersion: PropTypes.number, contextName: PropTypes.string, primary: PropTypes.bool, onStarted: PropTypes.func.isRequired, contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string, source: PropTypes.object };
 
 function Tests({ contextName, contextId, version, versions, canWrite, skills, productionVersion, seed, candidate, scopeKey, identity, state, source, onOpenSavedDraft, openSavedDraftDisabled }) {
   const [answerRunId, setAnswerRunId] = useState(null);
@@ -238,12 +272,12 @@ function Tests({ contextName, contextId, version, versions, canWrite, skills, pr
   const history = useContextTestRuns(contextId, historyPage);
   const latestAnswers = useContextTestRuns(contextId, 1);
   return <Stack spacing={3}>
-    <RegressionCases contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
+    <RegressionCases draftHandoff={Boolean(source?.testingDraft)} contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id, actions) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} versions={versions} canWrite={canWrite} onRunApplication={actions?.onRunApplication} onReady={actions?.onReady} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
     {(primary) => <Stack spacing={2}>
       <Section title={<Typography component="span" variant="m3">Check answers with this context</Typography>} description="Tests your instructions and locked linked skills together. To verify an application repair, choose the application test." />
       {source && !onOpenSavedDraft && <CandidateSource source={source} />}
       {onOpenSavedDraft ? <SavedDraftHandoff onOpen={onOpenSavedDraft} disabled={openSavedDraftDisabled} />
-        : <WholeContextTests contextName={contextName} contextId={contextId} candidate={candidate} scopeKey={scopeKey} identity={identity} state={state} source={source} primary={primary} onStarted={setAnswerRunId} />}
+        : <WholeContextTests contextName={contextName} contextId={contextId} candidate={candidate} scopeKey={scopeKey} identity={identity} state={state} source={source} primary={primary} onStarted={setAnswerRunId} versions={versions} productionVersion={productionVersion} />}
     </Stack>}
     </RegressionCases>
   </Stack>;

@@ -91,10 +91,10 @@ export async function createDriver({ jobId, runId, registration }) {
        * reviewer decides; the single counted gesture is the button that names the paid ceiling. */
       const expectPlan = async ({ candidate, reference, titles }) => {
         const ready = { timeout: 60_000 };
-        await expect(page.getByLabel('Candidate version', { exact: true })).toContainText(`v${candidate}`, ready);
-        await expect(page.getByLabel('Recorded reference version', { exact: true })).toContainText(`v${reference}`, ready);
+        await expect(page.getByLabel('Test version', { exact: true })).toContainText(`v${candidate}`, ready);
+        await expect(page.getByLabel('Was failing on', { exact: true })).toContainText(`v${reference}`, ready);
         for (const title of titles) await expect(group().getByRole('checkbox', { name: title, exact: true })).toBeChecked(ready);
-        await expect(group().getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked(ready);
+        await expect(group().getByRole('checkbox', { name: /^Was failing on v/ }).last()).toBeChecked(ready);
         await expect(page.getByRole('checkbox', { name: CEILING })).toBeEnabled({ timeout: 120_000 });
       };
       /** Accept the paid ceiling named on the button and start the run through the public Tests UI. Returns the evidence id. */
@@ -265,7 +265,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // current production (its one live runtime binding) is already the baseline for the neighboring cases.
           await expect(page).toHaveURL(new RegExp(`version=${state.repaired.number}&tab=tests`));
           await expectPlan({ candidate: state.repaired.number, reference: input.versions.recorded, titles: Object.values(TITLE) });
-          await expect(page.getByRole('combobox', { name: /^Production version/ })).toContainText(`v${input.versions.head}`);
+          await expect(page.getByRole('combobox', { name: /^Compare with/ })).toContainText(`v${input.versions.head}`);
           await shot('05a-matched-plan');
           const evidenceId = await startRun('matched');
           const run = await waitRun(evidenceId, signal);
@@ -356,7 +356,10 @@ export async function createDriver({ jobId, runId, registration }) {
           // The matched verification is still the one on screen (the CI ran elsewhere); the responder closes the
           // reviewed cell and continues; nothing is reopened or chosen again.
           await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
-          await expect(page.getByText('Release packet')).toBeVisible({ timeout: 120_000 });
+          // The CI run is an optional attachment folded under the result; opening it is a counted gesture.
+          const attachCi = page.getByRole('button', { name: 'Attach your CI run (optional)', exact: true });
+          await expect(attachCi).toBeVisible({ timeout: 120_000 });
+          await op.click(attachCi, 'open-ci-attachment');
           await expect(page.locator(`[data-execution-fingerprint="${state.runs.matched.execution_fingerprint}"]`)).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 import {
-  Alert,
   Button,
   Checkbox,
   DialogActions,
@@ -37,6 +36,7 @@ function Capture({
   renderSaved,
   describeSource,
   onChangeContext,
+  contextName,
 }) {
   const operation = useReviewedOperation();
   const segments = source.segments.filter((item) =>
@@ -62,6 +62,7 @@ function Capture({
         applicationBehavior={applicationBehavior}
         renderSaved={renderSaved}
         describeSource={describeSource}
+        targetName={contextName}
       />
     );
   return (
@@ -74,20 +75,29 @@ function Capture({
       maxWidth="md"
       aria-labelledby="context-capture-title"
     >
-      <DialogTitle id="context-capture-title">
-        Create context regression case
-      </DialogTitle>
+      <DialogTitle id="context-capture-title">Save test case</DialogTitle>
       <DialogContent>
         <Stack spacing={1.5}>
+          {contextName && (
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Typography variant="s1">Saving to {contextName}</Typography>
+              {onChangeContext && (
+                <Button size="small" variant="text" aria-label="Change context" disabled={operation.busy} onClick={onChangeContext}>
+                  Change
+                </Button>
+              )}
+            </Stack>
+          )}
           {!allowed ? (
             <ReviewState state="forbidden" />
           ) : (
             <>
-              <Alert severity="info">
-                All request and tool-result text is selected. Untick anything you don’t need.
-                Next you’ll redact and set the expected result; nothing runs yet.
-              </Alert>
-              <TechnicalDetails title="Source identity">
+              <Typography variant="s3" color="text.secondary">
+                Step 1 of 2 · All request and tool-result text is selected. Untick anything you
+                don&apos;t need. Next you&apos;ll remove private details and set the expected
+                answer. Nothing runs yet.
+              </Typography>
+              <TechnicalDetails title="Trace details">
               <IdentityValue
                 label="Source project"
                 value={source.traceRef.projectId}
@@ -136,7 +146,7 @@ function Capture({
         </Stack>
       </DialogContent>
       <DialogActions>
-        {onChangeContext && (
+        {onChangeContext && !contextName && (
           <Button disabled={operation.busy} onClick={onChangeContext}>
             Change context
           </Button>
@@ -180,6 +190,7 @@ Capture.propTypes = {
   renderSaved: PropTypes.func,
   describeSource: PropTypes.func,
   onChangeContext: PropTypes.func,
+  contextName: PropTypes.string,
 };
 export default function ContextCaptureDialog({
   open,
@@ -194,7 +205,7 @@ export default function ContextCaptureDialog({
   if (!scopeKey || state !== "ready" || !source)
     return (
       <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm">
-        <DialogTitle>Create context regression case</DialogTitle>
+        <DialogTitle>Save test case</DialogTitle>
         <DialogContent>
           <ReviewState state={!scopeKey ? "forbidden" : state} />
         </DialogContent>
