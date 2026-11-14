@@ -181,7 +181,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
 
     try:
         partial_input_warning, inputs = validate_eval_inputs(
-            eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
+            eval_template,
+            dict(inputs) if inputs else {},
+            mapped_keys=(inputs or {}).keys(),
         )
     except ValueError as exc:
         # Validation runs before metering/engine execution; expose the same
