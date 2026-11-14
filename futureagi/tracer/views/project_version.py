@@ -130,8 +130,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get base queryset with automatic filtering from mixin, then add an
         # explicit organization guard for ProjectVersion's indirect project FK.
-        query_Set = super().get_queryset().filter(
-            project__organization=request_organization
+        query_Set = (
+            super().get_queryset().filter(project__organization=request_organization)
         )
 
         if project_version_id:
@@ -545,9 +545,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project=project
-                )
+                id__in=EvalLogger.objects.filter(observation_span__project=project)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -1281,18 +1279,12 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 for s in ch_spans
                 if s.parent_span_id == "" and s.latency_ms is not None
             ]
-            costs_with_value = [
-                float(s.cost) for s in ch_spans if s.cost is not None
-            ]
+            costs_with_value = [float(s.cost) for s in ch_spans if s.cost is not None]
             tokens_with_value = [
-                int(s.total_tokens)
-                for s in ch_spans
-                if s.total_tokens is not None
+                int(s.total_tokens) for s in ch_spans if s.total_tokens is not None
             ]
 
-            latency_mean = (
-                statistics.fmean(root_latencies) if root_latencies else 0
-            )
+            latency_mean = statistics.fmean(root_latencies) if root_latencies else 0
             # ``statistics.pstdev`` matches Django's default ``StdDev``,
             # which is **population** stddev (``STDDEV_POP``) — see
             # django/db/models/aggregates.py::StdDev.__init__ where
@@ -1302,19 +1294,11 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # n<2 without raising, so the explicit ``if root_latencies else
             # 0`` guard stays only to preserve the downstream divide-by-
             # zero protection at the z-score sites.
-            latency_std = (
-                statistics.pstdev(root_latencies) if root_latencies else 0
-            )
+            latency_std = statistics.pstdev(root_latencies) if root_latencies else 0
             cost_mean = (
-                round(statistics.fmean(costs_with_value), 6)
-                if costs_with_value
-                else 0
+                round(statistics.fmean(costs_with_value), 6) if costs_with_value else 0
             )
-            cost_std = (
-                statistics.pstdev(costs_with_value)
-                if costs_with_value
-                else 0
-            )
+            cost_std = statistics.pstdev(costs_with_value) if costs_with_value else 0
             avg_tokens = (
                 round(statistics.fmean(tokens_with_value), 2)
                 if tokens_with_value
@@ -1506,9 +1490,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Get configuration objects once
             eval_configs = list(
                 CustomEvalConfig.objects.filter(
-                    id__in=EvalLogger.objects.filter(
-                        observation_span__project=project
-                    )
+                    id__in=EvalLogger.objects.filter(observation_span__project=project)
                     .values("custom_eval_config_id")
                     .distinct(),
                     deleted=False,

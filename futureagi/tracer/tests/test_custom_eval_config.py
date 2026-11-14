@@ -411,6 +411,7 @@ class TestProjectDeleteCascade:
 
     def _make_eval_config(self, observe_project, eval_template):
         from tracer.models.custom_eval_config import CustomEvalConfig
+
         return CustomEvalConfig.objects.create(
             name="Cascade Test Config",
             project=observe_project,
@@ -422,6 +423,7 @@ class TestProjectDeleteCascade:
 
     def _make_eval_logger(self, eval_config, trace_session):
         from tracer.models.observation_span import EvalLogger
+
         return EvalLogger.objects.create(
             custom_eval_config=eval_config,
             target_type="session",
@@ -483,6 +485,7 @@ class TestProjectDeleteCascade:
         from tracer.views.project import ProjectView
 
         from model_hub.models.ai_model import AIModel
+
         other_project = Project.objects.create(
             name="Other Project",
             organization=organization,
@@ -509,7 +512,13 @@ class TestProjectDeleteCascade:
         assert other_cfg.deleted is False
 
 
-BYO_MODEL_STRINGS = ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet-latest", "turing_large", ""]
+BYO_MODEL_STRINGS = [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "claude-3-5-sonnet-latest",
+    "turing_large",
+    "",
+]
 
 
 @pytest.mark.unit
@@ -657,9 +666,9 @@ class TestEvalTagIngestMappingValues:
             project.organization_id,
         )
 
-        assert any(
-            v is not None for v in versions.values()
-        ), "the whole span batch would have been dropped"
+        assert any(v is not None for v in versions.values()), (
+            "the whole span batch would have been dropped"
+        )
         assert not CustomEvalConfig.objects.filter(name="release-tag-eval").exists()
 
     def test_list_mapping_is_refused_as_a_value_error(self, project, eval_template):
