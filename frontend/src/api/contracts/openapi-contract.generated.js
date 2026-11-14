@@ -17672,6 +17672,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -17680,6 +17683,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -25942,6 +25948,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -25950,6 +25959,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -26779,6 +26791,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/SDKErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
           },
@@ -26936,6 +26954,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/SDKErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
@@ -57273,8 +57297,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         message: {
           title: "Message",
-          type: "string",
-          minLength: 1,
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
         },
         send_to_uuid: {
           title: "Send to uuid",
@@ -57283,7 +57312,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         uuid: {
           title: "Uuid",
+          description:
+            "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
           type: "string",
+          pattern:
+            "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-required-when": {
+        send_to_uuid: {
+          value: true,
+          fields: ["uuid"],
         },
       },
     },
@@ -75948,6 +75989,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        configuration_health: {
+          description:
+            "Last detected setup problem and next probe; null when no setup problem is recorded.",
+          required: [
+            "status",
+            "reason_code",
+            "first_failed_at",
+            "last_failed_at",
+            "failure_count",
+            "next_retry_at",
+          ],
+          type: "object",
+          properties: {
+            status: {
+              title: "Status",
+              type: "string",
+              enum: ["misconfigured"],
+            },
+            reason_code: {
+              title: "Reason code",
+              type: "string",
+              enum: [
+                "missing_agent",
+                "deleted_agent",
+                "missing_key",
+                "missing_assistant_id",
+                "credential_unreadable",
+              ],
+            },
+            first_failed_at: {
+              title: "First failed at",
+              type: "string",
+              format: "date-time",
+            },
+            last_failed_at: {
+              title: "Last failed at",
+              type: "string",
+              format: "date-time",
+            },
+            failure_count: {
+              title: "Failure count",
+              type: "integer",
+              minimum: 1,
+            },
+            next_retry_at: {
+              title: "Next retry at",
+              type: "string",
+              format: "date-time",
+            },
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -82994,6 +83088,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SDKEvalTemplate",
+        },
+      },
+    },
+    SDKEvaluationDenialResponse: {
+      required: ["status", "code"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        errors: {
+          title: "Errors",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        dimension: {
+          title: "Dimension",
+          type: "string",
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+        },
+        completed_results: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        failed_index: {
+          title: "Failed index",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

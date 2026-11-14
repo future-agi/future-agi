@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from sockets.targets import TARGET_PATTERN, normalize_socket_target
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES, ApiErrorCode
 from tfc.utils.serializer_fields import JsonValueField
 
@@ -269,9 +270,34 @@ class LangfuseTracesResponseSerializer(serializers.Serializer):
 
 
 class CallWebsocketRequestSerializer(serializers.Serializer):
-    message = serializers.CharField()
+    # Notification and streaming producers have different, open message shapes.
+    message = serializers.DictField(child=JsonValueField(allow_null=True))
     send_to_uuid = serializers.BooleanField(required=False, default=False)
-    uuid = serializers.CharField(required=False, allow_blank=True)
+    uuid = serializers.RegexField(
+        TARGET_PATTERN,
+        required=False,
+        allow_null=True,
+        trim_whitespace=False,
+        help_text=(
+            "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted "
+            "delivery; omit or use null for broadcasts."
+        ),
+    )
+
+    def validate_uuid(self, value):
+        return normalize_socket_target(value) if value is not None else None
+
+    class Meta:
+        swagger_schema_fields = {
+            "x-required-when": {"send_to_uuid": {"value": True, "fields": ["uuid"]}}
+        }
+
+    def validate(self, attrs):
+        if attrs.get("send_to_uuid") and attrs.get("uuid") is None:
+            raise serializers.ValidationError(
+                {"uuid": "A UUID is required for targeted delivery."}
+            )
+        return attrs
 
 
 class CallWebsocketResponseSerializer(serializers.Serializer):

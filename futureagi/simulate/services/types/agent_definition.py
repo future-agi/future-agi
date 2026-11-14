@@ -22,7 +22,9 @@ class ProviderCredentialsInput(BaseModel):
     Fields are ``Optional`` because DRF may or may not include them in
     ``validated_data`` depending on the request payload. Missing values are
     treated as "don't touch" by the sync logic (secrets are never cleared
-    by a missing key).
+    by a missing key). ``assistant_id=None`` explicitly clears the identity;
+    callers must omit that keyword for an absent field so ``model_fields_set``
+    retains the distinction.
     """
 
     provider: str

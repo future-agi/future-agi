@@ -9,6 +9,7 @@ Tests cover:
 
 import pytest
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.agent_definition import (
@@ -18,6 +19,7 @@ from simulate.services.agent_definition import (
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from tfc.middleware.workspace_context import set_workspace_context
 
 
 @pytest.fixture
@@ -278,6 +280,166 @@ class TestSyncProviderCredentials:
         legacy = ProviderCredentials.objects.get(agent_version=agent_version)
         assert legacy.agent_definition is None
         assert legacy.get_api_key() == "sk-legacy-key"
+
+
+@pytest.mark.parametrize("assistant", ["assistant-B", "  assistant-B  ", ""])
+def test_sync_updates_snapshot_from_saved_identity(agent_version, assistant):
+    # The caller can hold a stale version; unrelated snapshot changes must survive.
+    snapshot = {"assistant_id": "assistant-A", "description": "latest description"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(
+            provider="vapi", assistant_id=assistant, api_key="synthetic-key-B"
+        ),
+    )
+    agent_version.refresh_from_db()
+    credentials = ProviderCredentials.objects.get(agent_version=agent_version)
+    assert credentials.assistant_id == assistant.strip()
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": credentials.assistant_id,
+    }
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert "api_key" not in agent_version.configuration_snapshot
+
+
+@pytest.mark.parametrize("provider", ["vapi", "retell"])
+@pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
+@pytest.mark.parametrize(
+    "identity,expected",
+    [({}, "assistant-A"), ({"assistant_id": None}, ""), ({"assistant_id": ""}, "")],
+    ids=["omitted", "explicit-null", "empty-string"],
+)
+def test_sync_distinguishes_null_identity_from_omission(
+    agent_version, provider, key, identity, expected
+):
+    snapshot = {"assistant_id": "assistant-A", "description": "preserved"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type=provider,
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(provider=provider, api_key=key, **identity),
+    )
+    agent_version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert credentials.assistant_id == expected
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": expected,
+    }
+    assert credentials.get_api_key() == (
+        "synthetic-key-B" if key == "synthetic-key-B" else "synthetic-key-A"
+    )
+
+
+@pytest.mark.parametrize("assistant", ["assistant-B", None, ""])
+def test_sync_snapshot_failure_rolls_back_credentials(agent_version, assistant):
+    from django.db import connection
+
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    original_key = credentials.api_key
+    original_snapshot = agent_version.configuration_snapshot.copy()
+
+    def fail_snapshot_write(execute, sql, params, many, context):
+        if sql.startswith('UPDATE "simulate_agent_version"'):
+            raise RuntimeError("Synthetic snapshot write failure")
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(fail_snapshot_write):
+        with pytest.raises(RuntimeError, match="Synthetic snapshot write failure"):
+            sync_provider_credentials(
+                agent_version,
+                ProviderCredentialsInput(
+                    provider="vapi",
+                    assistant_id=assistant,
+                    api_key="synthetic-key-B",
+                ),
+            )
+    credentials.refresh_from_db()
+    agent_version.refresh_from_db()
+    assert credentials.api_key == original_key
+    assert credentials.assistant_id == "assistant-A"
+    assert agent_version.configuration_snapshot == original_snapshot
+
+
+@pytest.mark.parametrize("ambient", ["default", "unrelated"])
+def test_sync_locks_the_given_version_whatever_the_ambient_workspace(
+    organization, workspace, user, ambient
+):
+    """The caller already resolved this version; the lock re-reads it by key only.
+
+    Harness creation writes an agent in the job's workspace while the
+    thread-local scope can name another one (here the user's default, as the
+    ``user`` fixture binds, or an unrelated workspace).
+    """
+    target = Workspace.objects.create(
+        name="Target", organization=organization, created_by=user
+    )
+    definition = AgentDefinition.no_workspace_objects.create(
+        agent_name="Other workspace agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12345678902",
+        inbound=True,
+        description="Agent outside the ambient workspace",
+        provider="vapi",
+        organization=organization,
+        workspace=target,
+        languages=["en"],
+    )
+    version = definition.create_version(
+        description="Initial version",
+        commit_message="First version",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    assert version.workspace_id == target.id
+    if ambient == "unrelated":
+        set_workspace_context(
+            workspace=Workspace.objects.create(
+                name="Unrelated", organization=organization, created_by=user
+            ),
+            organization=organization,
+            user=user,
+        )
+    # Precondition: the ambient scope hides the version from the scoped manager.
+    assert not AgentVersion.objects.filter(pk=version.pk).exists()
+
+    sync_provider_credentials(
+        version,
+        ProviderCredentialsInput(
+            provider="vapi",
+            api_key="synthetic-key-B",
+            assistant_id="assistant-B",
+            provider_was_provided=True,
+        ),
+    )
+
+    credentials = ProviderCredentials.no_workspace_objects.get(agent_version=version)
+    stored = AgentVersion.no_workspace_objects.get(pk=version.pk)
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert credentials.assistant_id == "assistant-B"
+    assert stored.configuration_snapshot["assistant_id"] == "assistant-B"
+    assert version.configuration_snapshot["assistant_id"] == "assistant-B"
 
 
 # ============================================================================

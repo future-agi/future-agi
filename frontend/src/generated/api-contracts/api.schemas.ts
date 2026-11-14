@@ -5396,12 +5396,14 @@ export interface SpanAttributeValuesResponseApi {
   query_window_end: string;
 }
 
-export interface CallWebsocketRequestApi {
-  /** @minLength 1 */
-  message: string;
-  send_to_uuid?: boolean;
-  uuid?: string;
-}
+export type CallWebsocketRequestApiMessage = { [key: string]: JsonValueApi };
+
+export type CallWebsocketRequestApi = {
+  message: CallWebsocketRequestApiMessage;
+} & (
+  | { send_to_uuid: true; uuid: string }
+  | { send_to_uuid?: false; uuid?: string | null }
+);
 
 export interface CallWebsocketResponseApi {
   status?: boolean;
@@ -11299,6 +11301,33 @@ export interface EvalExecutionResponseResultApi {
 export interface EvalExecutionResponseApi {
   status: boolean;
   result: EvalExecutionResponseResultApi;
+}
+
+export type SDKEvaluationDenialResponseApiErrors = { [key: string]: string[] };
+
+export type SDKEvaluationDenialResponseApiUpgradeCta = {
+  [key: string]: unknown;
+};
+
+export type SDKEvaluationDenialResponseApiCompletedResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface SDKEvaluationDenialResponseApi {
+  status: boolean;
+  result?: string;
+  message?: string;
+  errors?: SDKEvaluationDenialResponseApiErrors;
+  /** @minLength 1 */
+  code: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: SDKEvaluationDenialResponseApiUpgradeCta;
+  completed_results?: SDKEvaluationDenialResponseApiCompletedResultsItem[];
+  /** @minimum 0 */
+  failed_index?: number;
 }
 
 export interface EvalPlayGroundFeedbackApi {
@@ -32050,6 +32079,21 @@ export const ObservabilityProviderApiProvider = {
 
 export type ObservabilityProviderApiMetadata = { [key: string]: unknown };
 
+export type ObservabilityProviderApiConfigurationHealth = {
+  readonly status: "misconfigured";
+  readonly reason_code:
+    | "missing_agent"
+    | "deleted_agent"
+    | "missing_key"
+    | "missing_assistant_id"
+    | "credential_unreadable";
+  readonly first_failed_at: string;
+  readonly last_failed_at: string;
+  /** @minimum 1 */
+  readonly failure_count: number;
+  readonly next_retry_at: string;
+} | null;
+
 export interface ObservabilityProviderApi {
   readonly id?: string;
   readonly project?: string;
@@ -32063,6 +32107,7 @@ export interface ObservabilityProviderApi {
   readonly organization?: string;
   readonly workspace?: string;
   metadata?: ObservabilityProviderApiMetadata;
+  readonly configuration_health?: ObservabilityProviderApiConfigurationHealth;
   readonly created_at?: string;
   readonly updated_at?: string;
 }

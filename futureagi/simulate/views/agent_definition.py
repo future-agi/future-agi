@@ -339,7 +339,11 @@ class CreateAgentDefinitionView(APIView):
                 creds_input = ProviderCredentialsInput(
                     provider=provider or "",
                     api_key=api_key,
-                    assistant_id=assistant_id,
+                    **(
+                        {"assistant_id": validated["assistant_id"]}
+                        if "assistant_id" in request.data
+                        else {}
+                    ),
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=validated.get("livekit_api_key"),
                     livekit_api_secret=validated.get("livekit_api_secret"),
@@ -774,14 +778,19 @@ class EditAgentDefinitionView(APIView):
                 # Route livekit_* fields to ProviderCredentials so they
                 # actually persist (setattr on the model is a no-op for these
                 # since they aren't real columns).
-                if preserve_existing_api_key:
-                    version = agent.active_version or agent.latest_version
-                    existing_api_key = (
-                        resolve_api_key_for_version(version) if version else None
-                    )
-                else:
-                    existing_api_key = None
-                version = agent.active_version or agent.latest_version
+                versions = agent.versions.select_for_update(of=("self",)).order_by(
+                    "-version_number"
+                )
+                version = versions.filter(
+                    status=AgentVersion.StatusChoices.ACTIVE
+                ).first()
+                if version is None:
+                    version = versions.first()
+                existing_api_key = (
+                    resolve_api_key_for_version(version)
+                    if preserve_existing_api_key and version is not None
+                    else None
+                )
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
@@ -790,7 +799,11 @@ class EditAgentDefinitionView(APIView):
                         if preserve_existing_api_key
                         else validated.get("api_key")
                     ),
-                    assistant_id=validated.get("assistant_id"),
+                    **(
+                        {"assistant_id": validated["assistant_id"]}
+                        if "assistant_id" in validated
+                        else {}
+                    ),
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=validated.get("livekit_api_key"),
                     livekit_api_secret=validated.get("livekit_api_secret"),

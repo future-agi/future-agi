@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         RunAgentPromptOptimiserWorkflowOutput,
         ScenarioResult,
     )
+    from tfc.temporal.common.evaluation_denials import evaluation_denial_message
 
 
 ACTIVITY_RETRY = RetryPolicy(
@@ -83,7 +84,7 @@ class AgentPromptOptimiserWorkflow:
             )
 
         except Exception as e:
-            error_msg = str(e)
+            error_msg = evaluation_denial_message(e) or str(e)
 
             # Try to finalize with error status
             try:

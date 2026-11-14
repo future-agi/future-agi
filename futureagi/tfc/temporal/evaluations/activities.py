@@ -13,6 +13,7 @@ from tfc.temporal.evaluations.types import (
     RunSingleEvaluationInput,
     RunSingleEvaluationOutput,
 )
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 # =============================================================================
 # Synchronous Helper Functions
@@ -85,6 +86,19 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         return {
             "evaluation_id": str(evaluation.id),
             "status": evaluation.status,
+        }
+
+    except EvaluationDenied as denial:
+        evaluation.status = StatusChoices.FAILED
+        evaluation.error_message = str(denial)
+        evaluation.value = None
+        evaluation.reason = str(denial)
+        evaluation.metadata = {"denial": denial.as_dict()}
+        evaluation.runtime = 0  # No evaluator executed; SDK runtime is non-nullable.
+        return {
+            "evaluation_id": evaluation_id,
+            "status": "failed",
+            "error": str(denial),
         }
 
     except Exception as e:

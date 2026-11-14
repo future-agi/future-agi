@@ -1649,6 +1649,11 @@ class DeactivateUserAPIView(APIView):
                         target_user.is_active = False
                         target_user.save(update_fields=["is_active"])
 
+            # The membership bulk updates above send no model signal.
+            from sockets.membership import close_sockets_for_membership
+
+            close_sockets_for_membership(target_user_id, organization.id)
+
             return self._gm.success_response(
                 {
                     "message": "User deactivated successfully",

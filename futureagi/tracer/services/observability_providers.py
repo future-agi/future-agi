@@ -7,7 +7,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 import structlog
@@ -18,6 +18,9 @@ from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
 from tracer.utils.attribute_accessor import vapi_customer
+
+if TYPE_CHECKING:
+    from tracer.utils.vapi_recording import VapiConfiguration
 
 logger = structlog.get_logger(__name__)
 
@@ -95,8 +98,38 @@ class RetellPage:
     drops: tuple[tuple[int, int], ...]
 
 
-class RetellConfigurationError(Exception):
-    """Agent/credential setup prevents a Retell fetch; message never carries key material or provider values."""
+class ProviderConfigurationError(Exception):
+    """A safe, classified setup failure; unclassified errors remain engineering errors."""
+
+    SETUP_REASONS = frozenset(
+        {
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+        }
+    )
+
+    def __init__(self, message: str, *, reason_code: str = "invalid_poll_arguments"):
+        super().__init__(message)
+        self.reason_code = (
+            reason_code
+            if reason_code in self.SETUP_REASONS
+            else "invalid_poll_arguments"
+        )
+
+    @property
+    def is_setup_error(self) -> bool:
+        return self.reason_code in self.SETUP_REASONS
+
+
+class RetellConfigurationError(ProviderConfigurationError):
+    """Retell setup or polling-argument failure."""
+
+
+class VapiConfigurationError(ProviderConfigurationError):
+    """Vapi setup failure; never an upstream authentication or server error."""
 
 
 class RetellCursorRejected(Exception):
@@ -253,12 +286,16 @@ class ObservabilityService:
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        *,
+        vapi_configuration: "VapiConfiguration | None" = None,
     ):
         """
         Fetches call logs from the specified provider.
         """
         if provider.provider == ProviderChoices.VAPI:
-            return ObservabilityService._fetch_vapi_logs(provider, start_time, end_time)
+            return ObservabilityService._fetch_vapi_logs(
+                provider, start_time, end_time, configuration=vapi_configuration
+            )
         elif provider.provider == ProviderChoices.ELEVEN_LABS:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
@@ -281,10 +318,59 @@ class ObservabilityService:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
     @staticmethod
+    def resolve_vapi_key(provider: ObservabilityProvider) -> str | None:
+        """Resolve only this provider's linked agent, never another agent on its project."""
+        from tracer.utils.vapi_recording import VapiRecordingService
+
+        agent = ObservabilityService._get_agent_definition(provider)
+        if agent is None or agent.deleted:
+            return None
+        return VapiRecordingService._api_key_from_agent_definition(agent)
+
+    @staticmethod
+    def resolve_vapi_configuration(
+        provider: ObservabilityProvider,
+    ) -> "VapiConfiguration":
+        """Resolve and validate a provider-scoped key/assistant pair, without HTTP."""
+        from tracer.utils.vapi_recording import VapiRecordingService
+
+        agent = ObservabilityService._get_agent_definition(provider)
+        if agent is None:
+            raise VapiConfigurationError(
+                "Vapi observability needs a linked agent", reason_code="missing_agent"
+            )
+        if agent.deleted:
+            raise VapiConfigurationError(
+                "Vapi linked agent is deleted", reason_code="deleted_agent"
+            )
+        try:
+            configuration = VapiRecordingService.configuration_from_agent_definition(
+                agent
+            )
+        except ValueError as exc:
+            raise VapiConfigurationError(
+                "Vapi credential could not be decrypted",
+                reason_code="credential_unreadable",
+            ) from exc
+        if not configuration.api_key:
+            raise VapiConfigurationError(
+                "Vapi API key is not configured for this agent",
+                reason_code="missing_key",
+            )
+        if not configuration.assistant_id:
+            raise VapiConfigurationError(
+                "Vapi assistant id is not configured for this agent",
+                reason_code="missing_assistant_id",
+            )
+        return configuration
+
+    @staticmethod
     def _fetch_vapi_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        *,
+        configuration: "VapiConfiguration | None" = None,
     ):
         """
         Fetches call logs from Vapi using time-based pagination.
@@ -294,15 +380,13 @@ class ObservabilityService:
         batch returns fewer results than the limit or after VAPI_MAX_PAGES.
 
         Returns:
-            List of logs, or empty list if API key is missing.
+            List of logs. Incomplete setup raises VapiConfigurationError.
         """
-        agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "VAPI")
-        if not api_key:
-            return []
+        if configuration is None:
+            configuration = ObservabilityService.resolve_vapi_configuration(provider)
 
-        headers = {"Authorization": f"Bearer {api_key}"}
-        assistant_id = getattr(agent, "assistant_id", None)
+        headers = {"Authorization": f"Bearer {configuration.api_key}"}
+        assistant_id = configuration.assistant_id
         all_logs: list[dict] = []
         current_start = start_time
 
@@ -554,8 +638,13 @@ class ObservabilityService:
             agent = provider.agent_definition
         except AgentDefinition.DoesNotExist as exc:
             raise RetellConfigurationError(
-                "Retell observability needs a linked agent"
+                "Retell observability needs a linked agent", reason_code="missing_agent"
             ) from exc
+
+        if agent.deleted:
+            raise RetellConfigurationError(
+                "Retell linked agent is deleted", reason_code="deleted_agent"
+            )
 
         rows = (
             ProviderCredentials.objects.filter(
@@ -578,15 +667,18 @@ class ObservabilityService:
             key = chosen.get_api_key() if chosen else (agent.api_key or None)
         except ValueError as exc:
             raise RetellConfigurationError(
-                "Retell credential could not be decrypted"
+                "Retell credential could not be decrypted",
+                reason_code="credential_unreadable",
             ) from exc
         if not key:
             raise RetellConfigurationError(
-                "Retell API key is not configured for this agent"
+                "Retell API key is not configured for this agent",
+                reason_code="missing_key",
             )
         if not agent.assistant_id:
             raise RetellConfigurationError(
-                "Retell agent id is not configured for this agent"
+                "Retell agent id is not configured for this agent",
+                reason_code="missing_assistant_id",
             )
         return key, agent.assistant_id
 

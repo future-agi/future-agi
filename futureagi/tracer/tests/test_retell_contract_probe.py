@@ -70,7 +70,9 @@ class TestFetcherSurface:
 
     def test_exception_types(self):
         m = _fetcher()
-        assert m.RetellConfigurationError.__bases__ == (Exception,)
+        assert m.ProviderConfigurationError.__bases__ == (Exception,)
+        assert m.RetellConfigurationError.__bases__ == (m.ProviderConfigurationError,)
+        assert m.VapiConfigurationError.__bases__ == (m.ProviderConfigurationError,)
         assert m.RetellCursorRejected.__bases__ == (Exception,)
         assert m.RetellCursorRejected(cause="missing_key").cause == "missing_key"
 
