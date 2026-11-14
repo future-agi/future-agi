@@ -1447,6 +1447,13 @@ def discard_draft(environment: HostedHarnessJob, piece: str, *, user: Any) -> bo
         if draft is None:
             return False
         discard_version(draft, user=user)
+        if piece == "suite":
+            from simulate.services.hosted_harness_conversation import (
+                record_failed_changes,
+            )
+
+            # A discarded change that could not be applied is no longer pending.
+            record_failed_changes(locked, [])
         # Candidates built from these edits go with them.
         discard_candidates(locked)
         transaction.on_commit(lambda: retire_chat_runtime(locked))

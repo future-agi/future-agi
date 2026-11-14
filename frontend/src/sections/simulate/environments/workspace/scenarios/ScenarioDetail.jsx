@@ -18,7 +18,11 @@ import {
   sendHarnessConversationMessage,
 } from "src/api/harness/harness";
 import { useAuthContext } from "src/auth/hooks";
-import { useDrafts, useSaveDrafts } from "src/api/simulate-environments/versions";
+import {
+  useDiscardDraft,
+  useDrafts,
+  useSaveDrafts,
+} from "src/api/simulate-environments/versions";
 import { draftSaveRequests } from "../drafts/draftSave";
 import SourceCompareDialog from "./SourceCompareDialog";
 import ValidateScenariosButton from "./ValidateScenariosButton";
@@ -326,6 +330,9 @@ export function LifecycleSections({ row, jobId }) {
           {lifecycle.state === "validated" && jobId && (
             <ActivateButton jobId={jobId} />
           )}
+          {lifecycle.reason === "apply_failed" && jobId && (
+            <DiscardChangeButton jobId={jobId} />
+          )}
           {lifecycle.state === "draft" &&
             lifecycle.reason === "not_ready" &&
             jobId &&
@@ -524,6 +531,26 @@ function ActivateButton({ jobId }) {
 }
 
 ActivateButton.propTypes = { jobId: PropTypes.string.isRequired };
+
+// A change the builder could not apply is discarded with the unsaved scenario changes it came with.
+function DiscardChangeButton({ jobId }) {
+  const discard = useDiscardDraft(jobId);
+  return (
+    <Button
+      size="small"
+      variant="outlined"
+      color="inherit"
+      sx={{ alignSelf: "flex-start" }}
+      disabled={discard.isPending}
+      onClick={() => discard.mutate(["suite"])}
+      data-testid="discard-failed-change"
+    >
+      {SCENARIOS_COPY.discardChange}
+    </Button>
+  );
+}
+
+DiscardChangeButton.propTypes = { jobId: PropTypes.string.isRequired };
 
 function Revisions({ jobId, scenarioKey }) {
   const { data } = useScenarioRevisions(jobId, scenarioKey);

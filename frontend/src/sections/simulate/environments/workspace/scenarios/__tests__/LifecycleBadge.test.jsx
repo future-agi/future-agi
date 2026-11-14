@@ -49,6 +49,15 @@ describe("LifecycleBadge", () => {
     expect(screen.queryByTestId("lifecycle-not-measured-chip")).toBeNull();
   });
 
+  it("marks a change the builder could not apply", () => {
+    render(
+      <LifecycleBadge
+        row={row({ state: "draft", reason: "apply_failed", reason_text: "This change could not be applied: bad check." })}
+      />,
+    );
+    expect(screen.getByTestId("lifecycle-apply-failed-chip")).toHaveTextContent("Could not apply");
+  });
+
   it("shows nothing for an environment without versions", () => {
     render(<LifecycleBadge row={row(null)} />);
     expect(screen.queryByTestId("lifecycle-badge")).toBeNull();

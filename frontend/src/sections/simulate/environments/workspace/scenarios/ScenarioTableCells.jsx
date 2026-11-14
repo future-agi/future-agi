@@ -40,6 +40,19 @@ export function LifecycleBadge({ row }) {
           />
         </span>
       </Tooltip>
+      {lifecycle.reason === "apply_failed" && (
+        <Tooltip title={lifecycle.reason_text || ""}>
+          <span data-testid="lifecycle-apply-failed-chip">
+            <StatusBadge
+              status="apply_failed"
+              role="danger"
+              label={SCENARIOS_COPY.couldNotApply}
+              size="sm"
+              dot={false}
+            />
+          </span>
+        </Tooltip>
+      )}
       {notMeasured && (
         <Tooltip title={lifecycle.warning_text || ""}>
           <span data-testid="lifecycle-not-measured-chip">

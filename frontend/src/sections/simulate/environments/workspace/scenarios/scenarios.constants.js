@@ -59,6 +59,8 @@ export const SCENARIOS_COPY = {
     "Validated before checks were recorded. Validate again to confirm.",
   keptAsWritten: "Kept as written",
   notMeasured: "Not measured at run time",
+  couldNotApply: "Could not apply",
+  discardChange: "Discard change",
   lifecycleFilterLabel: "Lifecycle",
   versionsLabel: "Versions",
   versionsDefault: "Saved (default)",
