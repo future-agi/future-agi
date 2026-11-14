@@ -7,6 +7,7 @@ import React, {
   Suspense,
 } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import {
   useDatapointDrawerStore,
   useDatapointDrawerStoreShallow,

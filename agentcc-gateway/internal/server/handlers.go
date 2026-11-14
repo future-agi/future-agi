@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // maxSessionIDLen is the maximum allowed byte length for a session ID.
@@ -81,6 +82,12 @@ type Handlers struct {
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
+	// asyncKeyRequired is set by server wiring when license auth is enabled
+	// without API-key auth: async jobs then have no anonymous owner.
+	asyncKeyRequired bool
+	// resultIPACL holds the global network rules applied when stored results
+	// (async jobs, batches, admin video jobs) are read or changed.
+	resultIPACL config.IPACLConfig
 
 	// Responses API store.
 	responsesStore *responses.Store
@@ -88,8 +95,15 @@ type Handlers struct {
 	// Files API store.
 	fileStore *files.Store
 
+	// trustedProxies is ip_acl.trusted_proxies: how many X-Forwarded-For hops
+	// clientIP trusts.
+	trustedProxies int
+
 	// Video generation store.
-	videoStore video.Store
+	videoIPACL    config.IPACLConfig
+	videoStore    video.Store
+	videoService  *lifecycle.Service
+	videoSyncWait time.Duration
 
 	// Phase 12A: Advanced routing components.
 	complexityAnalyzer   *routing.ComplexityAnalyzer
@@ -104,12 +118,32 @@ type Handlers struct {
 	scheduledMaxAhead      time.Duration
 
 	// Atomic pointers for hot-reloadable routing components.
-	circuitBreakers   atomic.Pointer[routing.CircuitBreakerRegistry]
 	failover          atomic.Pointer[routing.Failover]
 	modelFallbacks    atomic.Pointer[routing.ModelFallbacks]
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
+}
+
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
+	}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
+	}
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -224,12 +258,13 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 		keyStore:           keyStore,
 	}
 	h.failover.Store(failover)
-	h.circuitBreakers.Store(failover.CircuitBreakers())
 	h.modelFallbacks.Store(modelFallbacks)
 	h.conditionalRouter.Store(conditionalRouter)
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -243,7 +278,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	// Rebuild router in registry.
-	if err := registry.ReloadRouter(cfg.Routing); err != nil {
+	if err := registry.ReloadRouter(cfg.Routing, h.healthMonitor); err != nil {
 		return fmt.Errorf("reload router: %w", err)
 	}
 
@@ -280,9 +315,10 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 		}
 		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 	}
-	h.circuitBreakers.Store(cbReg)
+	// Observe the same breakers that the failover chain updates.
+	h.healthMonitor.SetCircuitBreakerRegistry(cbReg)
 
-	if cfg.Routing.Failover.Enabled {
+	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
 		fo := routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
 		h.failover.Store(fo)
 	} else {
@@ -303,6 +339,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -482,29 +519,34 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
 			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
 		}
-		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.circuitBreakers.Load())
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.healthMonitor.CircuitBreakerRegistry())
 	}
 	return h.failover.Load()
 }
 
-func (h *Handlers) resolveFallbackProviderExcluding(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string, excluded map[string]bool) (providers.Provider, string, string, bool) {
-	if p, providerID, upstreamModel, _ := h.orgProviderForExcluding(orgID, orgCfg, fallbackModel, excluded); p != nil {
-		return p, providerID, upstreamModel, true
+func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, model string, excluded map[string]bool) (providers.Provider, string, string, bool) {
+	if ctx.Err() != nil {
+		return nil, "", model, false
 	}
-
-	fbResult, fbErr := h.registry.ResolveExcluding(fallbackModel, excluded)
-	if fbErr != nil {
-		return nil, "", fallbackModel, false
+	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil {
+		return p, id, upstream, true
 	}
-	fbProvider := fbResult.Provider
-	if shouldApplyOrgProviderOverride(rc) {
-		fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
+	// A fallback model does not grant another credential source.
+	if h.orgProvidersOnly(ctx, rc) || ctx.Err() != nil {
+		return nil, "", model, false
 	}
-	resolvedModel := fallbackModel
-	if fbResult.ModelOverride != "" {
-		resolvedModel = fbResult.ModelOverride
+	result, err := h.registry.ResolveExcluding(model, excluded)
+	if err != nil {
+		return nil, "", model, false
 	}
-	return fbProvider, fbResult.Provider.ID(), resolvedModel, true
+	p := result.Provider
+	if rc.Metadata["key_type"] != "internal" {
+		p = h.applyOrgProviderOverride(orgID, orgCfg, p.ID(), p)
+	}
+	if result.ModelOverride != "" {
+		model = result.ModelOverride
+	}
+	return p, result.Provider.ID(), model, true
 }
 
 // applyOrgRoutingOverrides applies per-org routing config to the request context.
@@ -1018,7 +1060,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1052,19 +1094,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -1217,22 +1247,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Note: x-agentcc-timeout-ms is set via setAgentccHeaders (before WriteHeader)
 	// using rc.Metadata["timeout_ms"] which was populated above.
-
-	// Record provider latency for routing (after response).
-	if router := h.registry.Router(); router != nil {
-		if d, ok := rc.Timings["provider"]; ok {
-			router.RecordLatency(rc.Provider, d)
-		}
-	}
-
-	// Record health metrics.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
 
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
@@ -1393,32 +1407,26 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	if effectiveFallbacks != nil && effectiveFallbacks.HasFallbacks(model) {
-		orgID, orgCfg := h.resolveOrgConfig(rc)
+		var orgCfg *tenant.OrgConfig
+		if h.tenantStore != nil {
+			orgCfg = h.tenantStore.Get(rc.Metadata["org_id"])
+		}
 		for _, fbModel := range effectiveFallbacks.GetChain(model) {
-			// Routing-only aliases can become unavailable before the call-time fallback loop.
-			if p, providerID, upstreamModel, _ := h.orgProviderFor(orgID, orgCfg, fbModel); p != nil {
-				rc.Provider = providerID
+			p, id, upstream, ok := h.resolveFallbackProviderExcluding(ctx, rc.Metadata["org_id"], orgCfg, rc, fbModel, nil)
+			if ok {
+				rc.Provider = id
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = model
-				rc.Metadata["fallback_model"] = fbModel
-				rc.Metadata["org_provider_model_match"] = fbModel
-				return p, upstreamModel, nil
-			}
-			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
-			if fbErr == nil {
-				rc.Provider = fbResult.Provider.ID()
-				rc.Flags.FallbackUsed = true
-				rc.Metadata["original_model"] = model
-				rc.Metadata["fallback_model"] = fbModel
-				if fbResult.StrategyName != "" {
-					rc.Metadata["routing_strategy"] = fbResult.StrategyName
+				rc.Metadata["fallback_model"] = upstream
+				if base, exists := h.registry.GetProvider(id); !exists || base != p {
+					rc.Metadata["org_provider_model_match"] = fbModel
 				}
-				if fbResult.ModelOverride != "" {
-					return fbResult.Provider, fbResult.ModelOverride, nil
-				}
-				return fbResult.Provider, fbModel, nil
+				return p, upstream, nil
 			}
 		}
+	}
+	if router := h.registry.Router(); router != nil && router.TargetCount(model) > 0 {
+		return nil, "", models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
 	}
 
 	return nil, "", err
@@ -1433,11 +1441,12 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
+	registry := h.healthMonitor.CircuitBreakerRegistry()
 	servingProvider := provider
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		call := func(p providers.Provider) error {
-			return h.callProvider(ctx, rc, p, func() error {
-				resp, err := p.ChatCompletion(ctx, rc.Request)
+			return h.callProvider(ctx, registry, rc, p, func() error {
+				resp, err := h.callChatProvider(ctx, p, rc.Request)
 				if err == nil {
 					servingProvider = p
 					rc.Response = resp
@@ -1447,7 +1456,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			})
 		}
 		if err := call(provider); err != nil {
-			return h.callModelFallbacks(rc, orgCfg, err, call)
+			return h.callModelFallbacks(ctx, rc, orgCfg, err, effectiveFailover != nil && effectiveFailover.ShouldFailover(err), call)
 		}
 		return nil
 	}
@@ -1470,33 +1479,13 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
+	registry := fo.CircuitBreakers()
 	var servingProvider providers.Provider
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		call := func(p providers.Provider) error {
-			return h.callProvider(ctx, rc, p, func() error {
-				resp, err := p.ChatCompletion(ctx, rc.Request)
-				if err == nil {
-					servingProvider = p
-					rc.Response = resp
-					rc.ResolvedModel = resp.Model
-				}
-				return err
-			})
-		}
-		foResult, err := fo.ExecuteWithAdmission(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
-			p, ok := h.registry.GetProvider(providerID)
-			if !ok {
-				return fmt.Errorf("provider %q not found", providerID)
-			}
-
-			if shouldApplyOrgProviderOverride(rc) {
-				p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-			}
-
+		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
 			rc.Provider = providerID
 			rc.Response = nil
@@ -1507,20 +1496,28 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			return h.callProvider(ctx, rc, p, func() error {
-				resp, err := p.ChatCompletion(ctx, rc.Request)
-				if err == nil {
-					servingProvider = p
-					rc.Response = resp
-					rc.ResolvedModel = resp.Model
-				}
+			resp, err := h.callChatProvider(ctx, p, rc.Request)
+			if err != nil {
 				return err
-			})
+			}
+			servingProvider = p
+			rc.Response = resp
+			rc.ResolvedModel = resp.Model
+			return nil
 		})
 
 		if err != nil {
-			rc.Request.Model = originalModel
-			return h.callModelFallbacks(rc, orgCfg, err, call)
+			return h.callModelFallbacks(ctx, rc, orgCfg, err, true, func(p providers.Provider) error {
+				return h.callProvider(ctx, registry, rc, p, func() error {
+					resp, callErr := h.callChatProvider(ctx, p, rc.Request)
+					if callErr == nil {
+						servingProvider = p
+						rc.Response = resp
+						rc.ResolvedModel = resp.Model
+					}
+					return callErr
+				})
+			})
 		}
 
 		// Record failover metadata.
@@ -1563,50 +1560,51 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var firstChunk *models.StreamChunk
 	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
-	var completeProbe func(error)
-	finishProbe := func(err error) {
-		if completeProbe != nil {
-			completeProbe(err)
-			completeProbe = nil
-		}
-	}
+	// Time to the serving attempt's first chunk: the routing latency signal,
+	// as before per-attempt sampling, rather than the whole stream's length.
+	var firstChunkLatency time.Duration
+	var lease *routing.ProbeLease
+	defer func() { lease.Abandon() }()
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
 		}
-		finishProbe(context.Canceled) // local policy/write errors are not provider failures
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	registry := h.healthMonitor.CircuitBreakerRegistry()
+	if effectiveFailover != nil {
+		registry = effectiveFailover.CircuitBreakers()
+	}
+	finish := func(err error) {
+		lease.Complete(ctx, err)
+		h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
+	}
 
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
-		complete, err := h.admitProvider(ctx, rc, callProvider)
-		if err != nil {
-			return err
-		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
+		start := time.Now()
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
 			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
-			complete(err)
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			return err
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
-			complete(err)
 			return err
 		}
+		firstChunkLatency = time.Since(start)
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
-			finishProbe(context.Canceled)
 		}
-		completeProbe = complete
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
 		chunks = candidateChunks
@@ -1615,33 +1613,40 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		return nil
 	}
 
+	// Direct/model fallback calls own their admission; routed startup retries
+	// are already admitted by executeProviderFailover.
+	openAdmittedStream := func(callCtx context.Context, p providers.Provider) error {
+		admitted, err := h.admitProvider(callCtx, registry, rc, rc.Provider, p)
+		if err != nil {
+			return err
+		}
+		err = openStream(callCtx, p)
+		if err != nil {
+			admitted.Complete(callCtx, err)
+		} else {
+			lease = admitted
+		}
+		return err
+	}
+
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		originalModel := rc.Request.Model
-		orgID := rc.Metadata["org_id"]
-
 		tryModelFallbacks := func(firstErr error) error {
-			rc.Request.Model = originalModel
-			return h.callModelFallbacks(rc, orgCfg, firstErr, func(p providers.Provider) error {
-				return openStream(ctx, p)
+			return h.callModelFallbacks(ctx, rc, orgCfg, firstErr, effectiveFailover != nil && effectiveFailover.ShouldFailover(firstErr), func(p providers.Provider) error {
+				return openAdmittedStream(ctx, p)
 			})
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := effectiveFailover.ExecuteWithAdmission(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
-				p, ok := h.registry.GetProvider(providerID)
-				if !ok {
-					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
-				}
-				if shouldApplyOrgProviderOverride(rc) {
-					p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-				}
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, id string, p providers.Provider, modelOverride string) error {
+				rc.Provider = id
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {
 					rc.Request.Model = originalModel
 				}
 				return openStream(callCtx, p)
-			})
+			}, &lease)
 			if err != nil {
 				return tryModelFallbacks(err)
 			}
@@ -1662,7 +1667,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return nil
 		}
 
-		if err := openStream(ctx, provider); err != nil {
+		if err := openAdmittedStream(ctx, provider); err != nil {
 			return tryModelFallbacks(err)
 		}
 		return nil
@@ -1793,16 +1798,17 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+				raw := closedStreamOutcome(ctx, errCh)
+				finish(raw)
+				if raw != nil {
+					apiErr := streamEndError(ctx, raw)
 					if apiErr != nil {
-						finishProbe(apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				finishProbe(nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1869,7 +1875,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				continue
 			}
 			if err != nil {
-				finishProbe(err)
+				finish(err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1881,7 +1887,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case <-ctx.Done():
-			finishProbe(ctx.Err())
+			finish(ctx.Err())
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. streamCancel() in defer stops the
 			// guardrail goroutines. Drain remaining chunks to unblock the
@@ -1932,8 +1938,8 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 			if !ok {
 				// A provider sends its error before it closes chunks, and
 				// sends none once ctx is done; see closedStreamError.
-				if apiErr := pendingStreamError(errCh); apiErr != nil {
-					return nil, apiErr
+				if raw := closedStreamOutcome(ctx, errCh); raw != nil {
+					return nil, raw
 				}
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -2263,34 +2269,13 @@ func isBlockedMetadataKey(key string) bool {
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
+// clientIP returns the client address recorded as client_ip and judged by
+// ip_acl and per-key allowed_ips. X-Forwarded-For is honoured only for the
+// configured number of trusted proxy hops (ip_acl.trusted_proxies); with the
+// default of 0 it is the TCP peer. X-Real-IP is never trusted. See
+// trustedClientIP.
+func (h *Handlers) clientIP(r *http.Request) string {
+	return trustedClientIP(r, h.trustedProxies)
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"

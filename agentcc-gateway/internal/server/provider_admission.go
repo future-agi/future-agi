@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -10,42 +9,35 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// admitProvider runs only at the upstream boundary, after credentials are resolved.
-// The returned completion must be called once, at the end of the call or stream.
-func (h *Handlers) admitProvider(ctx context.Context, rc *models.RequestContext, p providers.Provider) (func(error), error) {
-	registry := h.circuitBreakers.Load()
-	if !registry.IsEnabled() {
-		return func(error) {}, nil
+// admitProvider uses a traversal's registry snapshot and canonical configured ID.
+// Adapter identity chooses credentials; it never becomes a scope key.
+func (h *Handlers) admitProvider(ctx context.Context, registry *routing.CircuitBreakerRegistry, rc *models.RequestContext, id string, p providers.Provider) (*routing.ProbeLease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	var cb *routing.CircuitBreaker
-	if global, ok := h.registry.GetProvider(p.ID()); ok && global == p {
-		cb = registry.Get(p.ID())
-	} else {
-		cb = registry.GetScoped(rc.Metadata["org_id"], p.ID(), p)
+	if registry.IsEnabled() {
+		if global, ok := h.registry.GetProvider(id); ok && global == p {
+			cb = registry.Get(id)
+		} else if orgID := rc.Metadata["org_id"]; orgID != "" {
+			cb = registry.GetScoped(orgID, id)
+		}
 	}
-	generation, allowed := cb.Allow()
+	lease, allowed := cb.Acquire()
 	if !allowed {
 		return nil, routing.CircuitOpenError()
 	}
-	return func(err error) {
-		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
-			// Client disconnects and local aborts release the slot without claiming recovery.
-			cb.RecordFailure(generation, nil)
-		} else if err != nil {
-			cb.RecordFailure(generation, err)
-		} else {
-			cb.RecordSuccess(generation)
-		}
-	}, nil
+	return lease, nil
 }
 
-func (h *Handlers) callProvider(ctx context.Context, rc *models.RequestContext, p providers.Provider, call func() error) error {
-	complete, err := h.admitProvider(ctx, rc, p)
+func (h *Handlers) callProvider(ctx context.Context, registry *routing.CircuitBreakerRegistry, rc *models.RequestContext, p providers.Provider, call func() error) error {
+	lease, err := h.admitProvider(ctx, registry, rc, rc.Provider, p)
 	if err != nil {
 		return err
 	}
+	defer lease.Abandon()
 	err = call()
-	complete(err)
+	lease.Complete(ctx, err)
 	return err
 }
 
@@ -59,19 +51,19 @@ func (h *Handlers) modelFallbackChain(rc *models.RequestContext) []string {
 	return nil
 }
 
-// callModelFallbacks skips refused targets, not the entire fallback model.
-// call owns admission so both ordinary calls and streams share this selection loop.
-func (h *Handlers) callModelFallbacks(rc *models.RequestContext, orgCfg *tenant.OrgConfig, firstErr error, call func(providers.Provider) error) error {
-	fo := h.effectiveFailover(orgCfg)
-	if !routing.IsCircuitOpen(firstErr) && (fo == nil || !fo.ShouldFailover(firstErr)) {
+// callModelFallbacks skips only locally refused candidates. The caller explicitly
+// supplies the entry point's ordinary-error policy, independently of admission.
+func (h *Handlers) callModelFallbacks(ctx context.Context, rc *models.RequestContext, orgCfg *tenant.OrgConfig, firstErr error, ordinaryEligible bool, call func(providers.Provider) error) error {
+	if ctx.Err() != nil || (!routing.IsAdmissionRefusal(firstErr) && !ordinaryEligible) {
 		return firstErr
 	}
-	originalModel := rc.Request.Model
+	originalModel, originalProvider := rc.Request.Model, rc.Provider
+	originalMatch := rc.Metadata["org_provider_model_match"]
 	for _, model := range h.modelFallbackChain(rc) {
 		excluded := make(map[string]bool)
-		for {
-			p, id, resolvedModel, ok := h.resolveFallbackProviderExcluding(rc.Metadata["org_id"], orgCfg, rc, model, excluded)
-			if !ok {
+		for ctx.Err() == nil {
+			p, id, resolvedModel, ok := h.resolveFallbackProviderExcluding(ctx, rc.Metadata["org_id"], orgCfg, rc, model, excluded)
+			if !ok || ctx.Err() != nil {
 				break
 			}
 			rc.Provider, rc.Request.Model = id, resolvedModel
@@ -88,6 +80,7 @@ func (h *Handlers) callModelFallbacks(rc *models.RequestContext, orgCfg *tenant.
 			excluded[id] = true
 		}
 	}
-	rc.Request.Model = originalModel
+	rc.Request.Model, rc.Provider = originalModel, originalProvider
+	rc.Metadata["org_provider_model_match"] = originalMatch
 	return firstErr
 }

@@ -305,7 +305,7 @@ const CustomJsonInput = ({
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
       } catch (err) {
-        logger.error("Falcon test-data generation failed", err);
+        logger.error("Test data generation failed", err);
         enqueueSnackbar("Couldn't generate test data. Please try again.", {
           variant: "error",
         });
@@ -374,7 +374,7 @@ const CustomJsonInput = ({
                   <Typography
                     variant="body2"
                     color="text.secondary"
-                    sx={{ fontSize: "13px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     Generating...
                   </Typography>
@@ -397,7 +397,7 @@ const CustomJsonInput = ({
                     flex: 1,
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     "&::placeholder": { color: "text.disabled" },
@@ -408,7 +408,7 @@ const CustomJsonInput = ({
                   variant="body2"
                   sx={{
                     flex: 1,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontStyle: "italic",
                   }}
@@ -464,7 +464,7 @@ const CustomJsonInput = ({
                 <IconButton size="small" onClick={handleClose}>
                   <Box
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       lineHeight: 1,
                     }}
@@ -492,7 +492,7 @@ const CustomJsonInput = ({
                     width: "100%",
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     borderTop: "1px solid",
@@ -518,7 +518,7 @@ const CustomJsonInput = ({
         {/* ── Falcon button overlay (bottom-right) ── */}
         {!aiOpen && (
           <Box sx={{ position: "absolute", bottom: 8, right: 12, zIndex: 5 }}>
-            <Tooltip title="Generate test data with Falcon AI" arrow>
+            <Tooltip title="Generate test data with AI" arrow>
               <IconButton
                 size="small"
                 onClick={() => setAiOpen(true)}
@@ -574,7 +574,7 @@ const CustomJsonInput = ({
               >
                 <Box
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontFamily: "monospace",
                   }}
@@ -585,7 +585,7 @@ const CustomJsonInput = ({
                   {variable}
                 </Typography>
               </Box>
-              <Box sx={{ fontSize: "13px", color: "text.disabled" }}>→</Box>
+              <Box sx={{ fontSize: "12px", color: "text.disabled" }}>→</Box>
               <Select
                 size="small"
                 displayEmpty

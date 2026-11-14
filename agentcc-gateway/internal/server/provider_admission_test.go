@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,7 +128,7 @@ func TestProbeDirectAdmission(t *testing.T) {
 				if mode == "org-failover" {
 					orgCfg := &tenant.OrgConfig{Routing: &tenant.RoutingConfig{FallbackEnabled: true}}
 					for i := 0; i < 2; i++ {
-						if srv.handlers.effectiveFailover(orgCfg).CircuitBreakers() != srv.handlers.circuitBreakers.Load() {
+						if srv.handlers.effectiveFailover(orgCfg).CircuitBreakers() != srv.handlers.healthMonitor.CircuitBreakerRegistry() {
 							t.Fatal("org failover override lost the persistent breaker registry")
 						}
 					}
@@ -136,10 +137,10 @@ func TestProbeDirectAdmission(t *testing.T) {
 				if status, _ := probeRequest(t, gateway, "primary", key, stream); status != http.StatusBadGateway {
 					t.Fatalf("outage status=%d", status)
 				}
-				if reg := srv.handlers.circuitBreakers.Load(); reg == nil {
+				if reg := srv.handlers.healthMonitor.CircuitBreakerRegistry(); reg == nil {
 					t.Fatal("no persistent breaker registry")
 				}
-				cb := srv.handlers.circuitBreakers.Load().Get("probe")
+				cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("probe")
 				if cb.State() != routing.StateOpen {
 					t.Fatalf("direct request did not open breaker: %v", cb.State())
 				}
@@ -151,8 +152,12 @@ func TestProbeDirectAdmission(t *testing.T) {
 				case <-time.After(time.Second):
 					t.Fatal("recovery probe never reached upstream")
 				}
-				if status, body := probeRequest(t, gateway, "primary", key, stream); status != 503 || !strings.Contains(body, `"code":"circuit_open"`) {
-					t.Errorf("saturated request status=%d, circuit_open=%t", status, strings.Contains(body, `"code":"circuit_open"`))
+				code := "circuit_open"
+				if mode == "org-failover" {
+					code = "all_providers_unavailable"
+				}
+				if status, body := probeRequest(t, gateway, "primary", key, stream); status != 503 || !strings.Contains(body, `"code":"`+code+`"`) {
+					t.Errorf("saturated request status=%d body=%s, want %s", status, body, code)
 				}
 				if calls.Load() != 2 {
 					t.Errorf("upstream calls=%d, want outage plus one probe", calls.Load())
@@ -215,12 +220,12 @@ func TestProbeStreamTerminalOutcome(t *testing.T) {
 			if !scanner.Scan() || !strings.Contains(scanner.Text(), "first") {
 				t.Fatal("first chunk not delivered")
 			}
-			cb := srv.handlers.circuitBreakers.Load().Get("probe")
+			cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("probe")
 			if generation, allowed := cb.Allow(); allowed {
 				cb.RecordFailure(generation, nil)
 				t.Error("stream released its admission token at the first chunk")
 			}
-			if status, body := probeRequest(t, gateway, "primary", "", true); status != 503 || !strings.Contains(body, "circuit_open") {
+			if status, body := probeRequest(t, gateway, "primary", "", true); status != 503 || !strings.Contains(body, "all_providers_unavailable") {
 				t.Errorf("stream released probe at first chunk: status=%d", status)
 			}
 			if ending == "cancel" {
@@ -287,7 +292,7 @@ func TestProbeTenantFallbackIsolation(t *testing.T) {
 			if status, _ := probeRequest(t, gateway, "primary", "synthetic-internal-a", stream); status != 502 {
 				t.Fatalf("tenant A status=%d", status)
 			}
-			if cb := srv.handlers.circuitBreakers.Load().Get("shared"); cb.State() != routing.StateClosed {
+			if cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("shared"); cb.State() != routing.StateClosed {
 				t.Errorf("tenant fallback changed operator breaker: %v", cb.State())
 			}
 			if _, err := srv.registry.Router().Select("fallback"); err != nil {
@@ -316,6 +321,7 @@ func TestProbeOrgFallbackReselectsSaturatedTarget(t *testing.T) {
 			healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeProbeResponse(w, stream, "org-alternative") }))
 			t.Cleanup(healthy.Close)
 			cfg := probeConfig(primary.URL)
+			cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"primary": {{Provider: "probe"}}}
 			cfg.Providers["a-blocked"] = config.ProviderConfig{BaseURL: blocked.URL, APIFormat: "openai", Models: []string{"operator-blocked"}}
 			cfg.Providers["b-healthy"] = config.ProviderConfig{BaseURL: healthy.URL, APIFormat: "openai", Models: []string{"operator-healthy"}}
 			cfg.Routing.ModelFallbacks = map[string][]string{"primary": {"org-fallback"}}
@@ -328,13 +334,13 @@ func TestProbeOrgFallbackReselectsSaturatedTarget(t *testing.T) {
 			tenants := tenant.NewStore()
 			tenants.Set("probe-org", orgCfg)
 			srv, gateway := newProbeServer(t, cfg, tenants)
-			p, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("probe-org", "a-blocked", "synthetic-org", orgCfg.Providers["a-blocked"])
+			_, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("probe-org", "a-blocked", "synthetic-org", orgCfg.Providers["a-blocked"])
 			if err != nil {
 				t.Fatal(err)
 			}
-			cb := srv.handlers.circuitBreakers.Load().GetScoped("probe-org", p.ID(), p)
+			cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().GetScoped("probe-org", "a-blocked")
 			generation, _ := cb.Allow()
-			cb.RecordFailure(generation, routing.CircuitOpenError())
+			cb.RecordFailure(generation, models.ErrUpstreamProvider(503, "synthetic upstream failure"))
 			time.Sleep(30 * time.Millisecond)
 			generation, allowed := cb.Allow()
 			if !allowed {
@@ -375,9 +381,9 @@ func TestProbeFallbackReselectsSaturatedTarget(t *testing.T) {
 			}
 			cfg.Routing.ModelFallbacks = map[string][]string{"primary": {"fallback"}}
 			srv, gateway := newProbeServer(t, cfg, nil)
-			cb := srv.handlers.circuitBreakers.Load().Get("blocked")
+			cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("blocked")
 			generation, _ := cb.Allow()
-			cb.RecordFailure(generation, routing.CircuitOpenError())
+			cb.RecordFailure(generation, models.ErrUpstreamProvider(503, "synthetic upstream failure"))
 			time.Sleep(30 * time.Millisecond)
 			generation, allowed := cb.Allow()
 			if !allowed {

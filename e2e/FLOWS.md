@@ -30,6 +30,28 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-002 — Agents remain complete across bounded list pages
+
+**Goal:** A developer can browse all of their agents in bounded pages without losing rows or changing supported page sizes.
+
+**Spec:** `flows/agents/graph-page-size-cap.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. create 101 uniquely named graphs through the public graph API
+2. open Agents Playground and search for the unique flow prefix
+3. compare the exact first-page names and IDs with the authorized 25-row list response
+4. move to page two and compare the exact next 25 rows with the list API
+5. request page sizes 101 and 100000000 and require a 100-row page with capped metadata
+6. follow next_page and require the final seeded graph without duplicated or omitted IDs
+
+**Backend state verified:**
+
+- The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
+- Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -87,6 +109,28 @@
 - choices-eval alert with a valid label is created
 - PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
 - alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
+
+### ALERT-E2E-003 — alert owners configure webhooks without private destinations or unauthorized changes
+
+**Goal:** An authorized alert owner configures a public webhook through the alert editor while private destinations and unauthorized changes are refused.
+
+**Spec:** `flows/alerts/webhook-configuration.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named muted monitor with no notification destinations
+2. open the alert editor, choose Webhook, enter a public URL and save
+3. read the exact saved destination through the detail API and Postgres
+4. try a private destination through the editor and verify rejection
+5. try cross-organization, cross-workspace and viewer updates
+
+**Backend state verified:**
+
+- The browser-saved webhook is returned by the alert detail API and stored on the owner organization's muted monitor.
+- A private destination is rejected and the saved webhook remains unchanged.
+- Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
 
 ## annotations
 
@@ -259,7 +303,7 @@
 
 **Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe
 
-**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:31`
 
 **Tags:** —
 
@@ -267,21 +311,90 @@
 
 1. complete first-run checks if required
 2. sign up with a unique email and a user-supplied password
-3. complete role and organization onboarding
-4. see both demo datasets
-5. open the Observe demo project
-6. open its single demo trace and inspect the span tree
+3. wait for the held initial profile read before role and goal controls become interactive
+4. select a role and click one goal once, then save and complete organization onboarding
+5. see both demo datasets
+6. open the Observe demo project
+7. open its single demo trace and inspect the span tree
 
 **Backend state verified:**
 
+- the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:145`
 
 **Tags:** @saml
 
@@ -302,7 +415,7 @@
 
 **Goal:** The browser that initiated SSO can complete after another browser posts first
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:191`
 
 **Tags:** @saml
 
@@ -322,7 +435,7 @@
 
 **Goal:** A real cross-site IdP POST does not leak the browser binding cookie
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:255`
 
 **Tags:** @saml
 
@@ -341,7 +454,7 @@
 
 **Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:276`
 
 **Tags:** @saml
 
@@ -360,7 +473,7 @@
 
 **Goal:** A SAML session lands in the organization that signed the assertion
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:308`
 
 **Tags:** @saml
 
@@ -379,7 +492,7 @@
 
 **Goal:** A SAML callback replaces a live session without using its stale organization scope
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:339`
 
 **Tags:** @saml
 
@@ -814,6 +927,54 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — dataset PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the dataset document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
+### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the experiment document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -1059,10 +1220,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1075,7 +1236,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1102,7 +1263,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:305`
 
 **Tags:** —
 
@@ -1126,7 +1287,7 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:376`
 
 **Tags:** —
 
@@ -1151,7 +1312,7 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:431`
 
 **Tags:** —
 
@@ -1176,7 +1337,7 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:510`
 
 **Tags:** —
 
@@ -1201,7 +1362,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:207`
 
 **Tags:** —
 
@@ -1222,7 +1383,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
@@ -1249,6 +1410,87 @@
 - the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
 - both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
 - the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
+
+### EVAL-E2E-013 — a Jev choice stays under the pointer while ordinary model search loads
+
+**Goal:** Choose Jev latest with one gesture during model search and reach the TypeSafe keys drawer without selecting a model or saving a key
+
+**Spec:** `flows/evals/evaluator-picker-search.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a real evaluator draft at normal and constrained viewport heights
+2. wait for the initial decision and ordinary-model catalogs, then search Jev
+3. observe the Jev row before and during ordinary-model loading
+4. press the row, release the unmodified search response, and release the pointer at the same position
+5. read the TypeSafe drawer and the still-unselected evaluation model
+
+**Backend state verified:**
+
+- the real provider-status API reports no TypeSafe key before and after each gesture
+- the browser sends no API-key write during either gesture
+
+**Browser observations:**
+
+- Jev latest does not move at loading onset or response completion
+- one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
+- the picker stays within the viewport at both heights
+
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
+
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
+
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
+
+**Backend state verified:**
+
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
 ## gateway
 
@@ -1304,7 +1546,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -1339,6 +1581,28 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
 
 ## observe
 
@@ -2197,7 +2461,7 @@
 
 **Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
 
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+**Spec:** `flows/observe/openrouter-usage.spec.ts:45`
 
 **Tags:** —
 
@@ -2249,7 +2513,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 
@@ -2387,29 +2651,98 @@
 - The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
 - After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
 
+### OBS-E2E-061 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
+
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
 
 **Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI
 
-**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:38`
 
 **Tags:** —
 
 **User steps:**
 
 1. create and name a prompt from scratch and select the local mock model
-2. Run Prompt and wait for real stored output before opening the Evaluation tab
+2. immediately Run Prompt after selecting the model while autosave is held, then release it and open Evaluation after real stored output
 3. Add Evaluation mapped to model_output and inspect its current catalog choices
 4. edit mapping to model_input with the same binding ID and name and wait for completion
 5. delete the binding and reload to verify current discovery excludes it
 
 **Backend state verified:**
 
-- real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results
+- no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
@@ -2458,6 +2791,33 @@
 - an atomic replace on the host is seen by the container without restarting anything
 - with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
 - POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 

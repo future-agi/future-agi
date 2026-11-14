@@ -1,6 +1,7 @@
 import React from "react";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { AllCommunityModule } from "ag-grid-community";
 import { expect, within, waitFor } from "storybook/test";
 import { addCollection } from "@iconify/react";

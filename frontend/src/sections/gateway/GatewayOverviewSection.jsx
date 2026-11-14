@@ -13,10 +13,9 @@ import {
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useMutation } from "@tanstack/react-query";
+import { useGatewayHealthCheck } from "./hooks/useGatewayHealthCheck";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import axiosInstance, { endpoints } from "src/utils/axios";
 import { useGatewayContext } from "./context/useGatewayContext";
 import { useProviderHealth } from "./providers/hooks/useGatewayConfig";
 import { useAnalyticsOverview } from "./analytics/hooks/useAnalyticsOverview";
@@ -106,22 +105,7 @@ const GatewayOverviewSection = () => {
     [gateway, apiKeys, overview],
   );
 
-  const healthCheckMutation = useMutation({
-    mutationFn: async (id) => {
-      const res = await axiosInstance.post(
-        endpoints.gateway.healthCheck(id),
-        {},
-      );
-      return res.data;
-    },
-    onSuccess: () => {
-      refreshGateways();
-      enqueueSnackbar("Health check complete", { variant: "success" });
-    },
-    onError: () => {
-      enqueueSnackbar("Health check failed", { variant: "error" });
-    },
-  });
+  const healthCheckMutation = useGatewayHealthCheck();
 
   // Provider summary
   const providers = providerHealth?.providers;
@@ -234,14 +218,14 @@ const GatewayOverviewSection = () => {
             <Typography
               sx={{
                 fontFamily: "monospace",
-                fontSize: 13,
+                fontSize: 12,
                 color: "text.primary",
                 wordBreak: "break-all",
               }}
             >
               {gateway.baseUrl}
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.tertiary", mt: 0.5 }}>
+            <Typography sx={{ fontSize: 12, color: "text.tertiary", mt: 0.5 }}>
               Send OpenAI-compatible requests to this URL. Use your API key for
               authentication.
             </Typography>
@@ -394,7 +378,7 @@ const GatewayOverviewSection = () => {
             })}
           </Stack>
         ) : (
-          <Typography sx={{ fontSize: 13, color: "text.tertiary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
             No provider data. Run a health check to see provider status.
           </Typography>
         )}
@@ -403,7 +387,7 @@ const GatewayOverviewSection = () => {
             <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
               Models
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.primary" }}>
               {gateway.modelCount ?? 0}
             </Typography>
           </Box>
@@ -411,7 +395,7 @@ const GatewayOverviewSection = () => {
             <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
               Last check
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.primary" }}>
               {gateway.lastHealthCheck
                 ? new Date(gateway.lastHealthCheck).toLocaleString()
                 : "Never"}
@@ -449,7 +433,7 @@ const GatewayOverviewSection = () => {
                 bgcolor: "transparent",
                 color: "text.primary",
                 font: "inherit",
-                fontSize: 13,
+                fontSize: 12,
                 textAlign: "left",
                 cursor: "pointer",
                 "&:hover": { bgcolor: "action.hover" },

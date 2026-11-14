@@ -175,7 +175,7 @@ const EvalRow = ({
           variant="body2"
           fontWeight={600}
           noWrap
-          sx={{ fontSize: "13px", flex: 1, minWidth: 0 }}
+          sx={{ fontSize: "12px", flex: 1, minWidth: 0 }}
         >
           {item.name}
         </Typography>
@@ -798,7 +798,7 @@ const SavedEvalsList = ({
           <Typography
             variant="body2"
             fontWeight={600}
-            sx={{ fontSize: "13px", flex: 1 }}
+            sx={{ fontSize: "12px", flex: 1 }}
           >
             {hasSel
               ? `${sel.size} of ${evals.length} selected`

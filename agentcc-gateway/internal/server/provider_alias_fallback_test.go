@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,7 +82,7 @@ func TestProbeAliasTenantFallbackDuringCooldown(t *testing.T) {
 						t.Fatalf("request %d: primary=%d fallback=%d wrong=%d, want 1/%d/0", request, primaryCalls.Load(), fallbackCalls.Load(), wrongCalls.Load(), request)
 					}
 				}
-				if cb := srv.handlers.circuitBreakers.Load().Get("probe"); cb.State() != routing.StateOpen {
+				if cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("probe"); cb.State() != routing.StateOpen {
 					t.Fatalf("primary breaker=%v, want open throughout cooldown", cb.State())
 				}
 
@@ -91,16 +92,16 @@ func TestProbeAliasTenantFallbackDuringCooldown(t *testing.T) {
 				}
 
 				// A resolved tenant fallback still requires admission at the call boundary.
-				p, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("probe-org", "backup", "synthetic-tenant", orgCfg.Providers["backup"])
+				_, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("probe-org", "backup", "synthetic-tenant", orgCfg.Providers["backup"])
 				if err != nil {
 					t.Fatal(err)
 				}
-				cb := srv.handlers.circuitBreakers.Load().GetScoped("probe-org", p.ID(), p)
+				cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().GetScoped("probe-org", "backup")
 				generation, allowed := cb.Allow()
 				if !allowed {
 					t.Fatal("healthy tenant fallback refused admission")
 				}
-				cb.RecordFailure(generation, routing.CircuitOpenError())
+				cb.RecordFailure(generation, models.ErrUpstreamProvider(503, "synthetic upstream failure"))
 				status, body := probeRequest(t, gateway, "routing-alias", "synthetic-internal", stream)
 				if status != http.StatusServiceUnavailable || !strings.Contains(body, "circuit_open") {
 					t.Errorf("open tenant fallback bypassed admission: status=%d circuit_open=%t", status, strings.Contains(body, "circuit_open"))

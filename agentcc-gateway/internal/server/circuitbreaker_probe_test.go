@@ -175,8 +175,8 @@ func testHalfOpenProbeBurst(t *testing.T, stream bool, fallback string) {
 				if stream && !strings.Contains(resp.body, "[DONE]") {
 					t.Error("successful stream did not complete")
 				}
-			} else if !strings.Contains(resp.body, `"code":"circuit_open"`) {
-				t.Error("rejected response did not contain circuit_open")
+			} else if !strings.Contains(resp.body, `"code":"all_providers_unavailable"`) {
+				t.Error("rejected response did not contain all_providers_unavailable")
 			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("burst request never completed")

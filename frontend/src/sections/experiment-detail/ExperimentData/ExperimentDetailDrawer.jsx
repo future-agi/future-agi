@@ -68,7 +68,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 //           padding: 2,
 //           textAlign: "center",
 //           color: "text.primary",
-//           fontSize: 13,
+//           fontSize: 12,
 //           fontWeight:400
 //         }}
 //       >
@@ -158,7 +158,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 //           {String.fromCharCode(65 + index)}
 //           {/* E{index} */}
 //         </Box>
-//         <Typography fontWeight={600} fontSize={13} color="text.primary">
+//         <Typography fontWeight={600} fontSize={12} color="text.primary">
 //           {col?.group?.name}
 //         </Typography>
 //       </Box>
@@ -195,7 +195,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 //                   width: "0px",
 //                 },
 //                 headerBackgroundColor: "background.paper",
-//                 fontSize:"13px"
+//                 fontSize:"12px"
 //               })}
 //               columnDefs={TabColumnDefs(setOpenDetailRow)}
 //               defaultColDef={defaultColDef}

@@ -22,16 +22,12 @@ import RightSectionAuth from "./RightSectionAuth";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import RadioField from "src/components/RadioField/RadioField";
-import { FormCheckboxField } from "src/components/FormCheckboxField";
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
 import { useAuthContext } from "src/auth/hooks";
-import {
-  AVAILABLE_ROLES,
-  DEFAULT_ROLES,
-  GOALS_LIST,
-  ROLE_OPTIONS,
-} from "./constants";
-import { organizationSchema, userDataSchema } from "./zodSchema";
+import { ROLE_OPTIONS } from "./constants";
+import { organizationSchema } from "./zodSchema";
+import OnboardingProfileForm from "./onboarding-profile-form";
 import { generateNameFromEmail, redirectAfterOrgSetup } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import SvgColor from "src/components/svg-color";
@@ -272,44 +268,23 @@ const SetupOrganization = ({ getStarted = false }) => {
     select: (d) => d?.data?.result,
   });
 
-  const { data: userOnboardingData } = useQuery({
+  const {
+    data: userOnboardingData,
+    isError: isOnboardingError,
+    refetch: refetchOnboarding,
+  } = useQuery({
     queryKey: ["user-role-goals"],
-    queryFn: async () => {
-      const response = await axios.get(endpoints.auth.user_onboarding_info);
+    queryFn: async ({ signal }) => {
+      const response = await axios.get(endpoints.auth.user_onboarding_info, {
+        signal,
+      });
       return response;
     },
-
+    enabled: !getStarted,
     select: (d) => d?.data?.result,
+    // The step shows its own error state with Retry instead of a toast.
+    meta: { errorHandled: true },
   });
-
-  const defaultValuesForUserForm = useCallback(() => {
-    const customRole = !DEFAULT_ROLES?.includes(userOnboardingData?.role);
-    const goalsArray = GOALS_LIST.map((goal) => {
-      const isSelected = userOnboardingData?.goals?.some(
-        (g) => g.toLowerCase() === goal.label.toLowerCase(),
-      );
-
-      return isSelected;
-    });
-
-    return {
-      role: customRole ? "" : userOnboardingData?.role || "",
-      customRole: customRole ? userOnboardingData?.role || "" : "",
-      goals: goalsArray,
-    };
-  }, [userOnboardingData]);
-
-  const userForm = useForm({
-    resolver: zodResolver(userDataSchema),
-    defaultValues: defaultValuesForUserForm(),
-  });
-  useEffect(() => {
-    if (userOnboardingData) {
-      const newDefaults = defaultValuesForUserForm();
-
-      userForm.reset(newDefaults);
-    }
-  }, [userOnboardingData]);
 
   const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({
     mutationFn: async (data) => {
@@ -318,7 +293,18 @@ const SetupOrganization = ({ getStarted = false }) => {
     meta: {
       errorHandled: true,
     },
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
+      // An in-flight read must not overwrite the saved profile on a later mount.
+      await queryClient.cancelQueries({ queryKey: ["user-role-goals"] });
+      const savedProfile = data.data.result.data;
+      queryClient.setQueryData(["user-role-goals"], {
+        data: {
+          result: {
+            ...savedProfile,
+            completed: Boolean(savedProfile.role && savedProfile.goals.length),
+          },
+        },
+      });
       enqueueSnackbar("Profile updated successfully", { variant: "success" });
       const provider = localStorage.getItem("signupProvider");
       trackEvent(Events.signUpCompleted, {
@@ -346,25 +332,6 @@ const SetupOrganization = ({ getStarted = false }) => {
       });
     },
   });
-  const { handleSubmit: handleSubmitUserData } = userForm;
-  const onSubmitUserData = (data, isSkipped = false) => {
-    if (isSavingUserData) {
-      return;
-    }
-    const payload = {
-      role: data?.customRole || data?.role,
-      goals: isSkipped
-        ? []
-        : GOALS_LIST.filter((_, index) => data?.goals[index]).map(
-            (goal) => goal?.label,
-          ),
-    };
-
-    saveUserData(payload);
-  };
-
-  const customRoleValue = userForm.watch("customRole");
-  const roleValue = userForm.watch("role");
   const orgForm = useForm({
     resolver: zodResolver(organizationSchema),
     mode: "onChange",
@@ -399,18 +366,6 @@ const SetupOrganization = ({ getStarted = false }) => {
       orgForm.reset(initialData);
     }
   }, [initialData, orgForm]);
-
-  useEffect(() => {
-    if (customRoleValue) {
-      userForm.setValue("role", "");
-    }
-  }, [customRoleValue]);
-
-  useEffect(() => {
-    if (roleValue) {
-      userForm.setValue("customRole", "");
-    }
-  }, [roleValue]);
 
   const addMember = useCallback(() => {
     append({
@@ -801,7 +756,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"13px"}
+              fontSize={"12px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now
@@ -815,152 +770,8 @@ const SetupOrganization = ({ getStarted = false }) => {
   const renderContent = () => {
     switch (activeStep) {
       case 0:
-        return (
-          <Stack spacing={2} width="440px">
-            <Box>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "24px",
-                  color: "text.primary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                What&apos;s your role
-              </Typography>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "24px",
-                  color: "text.secondary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                Select the job title you most identify with
-              </Typography>
-            </Box>
-
-            <RadioField
-              custom
-              control={userForm.control}
-              fieldName="role"
-              optionColor="text.primary"
-              labelColor="text.primary"
-              label={undefined}
-              groupSx={{ padding: 0, marginLeft: -1 }}
-              options={AVAILABLE_ROLES}
-            />
-
-            <Typography variant="M3" fontWeight={"fontWeightMedium"}>
-              Don&apos;t see your role?
-            </Typography>
-
-            <Controller
-              name="customRole"
-              control={userForm.control}
-              render={({ field, fieldState: { error } }) => (
-                <TextField
-                  {...field}
-                  fullWidth
-                  size="small"
-                  placeholder="Tell us about your role"
-                  variant="outlined"
-                  error={!!error}
-                  helperText={error?.message}
-                  sx={{
-                    backgroundColor: "background.neutral",
-                    borderRadius: "4px",
-                  }}
-                />
-              )}
-            />
-
-            <Button
-              variant="contained"
-              disabled={!roleValue && !customRoleValue}
-              onClick={() => setActiveStep(1)}
-              color="primary"
-            >
-              Continue
-            </Button>
-          </Stack>
-        );
-
       case 1:
-        return (
-          <Stack spacing={2} width="440px">
-            <Box>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "24px",
-                  color: "text.primary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                Let&apos;s get started
-              </Typography>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "24px",
-                  color: "text.secondary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                Tell us about your goals
-              </Typography>
-            </Box>
-
-            <Stack spacing={1}>
-              {GOALS_LIST.map((goal, index) => (
-                <FormCheckboxField
-                  key={goal.id}
-                  isCustom={true}
-                  labelPlacement="end"
-                  control={userForm.control}
-                  fieldName={`goals.${index}`}
-                  label={goal.label}
-                  helperText={goal.description}
-                />
-              ))}
-            </Stack>
-            <LoadingButton
-              size="large"
-              variant="contained"
-              loading={isSavingUserData}
-              disabled={isSavingUserData || (!roleValue && !customRoleValue)}
-              onClick={handleSubmitUserData((data) =>
-                onSubmitUserData(data, false),
-              )}
-              color="primary"
-            >
-              Continue
-            </LoadingButton>
-
-            <Typography
-              textAlign="center"
-              onClick={
-                !isSavingUserData
-                  ? handleSubmitUserData((data) => onSubmitUserData(data, true))
-                  : undefined
-              }
-              sx={{
-                cursor: isSavingUserData ? "not-allowed" : "pointer",
-                opacity: isSavingUserData ? 0.6 : 1,
-              }}
-              color="primary.main"
-              variant="s1.2"
-              fontWeight={"fontWeightMedium"}
-            >
-              Skip for now
-            </Typography>
-          </Stack>
-        );
+        return null;
 
       case 2:
         if (!isOwner) {
@@ -1072,6 +883,26 @@ const SetupOrganization = ({ getStarted = false }) => {
             position="static"
             activeStep={activeStep}
           />
+          {userOnboardingData ? (
+            <OnboardingProfileForm
+              initialData={userOnboardingData}
+              activeStep={activeStep}
+              setActiveStep={setActiveStep}
+              saveUserData={saveUserData}
+              isSavingUserData={isSavingUserData}
+            />
+          ) : (
+            (activeStep === 0 || activeStep === 1) &&
+            (isOnboardingError ? (
+              <ErrorState
+                title="Couldn't load your profile"
+                detail="Retry to choose your role and goals."
+                onRetry={() => refetchOnboarding()}
+              />
+            ) : (
+              <ContentSkeleton variant="panel" label="Loading your profile" />
+            ))
+          )}
           {renderContent()}
         </Box>
       </Box>

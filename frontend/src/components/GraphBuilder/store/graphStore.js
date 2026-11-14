@@ -1,11 +1,12 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
+import { registerUserStoreReset } from "src/utils/auth/userStoreResets";
 import {
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
   MarkerType,
 } from "@xyflow/react";
-import { getRandomId } from "src/utils/utils";
+import { getRandomId } from "src/utils/getRandomId";
 import logger from "src/utils/logger";
 import { validateGraphConnectivity } from "../connectivity";
 
@@ -278,7 +279,22 @@ export const useGraphStore = create((set, get) => ({
       activeEdgeId: null,
     });
   },
+
+  reset: () => {
+    set({
+      nodes: getInitialNodes(),
+      edges: initialEdges,
+      activeNodeId: null,
+      activeEdgeId: null,
+    });
+  },
 }));
+
+export const resetGraphStore = () => {
+  useGraphStore.getState().reset();
+};
+
+registerUserStoreReset("graph-builder", resetGraphStore);
 
 export function getNodeLabel(nodeType) {
   switch (nodeType) {

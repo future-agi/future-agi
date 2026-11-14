@@ -1,12 +1,12 @@
 package routing
 
 import (
+	"context"
 	"errors"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// CircuitBreakers returns the persistent registry, including for per-request failover overrides.
 func (f *Failover) CircuitBreakers() *CircuitBreakerRegistry {
 	if f == nil {
 		return nil
@@ -14,44 +14,49 @@ func (f *Failover) CircuitBreakers() *CircuitBreakerRegistry {
 	return f.cbReg
 }
 
-// CircuitOpenError distinguishes a local admission refusal from an upstream failure.
+// admissionRefusal is local provenance, not an upstream API code string.
+type admissionRefusal struct{ api *models.APIError }
+
+func (e *admissionRefusal) Error() string { return e.api.Error() }
+func (e *admissionRefusal) Unwrap() error { return e.api }
+
 func CircuitOpenError() error {
-	return &models.APIError{
+	return &admissionRefusal{api: &models.APIError{
 		Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
 		Message: "Provider circuit is open or at its probe limit",
-	}
+	}}
+}
+
+// ProvidersUnavailableError marks selection exhaustion without an upstream call.
+func ProvidersUnavailableError(message string) error {
+	return &admissionRefusal{api: models.ErrServiceUnavailable(message)}
+}
+
+func IsAdmissionRefusal(err error) bool {
+	var refusal *admissionRefusal
+	return errors.As(err, &refusal)
 }
 
 func IsCircuitOpen(err error) bool {
-	var apiErr *models.APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "circuit_open"
+	var refusal *admissionRefusal
+	return errors.As(err, &refusal) && refusal.api.Code == "circuit_open"
 }
 
-// CallProvider applies this failover's circuit breaker to an already-resolved provider.
-// Model fallbacks use it without adding routing, retries or timeouts of their own.
+// CallProvider admits an already resolved provider using the same scope as Execute.
 func (f *Failover) CallProvider(providerID string, call func() error) error {
-	_, err := f.callProvider(providerID, call)
-	return err
+	return f.CallProviderContext(context.Background(), providerID, call)
 }
 
-// callProvider distinguishes admission rejection from an error returned by the provider.
-func (f *Failover) callProvider(providerID string, call func() error) (admitted bool, err error) {
-	if !f.cbReg.IsEnabled() {
-		return true, call()
+func (f *Failover) CallProviderContext(ctx context.Context, providerID string, call func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	cb := f.cbReg.Get(providerID)
-	generation, allowed := cb.Allow()
+	lease, allowed := f.circuitBreakerFor(providerID).Acquire()
 	if !allowed {
-		return false, CircuitOpenError()
+		return CircuitOpenError()
 	}
-
-	// Keep one admission generation across the entire call, including any retries.
-	err = call()
-	if err == nil {
-		cb.RecordSuccess(generation)
-	} else {
-		cb.RecordFailure(generation, err)
-	}
-	return true, err
+	defer lease.Abandon()
+	err := call()
+	lease.Complete(ctx, err)
+	return err
 }

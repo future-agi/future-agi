@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 
@@ -15,11 +16,17 @@ var DefaultFailoverStatusCodes = []int{429, 500, 502, 503, 504}
 
 // Failover handles automatic provider failover on errors.
 type Failover struct {
-	cfg     config.FailoverConfig
-	router  *Router
-	retryer *Retryer
-	cbReg   *CircuitBreakerRegistry
-	codes   map[int]bool
+	cfg               config.FailoverConfig
+	router            *Router
+	retryer           *Retryer
+	cbReg             *CircuitBreakerRegistry
+	codes             map[int]bool
+	useCircuitBreaker func(string) bool
+	admit             func(context.Context, string) (*ProbeLease, error)
+	// orgBreakers holds BYOK breakers keyed by (org, provider). breakerScope is
+	// the org a request-scoped copy records into; empty means no org breaker.
+	orgBreakers  *ScopedCircuitBreakerRegistry
+	breakerScope string
 }
 
 // FailoverCallFunc is called for each failover attempt.
@@ -50,13 +57,58 @@ func NewFailover(cfg config.FailoverConfig, router *Router, retryer *Retryer, cb
 		codes[c] = true
 	}
 
-	return &Failover{
+	f := &Failover{
 		cfg:     cfg,
 		router:  router,
 		retryer: retryer,
 		cbReg:   cbReg,
 		codes:   codes,
 	}
+	if cbReg.IsEnabled() {
+		f.orgBreakers = cbReg.orgBreakers
+	}
+	return f
+}
+
+// WithCircuitBreakerFilter scopes admission and outcome recording per attempt.
+// The request-local filter must identify the actual instance used by the call.
+func (f *Failover) WithCircuitBreakerFilter(filter func(string) bool) *Failover {
+	scoped := *f
+	scoped.useCircuitBreaker = filter
+	return &scoped
+}
+
+// WithOrgCircuitBreakers is WithCircuitBreakerFilter for an org's request:
+// attempts the filter rejects (the org's own key) use a breaker for
+// (orgID, provider), with the shared thresholds, so one org's failures never
+// open the operator breaker or another org's. An empty orgID means none.
+func (f *Failover) WithOrgCircuitBreakers(orgID string, filter func(string) bool) *Failover {
+	scoped := f.WithCircuitBreakerFilter(filter)
+	scoped.breakerScope = orgID
+	return scoped
+}
+
+// circuitBreakerFor returns the breaker that admits and records an attempt
+// on providerID, or nil when the attempt has none.
+func (f *Failover) circuitBreakerFor(providerID string) *CircuitBreaker {
+	if !f.cbReg.IsEnabled() {
+		return nil
+	}
+	if f.useCircuitBreaker == nil || f.useCircuitBreaker(providerID) {
+		return f.cbReg.Get(providerID)
+	}
+	if f.breakerScope == "" || f.orgBreakers == nil {
+		return nil
+	}
+	return f.orgBreakers.Get(f.breakerScope, providerID)
+}
+
+// WithAdmission resolves the selected candidate and acquires its lease once,
+// before the retry group. Only an explicit local refusal skips the attempt.
+func (f *Failover) WithAdmission(admit func(context.Context, string) (*ProbeLease, error)) *Failover {
+	scoped := *f
+	scoped.admit = admit
+	return &scoped
 }
 
 // IsEnabled returns true if failover is enabled and a router is available.
@@ -91,24 +143,31 @@ func (f *Failover) ShouldFailover(err error) bool {
 
 // Execute runs the failover loop, trying providers until one succeeds or all fail.
 func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, error) {
-	return f.execute(ctx, model, call, f.callProvider)
+	result, _, err := f.execute(ctx, model, call, false)
+	return result, err
 }
 
-// ExecuteWithAdmission delegates admission to the caller, which can resolve tenant
-// credentials first and keep a streaming probe alive beyond its first chunk.
-func (f *Failover) ExecuteWithAdmission(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, error) {
-	return f.execute(ctx, model, call, func(_ string, call func() error) (bool, error) {
-		err := call()
-		return !IsCircuitOpen(err), err
-	})
+// ExecuteStream transfers the successful attempt's lease to the stream consumer.
+// Failed startup retries share a lease and complete only their final outcome.
+func (f *Failover) ExecuteStream(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, *ProbeLease, error) {
+	return f.execute(ctx, model, call, true)
 }
 
-func (f *Failover) execute(ctx context.Context, model string, call FailoverCallFunc, admit func(string, func() error) (bool, error)) (*FailoverResult, error) {
+func (f *Failover) execute(ctx context.Context, model string, call FailoverCallFunc, transfer bool) (*FailoverResult, *ProbeLease, error) {
 	excluded := make(map[string]bool)
 	var lastErr error
 	var originalProvider string
 
-	for attempt := 1; attempt <= f.cfg.MaxAttempts; attempt++ {
+	// Refused targets are excluded, but only admitted provider calls spend the
+	// attempt budget. Selection ends once all distinct providers are excluded.
+	attempt := 0
+	for attempt < f.cfg.MaxAttempts {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, nil, lastErr
+			}
+			return nil, nil, err
+		}
 		// Select a target, excluding already-tried providers.
 		var result *RoutingResult
 		var err error
@@ -119,38 +178,81 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 		}
 		if err != nil {
 			if lastErr != nil {
-				return nil, lastErr // Return the actual provider error, not "no targets"
+				return nil, nil, lastErr // Return the actual provider error, not "no targets"
 			}
-			return nil, models.ErrServiceUnavailable(err.Error())
+			if len(excluded) > 0 || f.router.TargetCount(model) > 0 {
+				return nil, nil, ProvidersUnavailableError(fmt.Sprintf("all providers for model %q are unavailable", model))
+			}
+			return nil, nil, err
 		}
 
 		if originalProvider == "" {
 			originalProvider = result.Target.ProviderID
 		}
 
-		admitted, callErr := admit(result.Target.ProviderID, func() error {
-			// Create per-attempt timeout so later attempts get their full time.
-			attemptCtx := ctx
-			if f.cfg.PerAttemptTimeout > 0 {
-				var cancel context.CancelFunc
-				attemptCtx, cancel = context.WithTimeout(ctx, f.cfg.PerAttemptTimeout)
-				defer cancel()
+		// Resolve and admit before retrying; refusal is explicit local provenance.
+		var lease *ProbeLease
+		var admissionErr error
+		if f.admit != nil {
+			lease, admissionErr = f.admit(ctx, result.Target.ProviderID)
+		} else {
+			cb := f.circuitBreakerFor(result.Target.ProviderID)
+			if ctx.Err() != nil {
+				admissionErr = ctx.Err()
+			} else {
+				var allowed bool
+				lease, allowed = cb.Acquire()
+				if !allowed {
+					admissionErr = CircuitOpenError()
+				}
 			}
+		}
+		if admissionErr != nil {
+			if IsCircuitOpen(admissionErr) {
+				excluded[result.Target.ProviderID] = true
+				continue
+			}
+			if lastErr != nil {
+				return nil, nil, lastErr
+			}
+			return nil, nil, admissionErr
+		}
 
-			if f.retryer.IsEnabled() {
-				_, err := f.retryer.Execute(attemptCtx, func() error {
-					return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
-				})
+		// Create per-attempt timeout if configured so later attempts get full time.
+		attemptCtx := ctx
+		var attemptCancel context.CancelFunc
+		if f.cfg.PerAttemptTimeout > 0 {
+			attemptCtx, attemptCancel = context.WithTimeout(ctx, f.cfg.PerAttemptTimeout)
+		}
+
+		// Call the provider (with retry if configured).
+		attempt++
+		var callErr, previousErr error
+		invoke := func() error {
+			if err := attemptCtx.Err(); err != nil {
+				if previousErr != nil {
+					return previousErr
+				}
 				return err
 			}
-			return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
-		})
-		if !admitted {
-			excluded[result.Target.ProviderID] = true
-			if lastErr == nil {
-				lastErr = callErr
-			}
-			continue
+			previousErr = call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
+			return previousErr
+		}
+		if f.retryer.IsEnabled() {
+			_, callErr = f.retryer.Execute(attemptCtx, invoke)
+		} else {
+			callErr = invoke()
+		}
+		if callErr == nil && attemptCtx.Err() != nil {
+			callErr = attemptCtx.Err()
+		}
+
+		// Classify before canceling the short-lived startup/attempt context.
+		if callErr != nil || !transfer {
+			lease.Complete(attemptCtx, callErr)
+		}
+		if attemptCancel != nil {
+			attemptCancel()
 		}
 
 		if callErr == nil {
@@ -159,9 +261,9 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 				ModelOverride:    result.Target.ModelOverride,
 				Attempts:         attempt,
 				OriginalProvider: originalProvider,
-				FallbackUsed:     attempt > 1,
+				FallbackUsed:     result.Target.ProviderID != originalProvider,
 				StrategyName:     result.StrategyName,
-			}, nil
+			}, lease, nil
 		}
 
 		lastErr = callErr
@@ -169,16 +271,16 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 
 		// Check if we should failover.
 		if !f.ShouldFailover(callErr) {
-			return nil, callErr
+			return nil, nil, callErr
 		}
 
 		// Check context cancellation.
 		if ctx.Err() != nil {
-			return nil, lastErr
+			return nil, nil, lastErr
 		}
 	}
 
-	return nil, lastErr
+	return nil, nil, lastErr
 }
 
 // isTimeoutError checks if an error is a timeout.

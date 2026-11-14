@@ -48,6 +48,7 @@ type CircuitBreaker struct {
 	cfg            config.CircuitBreakerConfig
 	codes          map[int]bool
 	onStateChange  func(string, bool) // providerID, healthy
+	readmitted     bool               // routing eligibility already published for this open cycle
 }
 
 // NewCircuitBreaker creates a circuit breaker for a provider.
@@ -98,6 +99,12 @@ func (cb *CircuitBreaker) Allow() (generation uint64, allowed bool) {
 			cb.generation++
 			cb.successes = 0
 			cb.halfOpenProbes = 0
+			// Direct probes can enter recovery before the cooldown callback runs.
+			// Publish eligibility in this epoch so later routed probes are not stranded.
+			if cb.onStateChange != nil && !cb.readmitted {
+				cb.onStateChange(cb.providerID, true)
+				cb.readmitted = true
+			}
 			slog.Debug("circuit breaker half-open",
 				"provider", cb.providerID,
 			)
@@ -223,7 +230,19 @@ func (cb *CircuitBreaker) State() CircuitState {
 // the circuit is open the router skips the provider, so no request would otherwise reach Allow
 // to move the circuit to half-open; Allow and the half-open probes decide from there.
 func (cb *CircuitBreaker) readmitAfterCooldown() {
-	time.AfterFunc(cb.cfg.Cooldown, func() { cb.onStateChange(cb.providerID, true) })
+	cb.readmitted = false
+	generation := cb.generation
+	time.AfterFunc(cb.cfg.Cooldown, func() { cb.readmit(generation) })
+}
+
+// readmit serializes callbacks with transitions, including a newer open cycle.
+func (cb *CircuitBreaker) readmit(generation uint64) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.generation == generation && cb.state == StateOpen && cb.onStateChange != nil && !cb.readmitted {
+		cb.readmitted = true
+		cb.onStateChange(cb.providerID, true)
+	}
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.
@@ -243,17 +262,19 @@ func (cb *CircuitBreaker) isFailure(err error) bool {
 type CircuitBreakerRegistry struct {
 	mu       sync.RWMutex
 	breakers map[string]*CircuitBreaker
-	scoped   map[breakerScope]scopedBreaker
 	cfg      config.CircuitBreakerConfig
 	onChange func(string, bool)
+	// Share org state across global and per-request failover configurations.
+	orgBreakers *ScopedCircuitBreakerRegistry
 }
 
 // NewCircuitBreakerRegistry creates a registry of circuit breakers.
 func NewCircuitBreakerRegistry(cfg config.CircuitBreakerConfig, onChange func(string, bool)) *CircuitBreakerRegistry {
 	return &CircuitBreakerRegistry{
-		breakers: make(map[string]*CircuitBreaker),
-		cfg:      cfg,
-		onChange: onChange,
+		breakers:    make(map[string]*CircuitBreaker),
+		cfg:         cfg,
+		onChange:    onChange,
+		orgBreakers: NewScopedCircuitBreakerRegistry(cfg),
 	}
 }
 
@@ -277,32 +298,9 @@ func (r *CircuitBreakerRegistry) Get(providerID string) *CircuitBreaker {
 	return cb
 }
 
-type breakerScope struct {
-	tenantID   string
-	providerID string
-}
-
-type scopedBreaker struct {
-	instance any
-	breaker  *CircuitBreaker
-}
-
-// GetScoped isolates tenant credentials from operator health and other tenants.
-// A replacement provider starts a new recovery cycle; in-flight calls keep their old breaker.
-// instance must be a comparable provider identity (the provider adapters are pointers).
-func (r *CircuitBreakerRegistry) GetScoped(tenantID, providerID string, instance any) *CircuitBreaker {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	key := breakerScope{tenantID, providerID}
-	if entry, ok := r.scoped[key]; ok && entry.instance == instance {
-		return entry.breaker
-	}
-	if r.scoped == nil {
-		r.scoped = make(map[breakerScope]scopedBreaker)
-	}
-	cb := NewCircuitBreaker(providerID, r.cfg, nil)
-	r.scoped[key] = scopedBreaker{instance: instance, breaker: cb}
-	return cb
+// GetScoped uses the bounded org/provider store, independent of adapter replacement.
+func (r *CircuitBreakerRegistry) GetScoped(orgID, providerID string) *CircuitBreaker {
+	return r.orgBreakers.Get(orgID, providerID)
 }
 
 // IsEnabled returns true if circuit breaking is enabled.

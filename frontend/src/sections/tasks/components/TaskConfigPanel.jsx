@@ -19,7 +19,7 @@ import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
+import TaskProjectField from "./TaskProjectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import {
   EvalPickerDrawer,
@@ -28,6 +28,7 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
+import TaskSamplingSection from "./task_sampling_section";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
@@ -55,7 +56,8 @@ const SectionHeader = ({ title, subtitle, action }) => (
       <Typography
         variant="subtitle2"
         fontWeight={600}
-        sx={{ fontSize: "13px" }}
+        component="h2"
+        sx={{ fontSize: "12px" }}
       >
         {title}
       </Typography>
@@ -158,7 +160,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             variant="body2"
             fontWeight={500}
             noWrap
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             {name}
           </Typography>
@@ -280,7 +282,7 @@ const TaskConfigPanel = ({
   mode,
   control,
   setValue,
-  getValues: _getValues,
+  getValues,
   projectLocked = false,
   initialProjectName = null,
 }) => {
@@ -528,8 +530,10 @@ const TaskConfigPanel = ({
           flexDirection: "column",
           gap: 2.5,
           p: 2.5,
+          minWidth: 0,
           overflow: "auto",
           height: "100%",
+          boxSizing: "border-box",
         }}
       >
         {/* ── Basic Info ── */}
@@ -563,12 +567,8 @@ const TaskConfigPanel = ({
                 helperText="Project cannot be changed after creation"
               />
             ) : (
-              <FormSearchSelectFieldControl
+              <TaskProjectField
                 control={control}
-                fieldName="project"
-                size="small"
-                label="Project"
-                required
                 options={
                   projectsList?.map((p) => ({
                     label: p.name,
@@ -576,8 +576,6 @@ const TaskConfigPanel = ({
                   })) || []
                 }
                 onChange={handleProjectFieldChange}
-                style={{ width: "100%" }}
-                noOptions="No projects available"
               />
             )}
 
@@ -626,28 +624,32 @@ const TaskConfigPanel = ({
 
         <Divider />
 
-        {/* Everything below Basic Info is disabled until a project is selected */}
+        {!isProjectSelected && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "12px", display: "block", fontStyle: "italic" }}
+          >
+            Select a project to configure filters, scheduling, and evaluations.
+          </Typography>
+        )}
+
+        {/* Controls are disabled until a project is selected; keep the instruction readable. */}
         <Box
+          component="fieldset"
+          disabled={!isProjectSelected}
           sx={{
+            m: 0,
+            p: 0,
+            border: 0,
+            minWidth: 0,
             display: "flex",
             flexDirection: "column",
             gap: 2.5,
-            opacity: isProjectSelected ? 1 : 0.45,
+            // Keep instructions and validation readable even before project selection.
             pointerEvents: isProjectSelected ? "auto" : "none",
-            transition: "opacity 0.15s",
           }}
         >
-          {!isProjectSelected && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "12px", display: "block", fontStyle: "italic" }}
-            >
-              Select a project to configure filters, scheduling, and
-              evaluations.
-            </Typography>
-          )}
-
           {/* ── Evaluations ── */}
           <Box>
             <SectionHeader
@@ -690,7 +692,7 @@ const TaskConfigPanel = ({
                 <Typography
                   variant="body2"
                   color="text.disabled"
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   No evaluations added yet
                 </Typography>
@@ -728,10 +730,15 @@ const TaskConfigPanel = ({
           {/* ── Scheduling ── */}
           <Box>
             <SectionHeader
-              title="Scheduling"
-              subtitle="Choose when and how much data to evaluate"
+              title="When to run"
+              subtitle="Execution timing is separate from data selection"
             />
             <TaskSchedulingSection control={control} isEdit={mode === "edit"} />
+          </Box>
+          <Divider />
+          <Box>
+            <SectionHeader title="Data to evaluate" />
+            <TaskSamplingSection control={control} getValues={getValues} />
           </Box>
         </Box>
       </Box>
