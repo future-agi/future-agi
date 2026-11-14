@@ -279,11 +279,30 @@ describe("RequestLogRetentionCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("labels the error of the previous run while a new one runs", async () => {
+    mockGet.mockResolvedValue({
+      data: response({
+        last_run: {
+          started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          finished_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          deleted_rows: 3,
+          error: "canceling statement due to lock timeout",
+        },
+      }),
+    });
+    renderCard();
+    expect(
+      await screen.findByText(
+        "Previous run: canceling statement due to lock timeout",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("explains which budget periods cleanup keeps", async () => {
     renderCard();
     expect(
       await screen.findByText(
-        "Each run keeps the current period of every budget, and by default the whole current calendar month (UTC) for the gateway's own budgets.",
+        "Each run keeps the current period of every budget, and by default the current calendar month and week (UTC) for the gateway's own budgets.",
       ),
     ).toBeInTheDocument();
   });

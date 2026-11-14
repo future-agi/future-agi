@@ -16,7 +16,7 @@ gateway's period rules (an empty period takes ``default_period``, then
 monthly; a period the gateway does not know counts as monthly). Budgets in
 the gateway's own YAML are invisible here, and the gateway seeds them from
 the current month by default, so every run also keeps the current UTC month
-unless AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS says there are none.
+and week unless AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS says there are none.
 
 The purge deletes in short batches, each its own transaction with a lock
 timeout. A batch locks only the rows it deletes and skips rows another
@@ -93,6 +93,11 @@ _PURGE_SQL = {
     """,
 }
 
+
+# The periods kept for budgets in the gateway's own YAML, which Django cannot
+# read: the current month and the current week. A YAML "total" budget needs
+# Request Logs kept forever (deploy/README.md).
+_GATEWAY_YAML_PERIODS = frozenset({"monthly", "weekly"})
 
 # The contract's camelCase aliases (agentcc/contracts/gateway_admin.py).
 _BUDGET_ALIASES = {
@@ -221,7 +226,7 @@ def effective_cutoff(retention_days, budgets, now=None):
 
     The retention's own cutoff, moved back to the start of the current period
     of every budget in use, so no budget loses a row it counts; and to the
-    start of the current UTC month, for the budgets of the gateway's own YAML,
+    start of the current UTC month and week, for the gateway's own YAML budgets,
     unless AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS says it has none.
     """
     if not retention_days:
@@ -230,7 +235,9 @@ def effective_cutoff(retention_days, budgets, now=None):
     if "total" in periods:
         return None
     if not settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS:
-        periods = periods | {DEFAULT_BUDGET_PERIOD}
+        # The gateway YAML's budgets: monthly by default, but a weekly one's
+        # week can start in the previous month (a daily one is inside both).
+        periods = periods | _GATEWAY_YAML_PERIODS
     now = now or timezone.now()
     cutoff = now - timedelta(days=retention_days)
     for period in periods:

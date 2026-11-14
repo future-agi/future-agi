@@ -460,13 +460,13 @@ seeds its budget counters from these rows when it starts, so every run keeps:
 
 - the current period of each budget in the organization's gateway config (a
   `total` budget keeps every row), and
-- the whole current UTC calendar month, for budgets defined in the gateway's
-  own YAML config, whose default period is monthly and which the app cannot
-  read. Set `AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS=true` on the backend and
+- the whole current UTC calendar month and the current week (from Monday),
+  for budgets defined in the gateway's own YAML config, whose default period
+  is monthly and which the app cannot read. Set `AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS=true` on the backend and
   worker only when the gateway YAML has no `budgets` section.
 
-A gateway YAML budget with a `weekly` or `daily` period is covered by the
-current month; one with period `total` needs Request Logs kept forever.
+A gateway YAML budget with a `monthly`, `weekly` or `daily` period is covered;
+one with period `total` needs Request Logs kept forever.
 
 ## Gateway webhook events: housekeeping
 

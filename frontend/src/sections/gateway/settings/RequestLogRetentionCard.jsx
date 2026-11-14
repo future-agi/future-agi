@@ -219,7 +219,7 @@ export default function RequestLogRetentionCard() {
               </Typography>
               <Typography variant="s3" color="text.secondary">
                 Each run keeps the current period of every budget, and by
-                default the whole current calendar month (UTC) for the
+                default the current calendar month and week (UTC) for the
                 gateway&apos;s own budgets.
               </Typography>
             </Box>
@@ -279,7 +279,11 @@ export default function RequestLogRetentionCard() {
                     </Typography>
                   )}
                   {lastRun.error && (
-                    <Alert severity="error">{lastRun.error}</Alert>
+                    <Alert severity="error">
+                      {runInProgress
+                        ? `Previous run: ${lastRun.error}`
+                        : lastRun.error}
+                    </Alert>
                   )}
                 </Stack>
               ) : (

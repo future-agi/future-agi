@@ -1906,7 +1906,7 @@ and those older than `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` expire.
     keys = ["AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS"]
     default = "`false`"
     setups = ["S", "D", "H"]
-    text = "Backend and worker: Request Logs retention always keeps the current UTC calendar month, because the gateway seeds the budgets of its own YAML config (default period monthly) from those rows and the app cannot read that file. Set `true` only when the gateway YAML defines no budgets; then retention keeps only the current period of each organization's own budgets. A gateway YAML budget with period `total` needs Request Logs kept forever. Helm: `config.extraEnv`."
+    text = "Backend and worker: Request Logs retention always keeps the current UTC calendar month and week, because the gateway seeds the budgets of its own YAML config (default period monthly) from those rows and the app cannot read that file. Set `true` only when the gateway YAML defines no budgets; then retention keeps only the current period of each organization's own budgets. A gateway YAML budget with period `total` needs Request Logs kept forever. Helm: `config.extraEnv`."
 
     [[part.section.row]]
     keys = ["AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS"]

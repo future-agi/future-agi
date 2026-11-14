@@ -127,6 +127,16 @@ def test_by_default_the_gateways_own_month_is_kept(settings):
     assert retention.effective_cutoff(1, {}, now=NOW) == NOW - timedelta(days=1)
 
 
+def test_the_gateways_own_week_is_kept_when_it_began_last_month(settings):
+    settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS = False
+    # Sunday 1 Nov 2026: the week began on Monday 26 Oct.
+    first = datetime(2026, 11, 1, 5, 0, tzinfo=UTC)
+
+    assert retention.effective_cutoff(1, {}, now=first) == datetime(
+        2026, 10, 26, tzinfo=UTC
+    )
+
+
 def test_the_gateway_yaml_setting_is_read_from_the_environment(monkeypatch):
     from django.core.exceptions import ImproperlyConfigured
 
