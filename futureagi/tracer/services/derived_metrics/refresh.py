@@ -13,7 +13,7 @@ M2/T16 still require representative scale measurements before deployment.
 import json
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -53,6 +53,7 @@ from tracer.services.derived_metrics.buckets import (
 from tracer.services.derived_metrics.deletion_protocol import (
     collect_history,
     serialized_project,
+    unreachable_closed_attempts,
 )
 from tracer.services.derived_metrics.lease import MetricPassYield
 from tracer.services.derived_metrics.publication import (
@@ -139,6 +140,25 @@ def estimated_captures(definitions, unit_count):
     """
     fields = sum(1 for d in definitions if getattr(d, "level", "") != "span")
     return fields * -(-unit_count // MAX_BATCH_ROWS)
+
+
+DEFAULT_HISTORY_GC_GRACE_SECONDS = 1800
+
+
+def history_gc_grace():
+    """How long a closed, unreachable attempt keeps its ClickHouse rows.
+
+    Longer than a lease (5 minutes), a request pin (5 minutes) and a statement
+    (60 seconds). Configurable: METRICS_HISTORY_GC_GRACE_SECONDS, 600 to 604800.
+    """
+    value = getattr(
+        settings, "METRICS_HISTORY_GC_GRACE_SECONDS", DEFAULT_HISTORY_GC_GRACE_SECONDS
+    )
+    if type(value) is not int or not 600 <= value <= 604_800:
+        raise ImproperlyConfigured(
+            "METRICS_HISTORY_GC_GRACE_SECONDS must be an integer from 600 to 604800"
+        )
+    return timedelta(seconds=value)
 
 
 def deltas_before_compaction():
@@ -1199,11 +1219,58 @@ class RefreshWriter:
         )
         if intent is not None:
             purge_by_scope(self.store, intent)
+        self.collect_unreachable_rows()
         self.scrub_orphans()
         # Unregistered attempts' rows are gone now, under ANY retention policy.
         discharge_omission_debts(self.lease.project_id, now=self.lease.clock())
         finish_pending_expiry(self)
         return intent
+
+    def collect_unreachable_rows(self, *, limit=100):
+        """Delete the ClickHouse rows of closed attempts no reader can reach.
+
+        Every compaction leaves a full copy behind; collect_history removes it
+        only with the attempt's PG row after ATTEMPT_LEDGER_RETENTION (7 days),
+        so physical rows grew about 30x past logical rows at 10M. Selection is
+        by PG reachability under the project lock (unreachable_closed_attempts);
+        the DELETEs run outside it, and each attempt is marked collected once.
+        A late INSERT of an aborted attempt is never readable and is reaped with
+        its PG row by collect_history and scrub_orphans, as before. The DELETE
+        is lightweight: rows stop being read at once (masked) and their bytes
+        return when a merge, or apply_deleted_masks in the scheduled metric
+        cleanup, rewrites the part. Returns the number of attempts collected.
+        """
+        from tracer.services.derived_metrics.storage import TABLES
+
+        now = self.lease.clock()
+        ids = unreachable_closed_attempts(
+            self.lease.project_id, now=now, grace=history_gc_grace(), limit=limit
+        )
+        if not ids:
+            return 0
+        params = {
+            "gc_org": str(self.org_id),
+            "gc_project": str(self.lease.project_id),
+            "gc_attempts": tuple(ids),
+        }
+        predicate = (
+            "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
+            "AND attempt_id IN %(gc_attempts)s"
+        )
+        for table in TABLES.values():
+            if self.store.execute(
+                f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
+            ):
+                self.store.execute(
+                    f"DELETE FROM {table.name} WHERE {predicate} "
+                    "SETTINGS lightweight_deletes_sync = 2",
+                    params,
+                )
+        with serialized_project(self.lease.project_id):
+            MetricRefreshAttempt.objects.filter(
+                id__in=ids, rows_collected_at__isnull=True
+            ).update(rows_collected_at=now)
+        return len(ids)
 
     def scrub_orphans(self):
         """Reap late writes to attempts PG has already collected.

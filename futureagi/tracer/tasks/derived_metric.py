@@ -1,9 +1,13 @@
 """Metric activities on existing Temporal queues; rollout is checked at execution."""
 
+import structlog
+
 from tfc.temporal import temporal_activity
 from tracer.services.derived_metrics import admission
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.service import execute_run
+
+logger = structlog.get_logger(__name__)
 
 
 @temporal_activity(
@@ -89,4 +93,13 @@ def cleanup_derived_metric_snapshots() -> int:
         # Never a completed namespace a (possibly failed) redaction reopened.
         for run_id in recoverable_captures(limit=10):
             enqueue_capture(run_id)
+        # Reclaim superseded copies that history GC deleted lightweight: a
+        # few partitions per run, outside every refresh pass. A failure keeps
+        # the rows masked (unreadable) for the next run.
+        from tracer.services.derived_metrics.history_gc import run_scheduled
+
+        try:
+            run_scheduled()
+        except Exception:
+            logger.exception("metric_history_gc_mask_failed")
     return completed

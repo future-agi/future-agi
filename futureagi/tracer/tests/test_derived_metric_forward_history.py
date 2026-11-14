@@ -292,6 +292,22 @@ def test_compaction_and_burst_settings_load_bounded_from_the_environment(
             30,
             500,
         ),
+        (
+            "METRICS_HISTORY_GC_GRACE_SECONDS",
+            "refresh",
+            "history_gc_grace",
+            1_800,
+            600,
+            604_800,
+        ),
+        (
+            "METRICS_GC_MASK_PARTITIONS_PER_RUN",
+            "history_gc",
+            "mask_partitions_per_run",
+            4,
+            0,
+            64,
+        ),
     ],
 )
 def test_pass_and_expiry_settings_load_bounded(
@@ -308,7 +324,11 @@ def test_pass_and_expiry_settings_load_bounded(
     )
 
     read = getattr(import_module(f"tracer.services.derived_metrics.{module}"), accessor)
-    expected = timedelta(seconds=default) if module == "retention" else default
+    expected = (
+        timedelta(seconds=default)
+        if accessor in {"expiry_interval", "history_gc_grace"}
+        else default
+    )
     assert load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})[name] == (
         default
     )

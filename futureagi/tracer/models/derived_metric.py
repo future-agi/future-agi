@@ -1042,6 +1042,9 @@ class MetricRefreshAttempt(models.Model):
     aborted_at = models.DateTimeField(null=True, blank=True)
     # The ledger is private and retention-bounded.
     expires_at = models.DateTimeField()
+    # When a closed attempt that no reader can reach had its ClickHouse rows
+    # deleted, ahead of this row's own ledger retention (collect_history).
+    rows_collected_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [

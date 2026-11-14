@@ -2091,6 +2091,17 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.derived_metrics.refresh": {
+        "RefreshWriter.collect_unreachable_rows": filed(
+            NO_SPAN_TABLE,
+            why="deletes rows of closed attempts no reader can reach from the metric stores",
+            table=(
+                "metric_field_values, metric_field_values_checkpoint, "
+                "metric_bucket_totals, metric_bucket_totals_checkpoint, "
+                "metric_unit_state, metric_source_dependencies, "
+                "metric_bucket_retired_parts, list_current_root_facts, "
+                "list_current_members and list_current_user_activity"
+            ),
+        ),
         "RefreshWriter.scrub_orphans": filed(
             NO_SPAN_TABLE,
             why="reaps rows of uncollected attempts from the metric stores",

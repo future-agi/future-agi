@@ -43,7 +43,7 @@ from django.db import (
     connections,
     transaction,
 )
-from django.db.models import Q
+from django.db.models import OuterRef, Q, Subquery
 from django.db.models.deletion import Collector
 from django.db.models.signals import pre_delete
 from django.utils import timezone
@@ -568,6 +568,73 @@ def collect_history(project_id, *, now=None, limit=1000):
         manifests.filter(id__in=candidates).delete()
         attempts.filter(id__in=expired_attempts).delete()
         return intent
+
+
+def unreachable_closed_attempts(project_id, *, now, grace, limit=100):
+    """Closed attempts whose ClickHouse rows no reader can reach, past ``grace``.
+
+    A reader reaches metric rows only through a manifest's allowlist: the
+    committed head, a pin's manifest (stale pins included, conservatively) or
+    an open attempt's parent. A committed or aborted attempt outside all of them
+    can never become reachable again, since a pin captures only the head and the
+    head never moves back. Its PG row, ledger and audit hashes stay for
+    collect_history's ATTEMPT_LEDGER_RETENTION; only its ClickHouse rows are
+    collected, once, after ``grace`` (longer than a lease, a request pin and a
+    statement). Like collect_history, this needs a committed checkpoint.
+
+    The grace runs from when the head stopped reading the attempt, not from
+    when it committed: a committed attempt left every head allowlist when the
+    first later checkpoint (purpose compaction, which restarts the allowlist)
+    was published. An aborted attempt was never in one.
+    """
+    with serialized_project(project_id):
+        refresh = MetricProjectRefresh.objects.filter(project_id=project_id).first()
+        if refresh is None or refresh.head_manifest_id is None:
+            return []
+        head = MetricReadManifest.objects.get(id=refresh.head_manifest_id)
+        if head.checkpoint_attempt_id is None:
+            return []
+        attempts = MetricRefreshAttempt.objects.filter(project_id=project_id)
+        open_attempts = attempts.filter(state__in=MetricRefreshAttempt.OPEN_STATES)
+        roots = {head.id}
+        roots.update(
+            MetricGenerationPin.objects.filter(project_id=project_id).values_list(
+                "manifest_id", flat=True
+            )
+        )
+        roots.update(
+            open_attempts.exclude(parent_manifest_id=None).values_list(
+                "parent_manifest_id", flat=True
+            )
+        )
+        keep = set(open_attempts.values_list("id", flat=True))
+        for manifest in MetricReadManifest.objects.filter(id__in=roots):
+            keep.add(manifest.published_by_id)
+            keep.update(attempt for _, attempt in manifest.allowed_attempts())
+        cutoff = now - grace
+        superseded = Subquery(
+            attempts.filter(
+                purpose=MetricRefreshAttempt.Purpose.COMPACTION,
+                state=MetricRefreshAttempt.State.COMMITTED,
+                generation__gt=OuterRef("generation"),
+            )
+            .order_by("generation")
+            .values("committed_at")[:1]
+        )
+        return list(
+            attempts.exclude(id__in=keep)
+            .filter(rows_collected_at__isnull=True)
+            .annotate(superseded_at=superseded)
+            .filter(
+                Q(
+                    state=MetricRefreshAttempt.State.COMMITTED,
+                    superseded_at__lte=cutoff,
+                )
+                | Q(state=MetricRefreshAttempt.State.ABORTED, aborted_at__lte=cutoff)
+            )
+            .order_by("generation")
+            .values_list("id", flat=True)[:limit]
+        )
 
 
 def _before_delete(sender, instance, using, **kwargs):

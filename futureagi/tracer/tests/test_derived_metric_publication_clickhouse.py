@@ -580,6 +580,122 @@ def test_repeated_checkpoint_pin_revocation_and_gc_collects_real_pg_ancestry(
         assert current_fields(writer, checkpoint)[0][2] == 1
 
 
+def physical_rows(writer):
+    """Rows the metric tables hold in active parts, deleted-but-masked included."""
+    return dict(
+        writer.store.execute(
+            "SELECT table, sum(rows) FROM system.parts WHERE database = "
+            "currentDatabase() AND active AND table IN %(tables)s GROUP BY table",
+            {"tables": tuple(TABLES)},
+        )
+    )
+
+
+def attempt_rows(writer, attempts):
+    """Rows any reader can still see for these attempts, across every store."""
+    total = 0
+    for table in TABLES:
+        total += writer.store.execute(
+            f"SELECT count() FROM {table} WHERE attempt_id IN %(attempts)s",
+            {"attempts": tuple(attempts) or ("00000000-0000-0000-0000-000000000000",)},
+        )[0][0]
+    return total
+
+
+@pytest.mark.django_db(transaction=True)
+def test_superseded_copies_are_collected_after_a_grace_not_after_seven_days(
+    live_writer,
+):
+    grace = timedelta(minutes=30)  # METRICS_HISTORY_GC_GRACE_SECONDS default
+    writer = live_writer
+    metric = uuid4()
+    initial, _ = prepare_field(writer, metric=metric, n=1)
+    writer.stage_and_publish(initial)
+    first = writer.compact()
+    pin = capture_pin(
+        writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(hours=1)
+    )
+    pinned = {str(a) for _, a in first.allowed_attempts()}
+    checkpoints = []
+    for n in (2, 3):
+        attempt, _ = prepare_field(writer, metric=metric, n=n)
+        writer.stage_and_publish(attempt)
+        head = writer.compact()
+        checkpoints.append((str(attempt.id), str(head.published_by_id)))
+    (_, previous), (last_delta, newest) = checkpoints
+    reachable = {str(a) for _, a in head.allowed_attempts()} | pinned
+    closed = {
+        str(a)
+        for a in MetricRefreshAttempt.objects.filter(
+            project_id=writer.lease.project_id, state__in=["committed", "aborted"]
+        ).values_list("id", flat=True)
+    }
+    superseded = closed - reachable
+    assert superseded and attempt_rows(writer, superseded)
+    expected = current_fields(writer, head)
+    attempts = MetricRefreshAttempt.objects.filter(
+        project_id=writer.lease.project_id
+    ).count()
+
+    def closed_ago(age, *, except_id=None):
+        at = writer.lease.clock() - age
+        project = MetricRefreshAttempt.objects.filter(
+            project_id=writer.lease.project_id
+        ).exclude(id=except_id)
+        project.filter(state="committed").update(committed_at=at)
+        project.filter(state="aborted").update(aborted_at=at)
+
+    # Inside the grace nothing is collected: a lease, a request pin or a
+    # statement may still be reading a just-superseded copy.
+    writer.collect_garbage()
+    closed_ago(grace - timedelta(seconds=30))
+    writer.collect_garbage()
+    assert attempt_rows(writer, superseded) > 0
+
+    # The grace runs from supersession, not from commit: the previous
+    # checkpoint committed long ago, but the newest checkpoint replaced it (and
+    # the last delta) only now, so a reader of that head may still be running.
+    closed_ago(grace + timedelta(seconds=30), except_id=newest)
+    writer.collect_garbage()
+    assert attempt_rows(writer, {previous}) > 0
+    assert attempt_rows(writer, {last_delta}) > 0
+    assert attempt_rows(writer, superseded - {previous, last_delta}) == 0
+
+    # Past the grace, the ordinary maintenance pass collects every superseded
+    # copy, long before the seven-day ledger retention; PG keeps the ledger.
+    closed_ago(grace + timedelta(seconds=30))
+    writer.collect_garbage()
+    assert attempt_rows(writer, superseded) == 0
+    assert attempt_rows(writer, reachable) > 0
+    assert current_fields(writer, head) == expected
+    assert [r[:3] for r in current_fields(writer, first)] == [("unit-a", 1.0, 0)]
+    assert pin.is_usable()
+    assert (
+        MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id).count()
+        == attempts
+    )
+    assert {
+        str(a)
+        for a in MetricRefreshAttempt.objects.filter(
+            project_id=writer.lease.project_id, rows_collected_at__isnull=False
+        ).values_list("id", flat=True)
+    } == superseded
+    # Collected once: a later pass issues no further deletes for them.
+    assert writer.collect_unreachable_rows() == 0
+
+    # Lightweight: the copies are masked, not yet rewritten. The scheduled
+    # cleanup's bounded reclaim rewrites the masked partitions; disk then holds
+    # only rows a reader can reach, and no reachable row changed.
+    from tracer.services.derived_metrics.history_gc import apply_deleted_masks
+
+    assert sum(physical_rows(writer).values()) > attempt_rows(writer, reachable)
+    done = apply_deleted_masks(writer.store.execute, limit=64)
+    assert done and all(table in TABLES for table, _, _ in done)
+    assert sum(physical_rows(writer).values()) == attempt_rows(writer, reachable)
+    assert current_fields(writer, head) == expected
+    assert apply_deleted_masks(writer.store.execute, limit=64) == []
+
+
 @pytest.mark.django_db(transaction=True)
 def test_checkpoint_byte_boundary_preserves_all_wide_payloads(live_writer):
     from tracer.services.derived_metrics.publication import (
