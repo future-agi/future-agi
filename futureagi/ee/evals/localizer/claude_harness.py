@@ -145,7 +145,9 @@ class LocalizationCase:
         an input that opened, or about a non-audio input. "Unlocalizable"
         about the input ffmpeg could not open, or about an audio input never
         opened (it would fail the same way), is the missing tool, not the
-        agent's free-text reason.
+        agent's free-text reason. So is any "unlocalizable" in simulation
+        localization while no recording has opened: findings there can only
+        be on the tested agent's recorded utterances.
         """
         if self.result is None or self.media_tool_error is None:
             return self.media_tool_error
@@ -157,6 +159,11 @@ class LocalizationCase:
         if (
             key not in self.inputs
             and (self.localizer.input_type or {}).get(key) == "audio"
+        ):
+            return self.media_tool_error
+        input_type = self.localizer.input_type or {}
+        if self.localizer.simulation_audio is not None and not any(
+            input_type.get(opened) == "audio" for opened in self.inputs
         ):
             return self.media_tool_error
         return None
