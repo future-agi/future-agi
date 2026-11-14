@@ -402,7 +402,7 @@ def _fair_order(rows):
         by_org,
         key=lambda org: (served.get(org) or NEVER, by_org[org][0]["oldest"], str(org)),
     )
-    order = []
+    order: list[dict] = []
     for turn in range(max((len(hooks) for hooks in by_org.values()), default=0)):
         order.extend(by_org[org][turn] for org in orgs if turn < len(by_org[org]))
     return order
@@ -520,7 +520,7 @@ def _lease_free_slots(now):
         running = sum(by_org.values())
         order = _fair_order(_ready_rows(now))
         free = max(cap - running, 0) if cap > 0 else len(order)
-        leased = []
+        leased: list = []
         for row in order:
             if len(leased) >= free:
                 break
