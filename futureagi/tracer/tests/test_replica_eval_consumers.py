@@ -852,3 +852,124 @@ def test_fresh_config_list_includes_a_config_created_after_freeze(
 
     assert config_id in listed(fresh="true")
     assert config_id not in listed()
+
+
+def test_fresh_config_list_without_a_project_stays_in_the_workspace(
+    auth_client, user, project, eval_template
+):
+    """`fresh` without a project_id lists the request workspace's configs, not
+    those of a sibling workspace in the same organization."""
+    from accounts.models.workspace import Workspace
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.project import Project
+
+    own_id = _create_config(auth_client, project, eval_template)
+    sibling = Project.no_workspace_objects.create(
+        name="Sibling workspace project",
+        organization=project.organization,
+        workspace=Workspace.objects.create(
+            name="Sibling workspace",
+            organization=project.organization,
+            created_by=user,
+            is_active=True,
+        ),
+        model_type=project.model_type,
+        trace_type="observe",
+    )
+    sibling_config = CustomEvalConfig.objects.create(
+        name="sibling-" + uuid.uuid4().hex,
+        project=sibling,
+        eval_template=eval_template,
+        config={},
+        mapping={},
+    )
+
+    response = auth_client.get(LIST_URL, {"fresh": "true"})
+    assert response.status_code == 200, response.content
+    listed = [str(row["id"]) for row in response.json()["result"]]
+    assert own_id in listed
+    assert str(sibling_config.pk) not in listed
+
+
+def _sibling_workspace_config(user, project, eval_template):
+    """A config on a project of another workspace of the same organization."""
+    from accounts.models.workspace import Workspace
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.project import Project
+
+    sibling = Project.no_workspace_objects.create(
+        name="Sibling workspace project " + uuid.uuid4().hex[:6],
+        organization=project.organization,
+        workspace=Workspace.objects.create(
+            name="Sibling workspace " + uuid.uuid4().hex[:6],
+            organization=project.organization,
+            created_by=user,
+            is_active=True,
+        ),
+        model_type=project.model_type,
+        trace_type="observe",
+    )
+    return CustomEvalConfig.objects.create(
+        name="sibling-" + uuid.uuid4().hex,
+        project=sibling,
+        eval_template=eval_template,
+        config={},
+        mapping={},
+    )
+
+
+@pytest.mark.parametrize(
+    "params",
+    ["none", "sibling_project_id", "fresh_sibling_project_id", "sibling_task_id"],
+)
+def test_config_list_stays_in_the_workspace_fresh_or_not(
+    auth_client, user, project, eval_template, params
+):
+    """Without `fresh` too, the list holds only the request workspace's
+    configs: a sibling workspace's are not listed, not even when the request
+    names that workspace's project or task."""
+    from tracer.models.eval_task import EvalTask
+
+    own_id = _create_config(auth_client, project, eval_template)
+    sibling_config = _sibling_workspace_config(user, project, eval_template)
+    query = {
+        "none": {},
+        "sibling_project_id": {"project_id": str(sibling_config.project_id)},
+        "fresh_sibling_project_id": {
+            "fresh": "true",
+            "project_id": str(sibling_config.project_id),
+        },
+        "sibling_task_id": {},
+    }[params]
+    if params == "sibling_task_id":
+        task = EvalTask.no_workspace_objects.create(
+            project=sibling_config.project, name="sibling task", filters={}
+        )
+        task.evals.add(sibling_config)
+        query = {"task_id": str(task.pk)}
+
+    response = auth_client.get(LIST_URL, query)
+
+    assert response.status_code == 200, response.content
+    listed = [str(row["id"]) for row in response.json()["result"]]
+    assert str(sibling_config.pk) not in listed
+    if params == "none":
+        assert own_id in listed
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_config_list_from_a_non_default_workspace_lists_only_its_own(
+    auth_client, user, project, eval_template, fresh
+):
+    """A request in a non-default workspace sees that workspace's configs,
+    not the default workspace's."""
+    own_default_id = _create_config(auth_client, project, eval_template)
+    sibling_config = _sibling_workspace_config(user, project, eval_template)
+    auth_client.set_workspace(sibling_config.project.workspace)
+
+    response = auth_client.get(LIST_URL, {"fresh": "true"} if fresh else {})
+
+    assert response.status_code == 200, response.content
+    listed = [str(row["id"]) for row in response.json()["result"]]
+    assert str(sibling_config.pk) in listed
+    assert own_default_id not in listed
