@@ -83,9 +83,7 @@ def test_invite_workspace_access_rejects_unknown_nested_fields():
     )
 
     assert not serializer.is_valid()
-    assert serializer.errors["workspace_access"][0]["workspaceId"] == [
-        "Unknown field."
-    ]
+    assert serializer.errors["workspace_access"][0]["workspaceId"] == ["Unknown field."]
 
 
 def test_member_role_update_workspace_access_keeps_workspace_ids_json_safe():

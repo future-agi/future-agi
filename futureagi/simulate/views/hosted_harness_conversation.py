@@ -245,7 +245,9 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def scenarios(self, request, pk=None):
-        return Response(conversation_scenarios(self._conversation, request.validated_data))
+        return Response(
+            conversation_scenarios(self._conversation, request.validated_data)
+        )
 
     @validated_request(
         request_serializer=HarnessConversationPublishSerializer,

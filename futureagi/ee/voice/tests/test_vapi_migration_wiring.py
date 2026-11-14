@@ -117,15 +117,21 @@ class TestPersistAudioToS3Routing:
         out = vapi_service.persist_audio_to_s3(self._input(audio_url=other_url))
         assert out == other_url
 
-    def test_uses_authenticated_endpoint_when_artifact_type_and_key_present(self, vapi_service):
-        with patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
-            return_value=b"mp3-bytes",
-        ) as mock_auth, patch(
-            "ee.voice.services.vapi_service.download_audio_from_url"
-        ) as mock_legacy, patch(
-            "ee.voice.services.vapi_service.upload_audio_to_s3",
-            return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+    def test_uses_authenticated_endpoint_when_artifact_type_and_key_present(
+        self, vapi_service
+    ):
+        with (
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
+                return_value=b"mp3-bytes",
+            ) as mock_auth,
+            patch(
+                "ee.voice.services.vapi_service.download_audio_from_url"
+            ) as mock_legacy,
+            patch(
+                "ee.voice.services.vapi_service.upload_audio_to_s3",
+                return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+            ),
         ):
             out = vapi_service.persist_audio_to_s3(
                 self._input(audio_url="https://storage.vapi.ai/x.mp3")
@@ -135,15 +141,19 @@ class TestPersistAudioToS3Routing:
         assert out == "https://bucket.s3.amazonaws.com/uploaded.mp3"
 
     def test_falls_back_to_legacy_when_auth_path_raises(self, vapi_service):
-        with patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
-            side_effect=RuntimeError("boom"),
-        ), patch(
-            "ee.voice.services.vapi_service.download_audio_from_url",
-            return_value=b"legacy-bytes",
-        ) as mock_legacy, patch(
-            "ee.voice.services.vapi_service.upload_audio_to_s3",
-            return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+        with (
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch(
+                "ee.voice.services.vapi_service.download_audio_from_url",
+                return_value=b"legacy-bytes",
+            ) as mock_legacy,
+            patch(
+                "ee.voice.services.vapi_service.upload_audio_to_s3",
+                return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+            ),
         ):
             out = vapi_service.persist_audio_to_s3(
                 self._input(audio_url="https://storage.vapi.ai/x.mp3")
@@ -152,14 +162,18 @@ class TestPersistAudioToS3Routing:
         assert out == "https://bucket.s3.amazonaws.com/uploaded.mp3"
 
     def test_falls_back_to_legacy_when_url_type_unknown(self, vapi_service):
-        with patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync"
-        ) as mock_auth, patch(
-            "ee.voice.services.vapi_service.download_audio_from_url",
-            return_value=b"legacy-bytes",
-        ) as mock_legacy, patch(
-            "ee.voice.services.vapi_service.upload_audio_to_s3",
-            return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+        with (
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync"
+            ) as mock_auth,
+            patch(
+                "ee.voice.services.vapi_service.download_audio_from_url",
+                return_value=b"legacy-bytes",
+            ) as mock_legacy,
+            patch(
+                "ee.voice.services.vapi_service.upload_audio_to_s3",
+                return_value="https://bucket.s3.amazonaws.com/uploaded.mp3",
+            ),
         ):
             out = vapi_service.persist_audio_to_s3(
                 self._input(
@@ -172,12 +186,15 @@ class TestPersistAudioToS3Routing:
         assert out == "https://bucket.s3.amazonaws.com/uploaded.mp3"
 
     def test_returns_original_url_on_upload_failure(self, vapi_service):
-        with patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
-            return_value=b"mp3-bytes",
-        ), patch(
-            "ee.voice.services.vapi_service.upload_audio_to_s3",
-            side_effect=RuntimeError("s3 down"),
+        with (
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.download_artifact_sync",
+                return_value=b"mp3-bytes",
+            ),
+            patch(
+                "ee.voice.services.vapi_service.upload_audio_to_s3",
+                side_effect=RuntimeError("s3 down"),
+            ),
         ):
             out = vapi_service.persist_audio_to_s3(
                 self._input(audio_url="https://storage.vapi.ai/x.mp3")
@@ -222,18 +239,24 @@ class TestExtractAndPersistRecordings:
             call_id="vapi-call-123",
         )
 
-        with patch(
-            "simulate.models.test_execution.CallExecution.objects.select_related"
-        ) as select_related, patch.object(
-            vapi_service, "_extract_recording_urls", return_value=recordings
-        ), patch.object(
-            vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
-        ), patch(
-            "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
-            new=AsyncMock(
-                side_effect=lambda *args, **kwargs: (f"s3://{args[2]}", 10)
+        with (
+            patch(
+                "simulate.models.test_execution.CallExecution.objects.select_related"
+            ) as select_related,
+            patch.object(
+                vapi_service, "_extract_recording_urls", return_value=recordings
             ),
-        ) as convert, patch("ee.usage.services.emitter.emit") as emit:
+            patch.object(
+                vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
+            ),
+            patch(
+                "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
+                new=AsyncMock(
+                    side_effect=lambda *args, **kwargs: (f"s3://{args[2]}", 10)
+                ),
+            ) as convert,
+            patch("ee.usage.services.emitter.emit") as emit,
+        ):
             select_related.return_value.aget = AsyncMock(return_value=call)
             result = await vapi_service.extract_and_persist_recordings("call-123")
 
@@ -288,16 +311,20 @@ class TestExtractAndPersistRecordings:
             call_id="vapi-call-123",
         )
 
-        with patch(
-            "simulate.models.test_execution.CallExecution.objects.select_related"
-        ) as select_related, patch.object(
-            vapi_service, "_extract_recording_urls", return_value={}
-        ), patch.object(
-            vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
-        ), patch(
-            "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
-            new=AsyncMock(return_value=("s3://recording", 10)),
-        ) as convert, patch("ee.usage.services.emitter.emit"):
+        with (
+            patch(
+                "simulate.models.test_execution.CallExecution.objects.select_related"
+            ) as select_related,
+            patch.object(vapi_service, "_extract_recording_urls", return_value={}),
+            patch.object(
+                vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
+            ),
+            patch(
+                "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
+                new=AsyncMock(return_value=("s3://recording", 10)),
+            ) as convert,
+            patch("ee.usage.services.emitter.emit"),
+        ):
             select_related.return_value.aget = AsyncMock(return_value=call)
             result = await vapi_service.extract_and_persist_recordings("call-123")
 
@@ -319,16 +346,20 @@ class TestExtractAndPersistRecordings:
             call_id="vapi-call-123",
         )
 
-        with patch(
-            "simulate.models.test_execution.CallExecution.objects.select_related"
-        ) as select_related, patch.object(
-            vapi_service, "_extract_recording_urls", return_value={}
-        ), patch.object(
-            vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
-        ), patch(
-            "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
-            new=AsyncMock(return_value=("s3://recording", 10)),
-        ) as convert, patch("ee.usage.services.emitter.emit"):
+        with (
+            patch(
+                "simulate.models.test_execution.CallExecution.objects.select_related"
+            ) as select_related,
+            patch.object(vapi_service, "_extract_recording_urls", return_value={}),
+            patch.object(
+                vapi_service, "_normalize_to_fagi_call_data", return_value=normalized
+            ),
+            patch(
+                "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
+                new=AsyncMock(return_value=("s3://recording", 10)),
+            ) as convert,
+            patch("ee.usage.services.emitter.emit"),
+        ):
             select_related.return_value.aget = AsyncMock(return_value=call)
             result = await vapi_service.extract_and_persist_recordings("call-123")
 

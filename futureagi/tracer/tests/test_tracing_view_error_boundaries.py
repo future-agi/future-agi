@@ -741,6 +741,8 @@ def _eval_detail_call(monkeypatch, exc):
     from tracer.views import observation_span as span_view
 
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = {
         "project_id": PROJECT_ID
     }
@@ -908,6 +910,8 @@ def test_eval_detail_uses_direct_write_v2_service(monkeypatch):
     from tracer.views import observation_span as span_view
 
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = {
         "project_id": PROJECT_ID
     }
