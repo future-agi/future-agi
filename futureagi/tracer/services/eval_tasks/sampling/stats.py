@@ -128,13 +128,16 @@ def required_sample_size(
     n = max(1, min(population, math.ceil(exact)))
     # Resolve a floating-point boundary using the reported margin itself,
     # rather than subtracting an epsilon that can understate the required n.
-    if (
-        n > 1
-        and margin_of_error(n - 1, population, proportion=p, confidence=confidence)
-        <= margin
-    ):
+    previous = (
+        margin_of_error(n - 1, population, proportion=p, confidence=confidence)
+        if n > 1
+        else None
+    )
+    if previous is not None and previous <= margin:
         n -= 1
-    if margin_of_error(n, population, proportion=p, confidence=confidence) > margin:
+    current = margin_of_error(n, population, proportion=p, confidence=confidence)
+    assert current is not None  # n is at least one.
+    if current > margin:
         n += 1
     return n
 
