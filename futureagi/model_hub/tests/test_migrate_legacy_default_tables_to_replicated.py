@@ -101,22 +101,38 @@ def _inserts(executed):
 # Refusals
 # ---------------------------------------------------------------------------
 
+
 def test_refuses_when_source_equals_target():
     with pytest.raises(CommandError, match="must differ"):
-        call_command(_CMD, "--source-database=default", "--target-database=default",
-                     "--tables=llm_logs", stdout=StringIO())
+        call_command(
+            _CMD,
+            "--source-database=default",
+            "--target-database=default",
+            "--tables=llm_logs",
+            stdout=StringIO(),
+        )
 
 
 def test_refuses_invalid_identifier():
     with pytest.raises(CommandError, match="valid ClickHouse identifier"):
-        call_command(_CMD, "--source-database=default", "--target-database=bad-name",
-                     "--tables=llm_logs", stdout=StringIO())
+        call_command(
+            _CMD,
+            "--source-database=default",
+            "--target-database=bad-name",
+            "--tables=llm_logs",
+            stdout=StringIO(),
+        )
 
 
 def test_refuses_unknown_table():
     with pytest.raises(CommandError, match="unknown entries"):
-        call_command(_CMD, "--source-database=default", "--target-database=futureagi",
-                     "--tables=not_a_table", stdout=StringIO())
+        call_command(
+            _CMD,
+            "--source-database=default",
+            "--target-database=futureagi",
+            "--tables=not_a_table",
+            stdout=StringIO(),
+        )
 
 
 def test_runs_on_single_node_ch():
@@ -140,6 +156,7 @@ def test_runs_on_single_node_ch():
 # ---------------------------------------------------------------------------
 # Dry-run
 # ---------------------------------------------------------------------------
+
 
 def test_dry_run_issues_no_writes():
     db_client, executed, _ = _make_db_client()
@@ -180,9 +197,7 @@ def test_dry_run_one_shot_treats_missing_replicas_as_created_empty():
     ``ensure_target ON CLUSTER`` would create on the 3rd on the real run,
     landing on all-empty -> COPY. Dry-run must not falsely REFUSE + TRUNCATE.
     """
-    db = _make_oneshot_dry_run_mock(
-        per_replica=[("ch-0", 0), ("ch-1", 0)], source=5
-    )
+    db = _make_oneshot_dry_run_mock(per_replica=[("ch-0", 0), ("ch-1", 0)], source=5)
     out, err = _run("llm_logs", db_client=db, dry_run=True)
     assert "would_insert=5" in out
     assert "REFUSE" not in err
@@ -225,25 +240,40 @@ def test_dry_run_one_shot_reports_refuse_when_partial_target():
 # Real run — keyed tables
 # ---------------------------------------------------------------------------
 
+
 def test_creates_database_on_cluster_before_table_work():
     db_client, executed, _ = _make_db_client()
     _run("cluster_centroids", db_client=db_client)
-    create_db = next(i for i, s in enumerate(executed) if "create database" in s.lower())
-    first_insert = next(i for i, s in enumerate(executed)
-                        if s.lower().lstrip().startswith("insert into"))
+    create_db = next(
+        i for i, s in enumerate(executed) if "create database" in s.lower()
+    )
+    first_insert = next(
+        i
+        for i, s in enumerate(executed)
+        if s.lower().lstrip().startswith("insert into")
+    )
     assert "ON CLUSTER 'cluster'" in executed[create_db]
     assert create_db < first_insert
 
 
-@pytest.mark.parametrize("table,expected_where", [
-    ("trace_input_embeddings",
-     "WHERE (project_id, trace_id) NOT IN "
-     "(SELECT project_id, trace_id FROM futureagi.trace_input_embeddings)"),
-    ("error_embeddings",
-     "WHERE (id) NOT IN (SELECT id FROM futureagi.error_embeddings)"),
-    ("cluster_centroids",
-     "WHERE (cluster_id) NOT IN (SELECT cluster_id FROM futureagi.cluster_centroids)"),
-])
+@pytest.mark.parametrize(
+    "table,expected_where",
+    [
+        (
+            "trace_input_embeddings",
+            "WHERE (project_id, trace_id) NOT IN "
+            "(SELECT project_id, trace_id FROM futureagi.trace_input_embeddings)",
+        ),
+        (
+            "error_embeddings",
+            "WHERE (id) NOT IN (SELECT id FROM futureagi.error_embeddings)",
+        ),
+        (
+            "cluster_centroids",
+            "WHERE (cluster_id) NOT IN (SELECT cluster_id FROM futureagi.cluster_centroids)",
+        ),
+    ],
+)
 def test_keyed_table_backfill_uses_its_dedup_clause(table, expected_where):
     db_client, executed, _ = _make_db_client()
     _run(table, db_client=db_client)
@@ -266,7 +296,8 @@ def test_backfill_uses_explicit_column_list_not_select_star():
 
 def test_keyed_table_idempotent_rerun_copies_zero():
     db_client, _, _ = _make_db_client(
-        source_count=10, target={"ch-0": 10, "ch-1": 10, "ch-2": 10})
+        source_count=10, target={"ch-0": 10, "ch-1": 10, "ch-2": 10}
+    )
     out, _ = _run("error_embeddings", db_client=db_client)
     assert "copied 0 rows" in out
 
@@ -274,6 +305,7 @@ def test_keyed_table_idempotent_rerun_copies_zero():
 # ---------------------------------------------------------------------------
 # Real run — append-only log tables (one-shot, no key)
 # ---------------------------------------------------------------------------
+
 
 def test_one_shot_inserts_without_where_when_empty_everywhere():
     db_client, executed, _ = _make_db_client(source_count=95)  # target all 0
@@ -287,7 +319,8 @@ def test_one_shot_inserts_without_where_when_empty_everywhere():
 def test_one_shot_no_op_when_already_converged():
     # Re-run after a successful one-shot: target == source on every replica.
     db_client, executed, _ = _make_db_client(
-        source_count=95, target={"ch-0": 95, "ch-1": 95, "ch-2": 95})
+        source_count=95, target={"ch-0": 95, "ch-1": 95, "ch-2": 95}
+    )
     out, _ = _run("llm_logs", db_client=db_client)
     assert not _inserts(executed)
     assert "one-shot no-op" in out
@@ -297,7 +330,8 @@ def test_one_shot_REFUSES_when_a_single_replica_is_empty():
     # THE critical bug: min() across replicas let one empty replica wave the
     # copy through and duplicate the keyless log. Must now refuse + fail.
     db_client, executed, _ = _make_db_client(
-        source_count=95, target={"ch-0": 95, "ch-1": 95, "ch-2": 0})
+        source_count=95, target={"ch-0": 95, "ch-1": 95, "ch-2": 0}
+    )
     with pytest.raises(CommandError, match="did not fully converge"):
         _run("llm_logs", db_client=db_client)
     assert not _inserts(executed)  # never inserted -> no duplication
@@ -305,7 +339,8 @@ def test_one_shot_REFUSES_when_a_single_replica_is_empty():
 
 def test_one_shot_refuses_on_partial_target():
     db_client, executed, _ = _make_db_client(
-        source_count=95, target={"ch-0": 42, "ch-1": 42, "ch-2": 42})
+        source_count=95, target={"ch-0": 42, "ch-1": 42, "ch-2": 42}
+    )
     with pytest.raises(CommandError, match="did not fully converge"):
         _run("llm_logs", db_client=db_client)
     assert not _inserts(executed)
@@ -322,21 +357,33 @@ def test_source_missing_creates_target_and_skips_copy():
 # Replica-aware parity + failure propagation
 # ---------------------------------------------------------------------------
 
+
 def test_parity_failure_raises_nonzero(monkeypatch):
     # A replica that never reaches source_count must fail the whole command so
     # an exit-code-gated CH_DATABASE flip cannot proceed.
     import model_hub.management.commands.migrate_legacy_default_tables_to_replicated as m
+
     monkeypatch.setattr(m.time, "sleep", lambda *_: None)
     clock = {"t": 0.0}
-    monkeypatch.setattr(m.time, "monotonic", lambda: clock.__setitem__("t", clock["t"] + 100) or clock["t"])
-    db_client, _, _ = _make_db_client(source_count=100, insert_reaches=1)  # never converges
+    monkeypatch.setattr(
+        m.time,
+        "monotonic",
+        lambda: clock.__setitem__("t", clock["t"] + 100) or clock["t"],
+    )
+    db_client, _, _ = _make_db_client(
+        source_count=100, insert_reaches=1
+    )  # never converges
     with pytest.raises(CommandError, match="did not fully converge"):
         _run("cluster_centroids", db_client=db_client)
 
 
 def test_multi_table_run_processes_each():
     db_client, executed, _ = _make_db_client()
-    _run("trace_input_embeddings", "error_embeddings", "cluster_centroids",
-         db_client=db_client)
+    _run(
+        "trace_input_embeddings",
+        "error_embeddings",
+        "cluster_centroids",
+        db_client=db_client,
+    )
     for table in ("trace_input_embeddings", "error_embeddings", "cluster_centroids"):
         assert any(f"INSERT INTO futureagi.{table}" in s for s in executed)

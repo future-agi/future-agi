@@ -4075,7 +4075,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": ["latest Flash GA", "multimodal understanding", "adaptive thinking"],
+        "best_for": [
+            "latest Flash GA",
+            "multimodal understanding",
+            "adaptive thinking",
+        ],
         "use_case": [
             "fast inference",
             "agentic AI tasks",
@@ -4096,7 +4100,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": ["agentic and coding tasks", "multimodal understanding", "thinking"],
+        "best_for": [
+            "agentic and coding tasks",
+            "multimodal understanding",
+            "thinking",
+        ],
         "use_case": [
             "code generation and repair",
             "agent orchestration",
@@ -4268,7 +4276,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "image_generation",
-        "best_for": ["cost-effective image generation", "text-to-image", "image editing"],
+        "best_for": [
+            "cost-effective image generation",
+            "text-to-image",
+            "image editing",
+        ],
         "use_case": ["batch image generation", "creative iteration"],
         "cutoff": "01-2025",
         "latency": 100,

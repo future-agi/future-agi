@@ -125,10 +125,12 @@ class FutureAGIOAuthProvider:
         from accounts.models.workspace import Workspace
 
         user = await sync_to_async(
-            lambda: User.objects.all()
-            .select_related("organization")
-            .order_by("created_at")
-            .first()
+            lambda: (
+                User.objects.all()
+                .select_related("organization")
+                .order_by("created_at")
+                .first()
+            )
         )()
 
         if not user:
@@ -136,9 +138,11 @@ class FutureAGIOAuthProvider:
 
         org = user.organization
         workspace = await sync_to_async(
-            lambda: Workspace.objects.all()
-            .filter(organization=org, is_default=True, is_active=True)
-            .first()
+            lambda: (
+                Workspace.objects.all()
+                .filter(organization=org, is_default=True, is_active=True)
+                .first()
+            )
         )()
 
         # Generate authorization code

@@ -25,7 +25,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Incorrect Recall",
                         "description": "Agent misquoted or contradicted something said earlier in the conversation.",
                     },
-                ]
+                ],
             },
             "Relevance": {
                 "description": "Agent response did not address the caller's question or current topic.",
@@ -42,11 +42,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Repetitive Response",
                         "description": "Agent repeated the same information or phrasing it already provided without adding value.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Task Completion": {
         "description": "Whether the agent accomplished the caller's goal by the end of the call.",
         "subcategories": {
@@ -61,7 +60,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Premature Closure",
                         "description": "Agent ended the interaction or moved on before the caller's issue was resolved.",
                     },
-                ]
+                ],
             },
             "Handoff Failures": {
                 "description": "Agent failed to properly transfer or escalate when needed.",
@@ -74,11 +73,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Failed Transfer",
                         "description": "Agent attempted a handoff but it failed or was executed incorrectly.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Conversation Flow": {
         "description": "Quality of turn-taking, transitions, pacing, and natural dialogue.",
         "subcategories": {
@@ -93,7 +91,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Overlapping Speech",
                         "description": "Agent spoke while the caller was still talking (not an interruption response).",
                     },
-                ]
+                ],
             },
             "Transition Quality": {
                 "description": "Unnatural or abrupt topic changes in the conversation.",
@@ -106,11 +104,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Failure to Acknowledge",
                         "description": "Agent did not acknowledge the caller's statement before responding or moving on.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Latency & Responsiveness": {
         "description": "Agent response time and latency components (model, voice, transcriber).",
         "subcategories": {
@@ -125,7 +122,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Inconsistent Latency",
                         "description": "Some turns were fast while others were very slow, creating an uneven experience.",
                     },
-                ]
+                ],
             },
             "Component Bottleneck": {
                 "description": "A specific latency component (model, voice, transcriber) is the bottleneck.",
@@ -142,11 +139,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Transcriber Bottleneck",
                         "description": "Speech-to-text conversion is the dominant contributor to slow responses.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Interruption Handling": {
         "description": "How the agent handles user interruptions and whether it talks over the user.",
         "subcategories": {
@@ -161,7 +157,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Slow Stop After Interruption",
                         "description": "Agent took too long to stop speaking after the user started talking.",
                     },
-                ]
+                ],
             },
             "Agent Interruption": {
                 "description": "Agent inappropriately interrupted the user.",
@@ -174,11 +170,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Excessive Agent Interruptions",
                         "description": "Agent interrupted the user multiple times during the call.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Safety & Compliance": {
         "description": "PII handling, caller verification, disclosure requirements, and safety.",
         "subcategories": {
@@ -193,7 +188,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Missing Verification",
                         "description": "Agent provided account-sensitive information without verifying the caller's identity.",
                     },
-                ]
+                ],
             },
             "Compliance Violations": {
                 "description": "Regulatory or policy compliance issues.",
@@ -206,11 +201,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Unsafe Advice",
                         "description": "Agent provided advice that could cause harm (medical, legal, financial without disclaimers).",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Instruction Adherence": {
         "description": "Whether the agent followed its system prompt, persona, tone, and configured behavior.",
         "subcategories": {
@@ -225,7 +219,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Tone Mismatch",
                         "description": "Agent's tone was inappropriate for the context (too casual, too formal, etc.).",
                     },
-                ]
+                ],
             },
             "Prompt Violations": {
                 "description": "Agent directly violated instructions from its system prompt.",
@@ -238,11 +232,10 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Missing Required Action",
                         "description": "Agent failed to perform an action its system prompt required.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
-
     "Tool Usage": {
         "description": "Correct invocation, error handling, and result interpretation of function/tool calls during the call.",
         "subcategories": {
@@ -261,7 +254,7 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Result Misinterpretation",
                         "description": "Agent misinterpreted the tool's response and relayed wrong information.",
                     },
-                ]
+                ],
             },
             "Tool Selection": {
                 "description": "Agent chose the wrong tool or failed to use a tool when needed.",
@@ -274,9 +267,9 @@ VOICE_ERROR_TAXONOMY = {
                         "name": "Unnecessary Tool Call",
                         "description": "Agent called a tool when the information was already available in context.",
                     },
-                ]
+                ],
             },
-        }
+        },
     },
 }
 
@@ -292,7 +285,9 @@ def format_voice_category_taxonomy(category_name: str) -> str:
 
     if "subcategories" in category_data:
         formatted += "Subcategories:\n"
-        for subcategory_name, subcategory_data in category_data["subcategories"].items():
+        for subcategory_name, subcategory_data in category_data[
+            "subcategories"
+        ].items():
             formatted += f"  - {subcategory_name}: {subcategory_data['description']}\n"
             for error in subcategory_data["errors"]:
                 formatted += f"    * {error['name']}: {error['description']}\n"

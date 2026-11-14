@@ -51,9 +51,14 @@ def _trace_with_retries(n=4):
         "span_name": "agent",
         "duration": "PT9S",
         "status_code": "Ok",
-        "span_attributes": {"span.kind": "CHAIN", "input.value": "do the thing",
-                            "output.value": "done"},
-        "child_spans": [_span(f"s{i}", "fetch_quote", f"attempt {i}") for i in range(n)],
+        "span_attributes": {
+            "span.kind": "CHAIN",
+            "input.value": "do the thing",
+            "output.value": "done",
+        },
+        "child_spans": [
+            _span(f"s{i}", "fetch_quote", f"attempt {i}") for i in range(n)
+        ],
     }
     return {"trace_id": "t1", "spans": [root]}
 
@@ -111,10 +116,15 @@ def test_explicit_retry_ids_still_honoured():
 def test_trace_without_retries_flags_no_retries():
     """Guard against the fix flagging everything."""
     root = {
-        "span_id": "root", "span_name": "agent", "duration": "PT1S",
+        "span_id": "root",
+        "span_name": "agent",
+        "duration": "PT1S",
         "status_code": "Ok",
-        "span_attributes": {"span.kind": "CHAIN", "input.value": "hi",
-                            "output.value": "hello"},
+        "span_attributes": {
+            "span.kind": "CHAIN",
+            "input.value": "hi",
+            "output.value": "hello",
+        },
         "child_spans": [_span("a", "alpha"), _span("b", "beta"), _span("c", "gamma")],
     }
     ext = structural_prefilter_with_ids({"trace_id": "t2", "spans": [root]})

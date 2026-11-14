@@ -40,9 +40,7 @@ class TestAgentEvaluatorMerge:
         cfg = _merge(
             "AgentEvaluator",
             base_config={"data_injection": {"variables_only": True}},
-            runtime_config={
-                "run_config": {"data_injection": {"trace_context": True}}
-            },
+            runtime_config={"run_config": {"data_injection": {"trace_context": True}}},
         )
         assert cfg["data_injection"] == {"trace_context": True}
 
@@ -106,9 +104,7 @@ class TestCustomPromptEvaluatorMerge:
         cfg = _merge(
             "CustomPromptEvaluator",
             base_config={"choice_scores": {"Yes": 1.0}},
-            runtime_config={
-                "run_config": {"choice_scores": {"Good": 1.0, "Bad": 0.0}}
-            },
+            runtime_config={"run_config": {"choice_scores": {"Good": 1.0, "Bad": 0.0}}},
         )
         assert cfg["choice_scores"] == {"Good": 1.0, "Bad": 0.0}
 
