@@ -105,8 +105,8 @@ def typed_walk_filter(
     key, kind = witness.key, witness.kind
     witness_sql, witness_params = witness.sql, witness.params
     if kind == "canonical_text":
-        values = canonical_picked_text_values(item)
-        if not values:
+        canonical_values = canonical_picked_text_values(item)
+        if not canonical_values:
             return None
         return WalkedTypedFilter(
             key=key,
@@ -115,7 +115,7 @@ def typed_walk_filter(
             witness_params=dict(witness_params),
             order_clause="",
             order_params={},
-            canonical_values=values,
+            canonical_values=canonical_values,
         )
     if kind not in {"number", "boolean"}:
         return None

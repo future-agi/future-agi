@@ -234,9 +234,7 @@ def test_ensure_events_table_does_not_alter_when_column_already_present():
     ensure_events_table(client)
 
     executed_sqls = [c.args[0] for c in client.execute.call_args_list]
-    assert not any(
-        s.lstrip().upper().startswith("ALTER TABLE") for s in executed_sqls
-    )
+    assert not any(s.lstrip().upper().startswith("ALTER TABLE") for s in executed_sqls)
 
 
 def test_build_replicated_engine_rejects_unknown_engine():
@@ -266,4 +264,7 @@ def test_centroid_ddl_is_shared_across_all_three_clustering_modules():
     )
     # error_clustering keeps a thin method wrapper, but it delegates to the
     # same module function rather than carrying its own DDL string.
-    assert "clustering_tables" in error_clustering.ErrorClusteringDB.ensure_centroid_table.__code__.co_names
+    assert (
+        "clustering_tables"
+        in error_clustering.ErrorClusteringDB.ensure_centroid_table.__code__.co_names
+    )

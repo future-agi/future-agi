@@ -25,6 +25,7 @@ from tracer.serializers.usage_coverage import (
     CaptureCoverageSerializer,
     CostCoverageSerializer,
 )
+from tracer.services.trace_source_navigation import is_span_id
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
@@ -692,9 +693,35 @@ class TraceVoiceCallDetailQuerySerializer(RunScopeQueryMixin, StrictInputSeriali
         required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
+    expected_span_id = serializers.CharField(
+        required=False,
+        max_length=255,
+        trim_whitespace=False,
+        help_text=(
+            "Optional evaluated span. Requires project_id; the response is "
+            "409 unless this read proves the span belongs to the call's "
+            "single conversation root."
+        ),
+    )
+
+    def validate_expected_span_id(self, value):
+        if not is_span_id(value):
+            raise serializers.ValidationError("Invalid span identifier.")
+        return value
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         self.reject_both(attrs)
+        if "expected_span_id" in attrs and (
+            "project_id" not in attrs
+            or "test_execution_id" in attrs
+            or "call_execution_id" in attrs
+        ):
+            raise serializers.ValidationError(
+                {
+                    "expected_span_id": "Requires an Observe project_id without run scope."
+                }
+            )
         trace_id = attrs.get("trace_id")
         legacy_trace_id = attrs.get("traceId")
         if trace_id is None and legacy_trace_id is None:

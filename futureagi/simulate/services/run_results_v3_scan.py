@@ -904,7 +904,9 @@ def scan_call_values(
         values = (
             _member_values(members[key])
             if key in members
-            else None if scenario is None else scenario._asdict()
+            else None
+            if scenario is None
+            else scenario._asdict()
         )
         if values is not None:
             row["result_sub_goal"] = (

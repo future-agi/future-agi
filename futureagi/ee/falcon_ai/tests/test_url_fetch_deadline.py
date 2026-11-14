@@ -1,8 +1,9 @@
-"""Real socket regressions; only DNS and the pinned destination are substituted."""
+"""URL fetch regressions with socket fixtures and mocked pool boundaries."""
 
 import asyncio
 import datetime
 import gzip
+import io
 import socket
 import ssl
 import threading
@@ -147,18 +148,158 @@ def slow_url_server(monkeypatch, tmp_path, request):
         serving.join(timeout=2)
 
 
+@pytest.mark.parametrize(
+    ("url", "expected_host"),
+    [
+        ("http://[2606:4700:4700::1111]/page", "[2606:4700:4700::1111]"),
+        ("http://[2606:4700:4700::1111]:8080/page", "[2606:4700:4700::1111]:8080"),
+        ("https://[2606:4700:4700::1111]:8443/page", "[2606:4700:4700::1111]:8443"),
+        ("http://93.184.216.34/page", "93.184.216.34"),
+        ("http://93.184.216.34:8080/page", "93.184.216.34:8080"),
+        ("https://public.example/page", "public.example"),
+        ("https://public.example:8443/page", "public.example:8443"),
+    ],
+)
+def test_request_host_header_matches_url_authority(monkeypatch, url, expected_host):
+    captured = []
+    response = urllib3.HTTPResponse(
+        status=200, headers={}, body=io.BytesIO(), preload_content=False
+    )
+    pool = Mock()
+
+    def record_request(*args, **kwargs):
+        captured.append(kwargs["headers"]["Host"])
+        return response
+
+    pool.request.side_effect = record_request
+    monkeypatch.setattr(ssrf_guard, "_resolve_pinned_ip", lambda host: host)
+    monkeypatch.setattr(ssrf_guard, "_open_pinned_pool", lambda *args: pool)
+
+    assert safe_fetch(url).status_code == 200
+    assert captured == [expected_host]
+
+
+def test_stalled_tcp_connect_respects_total_budget(monkeypatch):
+    connect_timeouts = []
+
+    def stalled_connect(connection):
+        assert connection.host == "93.184.216.34"
+        connect_timeouts.append(connection.timeout)
+        # Model a connect that uses its timeout before returning no socket.
+        time.sleep(connection.timeout)
+        raise TimeoutError("TCP connect timed out")
+
+    monkeypatch.setattr(ssrf_guard, "_resolve_pinned_ip", lambda host: "93.184.216.34")
+    monkeypatch.setattr(urllib3.connection.HTTPConnection, "_new_conn", stalled_connect)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        safe_fetch("http://public.example/page", timeout=1.5, total_timeout=0.3)
+    elapsed = time.monotonic() - started
+    # The connect itself must receive the total budget, not the 1.5s
+    # per-operation timeout. Leave room for scheduling around the sleep.
+    if connect_timeouts:
+        assert 0 < connect_timeouts[0] <= 0.3
+    else:
+        assert elapsed >= 0.3  # Expired before a connect could start.
+    assert elapsed < 1.2, elapsed
+
+
+def test_silent_tls_handshake_respects_total_budget(monkeypatch):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    release = threading.Event()
+    accepted = threading.Event()
+    handshake_timeouts = []
+    real_wrap_socket = ssl.SSLContext.wrap_socket
+
+    def capture_handshake_timeout(context, sock, *args, **kwargs):
+        # Called after urllib3 constructs the context and loads its CA bundle,
+        # immediately before Python starts the TLS handshake.
+        handshake_timeouts.append(sock.gettimeout())
+        return real_wrap_socket(context, sock, *args, **kwargs)
+
+    monkeypatch.setattr(ssl.SSLContext, "wrap_socket", capture_handshake_timeout)
+
+    def hold_connection():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                accepted.set()
+                release.wait(3)
+        except OSError:
+            pass
+
+    serving = threading.Thread(target=hold_connection, daemon=True)
+    serving.start()
+    real_connect = socket.create_connection
+
+    def connect_to_fixture(connection):
+        assert connection.host == "93.184.216.34"
+        # Spend part of the budget in TCP before the real TLS handshake stalls.
+        time.sleep(0.4)
+        return real_connect(listener.getsockname(), connection.timeout)
+
+    monkeypatch.setattr(ssrf_guard, "_resolve_pinned_ip", lambda host: "93.184.216.34")
+    monkeypatch.setattr(
+        urllib3.connection.HTTPConnection, "_new_conn", connect_to_fixture
+    )
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError) as error:
+            safe_fetch("https://public.example/page", timeout=1.5, total_timeout=0.6)
+        elapsed = time.monotonic() - started
+        if handshake_timeouts:
+            assert len(handshake_timeouts) == 1
+            assert accepted.wait(1)
+            assert 0 < handshake_timeouts[0] <= 0.6 - 0.4 + 0.01
+        else:
+            # A loaded runner can exhaust the budget before TLS starts. It
+            # must fail on the deadline rather than silently skip this check.
+            assert "deadline" in str(error.value).lower()
+            assert elapsed >= 0.6
+        # Without the shared deadline, TCP sleep + a 1.5s TLS timeout is 1.9s.
+        assert elapsed < 1.4, elapsed
+    finally:
+        release.set()
+        listener.close()
+        serving.join(timeout=2)
+
+
 @pytest.mark.parametrize("path", ["/drip", "/headers", "/chunked", "/gzip"])
-def test_progressing_response_stops_at_deadline(slow_url_server, path):
+def test_progressing_response_stops_at_deadline(monkeypatch, slow_url_server, path):
+    read_timeouts = []
+    real_readinto = ssrf_guard._DeadlineReader.readinto
+
+    def record_read_timeout(reader, buffer):
+        result = real_readinto(reader, buffer)
+        # A read can raise before changing the socket timeout when its budget
+        # is already gone. Record only the timeouts applied to completed reads.
+        read_timeouts.append(reader._sock.gettimeout())
+        return result
+
+    monkeypatch.setattr(ssrf_guard._DeadlineReader, "readinto", record_read_timeout)
     started = time.monotonic()
     result = fetch_url_content(f"{slow_url_server.url}{path}", timeout=0.35)
     elapsed = time.monotonic() - started
 
     assert result.startswith("[Failed to fetch URL:"), result
     assert "deadline" in result.lower(), result
-    assert elapsed < 0.8, elapsed
+    if read_timeouts:
+        # Every actual raw receive gets no more than the original budget;
+        # progressing bytes cannot reset the clock to an inactivity timeout.
+        assert all(0 < value <= 0.35 for value in read_timeouts)
+        if len(read_timeouts) > 1:
+            assert read_timeouts[-1] < read_timeouts[0]
+    else:
+        assert elapsed >= 0.35  # Expired before any raw receive.
+    # Without a deadline the progressing response takes at least ~1.5s
+    # (and /gzip must finish successfully rather than report a deadline).
+    assert elapsed < 1.3, elapsed
     # Timeout must close the actual transport, not just abandon a future while
     # the socket continues occupying a worker in the background.
-    assert slow_url_server.disconnected.wait(0.5)
+    if read_timeouts:
+        assert slow_url_server.disconnected.wait(0.5)
 
 
 def test_redirect_chain_shares_one_deadline(slow_url_server):
@@ -168,7 +309,8 @@ def test_redirect_chain_shares_one_deadline(slow_url_server):
 
     assert result.startswith("[Failed to fetch URL:"), result
     assert "deadline" in result.lower(), result
-    assert elapsed < 0.8, elapsed
+    # Four 0.15s redirects would reach /fast with per-operation timeouts.
+    assert elapsed < 1.2, elapsed
     assert "/fast" not in slow_url_server.paths
     assert len(slow_url_server.paths) <= 3
 
@@ -243,7 +385,7 @@ def test_expired_dns_waits_do_not_accumulate_queued_lookups(monkeypatch):
 @pytest.mark.parametrize("scheme", ["http", "https"])
 def test_request_write_uses_budget_remaining_after_connect(monkeypatch, scheme):
     clock = [10.0]
-    monkeypatch.setattr(ssrf_guard.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(ssrf_guard, "_monotonic", lambda: clock[0])
     connection_class = (
         ssrf_guard._DeadlineHTTPSConnection
         if scheme == "https"
@@ -258,7 +400,7 @@ def test_request_write_uses_budget_remaining_after_connect(monkeypatch, scheme):
 
     monkeypatch.setattr(connection, "connect", connect)
     connection.send(b"GET / HTTP/1.1\r\nHost: public.example\r\n\r\n")
-    sock.settimeout.assert_called_with(pytest.approx(0.2))
+    sock.settimeout.assert_called_once_with(pytest.approx(0.2))
     sock.sendall.assert_called_once()
 
 

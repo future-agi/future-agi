@@ -91,6 +91,10 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 func (g *PIIGuardrail) Name() string           { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
+// MutatesInput tells the dynamic scheduler to run remediation before parallel
+// readers and publish only a completed check's private copy.
+func (g *PIIGuardrail) MutatesInput() bool { return g.remediation != RemediationBlock }
+
 // Check scans messages for PII and returns a result.
 func (g *PIIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil {

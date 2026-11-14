@@ -2,6 +2,8 @@ package guardrails
 
 import (
 	"context"
+	"fmt"
+	"math"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -111,11 +113,21 @@ type CheckInput struct {
 
 // CheckResult is the output of a guardrail check.
 type CheckResult struct {
-	Pass    bool                   // true = safe, false = triggered
-	Score   float64                // 0.0 = safe, 1.0 = max violation
-	Action  Action                 // what action to take if triggered
-	Message string                 // human-readable explanation
-	Details map[string]interface{} // guardrail-specific metadata
+	// Err marks an execution failure, not a scored content decision. Engines
+	// apply fail_open before threshold evaluation, and realtime blocking policies
+	// refuse it regardless of score threshold; implementations must set it for
+	// transport, parsing, or evaluation errors.
+	Err error `json:"-"`
+	// FailureAdmitted records an unavailable check admitted by explicit policy.
+	FailureAdmitted bool `json:"-"`
+	// RealtimeErr marks a verdict envelope that realtime checks refuse as
+	// unavailable. Chat checks keep the decoded verdict and ignore it.
+	RealtimeErr error                  `json:"-"`
+	Pass        bool                   // true = safe, false = triggered
+	Score       float64                // 0.0 = safe, 1.0 = max violation
+	Action      Action                 // what action to take if triggered
+	Message     string                 // human-readable explanation
+	Details     map[string]interface{} // guardrail-specific metadata
 }
 
 // Guardrail is the interface that all guardrail implementations must satisfy.
@@ -139,19 +151,45 @@ type TriggeredGuardrail struct {
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.
 type PipelineResult struct {
-	Blocked   bool
-	Warnings  []string
-	Triggered []TriggeredGuardrail
+	// Unavailable marks a blocking execution failure, never a content verdict.
+	Unavailable bool
+	Blocked     bool
+	Warnings    []string
+	Triggered   []TriggeredGuardrail
 }
 
 // shouldTrigger applies the configured threshold to score-based guardrails.
-// Guardrails that return Pass=false without a score still trigger as hard failures.
+// Execution failures trigger regardless of score. Pass=false without a score is a hard rejection.
 func shouldTrigger(result *CheckResult, threshold float64) bool {
 	if result == nil {
 		return false
+	}
+	if result.Err != nil {
+		return true
 	}
 	if result.Score > threshold {
 		return true
 	}
 	return !result.Pass && result.Score <= 0
+}
+
+// checkResultError validates the execution envelope without reinterpreting a
+// legitimate rejecting result as an outage (which fail_open would then let through).
+func checkResultError(cr *CheckResult) error {
+	if cr == nil {
+		return fmt.Errorf("guardrail returned no result")
+	}
+	if cr.Err != nil {
+		return cr.Err
+	}
+	if math.IsNaN(cr.Score) || math.IsInf(cr.Score, 0) || cr.Score < 0 || cr.Score > 1 {
+		return fmt.Errorf("guardrail returned invalid score: %v", cr.Score)
+	}
+	return nil
+}
+
+// RequestTextChecker is implemented by checks that inspect only request
+// messages. Realtime post-stage text is passed to them as a request message.
+type RequestTextChecker interface {
+	ChecksRequestTextOnly()
 }

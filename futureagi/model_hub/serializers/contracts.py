@@ -2163,6 +2163,53 @@ class FeedbackDetailsResponseSerializer(serializers.Serializer):
     result = FeedbackDetailsResultSerializer()
 
 
+class EvalApiLogRowQuerySerializer(serializers.Serializer):
+    log_id = serializers.UUIDField(required=True)
+    order = serializers.CharField(required=False, allow_blank=True)
+    include_source_navigation = serializers.ChoiceField(
+        choices=("true", "false"), required=False
+    )
+
+    def get_fields(self):
+        # The ``source`` query parameter is added here: as a class attribute it
+        # would shadow DRF's ``Field.source`` (a str), which mypy rejects.
+        fields = {}
+        for name, field in super().get_fields().items():
+            fields[name] = field
+            if name == "order":
+                fields["source"] = serializers.CharField(
+                    required=False, allow_blank=True
+                )
+        return fields
+
+    def validate_include_source_navigation(self, value):
+        return value == "true"
+
+
+class EvalLogSourceNavigationSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=(
+            "ready",
+            "no_reference",
+            "unsupported_source",
+            "unsupported_target",
+            "incomplete_reference",
+            "invalid_reference",
+            "ambiguous_reference",
+            "unavailable",
+            "source_not_recorded",
+            "temporarily_unavailable",
+        )
+    )
+    kind = serializers.ChoiceField(choices=("trace", "voice_call"), allow_null=True)
+    project_id = serializers.UUIDField(allow_null=True)
+    trace_id = serializers.UUIDField(allow_null=True)
+    span_id = serializers.CharField(
+        max_length=255, trim_whitespace=False, allow_null=True
+    )
+    retryable = serializers.BooleanField()
+
+
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     log_id = serializers.UUIDField()
     created_at = serializers.DateTimeField()
@@ -2176,11 +2223,13 @@ class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     error_localizer_status = serializers.CharField(required=False, allow_blank=True)
     error_localizer_message = serializers.CharField(required=False, allow_blank=True)
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
-    span_id = serializers.UUIDField(required=False, allow_null=True)
+    # The evaluated span's id as stored, e.g. a 16-hex OTel id for Observe.
+    span_id = serializers.CharField(required=False, allow_null=True)
     trace_id = serializers.UUIDField(required=False, allow_null=True)
     prompt_id = serializers.UUIDField(required=False, allow_null=True)
     optimization_id = serializers.UUIDField(required=False, allow_null=True)
     experiment_id = serializers.UUIDField(required=False, allow_null=True)
+    source_navigation = EvalLogSourceNavigationSerializer(required=False)
 
 
 class EvalApiLogRowResponseSerializer(serializers.Serializer):

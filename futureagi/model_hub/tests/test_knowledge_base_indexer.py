@@ -112,9 +112,7 @@ class TestFileReaders:
         assert "second para" in text
 
     def test_process_rtf_extracts_plain_text(self, indexer, tmp_path):
-        path = _write(
-            tmp_path, "doc.rtf", r"{\rtf1\ansi hello from rtf\par}"
-        )
+        path = _write(tmp_path, "doc.rtf", r"{\rtf1\ansi hello from rtf\par}")
 
         assert "hello from rtf" in indexer.process_rtf(path)
 
@@ -218,9 +216,7 @@ class TestProcessContent:
     def test_short_text_produces_a_single_batch(self, indexer):
         indexer.process_content("a short document", "file-1", "kb-1", "org-1")
 
-        assert (
-            indexer._test_embedding_manager.parallel_process_metadata.call_count == 1
-        )
+        assert indexer._test_embedding_manager.parallel_process_metadata.call_count == 1
         assert len(indexer.chunks) == 1
 
     def test_batch_failure_is_raised_not_swallowed(self, indexer):
@@ -355,9 +351,7 @@ class TestProcessS3File:
         assert download.call_args[0][-1] == "docx"
 
     def test_failure_is_reported_as_an_error_dict_not_raised(self, mocker, indexer):
-        mocker.patch.object(
-            indexer, "download_s3_file", side_effect=OSError("gone")
-        )
+        mocker.patch.object(indexer, "download_s3_file", side_effect=OSError("gone"))
 
         result = indexer.process_s3_file("docs/f.txt", "file-1", "kb-1", "org-1")
 
@@ -387,10 +381,7 @@ class TestSearchAndDelete:
         results = indexer.search("kb-1", "what is x")
 
         assert results == [{"chunk_text": "hit"}]
-        kwargs = (
-            indexer._test_embedding_manager
-            .retrieve_avg_rag_based_examples.call_args.kwargs
-        )
+        kwargs = indexer._test_embedding_manager.retrieve_avg_rag_based_examples.call_args.kwargs
         assert kwargs["eval_id"] == "kb-1"
         assert kwargs["table_name"] == KB_TABLE_NAME
         assert kwargs["input_cols"] == [KB_INDEX_COL_NAME]
@@ -406,10 +397,7 @@ class TestSearchAndDelete:
     def test_get_data_subset_passes_top_k_and_threshold(self, indexer):
         indexer.get_data_subset_kb_id(["a", "b"], "kb-1", top_k=7)
 
-        kwargs = (
-            indexer._test_embedding_manager
-            .retrieve_avg_rag_based_examples.call_args.kwargs
-        )
+        kwargs = indexer._test_embedding_manager.retrieve_avg_rag_based_examples.call_args.kwargs
         assert kwargs["top_k"] == 7
         assert kwargs["threshold"] == 0.35
         # one input_col per query

@@ -292,7 +292,10 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return
 
     prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(

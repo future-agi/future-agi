@@ -63,6 +63,14 @@ def eval_template(user, db):
             "organization": None,  # System template
         },
     )
+    # This fixture is a global system template. The request-context signal
+    # fills nullable organization/workspace fields on create, so reset them to
+    # keep the row global, as the structure endpoint expects.
+    EvalTemplate.all_objects.filter(pk=template.pk).update(
+        organization=None,
+        workspace=None,
+    )
+    template.refresh_from_db()
     return template
 
 
