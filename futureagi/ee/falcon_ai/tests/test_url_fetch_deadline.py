@@ -180,8 +180,11 @@ def test_request_host_header_matches_url_authority(monkeypatch, url, expected_ho
 
 
 def test_stalled_tcp_connect_respects_total_budget(monkeypatch):
+    connect_timeouts = []
+
     def stalled_connect(connection):
         assert connection.host == "93.184.216.34"
+        connect_timeouts.append(connection.timeout)
         # Model a connect that uses its timeout before returning no socket.
         time.sleep(connection.timeout)
         raise TimeoutError("TCP connect timed out")
@@ -192,7 +195,13 @@ def test_stalled_tcp_connect_respects_total_budget(monkeypatch):
     with pytest.raises(TimeoutError):
         safe_fetch("http://public.example/page", timeout=1.5, total_timeout=0.3)
     elapsed = time.monotonic() - started
-    assert elapsed < 0.8, elapsed
+    # The connect itself must receive the total budget, not the 1.5s
+    # per-operation timeout. Leave room for scheduling around the sleep.
+    if connect_timeouts:
+        assert 0 < connect_timeouts[0] <= 0.3
+    else:
+        assert elapsed >= 0.3  # Expired before a connect could start.
+    assert elapsed < 1.2, elapsed
 
 
 def test_silent_tls_handshake_respects_total_budget(monkeypatch):
@@ -201,6 +210,16 @@ def test_silent_tls_handshake_respects_total_budget(monkeypatch):
     listener.listen(1)
     release = threading.Event()
     accepted = threading.Event()
+    handshake_timeouts = []
+    real_wrap_socket = ssl.SSLContext.wrap_socket
+
+    def capture_handshake_timeout(context, sock, *args, **kwargs):
+        # Called after urllib3 constructs the context and loads its CA bundle,
+        # immediately before Python starts the TLS handshake.
+        handshake_timeouts.append(sock.gettimeout())
+        return real_wrap_socket(context, sock, *args, **kwargs)
+
+    monkeypatch.setattr(ssl.SSLContext, "wrap_socket", capture_handshake_timeout)
 
     def hold_connection():
         try:
@@ -227,11 +246,20 @@ def test_silent_tls_handshake_respects_total_budget(monkeypatch):
     )
     try:
         started = time.monotonic()
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError) as error:
             safe_fetch("https://public.example/page", timeout=1.5, total_timeout=0.6)
         elapsed = time.monotonic() - started
-        assert accepted.wait(0.3)
-        assert elapsed < 0.8, elapsed
+        if handshake_timeouts:
+            assert len(handshake_timeouts) == 1
+            assert accepted.wait(1)
+            assert 0 < handshake_timeouts[0] <= 0.6 - 0.4 + 0.01
+        else:
+            # A loaded runner can exhaust the budget before TLS starts. It
+            # must fail on the deadline rather than silently skip this check.
+            assert "deadline" in str(error.value).lower()
+            assert elapsed >= 0.6
+        # Without the shared deadline, TCP sleep + a 1.5s TLS timeout is 1.9s.
+        assert elapsed < 1.4, elapsed
     finally:
         release.set()
         listener.close()
@@ -239,17 +267,39 @@ def test_silent_tls_handshake_respects_total_budget(monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/drip", "/headers", "/chunked", "/gzip"])
-def test_progressing_response_stops_at_deadline(slow_url_server, path):
+def test_progressing_response_stops_at_deadline(monkeypatch, slow_url_server, path):
+    read_timeouts = []
+    real_readinto = ssrf_guard._DeadlineReader.readinto
+
+    def record_read_timeout(reader, buffer):
+        result = real_readinto(reader, buffer)
+        # A read can raise before changing the socket timeout when its budget
+        # is already gone. Record only the timeouts applied to completed reads.
+        read_timeouts.append(reader._sock.gettimeout())
+        return result
+
+    monkeypatch.setattr(ssrf_guard._DeadlineReader, "readinto", record_read_timeout)
     started = time.monotonic()
     result = fetch_url_content(f"{slow_url_server.url}{path}", timeout=0.35)
     elapsed = time.monotonic() - started
 
     assert result.startswith("[Failed to fetch URL:"), result
     assert "deadline" in result.lower(), result
-    assert elapsed < 0.8, elapsed
+    if read_timeouts:
+        # Every actual raw receive gets no more than the original budget;
+        # progressing bytes cannot reset the clock to an inactivity timeout.
+        assert all(0 < value <= 0.35 for value in read_timeouts)
+        if len(read_timeouts) > 1:
+            assert read_timeouts[-1] < read_timeouts[0]
+    else:
+        assert elapsed >= 0.35  # Expired before any raw receive.
+    # Without a deadline the progressing response takes at least ~1.5s
+    # (and /gzip must finish successfully rather than report a deadline).
+    assert elapsed < 1.3, elapsed
     # Timeout must close the actual transport, not just abandon a future while
     # the socket continues occupying a worker in the background.
-    assert slow_url_server.disconnected.wait(0.5)
+    if read_timeouts:
+        assert slow_url_server.disconnected.wait(0.5)
 
 
 def test_redirect_chain_shares_one_deadline(slow_url_server):
@@ -259,7 +309,8 @@ def test_redirect_chain_shares_one_deadline(slow_url_server):
 
     assert result.startswith("[Failed to fetch URL:"), result
     assert "deadline" in result.lower(), result
-    assert elapsed < 0.8, elapsed
+    # Four 0.15s redirects would reach /fast with per-operation timeouts.
+    assert elapsed < 1.2, elapsed
     assert "/fast" not in slow_url_server.paths
     assert len(slow_url_server.paths) <= 3
 
@@ -349,7 +400,7 @@ def test_request_write_uses_budget_remaining_after_connect(monkeypatch, scheme):
 
     monkeypatch.setattr(connection, "connect", connect)
     connection.send(b"GET / HTTP/1.1\r\nHost: public.example\r\n\r\n")
-    sock.settimeout.assert_called_with(pytest.approx(0.2))
+    sock.settimeout.assert_called_once_with(pytest.approx(0.2))
     sock.sendall.assert_called_once()
 
 

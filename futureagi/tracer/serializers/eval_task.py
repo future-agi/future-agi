@@ -382,8 +382,10 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
     )
+    # Primary: a task is usually created right after its eval configs, and
+    # a replica that has not applied them yet would reject their ids.
     evals = serializers.PrimaryKeyRelatedField(
-        queryset=CustomEvalConfig.objects.all(), many=True
+        queryset=CustomEvalConfig.objects.using("default"), many=True
     )
     name = serializers.CharField(min_length=1, max_length=255)
     sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
@@ -596,7 +598,9 @@ class EditEvalTaskSerializer(serializers.Serializer):
             raise serializers.ValidationError("At least one eval config is required.")
         try:
             eval_objects = list(
-                CustomEvalConfig.objects.filter(id__in=value, deleted=False)
+                CustomEvalConfig.objects.using("default").filter(
+                    id__in=value, deleted=False
+                )
             )
 
             if len(eval_objects) != len(value):

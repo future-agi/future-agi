@@ -522,3 +522,44 @@ class EvalLogger(BaseModel):
                 name="eval_logger_live_session_uniq",
             ),
         ]
+
+
+class EvalRecalculation(models.Model):
+    """A Recalculate that has not finished yet.
+
+    Recalculate retires the span's live result for the config (``previous``)
+    and computes a new one inside the user's request. This row is written in
+    the same transaction as the retirement, and removed in the transaction
+    that finishes the recalculation: the new result kept and the previous
+    result's Error Feed memberships retired, or the previous result put back.
+    A row that outlives its request (the worker was killed mid-eval) is
+    finished by the eval-task sweep
+    (``tracer.services.eval_tasks.recalculate.recover_stale_recalculations``).
+
+    ``replacement`` is the entry Recalculate inserted for a result an eval
+    task produced (one live entry per task, row and config). It is empty for
+    a result with no task (an inline Observe eval, an experiment span): the
+    per-span eval writes the new result itself, so the sweep finds it by the
+    previous result's span and config.
+
+    Kept apart from ``tracer_eval_logger`` so the sweep reads a table that only
+    holds recalculations in flight, not every result.
+    """
+
+    replacement = models.OneToOneField(
+        EvalLogger,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    previous = models.ForeignKey(
+        EvalLogger,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    eval_task_id = models.CharField(max_length=255)
+    started_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "tracer_eval_recalculation"

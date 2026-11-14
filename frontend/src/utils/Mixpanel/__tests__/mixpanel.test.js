@@ -92,6 +92,62 @@ describe("Mixpanel session replay shutdown", () => {
     });
   });
 
+  it("sends events without credential-like keys at any depth and keeps ordinary ones", async () => {
+    const { trackEvent } = await loadMixpanel();
+    const marker = "SYNTHETIC_CREDENTIAL_VALUE";
+    const callerProperties = {
+      id: "agent-1",
+      form_fields: {
+        agent_type: "voice",
+        provider: "vapi",
+        api_key: marker,
+        headers: [{ key: "Authorization", value: marker }],
+        livekit: { livekit_api_secret: marker, livekit_url: "wss://x.test" },
+        steps: [{ name: "first", token: marker }],
+      },
+    };
+
+    trackEvent(Events.createAgentDefClicked, callerProperties);
+
+    expect(mocks.mixpanel.track).toHaveBeenCalledTimes(1);
+    const properties = mocks.mixpanel.track.mock.calls[0][1];
+    expect(JSON.stringify(properties)).not.toContain(marker);
+    expect(properties).toEqual({
+      id: "agent-1",
+      form_fields: {
+        agent_type: "voice",
+        provider: "vapi",
+        livekit: { livekit_url: "wss://x.test" },
+        steps: [{ name: "first" }],
+      },
+    });
+    expect(callerProperties.form_fields.api_key).toBe(marker);
+  });
+
+  it("names client errors on a token link by the route pattern", async () => {
+    const { trackError } = await loadMixpanel();
+    const linkCode = "SYNTHETIC-LINK-CODE-a41f";
+    window.history.replaceState(
+      {},
+      "",
+      `/auth/jwt/invitation/set-password/user-1/${linkCode}`,
+    );
+
+    trackError({ error: "identify failed", api_key: linkCode });
+
+    expect(mocks.mixpanel.track).toHaveBeenCalledWith(
+      "Client Error : /auth/jwt/invitation/set-password/:uuid/:token",
+      {
+        error: "identify failed",
+        // The page address is sent by its route pattern too.
+        $current_url: `${window.location.origin}/auth/jwt/invitation/set-password/:uuid/:token`,
+      },
+    );
+    expect(JSON.stringify(mocks.mixpanel.track.mock.calls)).not.toContain(
+      linkCode,
+    );
+  });
+
   it("retries configuration after set_config throws", async () => {
     const configError = new Error("config failed");
     mocks.mixpanel.set_config.mockImplementationOnce(() => {
