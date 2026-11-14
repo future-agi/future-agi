@@ -172,6 +172,230 @@ class TestTokenBasedPricing:
 
 
 # =============================================================================
+# Unit Tests - Embedding Model Pricing (input-only token pricing)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestEmbeddingModelPricing:
+    """Embedding models are priced with only ``input_per_1M_tokens`` (they
+    produce no output tokens). Their cost must be computed from that key, not
+    silently dropped to $0 because an ``output_per_1M_tokens`` key is absent."""
+
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "text-embedding-3-large",
+            "text-embedding-3-small",
+            "text-embedding-ada-002",
+        ],
+    )
+    def test_embedding_cost_is_not_zero(self, model_name):
+        pricing = get_model_pricing(model_name)
+        # Sanity: embeddings are priced with an input token rate and no output rate.
+        assert "input_per_1M_tokens" in pricing
+        assert "output_per_1M_tokens" not in pricing
+        input_price = pricing["input_per_1M_tokens"]
+        assert input_price > 0
+
+        token_usage = {"prompt_tokens": 1_000_000, "completion_tokens": 0}
+        result = calculate_total_cost(model_name, token_usage)
+
+        expected = round((1_000_000 / 1_000_000) * input_price, 6)
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        assert result["total_cost"] > 0  # regression: used to fall through to $0
+        assert result["pricing_source"] == "available_models"
+
+
+@pytest.mark.unit
+class TestMultimodalEmbeddingPricing:
+    """Multimodal embedding models (e.g. ``amazon.titan-embed-image-v1``) carry
+    both ``input_per_1M_tokens`` and ``input_per_image`` pricing. The per-image
+    component must be added on top of any token cost, otherwise image-only
+    requests are reported as $0 and mixed requests omit the image cost."""
+
+    MODEL = "amazon.titan-embed-image-v1"
+
+    def test_catalog_entry_has_both_components(self):
+        pricing = get_model_pricing(self.MODEL)
+        # Guards the assumption behind this suite: this model prices per token
+        # AND per image.
+        assert pricing is not None
+        assert "input_per_1M_tokens" in pricing
+        assert "input_per_image" in pricing
+        assert pricing["input_per_image"] > 0
+
+    def test_image_only_request_is_not_zero(self):
+        """Image-only request (no tokens) must bill the per-image component.
+
+        Regression: previously took the token branch, never added the image
+        component, and returned $0."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["input_per_image"]
+
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "num_images": 5}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round(5 * per_image, 6)
+        assert expected > 0
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        assert result["total_cost"] > 0  # regression: used to fall through to $0
+        assert result["pricing_source"] == "available_models"
+
+    def test_mixed_request_includes_both_components(self):
+        """Mixed text+image request must include token AND image cost."""
+        pricing = get_model_pricing(self.MODEL)
+        token_rate = pricing["input_per_1M_tokens"]
+        per_image = pricing["input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 1_000_000,
+            "completion_tokens": 0,
+            "num_images": 5,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected_tokens = round((1_000_000 / 1_000_000) * token_rate, 6)
+        expected_images = round(5 * per_image, 6)
+        expected = round(expected_tokens + expected_images, 6)
+
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        # Both components are strictly positive and both are counted.
+        assert expected_tokens > 0 and expected_images > 0
+        assert result["total_cost"] > expected_tokens
+
+    def test_text_only_request_unchanged(self):
+        """Text-only request (no image count) bills tokens only -- the image
+        branch must not add anything or break the existing token path."""
+        pricing = get_model_pricing(self.MODEL)
+        token_rate = pricing["input_per_1M_tokens"]
+
+        token_usage = {"prompt_tokens": 1_000_000, "completion_tokens": 0}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round((1_000_000 / 1_000_000) * token_rate, 6)
+        assert result["prompt_cost"] == expected
+        assert result["total_cost"] == expected
+
+    def test_images_generated_key_is_accepted(self):
+        """Callers that report image counts as ``images_generated`` are billed
+        the per-image component too."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "images_generated": 3,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        assert result["total_cost"] == round(3 * per_image, 6)
+        assert result["total_cost"] > 0
+
+
+@pytest.mark.unit
+class TestVisionModelImageInputPerImageAlias:
+    """Some vision models carry the same per-image input component under the key
+    ``image_input_per_image`` instead of ``input_per_image`` (e.g.
+    ``vertex_ai/meta/llama-3.2-90b-vision-instruct-maas``, priced
+    ``{input_per_1M_tokens: 0.7, output_per_1M_tokens: 0.9,
+    image_input_per_image: 0.002}``). The per-image component must still be
+    added, otherwise the image cost is silently dropped.
+
+    Regression: before the alias was accepted, a mixed request of
+    ``{prompt_tokens: 1000, completion_tokens: 500, num_images: 4}`` returned
+    only $0.00115 in tokens and dropped 4 x $0.002 = $0.008 of image cost
+    (~87% undercharge)."""
+
+    MODEL = "vertex_ai/meta/llama-3.2-90b-vision-instruct-maas"
+
+    @pytest.fixture(autouse=True)
+    def full_vertex_catalog(self, monkeypatch):
+        # The default image omits the optional Vertex SDK and hides its models.
+        # Exercise the catalog pricing contract independently of that UI filter.
+        from agentic_eval.core_evals.run_prompt import model_pricing
+        from agentic_eval.core_evals.run_prompt.available_models import (
+            OSS_AVAILABLE_MODELS,
+        )
+
+        monkeypatch.setattr(model_pricing, "AVAILABLE_MODELS", OSS_AVAILABLE_MODELS)
+        model_pricing.get_model_info.cache_clear()
+        model_pricing.get_model_pricing.cache_clear()
+        yield
+        model_pricing.get_model_info.cache_clear()
+        model_pricing.get_model_pricing.cache_clear()
+
+    def test_catalog_entry_uses_alias_key(self):
+        pricing = get_model_pricing(self.MODEL)
+        # Guards the assumption behind this suite: this model prices per token
+        # AND per image, but under the ``image_input_per_image`` alias.
+        assert pricing is not None
+        assert "input_per_1M_tokens" in pricing
+        assert "output_per_1M_tokens" in pricing
+        assert "input_per_image" not in pricing
+        assert "image_input_per_image" in pricing
+        assert pricing["image_input_per_image"] > 0
+
+    def test_mixed_request_includes_image_component(self):
+        """Mixed text+image request must include token AND image cost billed
+        under the ``image_input_per_image`` alias.
+
+        Fail-without: before the alias was accepted, the image component was
+        dropped and total_cost was only the token cost ($0.00115)."""
+        pricing = get_model_pricing(self.MODEL)
+        input_rate = pricing["input_per_1M_tokens"]
+        output_rate = pricing["output_per_1M_tokens"]
+        per_image = pricing["image_input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "num_images": 4,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected_prompt_tokens = round((1000 / 1_000_000) * input_rate, 6)
+        expected_images = round(4 * per_image, 6)
+        expected_prompt = round(expected_prompt_tokens + expected_images, 6)
+        expected_completion = round((500 / 1_000_000) * output_rate, 6)
+        expected_total = round(expected_prompt + expected_completion, 6)
+
+        # The image component is strictly positive and actually counted.
+        assert expected_images == 0.008
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+        assert result["total_cost"] == expected_total
+        # Regression guard: total must exceed the token-only cost by the full
+        # image component (fails when the alias is dropped).
+        token_only_total = round(expected_prompt_tokens + expected_completion, 6)
+        assert token_only_total == 0.00115
+        assert result["total_cost"] == round(token_only_total + expected_images, 6)
+        assert result["total_cost"] > token_only_total
+
+    def test_image_only_request_is_not_zero(self):
+        """Image-only request under the alias key must bill the per-image
+        component instead of returning $0."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["image_input_per_image"]
+
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "num_images": 4}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round(4 * per_image, 6)
+        assert expected > 0
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+
+
+# =============================================================================
 # Unit Tests - Character-Based Pricing (TTS Models)
 # =============================================================================
 
@@ -224,6 +448,103 @@ class TestCharacterBasedPricing:
 
 
 # =============================================================================
+# Unit Tests - Per-1k-Character Pricing (Gemini chat/embedding models)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestPer1kCharacterPricing:
+    """Test per-1k-character pricing.
+
+    Several Gemini models (e.g. gemini-1.5-pro / -flash, gemini/gemini-2.5-*,
+    openrouter/google/gemini-pro-1.5) are priced with
+    ``input_per_1k_characters`` / ``output_per_1k_characters``. Before the fix
+    ``calculate_total_cost`` only handled the per-1M-character (TTS) branch, so
+    every per-1k-character model fell through to the "unknown pricing" path and
+    returned a hard $0.
+
+    These tests exercise the catalog's declared units, not current provider
+    invoices. Character pricing requires real counts for every priced side.
+    Token-only usage receives a labelled default estimate, never a character
+    count derived from tokens.
+    """
+
+    def test_gemini_1_5_pro_per_1k_char_pricing_lookup(self):
+        """Gemini 1.5 Pro is priced per 1k characters, not per 1M tokens."""
+        pricing = get_model_pricing("gemini-1.5-pro")
+
+        assert pricing is not None
+        assert "input_per_1k_characters" in pricing
+        assert "output_per_1k_characters" in pricing
+        # This branch does NOT use token-based keys.
+        assert "input_per_1M_tokens" not in pricing
+
+    def test_calculate_cost_per_1k_char_with_explicit_characters_is_non_zero(self):
+        """Regression: with REAL character counts a per-1k-char chat model must
+        no longer cost a hard $0.
+
+        Fails without the per-1k-character branch (falls through to Unknown ->
+        $0); passes with it.
+        """
+        # Real character counts are supplied, so this branch prices correctly.
+        token_usage = {"input_characters": 50000, "output_characters": 10000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        # gemini-1.5-pro: $0.007 / 1k input chars and $0.007 / 1k output chars.
+        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+
+        assert result["total_cost"] > 0.0  # the core regression assertion
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+        assert result["total_cost"] == round(
+            expected_prompt_cost + expected_completion_cost, 6
+        )
+
+    def test_calculate_cost_per_1k_char_uses_only_real_characters(self):
+        """The branch prices from character counts only; token counts that
+        happen to be present alongside them are ignored (not added in)."""
+        token_usage = {
+            "input_characters": 50000,
+            "output_characters": 10000,
+            # Token counts are present but MUST NOT influence the char cost.
+            "prompt_tokens": 999999,
+            "completion_tokens": 999999,
+        }
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+
+    def test_calculate_cost_per_1k_char_tokens_only_does_not_fabricate(self):
+        """Token-only usage receives a token fallback, not a character price."""
+        token_usage = {"prompt_tokens": 10000, "completion_tokens": 2000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        assert result["pricing_source"] == "default"
+        assert result["prompt_cost"] == 0.0015
+        assert result["completion_cost"] == 0.0012
+        assert result["total_cost"] == 0.0027
+
+    def test_calculate_cost_per_1k_char_handles_na_placeholder_price(self):
+        """Placeholder character rates receive a labelled fallback estimate."""
+        token_usage = {"input_characters": 1000, "output_characters": 0}
+
+        result = calculate_total_cost("text-multilingual-embedding-002", token_usage)
+
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] == 0.015
+        assert result["prompt_cost"] == 0.015
+        assert result["completion_cost"] == 0.0
+
+
+# =============================================================================
 # Unit Tests - Minute-Based Pricing (STT Models)
 # =============================================================================
 
@@ -263,6 +584,37 @@ class TestMinuteBasedPricing:
         assert result["prompt_cost"] == expected_cost
         assert result["completion_cost"] == 0.0
         assert result["total_cost"] == expected_cost
+
+    def test_azure_whisper_pricing_uses_per_minute_audio_alias(self):
+        """azure/whisper-1 is priced with the `per_minute_audio` alias key."""
+        pricing = get_model_pricing("azure/whisper-1")
+
+        assert pricing is not None
+        assert "per_minute_audio" in pricing
+        assert pricing["per_minute_audio"] == 0.006
+
+    def test_calculate_cost_azure_whisper_equals_openai_whisper(self):
+        """Regression: azure/whisper-1 must cost the same as openai whisper-1.
+
+        Both are $0.006/min, but azure/whisper-1 uses the `per_minute_audio`
+        alias. Before the fix the STT branch only handled `input_per_minute`,
+        so azure/whisper-1 fell through to Unknown -> $0.
+
+        Fails without the alias (azure -> $0.0 != whisper-1 -> $0.06);
+        passes with it.
+        """
+        token_usage = {"audio_seconds": 600.0}  # 10 minutes
+
+        azure_result = calculate_total_cost("azure/whisper-1", token_usage)
+        openai_result = calculate_total_cost("whisper-1", token_usage)
+
+        # 10 min * $0.006 = $0.06
+        expected_cost = round((600.0 / 60.0) * 0.006, 6)
+
+        assert azure_result["total_cost"] > 0.0  # the core regression assertion
+        assert azure_result["prompt_cost"] == expected_cost
+        assert azure_result["completion_cost"] == 0.0
+        assert azure_result["total_cost"] == openai_result["total_cost"]
 
 
 # =============================================================================
@@ -580,6 +932,156 @@ class TestFallbackPricing:
         assert result["pricing_source"] == "fallback"
         assert result["prompt_cost"] == expected_prompt
         assert result["completion_cost"] == expected_completion
+
+
+# =============================================================================
+# Unit Tests - Unrecognized / Placeholder Pricing Are Not Silent $0
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestUnrecognizedPricingNotSilentZero:
+    """Regression tests: pricing that is present but not priceable must NOT be
+    billed as a silent $0 with source "available_models".
+
+    Two root causes are covered:
+      (A) An unrecognized-but-present pricing structure (numeric values, but no
+          key shape the cost calculator understands) used to fall through to a
+          $0 cost while still reporting source "available_models" -- making it
+          indistinguishable from a legitimate $0. It must now fall back to a
+          real estimate and stamp a detectable source ("default"/"fallback").
+      (B) Placeholder / non-numeric pricing (e.g. azure_ai "details" strings or
+          together_ai "pay-per-token" strings) is returned as a non-None dict by
+          get_model_pricing, so the fallback never runs. get_model_pricing must
+          treat such pricing as missing (return None) so a real estimate applies.
+    """
+
+    UNRECOGNIZED_PRICING_MOD = (
+        "agentic_eval.core_evals.run_prompt.model_pricing.get_model_pricing"
+    )
+
+    # ---- (A) unrecognized-but-present numeric pricing ----------------------
+
+    def test_unrecognized_pricing_falls_back_not_silent_zero(self, monkeypatch):
+        """Unrecognized (but numeric) pricing -> fallback estimate, detectable source.
+
+        Fails on old code: old behavior returned total_cost 0.0 with
+        pricing_source "available_models".
+        """
+        # Input-only token rates are supported for embeddings. Use an actually
+        # unsupported unit to exercise fallback recognition instead.
+        unrecognized = {"per_1000_pairs": 5.0}
+        monkeypatch.setattr(self.UNRECOGNIZED_PRICING_MOD, lambda name: unrecognized)
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("some-model-with-weird-pricing", token_usage)
+
+        # The whole point of the fix: not a silent $0 attributed to the catalog.
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+        # Should equal the standard default fallback estimate.
+        expected_prompt = round(
+            (1000 / 1_000_000) * DEFAULT_FALLBACK_PRICING["input_per_1M_tokens"], 6
+        )
+        expected_completion = round(
+            (500 / 1_000_000) * DEFAULT_FALLBACK_PRICING["output_per_1M_tokens"], 6
+        )
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+
+    def test_unrecognized_pricing_honors_custom_fallback(self, monkeypatch):
+        """Custom fallback pricing is used (source 'fallback') on the unrecognized path."""
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD, lambda name: {"per_1000_pairs": 2.0}
+        )
+        custom_fallback = {"input_per_1M_tokens": 1.0, "output_per_1M_tokens": 2.0}
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost(
+            "reranker-weird", token_usage, fallback_pricing=custom_fallback
+        )
+
+        assert result["pricing_source"] == "fallback"
+        assert result["prompt_cost"] == round((1000 / 1_000_000) * 1.0, 6)
+        assert result["completion_cost"] == round((500 / 1_000_000) * 2.0, 6)
+
+    def test_genuine_zero_pricing_stays_available_models(self, monkeypatch):
+        """A real $0 (recognized zero pricing) must stay source 'available_models'.
+
+        This is the distinction the fix preserves: a true $0 is detectable
+        apart from a missed/unrecognized $0.
+        """
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD,
+            lambda name: {"input_per_1M_tokens": 0.0, "output_per_1M_tokens": 0.0},
+        )
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("free-model", token_usage)
+
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == 0.0
+
+    # ---- (B) placeholder / non-numeric pricing in the real catalog ---------
+
+    def test_has_numeric_pricing_helper(self):
+        """_has_numeric_pricing distinguishes priceable from placeholder dicts."""
+        from agentic_eval.core_evals.run_prompt.model_pricing import (
+            _has_numeric_pricing,
+        )
+
+        assert _has_numeric_pricing(
+            {"input_per_1M_tokens": 5, "output_per_1M_tokens": 15}
+        )
+        assert _has_numeric_pricing({"per_image": 0.04})
+        assert _has_numeric_pricing({"input_per_1M_tokens": 0.0})  # real $0 counts
+        # Placeholders have no numeric values:
+        assert not _has_numeric_pricing({"details": "Varies by deployment and usage"})
+        assert not _has_numeric_pricing({"per_1M_tokens": "pay-per-token"})
+        assert not _has_numeric_pricing({"per_image": "N/A"})
+        # bool must not count as numeric:
+        assert not _has_numeric_pricing({"free": True})
+
+    def test_azure_ai_details_placeholder_returns_none(self):
+        """azure_ai '{details: ...}' placeholder pricing -> None (so fallback runs)."""
+        assert get_model_pricing("azure_ai/mistral-large") is None
+
+    def test_together_ai_string_placeholder_returns_none(self):
+        """together_ai '{per_1M_tokens: "pay-per-token"}' placeholder -> None."""
+        assert get_model_pricing("together-ai-8.1b-21b") is None
+
+    def test_azure_ai_placeholder_model_routes_to_fallback(self):
+        """A catalogued placeholder model now yields a real estimate, not silent $0."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("azure_ai/mistral-large", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_together_ai_placeholder_model_routes_to_fallback(self):
+        """together_ai string-priced model routes to fallback estimate."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("together-ai-8.1b-21b", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_real_pricing_unchanged(self):
+        """Sanity: a normally-priced model is unaffected by the fix."""
+        assert get_model_pricing("gpt-4o") == {
+            "input_per_1M_tokens": 5,
+            "output_per_1M_tokens": 15,
+        }
+        result = calculate_total_cost(
+            "gpt-4o", {"prompt_tokens": 1000, "completion_tokens": 500}
+        )
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == round(
+            (1000 / 1_000_000) * 5 + (500 / 1_000_000) * 15, 6
+        )
 
 
 # =============================================================================

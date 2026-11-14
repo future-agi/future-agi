@@ -498,8 +498,17 @@ def run_eval_func(
                 "composite_eval_dataset",
                 "tracer_composite",
             }
-            cost_properties = {}
-            if is_composite_source and not llm_cost and _fallback_cost:
+            reported_source = eval_cost.get("pricing_source")
+            cost_properties = (
+                {"pricing_source": reported_source} if reported_source else {}
+            )
+            # A known zero (including a zero-valued estimate) is not missing cost.
+            if (
+                is_composite_source
+                and not llm_cost
+                and not reported_source
+                and _fallback_cost
+            ):
                 actual_cost = Decimal(str(_fallback_cost)) + Decimal(str(per_run_fee))
                 cost_properties = {
                     "llm_cost_usd": str(_fallback_cost),
