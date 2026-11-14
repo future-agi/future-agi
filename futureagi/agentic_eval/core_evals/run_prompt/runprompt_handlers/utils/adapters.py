@@ -49,7 +49,7 @@ class RunPromptAdapter:
         Returns:
             Concatenated text content from messages
         """
-        return AudioProcessor.extract_text_from_messages(self.messages)
+        return AudioProcessor.extract_literal_speech_script(self.messages)
 
     def _get_input_audio_from_messages(self) -> str:
         """
