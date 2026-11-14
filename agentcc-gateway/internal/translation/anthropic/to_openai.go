@@ -467,7 +467,7 @@ func convertContentParts(blocks []ContentBlock) (json.RawMessage, error) {
 			}
 		case "image":
 			if b.Source == nil {
-				continue
+				return nil, fmt.Errorf("image block has no source")
 			}
 			url, err := imageSourceToURL(b.Source)
 			if err != nil {

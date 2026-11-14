@@ -2080,3 +2080,74 @@ func TestStreamParse_ServerToolUseDoesNotCorruptAnInFlightToolCall(t *testing.T)
 			chunk.Choices[0].Delta.ToolCalls)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Review follow-ups (mixed parts, media allowlist, query-string PDFs)
+// ---------------------------------------------------------------------------
+
+func TestTranslateVisionContent_MixedTextImageFilePreserved(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"text","text":"Compare"},
+		{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}},
+		{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0x"}}
+	]`)
+
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("blocks length = %d, want 3", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[1].Type != "image" || blocks[2].Type != "document" {
+		t.Fatalf("block types = %q,%q,%q, want text,image,document", blocks[0].Type, blocks[1].Type, blocks[2].Type)
+	}
+}
+
+func TestTranslateVisionContent_FileDataUnsupportedMimeRejected(t *testing.T) {
+	// Anthropic accepts four image types and PDFs only; an svg must be
+	// refused here instead of shipped as an image block the upstream rejects
+	// without naming the attachment.
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_data":"data:image/svg+xml;base64,PHN2Zy8+"}}
+	]`)
+
+	_, err := translateVisionContent(content)
+	if err == nil {
+		t.Fatal("expected error for an unsupported media type, got nil")
+	}
+	var apiErr *models.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 || apiErr.Code != "unsupported_content_part" {
+		t.Fatalf("err = %v, want 400 unsupported_content_part", err)
+	}
+}
+
+func TestTranslateVisionContent_FileID_PDFQueryURL(t *testing.T) {
+	// The .pdf extension check must survive a query string.
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"https://example.com/report.pdf?token=1"}}
+	]`)
+
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 || blocks[0].Type != "document" {
+		t.Fatalf("blocks = %+v, want a single document block", blocks)
+	}
+}
+
+func TestTranslateVisionContent_FileID_UnsupportedURLTypeRejected(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"https://example.com/notes.docx"}}
+	]`)
+
+	_, err := translateVisionContent(content)
+	if err == nil {
+		t.Fatal("expected error for a URL whose type Anthropic cannot carry, got nil")
+	}
+	var apiErr *models.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("err = %v, want 400 APIError", err)
+	}
+}

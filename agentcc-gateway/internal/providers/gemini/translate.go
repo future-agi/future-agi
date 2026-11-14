@@ -265,12 +265,14 @@ func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
 	}
 }
 
-// RejectUnroutableFileParts scans message content for file parts whose file_id
-// is a managed identifier rather than a fetchable URL. Gemini's fileUri only
-// accepts http(s) and gs:// locations, so forwarding an opaque identifier
-// would ask Google to fetch a string that is not a location and the model
-// would receive a broken reference. file_data (inline base64) parts and URL
-// file_id values are unaffected.
+// RejectUnroutableFileParts scans message content for file parts Gemini cannot
+// carry. file_id must be an http(s) or gs:// location — Gemini's fileUri only
+// accepts locations, so forwarding a managed identifier would ask Google to
+// fetch a string that is not one and the model would receive a broken
+// reference. file_data must be a data: URI or an http(s) URL, the shapes
+// translateVisionContent actually maps to inlineData/fileData; anything else
+// (bare base64, gs://) would be silently dropped, losing the attachment while
+// the caller is billed for an answer that never saw their file.
 //
 // Kept apart from translateVisionContent for the same reason as
 // RejectUnsupportedTools: a validation error does not belong in a translator's
@@ -288,7 +290,19 @@ func RejectUnroutableFileParts(messages []models.Message) *models.APIError {
 			continue // plain-string content: nothing to check
 		}
 		for _, p := range parts {
-			if p.Type != "file" || p.File == nil || p.File.FileID == "" || p.File.FileData != "" {
+			if p.Type != "file" || p.File == nil {
+				continue
+			}
+			if p.File.FileData != "" {
+				if parseImageURLToPart(p.File.FileData) == nil {
+					slog.Warn("gemini: file_data value cannot be carried by this provider",
+						"prefix", p.File.FileData[:min(len(p.File.FileData), 16)])
+					return models.ErrBadRequest("unsupported_content_part",
+						"file_data must be a data: URI or an http(s) URL to be routed to Gemini")
+				}
+				continue
+			}
+			if p.File.FileID == "" {
 				continue
 			}
 			if strings.HasPrefix(p.File.FileID, "http://") ||

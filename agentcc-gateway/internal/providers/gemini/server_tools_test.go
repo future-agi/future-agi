@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -392,6 +393,47 @@ func TestChatCompletion_UnroutableFilePartIsRefused(t *testing.T) {
 	}
 	if apiErr.Code != "unsupported_content_part" {
 		t.Errorf("code = %q, want %q", apiErr.Code, "unsupported_content_part")
+	}
+	if reached {
+		t.Error("the upstream was called for a request the gateway cannot serve")
+	}
+}
+
+func TestStreamChatCompletion_UnroutableFilePartIsRefused(t *testing.T) {
+	// The stream entry point runs the same validator before anything is sent.
+	var req models.ChatCompletionRequest
+	body := `{"model":"gemini-3.6-flash","stream":true,"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"file-abc123"}}]}]}`
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("reading the request: %v", err)
+	}
+
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.Write([]byte(`{"candidates":[]}`))
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL)
+	chunks, errs := p.StreamChatCompletion(context.Background(), &req)
+
+	select {
+	case err := <-errs:
+		var apiErr *models.APIError
+		if !asAPIError(err, &apiErr) {
+			t.Fatalf("error %v is not an *models.APIError", err)
+		}
+		if apiErr.Status != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadRequest)
+		}
+		if apiErr.Code != "unsupported_content_part" {
+			t.Errorf("code = %q, want %q", apiErr.Code, "unsupported_content_part")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no refusal arrived on the error channel")
+	}
+	if len(chunks) != 0 {
+		t.Errorf("got %d chunks before the refusal", len(chunks))
 	}
 	if reached {
 		t.Error("the upstream was called for a request the gateway cannot serve")

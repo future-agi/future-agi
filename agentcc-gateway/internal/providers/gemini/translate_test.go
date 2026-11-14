@@ -2310,3 +2310,22 @@ func TestRejectUnroutableFileParts_PlainStringContent(t *testing.T) {
 		t.Fatalf("unexpected refusal: %v", err)
 	}
 }
+
+func TestRejectUnroutableFileParts_UnparsableFileDataRejected(t *testing.T) {
+	// Bare base64 (no data: prefix) is silently dropped by the translator —
+	// the validator must refuse it instead of letting the attachment vanish.
+	messages := []models.Message{{
+		Role: "user",
+		Content: json.RawMessage(`[
+			{"type":"file","file":{"file_data":"JVBERi0x"}}
+		]`),
+	}}
+
+	err := RejectUnroutableFileParts(messages)
+	if err == nil {
+		t.Fatal("expected a refusal for bare-base64 file_data, got nil")
+	}
+	if err.Status != 400 || err.Code != "unsupported_content_part" {
+		t.Fatalf("status=%d code=%q, want 400 unsupported_content_part", err.Status, err.Code)
+	}
+}

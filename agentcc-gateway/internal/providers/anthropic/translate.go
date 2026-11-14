@@ -395,8 +395,12 @@ func translateVisionContent(content json.RawMessage) ([]anthropicContentBlock, e
 				if mediaType == "" {
 					mediaType = "application/pdf"
 				}
+				blockType, err := binaryBlockType(mediaType)
+				if err != nil {
+					return nil, err
+				}
 				blocks = append(blocks, anthropicContentBlock{
-					Type: binaryBlockType(mediaType),
+					Type: blockType,
 					Source: &imageSource{
 						Type:      "base64",
 						MediaType: mediaType,
@@ -416,8 +420,12 @@ func translateVisionContent(content json.RawMessage) ([]anthropicContentBlock, e
 				return nil, models.ErrBadRequest("unsupported_content_part",
 					fmt.Sprintf("file part %q references a managed file identifier %q that cannot be routed to Anthropic without resolution; pass a URL or inline file_data instead", p.File.Filename, p.File.FileID))
 			}
+			blockType, err := urlBinaryBlockType(p.File.Format, p.File.FileID)
+			if err != nil {
+				return nil, err
+			}
 			blocks = append(blocks, anthropicContentBlock{
-				Type: urlBinaryBlockType(p.File.Format, p.File.FileID),
+				Type: blockType,
 				Source: &imageSource{
 					Type: "url",
 					URL:  p.File.FileID,
@@ -428,22 +436,39 @@ func translateVisionContent(content json.RawMessage) ([]anthropicContentBlock, e
 	return blocks, nil
 }
 
-// binaryBlockType picks the Anthropic block type for inline binary data:
-// documents for everything that is not an image.
-func binaryBlockType(mediaType string) string {
-	if strings.HasPrefix(mediaType, "image/") {
-		return "image"
+// binaryBlockType classifies inline binary data for Anthropic, which accepts
+// only four image types and PDFs; anything else is refused here rather than
+// shipped as a block the upstream will reject without naming the attachment.
+func binaryBlockType(mediaType string) (string, error) {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return "image", nil
+	case "application/pdf":
+		return "document", nil
+	default:
+		return "", models.ErrBadRequest("unsupported_content_part",
+			fmt.Sprintf("Anthropic cannot carry %q content; pass the file as a supported media type (image/jpeg, image/png, image/gif, image/webp, application/pdf)", mediaType))
 	}
-	return "document"
 }
 
-// urlBinaryBlockType picks the Anthropic block type for a URL-sourced binary:
-// documents for PDFs (by declared format or extension), images otherwise.
-func urlBinaryBlockType(format, url string) string {
-	if format == "application/pdf" || strings.HasSuffix(strings.ToLower(url), ".pdf") {
-		return "document"
+// urlBinaryBlockType classifies a URL-sourced file for Anthropic: documents
+// for PDFs (by declared format, accepting the "pdf" shorthand, or a .pdf
+// extension after any query string), images for the four supported image
+// types, and a refusal for anything else the upstream would reject.
+func urlBinaryBlockType(format, url string) (string, error) {
+	switch format {
+	case "application/pdf", "pdf":
+		return "document", nil
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return "image", nil
 	}
-	return "image"
+	cleanURL, _, _ := strings.Cut(url, "?")
+	cleanURL, _, _ = strings.Cut(cleanURL, "#")
+	if strings.HasSuffix(strings.ToLower(cleanURL), ".pdf") {
+		return "document", nil
+	}
+	return "", models.ErrBadRequest("unsupported_content_part",
+		fmt.Sprintf("cannot determine that %q is a file type Anthropic accepts (image/jpeg, image/png, image/gif, image/webp, application/pdf); pass an explicit format or a URL ending in .pdf", url))
 }
 
 // convertImageToAnthropic converts an image URL (data URI or HTTP URL) to Anthropic image block.

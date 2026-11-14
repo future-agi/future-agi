@@ -530,6 +530,9 @@ func TestRequestToCanonical_DocumentBase64(t *testing.T) {
 	if parts[1].File.Format != "application/pdf" {
 		t.Errorf("Format = %q, want application/pdf", parts[1].File.Format)
 	}
+	if parts[1].File.FileID != "" {
+		t.Errorf("FileID = %q, want empty for a base64-source document", parts[1].File.FileID)
+	}
 }
 
 func TestRequestToCanonical_DocumentURL(t *testing.T) {
@@ -551,7 +554,9 @@ func TestRequestToCanonical_DocumentURL(t *testing.T) {
 	var parts []struct {
 		Type string `json:"type"`
 		File *struct {
-			FileID string `json:"file_id"`
+			FileID   string `json:"file_id"`
+			FileData string `json:"file_data"`
+			Format   string `json:"format"`
 		} `json:"file"`
 	}
 	if err := json.Unmarshal(req.Messages[0].Content, &parts); err != nil {
@@ -562,6 +567,9 @@ func TestRequestToCanonical_DocumentURL(t *testing.T) {
 	}
 	if parts[0].File.FileID != "https://example.com/report.pdf" {
 		t.Errorf("FileID = %q, want the source URL", parts[0].File.FileID)
+	}
+	if parts[0].File.FileData != "" || parts[0].File.Format != "" {
+		t.Errorf("FileData/Format = %q/%q, want both empty for a URL-source document", parts[0].File.FileData, parts[0].File.Format)
 	}
 }
 
@@ -638,5 +646,26 @@ func TestRequestToCanonical_UnknownBlockRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mystery_block") {
 		t.Errorf("error = %v, want it to name the block type", err)
+	}
+}
+
+func TestRequestToCanonical_NilSourceImageRejected(t *testing.T) {
+	// An image block with no source would otherwise collapse the turn to a
+	// bare null — the same failure mode container_upload had.
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [{"type": "image"}]
+		}]
+	}`)
+
+	_, _, err := tr.RequestToCanonical(body)
+	if err == nil {
+		t.Fatal("expected error for an image block with no source, got nil")
+	}
+	if !strings.Contains(err.Error(), "image") {
+		t.Errorf("error = %v, want it to name the image block", err)
 	}
 }
