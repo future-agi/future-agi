@@ -106,8 +106,9 @@ class TestListenerTokenHappyPath:
         access_token_cls = MagicMock(return_value=fake_token_instance)
         video_grants_cls = MagicMock()
 
-        with patch("livekit.api.AccessToken", access_token_cls), patch(
-            "livekit.api.VideoGrants", video_grants_cls
+        with (
+            patch("livekit.api.AccessToken", access_token_cls),
+            patch("livekit.api.VideoGrants", video_grants_cls),
         ):
             response = auth_client.get(self.URL_TEMPLATE.format(ongoing_call.id))
 
@@ -181,9 +182,7 @@ class TestValidateCredentials:
         livekit_api_cls = MagicMock(return_value=fake_lk_api)
 
         with patch("livekit.api.LiveKitAPI", livekit_api_cls):
-            response = auth_client.post(
-                self.URL, self._payload(), format="json"
-            )
+            response = auth_client.post(self.URL, self._payload(), format="json")
 
         assert response.status_code == 200
         body = response.json()
@@ -223,9 +222,7 @@ class TestValidateCredentials:
         livekit_api_cls = MagicMock(return_value=fake_lk_api)
 
         with patch("livekit.api.LiveKitAPI", livekit_api_cls):
-            response = auth_client.post(
-                self.URL, self._payload(), format="json"
-            )
+            response = auth_client.post(self.URL, self._payload(), format="json")
 
         assert response.status_code == 200
         body = response.json()

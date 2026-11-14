@@ -186,7 +186,9 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(str(e))
 
 
-class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccWebhookEventViewSet(
+    BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet
+):
     """Read-only view of webhook event delivery records."""
 
     permission_classes = [IsAuthenticated]
@@ -219,7 +221,9 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retrieve_error", error=str(e))
             return self._gm.not_found("Webhook event not found")
@@ -246,7 +250,9 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
                 ]
             )
 
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retry_error", error=str(e))
             return self._gm.bad_request(str(e))

@@ -72,7 +72,11 @@ class TestBuildChatAggregateMetrics:
         assert _build_chat_aggregate_metrics([]) == {}
 
     def test_skips_voice_calls(self):
-        calls = [MagicMock(simulation_call_type="voice", conversation_metrics_data={"latency": 100})]
+        calls = [
+            MagicMock(
+                simulation_call_type="voice", conversation_metrics_data={"latency": 100}
+            )
+        ]
         assert _build_chat_aggregate_metrics(calls) == {}
 
     def test_averages_metrics(self):
@@ -371,8 +375,8 @@ class TestGetFullTestExecutionData:
     @patch("simulate.utils.agent_optimiser.TestExecution")
     def test_exception_returns_none(self, mock_te):
         mock_te.DoesNotExist = self._DNE
-        mock_te.objects.select_related.return_value.get.side_effect = (
-            RuntimeError("failure")
+        mock_te.objects.select_related.return_value.get.side_effect = RuntimeError(
+            "failure"
         )
         assert get_full_test_execution_data(str(uuid.uuid4())) is None
 

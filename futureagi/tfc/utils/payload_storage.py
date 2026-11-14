@@ -165,8 +165,7 @@ class PayloadStorage:
         """
         if not self._redis_available or not self._redis_client:
             raise RuntimeError(
-                "Redis is not available for payload storage. "
-                "Cannot retrieve payloads."
+                "Redis is not available for payload storage. Cannot retrieve payloads."
             )
 
         try:
