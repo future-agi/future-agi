@@ -61,14 +61,14 @@ const WorkspaceSuccess = ({ workspaceData, onClose }) => {
               width: 16,
               height: 16,
               borderRadius: "50%",
-              bgcolor: "green.600",
+              bgcolor: "status.success.solid",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
             <SvgColor
-              sx={{ height: 14, width: 14, color: "#FFFFFF" }}
+              sx={{ height: 14, width: 14, color: "common.white" }}
               src={"/assets/icons/ic_tick.svg"}
             />
           </Box>
@@ -101,7 +101,7 @@ const WorkspaceSuccess = ({ workspaceData, onClose }) => {
             padding: 1,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           Workspace Name: {workspaceData?.workspace?.name}

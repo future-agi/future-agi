@@ -1,4 +1,5 @@
 /* eslint-disable react/prop-types */
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo, useCallback } from "react";
 import {
   Box,
@@ -6,9 +7,6 @@ import {
   Stack,
   Tab,
   Tabs,
-  Card,
-  CardContent,
-  CardActionArea,
   Grid,
   Table,
   TableBody,
@@ -18,7 +16,12 @@ import {
   TableRow,
   Chip,
   Skeleton,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -26,6 +29,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useGatewayConfig,
   useProviderHealth,
+  useUpdateConfig,
 } from "../providers/hooks/useGatewayConfig";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useGatewayContext } from "../context/useGatewayContext";
@@ -38,6 +42,16 @@ import { formatCost } from "../utils/formatters";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 function extractAlertRules(config) {
   const alerting = config?.alerting || config?.alerts || {};
@@ -82,8 +96,8 @@ function getSeverityColor(severity) {
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
 
-const AlertRulesTab = ({ rules }) => (
-  <Card>
+const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
+  <Section variant="panel">
     <TableContainer>
       <Table size="small">
         <TableHead>
@@ -95,6 +109,7 @@ const AlertRulesTab = ({ rules }) => (
             <TableCell>Window</TableCell>
             <TableCell>Severity</TableCell>
             <TableCell>Status</TableCell>
+            <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -126,25 +141,41 @@ const AlertRulesTab = ({ rules }) => (
                 </Typography>
               </TableCell>
               <TableCell>
-                <Chip
-                  label={rule.severity || "info"}
-                  color={getSeverityColor(rule.severity)}
-                  size="small"
+                <StatusBadge
+                  status={rule.severity || "info"}
+                  label={String(rule.severity || "info")}
+                  role={CHIP_ROLE[getSeverityColor(rule.severity)]}
                 />
               </TableCell>
               <TableCell>
-                <Chip
-                  label={rule.enabled !== false ? "Active" : "Disabled"}
-                  color={rule.enabled !== false ? "success" : "default"}
-                  size="small"
-                  variant="outlined"
+                <StatusBadge
+                  status={rule.enabled !== false ? "Active" : "Disabled"}
+                  label={String(rule.enabled !== false ? "Active" : "Disabled")}
+                  role={
+                    CHIP_ROLE[rule.enabled !== false ? "success" : "default"]
+                  }
                 />
+              </TableCell>
+              <TableCell align="right">
+                <Tooltip title="Delete rule">
+                  <span>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      disabled={isDeleting}
+                      onClick={() => onDelete(idx)}
+                      aria-label={`Delete rule ${rule.name || idx + 1}`}
+                    >
+                      <Iconify icon="solar:trash-bin-trash-linear" width={18} />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </TableCell>
             </TableRow>
           ))}
           {rules.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} align="center">
+              <TableCell colSpan={8} align="center">
                 <Typography variant="body2" color="text.secondary" py={4}>
                   No alert rules configured. Click &quot;Create Rule&quot; to
                   add your first alert rule.
@@ -155,7 +186,7 @@ const AlertRulesTab = ({ rules }) => (
         </TableBody>
       </Table>
     </TableContainer>
-  </Card>
+  </Section>
 );
 
 // ---------------------------------------------------------------------------
@@ -163,10 +194,10 @@ const AlertRulesTab = ({ rules }) => (
 // ---------------------------------------------------------------------------
 
 const CHANNEL_ICONS = {
-  webhook: "mdi:webhook",
-  email: "mdi:email-outline",
+  webhook: "solar:link-circle-linear",
+  email: "solar:letter-linear",
   slack: "mdi:slack",
-  pagerduty: "mdi:cellphone-link",
+  pagerduty: "solar:smartphone-linear",
 };
 
 function maskUrl(url) {
@@ -179,117 +210,128 @@ function maskUrl(url) {
   }
 }
 
-const ChannelsTab = ({ channels }) => (
+const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
   <Stack spacing={2}>
     {channels.length === 0 ? (
-      <Card sx={{ p: 4 }}>
+      <Section variant="panel" sx={{ p: 4 }}>
         <Typography color="text.secondary" textAlign="center">
           No notification channels configured.
         </Typography>
-      </Card>
+      </Section>
     ) : (
       channels.map((ch, idx) => (
-        <Card key={ch.name || idx}>
-          <CardContent>
-            <Stack
-              direction="row"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={1.5}
-            >
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Iconify
-                  icon={CHANNEL_ICONS[ch.type] || "mdi:bell-outline"}
-                  width={24}
-                  sx={{ color: "primary.main" }}
-                />
-                <Typography variant="h6">
-                  {ch.name || `Channel ${idx + 1}`}
+        <Section variant="panel" key={ch.name || idx}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            mb={1.5}
+          >
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Iconify
+                icon={CHANNEL_ICONS[ch.type] || "solar:bell-linear"}
+                width={24}
+                sx={{ color: "primary.main" }}
+              />
+              <Typography variant="h6">
+                {ch.name || `Channel ${idx + 1}`}
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={0.5}>
+              <Chip
+                label={ch.type || "webhook"}
+                color="primary"
+                size="small"
+                variant="outlined"
+              />
+              <Chip
+                label={ch.enabled !== false ? "Enabled" : "Disabled"}
+                color={ch.enabled !== false ? "success" : "default"}
+                size="small"
+              />
+              <Tooltip title="Delete channel">
+                <span>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    disabled={isDeleting}
+                    onClick={() => onDelete(idx)}
+                    aria-label={`Delete channel ${ch.name || idx + 1}`}
+                  >
+                    <Iconify icon="solar:trash-bin-trash-linear" width={18} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Stack>
+          </Stack>
+          <Stack spacing={0.75}>
+            {(ch.url || ch.endpoint || ch.webhook_url) && (
+              <Stack direction="row" spacing={2}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ minWidth: 120 }}
+                >
+                  Endpoint
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
+                >
+                  {maskUrl(ch.url || ch.endpoint || ch.webhook_url)}
                 </Typography>
               </Stack>
-              <Stack direction="row" spacing={0.5}>
-                <Chip
-                  label={ch.type || "webhook"}
-                  color="primary"
-                  size="small"
-                  variant="outlined"
-                />
-                <Chip
-                  label={ch.enabled !== false ? "Enabled" : "Disabled"}
-                  color={ch.enabled !== false ? "success" : "default"}
-                  size="small"
-                />
+            )}
+            {ch.email && (
+              <Stack direction="row" spacing={2}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ minWidth: 120 }}
+                >
+                  Email
+                </Typography>
+                <Typography variant="body2">{ch.email}</Typography>
               </Stack>
-            </Stack>
-            <Stack spacing={0.75}>
-              {(ch.url || ch.endpoint || ch.webhook_url) && (
-                <Stack direction="row" spacing={2}>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ minWidth: 120 }}
-                  >
-                    Endpoint
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
-                  >
-                    {maskUrl(ch.url || ch.endpoint || ch.webhook_url)}
-                  </Typography>
-                </Stack>
-              )}
-              {ch.email && (
-                <Stack direction="row" spacing={2}>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ minWidth: 120 }}
-                  >
-                    Email
-                  </Typography>
-                  <Typography variant="body2">{ch.email}</Typography>
-                </Stack>
-              )}
-              {ch.channel && (
-                <Stack direction="row" spacing={2}>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ minWidth: 120 }}
-                  >
-                    Channel
-                  </Typography>
-                  <Typography variant="body2">{ch.channel}</Typography>
-                </Stack>
-              )}
-              {ch.severity_filter && (
-                <Stack direction="row" spacing={2}>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ minWidth: 120 }}
-                  >
-                    Severity Filter
-                  </Typography>
-                  <Typography variant="body2">{ch.severity_filter}</Typography>
-                </Stack>
-              )}
-              {ch.description && (
-                <Stack direction="row" spacing={2}>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ minWidth: 120 }}
-                  >
-                    Description
-                  </Typography>
-                  <Typography variant="body2">{ch.description}</Typography>
-                </Stack>
-              )}
-            </Stack>
-          </CardContent>
-        </Card>
+            )}
+            {ch.channel && (
+              <Stack direction="row" spacing={2}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ minWidth: 120 }}
+                >
+                  Channel
+                </Typography>
+                <Typography variant="body2">{ch.channel}</Typography>
+              </Stack>
+            )}
+            {ch.severity_filter && (
+              <Stack direction="row" spacing={2}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ minWidth: 120 }}
+                >
+                  Severity Filter
+                </Typography>
+                <Typography variant="body2">{ch.severity_filter}</Typography>
+              </Stack>
+            )}
+            {ch.description && (
+              <Stack direction="row" spacing={2}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ minWidth: 120 }}
+                >
+                  Description
+                </Typography>
+                <Typography variant="body2">{ch.description}</Typography>
+              </Stack>
+            )}
+          </Stack>
+        </Section>
       ))
     )}
   </Stack>
@@ -322,116 +364,70 @@ const LiveMetricsTab = ({
   return (
     <Stack spacing={3}>
       {/* Key metrics */}
-      <Grid container spacing={2}>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics?tab=usage")}
-              sx={{ textAlign: "center", py: 2, px: 1 }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                Request Rate
-              </Typography>
-              <Typography variant="h4">
-                {Number(val(overview?.total_requests) ?? 0).toLocaleString()}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                total
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() =>
-                navigate("/dashboard/gateway/analytics?tab=errors")
-              }
-              sx={{ textAlign: "center", py: 2, px: 1 }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                Error Rate
-              </Typography>
-              <Typography
-                variant="h4"
-                color={
-                  Number(val(overview?.error_rate) ?? 0) > 5
-                    ? "error.main"
-                    : "success.main"
-                }
-              >
-                {val(overview?.error_rate) != null
-                  ? `${Number(val(overview.error_rate)).toFixed(1)}%`
-                  : "0%"}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() =>
-                navigate("/dashboard/gateway/analytics?tab=latency")
-              }
-              sx={{ textAlign: "center", py: 2, px: 1 }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                Avg Latency
-              </Typography>
-              <Typography variant="h4">
-                {val(overview?.avg_latency_ms) != null
-                  ? `${Number(val(overview.avg_latency_ms)).toFixed(0)}ms`
-                  : "\u2014"}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics?tab=cost")}
-              sx={{ textAlign: "center", py: 2, px: 1 }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                Total Cost
-              </Typography>
-              <Typography variant="h4" color="primary.main">
-                {formatCost(val(overview?.total_cost))}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-      </Grid>
+      <MetricStrip
+        items={[
+          {
+            label: "Request rate",
+            value: Number(val(overview?.total_requests) ?? 0).toLocaleString(),
+            hint: "total",
+            onClick: () => navigate("/dashboard/gateway/analytics?tab=usage"),
+          },
+          {
+            label: "Error rate",
+            value:
+              val(overview?.error_rate) != null
+                ? `${Number(val(overview.error_rate)).toFixed(1)}%`
+                : "0%",
+            // Only judged once there's traffic; "0%" with no requests isn't healthy.
+            ...(Number(val(overview?.total_requests) ?? 0) > 0 && {
+              hint:
+                Number(val(overview.error_rate)) > 5 ? "Above 5%" : "Under 5%",
+              hintRole:
+                Number(val(overview.error_rate)) > 5 ? "danger" : "success",
+            }),
+            onClick: () => navigate("/dashboard/gateway/analytics?tab=errors"),
+          },
+          {
+            label: "Avg latency",
+            value:
+              val(overview?.avg_latency_ms) != null
+                ? `${Number(val(overview.avg_latency_ms)).toFixed(0)}ms`
+                : "\u2014",
+            onClick: () => navigate("/dashboard/gateway/analytics?tab=latency"),
+          },
+          {
+            label: "Total cost",
+            value: formatCost(val(overview?.total_cost)),
+            onClick: () => navigate("/dashboard/gateway/analytics?tab=cost"),
+          },
+        ]}
+      />
 
       {/* Provider status indicators */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Provider Status
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Provider Status
+        </Typography>
+        {providerList.length > 0 ? (
+          <Stack direction="row" flexWrap="wrap" gap={1.5}>
+            {providerList.map((p, idx) => {
+              const isHealthy = p.healthy !== false && p.status !== "unhealthy";
+              return (
+                <Chip
+                  key={p.name || idx}
+                  label={p.name || `Provider ${idx + 1}`}
+                  color={isHealthy ? "success" : "error"}
+                  variant="outlined"
+                />
+              );
+            })}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No provider status data available.
           </Typography>
-          {providerList.length > 0 ? (
-            <Stack direction="row" flexWrap="wrap" gap={1.5}>
-              {providerList.map((p, idx) => {
-                const isHealthy =
-                  p.healthy !== false && p.status !== "unhealthy";
-                return (
-                  <Chip
-                    key={p.name || idx}
-                    label={p.name || `Provider ${idx + 1}`}
-                    color={isHealthy ? "success" : "error"}
-                    variant="outlined"
-                    sx={{ fontSize: "0.875rem", py: 2 }}
-                  />
-                );
-              })}
-            </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No provider status data available.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </Section>
     </Stack>
   );
 };
@@ -482,6 +478,57 @@ const AlertingMonitoringSection = () => {
   const rules = useMemo(() => extractAlertRules(config), [config]);
   const channels = useMemo(() => extractChannels(config), [config]);
 
+  const updateConfig = useUpdateConfig();
+
+  // The patch endpoint replaces `alerting.rules` when it is given an array, so
+  // deleting is "save the list without this one". `rules` is already normalised
+  // to an array by extractAlertRules, whichever shape the config was stored in.
+  const handleDeleteRule = useCallback(
+    (idx) => {
+      const rule = rules[idx];
+      updateConfig.mutate(
+        {
+          gatewayId,
+          config: { alerting: { rules: rules.filter((_, i) => i !== idx) } },
+        },
+        {
+          onSuccess: () =>
+            enqueueSnackbar(`Alert rule "${rule?.name || idx + 1}" deleted`, {
+              variant: "success",
+            }),
+          onError: () =>
+            enqueueSnackbar("Failed to delete alert rule", {
+              variant: "error",
+            }),
+        },
+      );
+    },
+    [rules, gatewayId, updateConfig],
+  );
+
+  const handleDeleteChannel = useCallback(
+    (idx) => {
+      const channel = channels[idx];
+      updateConfig.mutate(
+        {
+          gatewayId,
+          config: {
+            alerting: { channels: channels.filter((_, i) => i !== idx) },
+          },
+        },
+        {
+          onSuccess: () =>
+            enqueueSnackbar(`Channel "${channel?.name || idx + 1}" deleted`, {
+              variant: "success",
+            }),
+          onError: () =>
+            enqueueSnackbar("Failed to delete channel", { variant: "error" }),
+        },
+      );
+    },
+    [channels, gatewayId, updateConfig],
+  );
+
   if (gwLoading || configLoading) {
     return (
       <Box p={3}>
@@ -507,6 +554,7 @@ const AlertingMonitoringSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.monitoring}
         title="Monitoring"
         subtitle="Configure alert rules and notification channels"
@@ -515,14 +563,14 @@ const AlertingMonitoringSection = () => {
             label: "Create Rule",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setCreateRuleOpen(true),
           },
           {
             label: "Add Channel",
             variant: "outlined",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setCreateChannelOpen(true),
           },
         ]}
@@ -531,7 +579,7 @@ const AlertingMonitoringSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Live Metrics" />
         <Tab label="Alert Rules" />
@@ -545,18 +593,33 @@ const AlertingMonitoringSection = () => {
           gatewayId={gatewayId}
         />
       )}
-      {tab === 1 && <AlertRulesTab rules={rules} />}
-      {tab === 2 && <ChannelsTab channels={channels} />}
+      {tab === 1 && (
+        <AlertRulesTab
+          rules={rules}
+          onDelete={handleDeleteRule}
+          isDeleting={updateConfig.isPending}
+        />
+      )}
+      {tab === 2 && (
+        <ChannelsTab
+          channels={channels}
+          onDelete={handleDeleteChannel}
+          isDeleting={updateConfig.isPending}
+        />
+      )}
 
       <CreateAlertRuleDialog
         open={createRuleOpen}
         onClose={() => setCreateRuleOpen(false)}
         gatewayId={gatewayId}
+        existingRules={rules}
+        channelNames={channels.map((c) => c?.name).filter(Boolean)}
       />
       <CreateChannelDialog
         open={createChannelOpen}
         onClose={() => setCreateChannelOpen(false)}
         gatewayId={gatewayId}
+        existingChannels={channels}
       />
     </Box>
   );

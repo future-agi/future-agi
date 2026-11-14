@@ -103,7 +103,8 @@ export default function ModelTableToolbar({ filters, onFilters }) {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>
@@ -112,7 +113,7 @@ export default function ModelTableToolbar({ filters, onFilters }) {
           />
 
           {/* <IconButton onClick={popover.onOpen}>
-            <Iconify icon="eva:more-vertical-fill" />
+            <Iconify icon="solar:menu-dots-vertical-linear" />
           </IconButton> */}
         </Stack>
       </Stack>

@@ -425,7 +425,13 @@ const GuardrailCheckDialog = ({
   const hideConfidence = providerMeta?.hideConfidence === true;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         Configure: {displayName}
         {providerMeta?.description && (

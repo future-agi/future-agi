@@ -13,6 +13,8 @@ Comprehensive tests for workspace_management.py endpoints:
 - ManageTeamView
 """
 
+from datetime import UTC, datetime
+
 import pytest
 from rest_framework import status
 
@@ -181,6 +183,28 @@ class TestWorkspaceListAPIView:
         """Can sort workspaces."""
         response = auth_client.get("/accounts/workspace/list/", {"sort": "-created_at"})
         assert response.status_code == status.HTTP_200_OK
+
+    def test_list_workspaces_dates_carry_time_and_offset(self, auth_client, workspace):
+        """Start and last-updated dates are full instants, not bare dates.
+
+        The list shows them as a local date and time; a bare date parses as
+        midnight UTC, which a browser west of UTC shows as the day before.
+        """
+        created = datetime(2026, 9, 28, 16, 8, 30, tzinfo=UTC)
+        updated = datetime(2026, 9, 28, 16, 16, 5, tzinfo=UTC)
+        # update() bypasses auto_now/auto_now_add.
+        Workspace.no_workspace_objects.filter(id=workspace.id).update(
+            created_at=created, updated_at=updated
+        )
+
+        response = auth_client.get("/accounts/workspace/list/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            r for r in response.json()["results"] if r["id"] == str(workspace.id)
+        )
+        assert datetime.fromisoformat(row["start_data"]) == created
+        assert datetime.fromisoformat(row["last_update_date"]) == updated
 
 
 # =============================================================================

@@ -60,7 +60,13 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
   };
 
   return (
-    <Dialog open={open} onClose={() => {}} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={() => {}}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         <Typography
           variant="s1"
@@ -91,7 +97,7 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
             }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               sx={{ width: "20px", height: "20px", color: "success.main" }}
             />
             <Typography
@@ -113,7 +119,7 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
             }}
           >
             <Iconify
-              icon="mdi:alert"
+              icon="solar:danger-triangle-linear"
               sx={{
                 width: "20px",
                 height: "20px",
@@ -164,12 +170,7 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
             <Button
               variant="outlined"
               size="small"
-              startIcon={
-                <Iconify
-                  icon="mdi:content-copy"
-                  sx={{ width: "16px", height: "16px" }}
-                />
-              }
+              startIcon={<Iconify width={16} icon="solar:copy-linear" />}
               onClick={handleCopyAll}
             >
               <Typography variant="s2" fontWeight="fontWeightMedium">
@@ -180,10 +181,7 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
               variant="outlined"
               size="small"
               startIcon={
-                <Iconify
-                  icon="mdi:download"
-                  sx={{ width: "16px", height: "16px" }}
-                />
+                <Iconify width={16} icon="solar:download-minimalistic-linear" />
               }
               onClick={handleDownload}
             >

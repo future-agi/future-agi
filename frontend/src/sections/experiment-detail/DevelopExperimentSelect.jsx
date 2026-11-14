@@ -145,7 +145,10 @@ const DevelopExperimentSelect = () => {
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+                  <Iconify
+                    icon="solar:magnifier-linear" width={16}
+                    sx={{ color: "divider" }}
+                  />
                 </InputAdornment>
               ),
             }}

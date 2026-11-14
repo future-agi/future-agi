@@ -1,8 +1,9 @@
 """Regression tests for Retell's inline recording rehost normalization."""
 
+import json
 from unittest.mock import patch
 
-from tracer.utils.retell import normalize_retell_data
+from tracer.utils.retell import normalize_retell_data, provider_log_issues
 
 RETELL_MONO_URL = "https://retell-cdn.example.test/call-123-mono.wav"
 RETELL_STEREO_URL = "https://retell-cdn.example.test/call-123-stereo.wav"
@@ -336,3 +337,97 @@ def test_normalize_retell_data_out_of_order_transcripts_sorted():
     # After sort: user (0-2.5), agent (2-3) → overlap = 2.5 - 2 = 0.5
     assert attrs["ai_interruption_count"] == 1
     assert attrs["call.talk_ratio"] is not None
+
+
+PROVIDER_LOG = """2026-01-31 10:00:00.250 call-123 info: Starting call: call-123
+2026-01-31 10:00:01.000 call-123 info: Calling tool: lookup_slot
+Arguments: {"day": "monday"}
+Result: error: this payload line is not an event
+2026-01-31 10:00:04.750 call-123 error: Streaming LLM response attempt 1 failed: 800ms timeout reached for first token
+2026-01-31 10:00:09 call-123 warn: Background voice denoise connection lost; reconnecting
+2026-01-31 10:00:12.5 call-123 info: Ending call
+"""
+
+
+def test_provider_log_issues_keeps_warning_and_error_lines_with_seconds_from_the_start():
+    assert provider_log_issues(PROVIDER_LOG) == [
+        {
+            "at": 4.5,
+            "level": "error",
+            "message": "Streaming LLM response attempt 1 failed: 800ms timeout reached for first token",
+        },
+        {
+            "at": 8.75,
+            "level": "warn",
+            "message": "Background voice denoise connection lost; reconnecting",
+        },
+    ]
+    assert provider_log_issues("") == []
+
+
+def test_provider_log_issues_are_bounded():
+    line = "2026-01-31 10:00:00.000 call-123 error: " + "x" * 500
+    issues = provider_log_issues("\n".join([line] * 80))
+
+    assert len(issues) == 50
+    assert {len(issue["message"]) for issue in issues} == {200}
+
+
+class _LogResponse:
+    def __init__(self, text):
+        self.content = text.encode()
+
+    def raise_for_status(self):
+        return None
+
+
+def test_normalize_retell_data_stores_the_provider_log_issues_for_a_project_poll():
+    log = _retell_log(public_log_url="https://provider-cdn.example.test/call-123.log")
+
+    with (
+        patch("tracer.utils.retell.convert_audio_url_to_s3_sync", return_value=("", 0)),
+        patch(
+            "tracer.utils.retell.safe_fetch", return_value=_LogResponse(PROVIDER_LOG)
+        ) as fetch,
+    ):
+        attrs = normalize_retell_data(log, project_id="project-1")["span_attributes"]
+
+    fetch.assert_called_once_with(
+        "https://provider-cdn.example.test/call-123.log",
+        method="GET",
+        timeout=5,
+        max_bytes=256 * 1024,
+    )
+    assert [
+        issue["level"]
+        for issue in json.loads(attrs["conversation.provider_log.issues"])
+    ] == ["error", "warn"]
+
+
+def test_normalize_retell_data_survives_a_provider_log_that_cannot_be_read():
+    log = _retell_log(public_log_url="https://provider-cdn.example.test/call-123.log")
+
+    with (
+        patch("tracer.utils.retell.convert_audio_url_to_s3_sync", return_value=("", 0)),
+        patch("tracer.utils.retell.safe_fetch", side_effect=ValueError("blocked")),
+    ):
+        attrs = normalize_retell_data(log, project_id="project-1")["span_attributes"]
+
+    # Absent, not empty: nobody looked at this log.
+    assert "conversation.provider_log.issues" not in attrs
+
+
+def test_normalize_retell_data_reads_no_provider_log_without_a_project_or_an_https_link():
+    with (
+        patch("tracer.utils.retell.convert_audio_url_to_s3_sync", return_value=("", 0)),
+        patch("tracer.utils.retell.safe_fetch") as fetch,
+    ):
+        normalize_retell_data(
+            _retell_log(public_log_url="https://provider-cdn.example.test/a.log")
+        )
+        for link in (None, "", "http://provider-cdn.example.test/a.log", 7):
+            normalize_retell_data(
+                _retell_log(public_log_url=link), project_id="project-1"
+            )
+
+    fetch.assert_not_called()

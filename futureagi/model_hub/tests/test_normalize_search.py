@@ -122,9 +122,7 @@ class TestNormalizeSearchIntegration:
             visible_ui=True,
         )
 
-    def test_search_with_spaces_finds_underscore_name(
-        self, organization, workspace
-    ):
+    def test_search_with_spaces_finds_underscore_name(self, organization, workspace):
         """Typing 'context adherence' must find 'context_adherence'."""
         self._make_template(organization, workspace, "context_adherence")
         qs = build_eval_list_queryset(
@@ -135,9 +133,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context_adherence" in names
 
-    def test_search_with_spaces_finds_hyphen_name(
-        self, organization, workspace
-    ):
+    def test_search_with_spaces_finds_hyphen_name(self, organization, workspace):
         """Typing 'context adherence' must find 'context-adherence'."""
         self._make_template(organization, workspace, "context-adherence")
         qs = build_eval_list_queryset(
@@ -148,9 +144,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context-adherence" in names
 
-    def test_search_with_underscore_still_works(
-        self, organization, workspace
-    ):
+    def test_search_with_underscore_still_works(self, organization, workspace):
         """Direct underscore search must still work (backward compat)."""
         self._make_template(organization, workspace, "context_adherence")
         qs = build_eval_list_queryset(
@@ -161,9 +155,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context_adherence" in names
 
-    def test_search_with_hyphen_still_works(
-        self, organization, workspace
-    ):
+    def test_search_with_hyphen_still_works(self, organization, workspace):
         """Direct hyphen search must still work (backward compat)."""
         self._make_template(organization, workspace, "context-adherence")
         qs = build_eval_list_queryset(
@@ -174,9 +166,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context-adherence" in names
 
-    def test_search_does_not_match_unrelated(
-        self, organization, workspace
-    ):
+    def test_search_does_not_match_unrelated(self, organization, workspace):
         """Normalization should not cause false positive matches."""
         self._make_template(organization, workspace, "context_adherence")
         self._make_template(organization, workspace, "unrelated_eval")
@@ -189,9 +179,7 @@ class TestNormalizeSearchIntegration:
         assert "context_adherence" not in names
         assert "unrelated_eval" in names
 
-    def test_search_multi_word_name(
-        self, organization, workspace
-    ):
+    def test_search_multi_word_name(self, organization, workspace):
         """Multi-word normalization: 'answer similarity' → 'answer_similarity'."""
         self._make_template(organization, workspace, "answer_similarity")
         qs = build_eval_list_queryset(
@@ -202,9 +190,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "answer_similarity" in names
 
-    def test_case_insensitive_search(
-        self, organization, workspace
-    ):
+    def test_case_insensitive_search(self, organization, workspace):
         """Search is case-insensitive (icontains)."""
         self._make_template(organization, workspace, "context_adherence")
         qs = build_eval_list_queryset(
@@ -215,9 +201,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context_adherence" in names
 
-    def test_partial_match_with_spaces(
-        self, organization, workspace
-    ):
+    def test_partial_match_with_spaces(self, organization, workspace):
         """Partial search 'context adh' should match 'context_adherence'."""
         self._make_template(organization, workspace, "context_adherence")
         qs = build_eval_list_queryset(
@@ -228,9 +212,7 @@ class TestNormalizeSearchIntegration:
         names = list(qs.values_list("name", flat=True))
         assert "context_adherence" in names
 
-    def test_no_search_returns_all(
-        self, organization, workspace
-    ):
+    def test_no_search_returns_all(self, organization, workspace):
         """Without search, all visible templates are returned."""
         t1 = self._make_template(organization, workspace, "eval_a")
         t2 = self._make_template(organization, workspace, "eval_b")
@@ -242,9 +224,7 @@ class TestNormalizeSearchIntegration:
         assert "eval_a" in names
         assert "eval_b" in names
 
-    def test_search_with_no_results(
-        self, organization, workspace
-    ):
+    def test_search_with_no_results(self, organization, workspace):
         """A search that matches nothing returns an empty queryset."""
         self._make_template(organization, workspace, "context_adherence")
         qs = build_eval_list_queryset(

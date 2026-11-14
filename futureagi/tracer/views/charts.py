@@ -25,6 +25,9 @@ from tracer.services.clickhouse.graph_action_deadline import (
     start_graph_action_deadline,
 )
 from tracer.services.clickhouse.graph_dispatch import graph_payload_is_publishable
+from tracer.services.clickhouse.graph_metric_statistic import (
+    chart_bundle_statistics,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -197,6 +200,11 @@ class ChartsView(GenericViewSet):
                     organization_id=organization_id,
                     workspace_id=workspace_id,
                 )
+                if isinstance(metric_data, dict):
+                    metric_data = {
+                        **metric_data,
+                        "system_metric_statistics": chart_bundle_statistics(),
+                    }
 
             elif data_type == "SYSTEM_METRIC":
                 metric_data = get_system_metric_data(

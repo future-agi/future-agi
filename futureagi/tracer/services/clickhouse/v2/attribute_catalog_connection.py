@@ -1,47 +1,18 @@
-"""Dedicated fail-closed ClickHouse boundary for public catalog reads.
+"""SELECT-only SQL and query bounds shared by observed catalog readers.
 
-This module deliberately does not import ``get_v2_config`` or the CH25 source
-query client.  Every credential and the database are supplied by the explicit
-``SPAN_ATTRIBUTE_CATALOG_CH_*`` settings.  The pooled native client is locked
-to the server-enforced read-only path and every executor instance owns one
-shared two-second wall across all qualification and candidate queries.
+These helpers accept an explicit database and table allowlist; they neither own
+credentials nor retain the retired snapshot/activation connection.
 """
 
 from __future__ import annotations
 
 import re
-import threading
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from time import monotonic
+from dataclasses import dataclass
 from typing import Any
 
-from django.conf import settings as django_settings
-
-from tracer.services.clickhouse.application_read_policy import (
-    application_read_context,
-    application_read_settings,
-)
-from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.server_readonly import ensure_read_statement
 
-CATALOG_READ_MAX_WALL_MS = 2_000
-CATALOG_READ_POOL_SIZE = 4
-CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS = 2.0
-
 _DATABASE_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
-_ISOLATED_DATABASE_DENYLIST = frozenset(
-    {"default", "system", "information_schema", "futureagi"}
-)
-_CATALOG_TABLES = frozenset(
-    {
-        "span_attribute_catalog_activations",
-        "span_attribute_catalog_source_streams",
-        "span_attribute_catalog_checkpoints",
-        "span_attribute_key_catalog",
-        "span_attribute_value_catalog",
-    }
-)
 _MUTATION_KEYWORDS = frozenset(
     {
         "ALTER",
@@ -59,6 +30,7 @@ _MUTATION_KEYWORDS = frozenset(
         "RESTORE",
         "REVOKE",
         "SET",
+        "SETTINGS",
         "SYSTEM",
         "TRUNCATE",
         "UPDATE",
@@ -102,72 +74,6 @@ _ALLOWED_SETTING_KEYS = frozenset(
         "readonly",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class AttributeCatalogConnectionConfig:
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str = field(repr=False)
-
-    @classmethod
-    def from_settings(cls, source: Any = django_settings):
-        config = cls(
-            host=getattr(source, "SPAN_ATTRIBUTE_CATALOG_CH_HOST", None),
-            port=getattr(source, "SPAN_ATTRIBUTE_CATALOG_CH_PORT", None),
-            database=getattr(source, "SPAN_ATTRIBUTE_CATALOG_CH_DATABASE", None),
-            user=getattr(source, "SPAN_ATTRIBUTE_CATALOG_CH_USER", None),
-            password=getattr(source, "SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD", None),
-        )
-        config.validate(
-            qualifier_database=getattr(source, "SPAN_ATTRIBUTE_CATALOG_DATABASE", None),
-            source_users={
-                str(
-                    (getattr(source, "CLICKHOUSE_V2", {}) or {}).get("CH25_USER") or ""
-                ).strip(),
-                str(
-                    (getattr(source, "CLICKHOUSE", {}) or {}).get("CH_USERNAME") or ""
-                ).strip(),
-            }
-            - {""},
-        )
-        return config
-
-    def validate(self, *, qualifier_database: Any, source_users: set[str]) -> None:
-        if (
-            not isinstance(self.host, str)
-            or not self.host.strip()
-            or type(self.port) is not int
-            or not 1 <= self.port <= 65_535
-            or not isinstance(self.user, str)
-            or not self.user.strip()
-            or not isinstance(self.password, str)
-            or not self.password
-        ):
-            raise ValueError(
-                "complete dedicated attribute catalog ClickHouse settings are required"
-            )
-        if (
-            not isinstance(self.database, str)
-            or not _DATABASE_RE.fullmatch(self.database)
-            or len(self.database.encode("utf-8")) > 128
-            or "dev" not in self.database.lower()
-            or self.database.lower() in _ISOLATED_DATABASE_DENYLIST
-        ):
-            raise ValueError(
-                "attribute catalog database must be an isolated development identifier"
-            )
-        if qualifier_database != self.database:
-            raise ValueError(
-                "attribute catalog qualifier and connection databases must match"
-            )
-        if self.user in source_users:
-            raise ValueError(
-                "attribute catalog reads require a dedicated identity distinct "
-                "from source application users"
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +188,7 @@ def _validate_catalog_query(
     query: str,
     *,
     database: str,
-    allowed_tables: frozenset[str] = _CATALOG_TABLES,
+    allowed_tables: frozenset[str],
 ) -> None:
     if not isinstance(query, str):
         raise TypeError("catalog query must be SQL text")
@@ -367,149 +273,3 @@ def _bounded_query_settings(
     bounded["result_overflow_mode"] = "throw"
     bounded["timeout_overflow_mode"] = "throw"
     return bounded
-
-
-_client: ClickHouseClient | None = None
-_client_config: AttributeCatalogConnectionConfig | None = None
-_client_lock = threading.Lock()
-
-
-def get_attribute_catalog_read_client(
-    config: AttributeCatalogConnectionConfig | None = None,
-) -> ClickHouseClient:
-    """Return the dedicated pooled client without consulting source settings."""
-
-    global _client, _client_config
-    config = config or AttributeCatalogConnectionConfig.from_settings()
-    with _client_lock:
-        if _client is not None and _client_config != config:
-            _client.close()
-            _client = None
-            _client_config = None
-        if _client is None:
-            _client = ClickHouseClient(
-                host=config.host,
-                port=config.port,
-                user=config.user,
-                password=config.password,
-                database=config.database,
-                server_enforced_readonly=True,
-                connect_timeout=CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
-                send_timeout=CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
-                receive_timeout=CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
-                pool_size=CATALOG_READ_POOL_SIZE,
-            )
-            _client_config = config
-        return _client
-
-
-def reset_attribute_catalog_read_client() -> None:
-    """Close the isolated pool; intended for shutdown and config-aware tests."""
-
-    global _client, _client_config
-    with _client_lock:
-        if _client is not None:
-            _client.close()
-        _client = None
-        _client_config = None
-
-
-class AttributeCatalogReadExecutor:
-    """Allowlisted reads; public mode does not install statement abort caps."""
-
-    def __init__(
-        self,
-        *,
-        config: AttributeCatalogConnectionConfig | None = None,
-        client_factory: Callable[
-            [AttributeCatalogConnectionConfig], ClickHouseClient
-        ] = get_attribute_catalog_read_client,
-        clock: Callable[[], float] = monotonic,
-        application_read: bool = False,
-    ) -> None:
-        self._config = config or AttributeCatalogConnectionConfig.from_settings()
-        self._client_factory = client_factory
-        self._clock = clock
-        self._application_read = application_read
-        self._deadline = clock() + CATALOG_READ_MAX_WALL_MS / 1_000
-        self._client: ClickHouseClient | None = None
-
-    def execute(
-        self,
-        query: str,
-        params: dict[str, Any],
-        *,
-        timeout_ms: int,
-        settings: dict[str, Any],
-    ) -> AttributeCatalogQueryPage:
-        _validate_catalog_query(query, database=self._config.database)
-        remaining_ms = int((self._deadline - self._clock()) * 1_000)
-        if remaining_ms < 1:
-            raise TimeoutError("attribute catalog read deadline exhausted")
-        bounded_timeout_ms = min(
-            max(int(timeout_ms), 1),
-            remaining_ms,
-            CATALOG_READ_MAX_WALL_MS,
-        )
-        query_settings = _bounded_query_settings(
-            settings, timeout_ms=bounded_timeout_ms
-        )
-        if self._application_read:
-            bounded_timeout_ms = None
-            query_settings = application_read_settings(query_settings)
-        if self._client is None:
-            self._client = self._client_factory(self._config)
-        started_at = self._clock()
-        try:
-            progress_execute = getattr(
-                type(self._client), "execute_read_with_progress", None
-            )
-            with application_read_context(self._application_read):
-                if callable(progress_execute):
-                    rows, columns, _, read_rows, read_bytes = progress_execute(
-                        self._client,
-                        query,
-                        params,
-                        timeout_ms=bounded_timeout_ms,
-                        settings=query_settings,
-                    )
-                else:
-                    rows, columns, _ = self._client.execute_read(
-                        query,
-                        params,
-                        timeout_ms=bounded_timeout_ms,
-                        settings=query_settings,
-                    )
-                    read_rows = None
-                    read_bytes = None
-        except Exception:
-            # A deadline/error may leave a native socket unusable. The global
-            # provider will construct a fresh isolated pool on the next read.
-            if self._client_factory is get_attribute_catalog_read_client:
-                reset_attribute_catalog_read_client()
-            self._client = None
-            raise
-        names = [
-            column[0] if isinstance(column, tuple) else column for column in columns
-        ]
-        return AttributeCatalogQueryPage(
-            data=[dict(zip(names, row, strict=False)) for row in rows],
-            query_time_ms=round((self._clock() - started_at) * 1_000, 2),
-            read_rows=read_rows,
-            read_bytes=read_bytes,
-        )
-
-    def close(self) -> None:
-        # The default client is a process-wide dedicated pool and is intentionally
-        # retained. Injected per-request clients remain owned by their factory.
-        self._client = None
-
-
-__all__ = [
-    "AttributeCatalogConnectionConfig",
-    "AttributeCatalogQueryPage",
-    "AttributeCatalogReadExecutor",
-    "CATALOG_READ_MAX_WALL_MS",
-    "get_attribute_catalog_read_client",
-    "reset_attribute_catalog_read_client",
-]

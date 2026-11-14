@@ -5,8 +5,6 @@ import {
   Box,
   Typography,
   Stack,
-  Card,
-  CardContent,
   Button,
   Switch,
   FormControlLabel,
@@ -21,6 +19,7 @@ import {
   Tooltip,
   Alert,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -29,6 +28,7 @@ import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useFallbackConfig } from "./hooks/useFallbackConfig";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import EmptyState from "src/components/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,14 +53,9 @@ const ConfigSection = ({
 }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <Card variant="outlined">
-      <CardContent
-        sx={{
-          py: 1.5,
-          "&:last-child": { pb: 1.5 },
-          cursor: "pointer",
-          userSelect: "none",
-        }}
+    <Section variant="panel">
+      <Box
+        sx={{ cursor: "pointer", userSelect: "none" }}
         onClick={() => setOpen((v) => !v)}
       >
         <Stack
@@ -95,20 +90,22 @@ const ConfigSection = ({
               />
             )}
             <Iconify
-              icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+              icon={
+                open
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={20}
               sx={{ color: "text.secondary" }}
             />
           </Stack>
         </Stack>
-      </CardContent>
+      </Box>
       <Collapse in={open}>
-        <Divider />
-        <CardContent sx={{ pt: 2 }} onClick={(e) => e.stopPropagation()}>
-          {children}
-        </CardContent>
+        <Divider sx={{ my: 2 }} />
+        <Box onClick={(e) => e.stopPropagation()}>{children}</Box>
       </Collapse>
-    </Card>
+    </Section>
   );
 };
 
@@ -212,8 +209,8 @@ const FallbackChainEditor = ({
   };
 
   return (
-    <Card
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         mb: 1.5,
         bgcolor: "action.hover",
@@ -221,95 +218,86 @@ const FallbackChainEditor = ({
         borderColor: "divider",
       }}
     >
-      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          flexWrap="wrap"
-          useFlexGap
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Chip label="Primary" size="small" color="primary" variant="outlined" />
+        <TextField
+          select
+          size="small"
+          value={primaryModel}
+          onChange={handlePrimaryChange}
+          sx={{ minWidth: 180 }}
         >
-          <Chip
-            label="Primary"
-            size="small"
-            color="primary"
-            variant="outlined"
-            sx={{ fontWeight: 600 }}
-          />
-          <TextField
-            select
-            size="small"
-            value={primaryModel}
-            onChange={handlePrimaryChange}
-            sx={{ minWidth: 180 }}
-          >
-            {models.map((m) => (
-              <MenuItem key={m} value={m}>
-                {m}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          {fallbacks.map((fb, i) => (
-            <React.Fragment key={i}>
-              <Iconify
-                icon="mdi:arrow-right-bold"
-                width={20}
-                sx={{ color: "text.secondary" }}
-              />
-              <Chip
-                label={`#${i + 1}`}
-                size="small"
-                variant="outlined"
-                sx={{ fontWeight: 600, minWidth: 32 }}
-              />
-              <TextField
-                select
-                size="small"
-                value={fb}
-                onChange={(e) => handleFallbackChange(i, e.target.value)}
-                sx={{ minWidth: 180 }}
-              >
-                {models.map((m) => (
-                  <MenuItem key={m} value={m}>
-                    {m}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <IconButton
-                size="small"
-                onClick={() => handleRemoveFallback(i)}
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="mdi:close-circle-outline" width={18} />
-              </IconButton>
-            </React.Fragment>
+          {models.map((m) => (
+            <MenuItem key={m} value={m}>
+              {m}
+            </MenuItem>
           ))}
+        </TextField>
 
-          <Button
-            size="small"
-            onClick={handleAddFallback}
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
-            sx={{ textTransform: "none" }}
-          >
-            Add Fallback
-          </Button>
+        {fallbacks.map((fb, i) => (
+          <React.Fragment key={i}>
+            <Iconify
+              icon="solar:arrow-right-linear"
+              width={20}
+              sx={{ color: "text.secondary" }}
+            />
+            <Chip
+              label={`#${i + 1}`}
+              size="small"
+              variant="outlined"
+              sx={{ minWidth: 32 }}
+            />
+            <TextField
+              select
+              size="small"
+              value={fb}
+              onChange={(e) => handleFallbackChange(i, e.target.value)}
+              sx={{ minWidth: 180 }}
+            >
+              {models.map((m) => (
+                <MenuItem key={m} value={m}>
+                  {m}
+                </MenuItem>
+              ))}
+            </TextField>
+            <IconButton
+              size="small"
+              onClick={() => handleRemoveFallback(i)}
+              sx={{ color: "text.secondary" }}
+            >
+              <Iconify icon="solar:close-circle-linear" width={20} />
+            </IconButton>
+          </React.Fragment>
+        ))}
 
-          {onRemove && (
-            <Tooltip title="Remove this chain">
-              <IconButton
-                size="small"
-                onClick={onRemove}
-                aria-label="Remove this chain"
-                sx={{ ml: "auto", color: "error.main" }}
-              >
-                <Iconify icon="mdi:delete-outline" width={20} />
-              </IconButton>
-            </Tooltip>
-          )}
-        </Stack>
-      </CardContent>
-    </Card>
+        <Button
+          size="small"
+          onClick={handleAddFallback}
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
+        >
+          Add Fallback
+        </Button>
+
+        {onRemove && (
+          <Tooltip title="Remove this chain">
+            <IconButton
+              size="small"
+              onClick={onRemove}
+              aria-label="Remove this chain"
+              sx={{ ml: "auto", color: "error.main" }}
+            >
+              <Iconify icon="solar:trash-bin-trash-linear" width={20} />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Stack>
+    </Section>
   );
 };
 
@@ -547,38 +535,24 @@ const FallbacksSection = () => {
           subtitle="Configure model fallback chains and provider reliability settings"
           actions={[]}
         />
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Stack alignItems="center" spacing={2} py={4}>
-              <Iconify
-                icon="solar:shield-warning-bold-duotone"
-                width={56}
-                sx={{ color: "text.disabled" }}
-              />
-              <Typography variant="h6" color="text.secondary">
-                No models configured yet
-              </Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                textAlign="center"
-                maxWidth={460}
-              >
-                Fallback chains route requests to backup models when the primary
-                model is unavailable. To get started, add a provider with at
-                least one model in the <strong>Providers</strong> tab.
-              </Typography>
+        <Section variant="panel" sx={{ mt: 3 }}>
+          <EmptyState
+            icon="solar:shield-warning-linear"
+            title="No models configured yet"
+            description="Fallback chains send requests to a backup model when the primary one is unavailable. Add a provider with at least one model first."
+            action={
               <Button
                 variant="contained"
                 color="primary"
-                startIcon={<Iconify icon="solar:add-circle-bold" />}
+                size="small"
                 onClick={() => navigate("/dashboard/gateway/providers")}
               >
-                Configure Providers
+                Add provider
               </Button>
-            </Stack>
-          </CardContent>
-        </Card>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
+        </Section>
       </Box>
     );
   }
@@ -622,7 +596,7 @@ const FallbacksSection = () => {
               variant="contained"
               size="small"
               onClick={handleSave}
-              startIcon={<Iconify icon="mdi:content-save-outline" width={18} />}
+              startIcon={<Iconify icon="solar:diskette-linear" width={20} />}
             >
               Save & Apply
             </LoadingButton>
@@ -635,7 +609,7 @@ const FallbacksSection = () => {
         <ConfigSection
           title="Model Fallback Chains"
           subtitle="When all providers for a model fail, try the next model in the chain"
-          icon="mdi:link-variant"
+          icon="solar:link-linear"
           defaultOpen
           enabled={draft.fallback_enabled ?? draft.fallbackEnabled ?? true}
           onToggle={(v) => updateDraft("fallback_enabled", v)}
@@ -668,17 +642,12 @@ const FallbacksSection = () => {
 
             {/* Chains */}
             {fallbackChains.length === 0 ? (
-              <Box py={3} textAlign="center">
-                <Iconify
-                  icon="mdi:link-variant-off"
-                  width={40}
-                  sx={{ color: "text.disabled", mb: 1 }}
-                />
-                <Typography variant="body2" color="text.secondary" mb={2}>
-                  No fallback chains configured. When a model&apos;s providers
-                  all fail, the request will fail.
-                </Typography>
-              </Box>
+              <EmptyState
+                icon="solar:link-broken-linear"
+                title="No fallback chains yet"
+                description="When all of a model's providers fail, the request will fail."
+                sx={{ py: 3 }}
+              />
             ) : (
               fallbackChains.map(([primary, fbs]) => (
                 <FallbackChainEditor
@@ -698,8 +667,8 @@ const FallbacksSection = () => {
               variant="outlined"
               size="small"
               onClick={handleAddChain}
-              startIcon={<Iconify icon="mdi:plus" width={18} />}
-              sx={{ alignSelf: "flex-start", textTransform: "none" }}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
+              sx={{ alignSelf: "flex-start" }}
             >
               Add Fallback Chain
             </Button>
@@ -710,7 +679,7 @@ const FallbacksSection = () => {
         <ConfigSection
           title="Provider Failover"
           subtitle="Automatically try a different provider when one fails"
-          icon="mdi:swap-horizontal-bold"
+          icon="solar:transfer-horizontal-linear"
           enabled={failover.enabled ?? true}
           onToggle={(v) => updateNested("failover", "enabled", v)}
         >
@@ -796,7 +765,7 @@ const FallbacksSection = () => {
         <ConfigSection
           title="Retry"
           subtitle="Retry failed requests with exponential backoff before failing over"
-          icon="mdi:refresh"
+          icon="solar:refresh-linear"
           enabled={retry.enabled ?? false}
           onToggle={(v) => updateNested("retry", "enabled", v)}
         >
@@ -978,7 +947,7 @@ const FallbacksSection = () => {
         <ConfigSection
           title="Model Timeouts"
           subtitle="Override default timeout per model (e.g. longer for reasoning models)"
-          icon="mdi:timer-outline"
+          icon="solar:clock-circle-linear"
         >
           <ModelTimeoutsEditor
             timeouts={modelTimeouts}
@@ -999,8 +968,7 @@ const FallbacksSection = () => {
             bgcolor: "background.paper",
             borderRadius: 1,
             border: 1,
-            borderColor: "primary.main",
-            boxShadow: 3,
+            borderColor: "divider",
           }}
         >
           <Stack
@@ -1025,9 +993,7 @@ const FallbacksSection = () => {
                 variant="contained"
                 size="small"
                 onClick={handleSave}
-                startIcon={
-                  <Iconify icon="mdi:content-save-outline" width={18} />
-                }
+                startIcon={<Iconify icon="solar:diskette-linear" width={20} />}
               >
                 Save & Apply
               </LoadingButton>

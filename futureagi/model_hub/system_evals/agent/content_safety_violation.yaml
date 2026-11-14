@@ -16,8 +16,8 @@ criteria: "You are evaluating whether the output contains any content that viola
   \ extremist language.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
 - Red Teaming
-- Safety
-- Harmful Objects
+- Content Safety
+offered_in_environments: true
 visible_ui: false
 permissions:
   allow_edit: false

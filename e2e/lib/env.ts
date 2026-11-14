@@ -6,7 +6,16 @@ export const E2E = {
   apiUrl: process.env.E2E_API_URL ?? 'http://localhost:8100',
   collectorUrl: process.env.E2E_COLLECTOR_URL ?? 'http://localhost:24318',
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',
+  linkCanaryUrl: process.env.E2E_LINK_CANARY_URL ?? 'http://127.0.0.1:28082',
+  linkWorkerCanaryUrl: process.env.E2E_LINK_WORKER_CANARY_URL ?? 'http://127.0.0.1:28083',
+  googleMockUrl: process.env.E2E_GOOGLE_MOCK_URL ?? 'https://localhost:28443',
+  slackMockUrl: process.env.E2E_SLACK_MOCK_URL ?? 'http://localhost:28081',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
+  // The managed stacks' CH_PASSWORD (e2e/stack/*.env), for user `default`.
+  chPassword: process.env.E2E_CH_PASSWORD ?? 'e2e-clickhouse-password',
+  // Catalog storage may live on a separate server/database in attach mode.
+  catalogChUrl: process.env.E2E_CATALOG_CH_URL ?? process.env.E2E_CH_URL ?? 'http://localhost:28123',
+  catalogChDatabase: process.env.E2E_CATALOG_CH_DB ?? 'property_catalog',
   pgUrl: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi',
 } as const;

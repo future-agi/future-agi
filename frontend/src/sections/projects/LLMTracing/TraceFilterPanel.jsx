@@ -6,6 +6,8 @@
  *   - Query tab: inline token builder (shared FilterPanel's QueryInput)
  */
 import {
+  Checkbox,
+  Radio,
   Box,
   Button,
   Chip,
@@ -37,7 +39,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import BoundedCursorPaginationControl from "src/components/BoundedCursorPaginationControl";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import { SpanTypes } from "src/utils/constant";
 import {
@@ -87,6 +89,7 @@ import {
   PROPERTY_CATALOG_LEGACY_CACHE_TIME_MS,
   PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
   PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  PROPERTY_CATALOG_PAGE_SIZE,
   PROPERTY_PICKER_PREFETCH_MARGIN_PX,
   PROPERTY_PICKER_RENDER_BATCH_SIZE,
   PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
@@ -197,6 +200,50 @@ const BASE_TRACE_FILTER_FIELDS = [
   { value: "tag", label: "Tag", type: "string" },
 ];
 
+// Users discover custom attributes through the trace catalog, but these row
+// fields belong to the Users registry. Keep their identity and input type
+// authoritative even when that shared catalog publishes a trace-system alias.
+const USER_FILTER_FIELDS = [
+  {
+    value: "user_id",
+    label: "User ID",
+    type: "string",
+    dynamicAliases: ["user"],
+  },
+  { value: "user_id_type", label: "User ID Type", type: "string" },
+  { value: "user_id_hash", label: "User ID Hash", type: "string" },
+  { value: "activated_at", label: "First Active", type: "datetime" },
+  { value: "last_active", label: "Last Active", type: "datetime" },
+  { value: "num_active_days", label: "Active Days", type: "number" },
+  { value: "total_cost", label: "Total Cost ($)", type: "number" },
+  { value: "total_tokens", label: "Total Tokens", type: "number" },
+  { value: "input_tokens", label: "Input Tokens", type: "number" },
+  { value: "output_tokens", label: "Output Tokens", type: "number" },
+  { value: "num_traces", label: "No. of Traces", type: "number" },
+  { value: "num_sessions", label: "No. of Sessions", type: "number" },
+  {
+    value: "avg_session_duration",
+    label: "Avg Session Duration (s)",
+    type: "number",
+  },
+  {
+    value: "avg_trace_latency",
+    label: "Avg Latency / Trace (ms)",
+    type: "number",
+  },
+  { value: "num_llm_calls", label: "No. of LLM Calls", type: "number" },
+  {
+    value: "num_guardrails_triggered",
+    label: "Guardrails Triggered",
+    type: "number",
+  },
+  {
+    value: "num_traces_with_errors",
+    label: "Traces with Errors",
+    type: "number",
+  },
+];
+
 const TRACE_ID_FIELD = {
   value: "trace_id",
   label: "Trace ID",
@@ -214,10 +261,11 @@ const SPAN_ID_FIELD = {
 //   `tab` === "trace"  → Trace ID
 //   `tab` === "spans"  → Trace ID + Span ID
 //   otherwise          → no id fields (preserves behavior for non-LLMTracing
-//                        consumers such as sessions/users).
+//                        consumers such as sessions).
 // Exported for direct unit testing.
 export const getTraceFilterFields = (tab) => {
   if (tab === "voiceCalls") return VOICE_CALL_FILTER_FIELDS;
+  if (tab === "users") return USER_FILTER_FIELDS;
   if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
   if (tab === "spans")
     return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
@@ -280,7 +328,9 @@ export function mergeTraceFilterProperties({
 }) {
   const effectivePropertyNamespace =
     propertyNamespace || defaultPropertyNamespace(tab, source);
-  const staticProps = getTraceFilterFields(tab).map((field) =>
+  const staticProps = getTraceFilterFields(
+    effectivePropertyNamespace === "users" ? "users" : tab,
+  ).map((field) =>
     toStaticFilterProperty(
       field,
       isSpansView,
@@ -418,11 +468,15 @@ function attachPropertyRegistryIdentity(
 // Category config for dashboard-style property picker
 // ---------------------------------------------------------------------------
 const CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System", icon: "mdi:tune-variant" },
-  { key: "eval", label: "Evals", icon: "mdi:check-circle-outline" },
-  { key: "annotation", label: "Annotations", icon: "mdi:comment-text-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "system", label: "System", icon: "solar:tuning-2-linear" },
+  { key: "eval", label: "Evals", icon: "solar:check-circle-linear" },
+  {
+    key: "annotation",
+    label: "Annotations",
+    icon: "solar:chat-round-line-linear",
+  },
+  { key: "attribute", label: "Attributes", icon: "solar:code-linear" },
 ];
 
 function mapCategory(raw) {
@@ -568,9 +622,20 @@ const BOOLEAN_TYPES = new Set(["boolean", "bool"]);
 const ARRAY_TYPES = new Set(["array", "list", "json"]);
 const MAP_TYPES = new Set(["map", "object"]);
 
-const normalizeFieldType = (rawType) => {
+const normalizeFieldType = (rawType, attributeTypes) => {
   if (!rawType) return "string";
   const t = String(rawType).toLowerCase();
+  // The catalog uses json for a union of storage types, not just arrays.
+  // Mixed scalars use the typed value picker so equality preserves each type.
+  if (
+    t === "json" &&
+    Array.isArray(attributeTypes) &&
+    attributeTypes.length > 1 &&
+    attributeTypes.every((type) =>
+      ["string", "number", "boolean"].includes(type),
+    )
+  )
+    return "string";
   if (NUMERIC_TYPES.has(t)) return "number";
   if (DATE_TYPES.has(t)) return "date";
   if (BOOLEAN_TYPES.has(t)) return "boolean";
@@ -638,7 +703,7 @@ export const isCompleteNumericValue = (v) => {
 
 const NUMERIC_HELPER_TEXT_PROPS = {
   sx: {
-    fontSize: 10,
+    fontSize: 12,
     mx: 0.5,
     mt: 0,
     position: "absolute",
@@ -676,10 +741,16 @@ const isNativeIdField = (id, colType) =>
   ID_ONLY_FIELDS.has(id) && isNativeColumnType(colType);
 
 const getOperatorsForFilter = (filter, property) => {
-  if (isNativeIdField(
-    filter?.field,
-    filter?.apiColType || filter?.fieldCategory || property?.apiColType || property?.category,
-  )) return ID_ONLY_OPS;
+  if (
+    isNativeIdField(
+      filter?.field,
+      filter?.apiColType ||
+        filter?.fieldCategory ||
+        property?.apiColType ||
+        property?.category,
+    )
+  )
+    return ID_ONLY_OPS;
   const ops = getOperators(filter?.fieldType);
   // A property may narrow its own operators — e.g. span type, where the API
   // takes a value list and has nowhere to put an operator, so anything but
@@ -908,6 +979,7 @@ export function filterPropertiesForPicker({
   category = "all",
   search = "",
   hasCategorySidebar = true,
+  catalogSearchMatches = [],
 }) {
   const rawQuery = String(search || "").trim();
   const query = normalizePropertySearchText(search);
@@ -925,13 +997,33 @@ export function filterPropertiesForPicker({
     list,
     rawQuery,
   );
+  // Native relational search also matches template names that are not in the
+  // returned display label. Keep those server-matched rows, while synthetic
+  // Annotator and local System aliases still have to match the visible search.
+  const nativeSearchIdentities = new Set(
+    catalogSearchMatches
+      .filter(
+        (property) =>
+          ["eval", "annotation"].includes(property.category) &&
+          !property.catalogSearchFallback,
+      )
+      .map(queryPropertyIdentity),
+  );
   const fuzzyMatches = list.filter((property) => {
     const name = normalizePropertySearchText(property.name);
     const id = normalizePropertySearchText(property.id);
-    const aliases = (property.searchAliases || []).some((alias) =>
-      normalizePropertySearchText(alias).includes(query),
+    // A backend alias must find its canonical local field during search too;
+    // otherwise search bypasses the alias suppression used by normal browsing.
+    const aliases = [
+      ...(property.searchAliases || []),
+      ...(property.dynamicAliases || []),
+    ].some((alias) => normalizePropertySearchText(alias).includes(query));
+    return (
+      nativeSearchIdentities.has(queryPropertyIdentity(property)) ||
+      name.includes(query) ||
+      id.includes(query) ||
+      aliases
     );
-    return name.includes(query) || id.includes(query) || aliases;
   });
   // Exact ids and canonical System labels stay first, but All must retain all
   // fuzzy category matches. For example, `cost` must show Cost plus every
@@ -1151,6 +1243,12 @@ export function mergeCatalogSearchProperties({
       );
       if (!localProperty) return true;
 
+      // Native fields own their controls and wire identity just as in the
+      // unsearched inventory. Server search must not replace Call ID's text
+      // input or Status's closed choices depending on response timing. Raw
+      // attributes with the same spelling remain distinct above.
+      if (localProperty.category === "system") return false;
+
       // An exact catalog id remains authoritative for project naming/type
       // metadata. Alias-only results (for example `tokens`) yield to the local
       // canonical definition so filters still submit
@@ -1255,7 +1353,7 @@ function metricToTraceFilterProperty(m) {
     else if (ot === "thumbs_up_down") type = "thumbs";
     else type = "categorical";
   } else {
-    type = normalizeFieldType(m.type);
+    type = normalizeFieldType(m.type, m.attributeTypes || m.attribute_types);
   }
   // thumbs labels have two fixed choices — surface them so the value picker
   // renders a multi-select without needing a dashboard lookup.
@@ -1390,7 +1488,7 @@ export function buildTraceFilterProperties(
     (property) => property.category === "annotation",
   );
   const alreadyHasAnnotator = properties.some(
-    (property) => property.id === ANNOTATOR_FILTER_PROPERTY.id,
+    (property) => property.registryId === ANNOTATOR_FILTER_PROPERTY.registryId,
   );
 
   // The base inventory owns global synthetic fields even when its first
@@ -1699,6 +1797,7 @@ function PropertyPicker({
   enableExactAttributeLookup = true,
   unifiedCatalogActive = false,
   isSimulator = false,
+  catalogLoading = false,
   catalogError = false,
   hasNextCatalogPage = false,
   catalogContinuationKey = null,
@@ -1707,6 +1806,7 @@ function PropertyPicker({
   loadNextCatalogPage,
   catalogCategoryCounts = null,
   catalogCategoryCountsExact = false,
+  catalogQueryProvenance = null,
   propertyFilter,
 }) {
   const [search, setSearch] = useState("");
@@ -1771,6 +1871,74 @@ function PropertyPicker({
     allowLegacyNotReadyFallback: true,
     fallbackScopeKey: `${pickerCatalogFallbackScope}:all-search`,
   });
+  const currentCatalogActive =
+    unifiedCatalogActive &&
+    catalogQueryProvenance === "current_property_catalog";
+  // The finite native manifest needs its own complete read: catalog totals
+  // include system fields that this picker excludes or replaces locally.
+  // Keep this inventory independent of both category navigation and search.
+  const systemCatalog = usePropertyCatalog({
+    category: "system_metric",
+    projectIds: projectId ? [projectId] : [],
+    source,
+    perEvalConfig: true,
+    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
+    enabled: Boolean(
+      currentCatalogActive && open && (projectId || allowWorkspaceScope),
+    ),
+  });
+  const systemInventoryComplete = Boolean(
+    systemCatalog.isSuccess &&
+      !systemCatalog.hasNextPage &&
+      !systemCatalog.isFetching &&
+      !systemCatalog.isError &&
+      !systemCatalog.cursorChainStopped,
+  );
+  const loadSystemPage = useSingleFlightPageRequest({
+    identity: JSON.stringify([projectId, allowWorkspaceScope, source]),
+    enabled: Boolean(systemCatalog.hasNextPage && !systemCatalog.isFetching),
+    request: systemCatalog.fetchNextPage,
+  });
+  useEffect(() => {
+    if (
+      currentCatalogActive &&
+      open &&
+      systemCatalog.hasNextPage &&
+      !systemCatalog.isFetching &&
+      !systemCatalog.isError &&
+      !systemCatalog.isFetchNextPageError &&
+      !systemCatalog.cursorChainStopped
+    )
+      loadSystemPage();
+  }, [
+    currentCatalogActive,
+    open,
+    systemCatalog.hasNextPage,
+    systemCatalog.isFetching,
+    systemCatalog.isError,
+    systemCatalog.isFetchNextPageError,
+    systemCatalog.cursorChainStopped,
+    systemCatalog.continuationKey,
+    loadSystemPage,
+  ]);
+  const completeSystemProperties = useMemo(() => {
+    const nativeProperties = buildTraceFilterProperties(
+      systemCatalog.metrics || [],
+      {
+        isSimulator,
+        sourceScope: source,
+      },
+    ).filter((property) => property.category === "system");
+    return mergeCatalogSearchProperties({
+      baseProperties: properties.filter(
+        (property) => property.category === "system",
+      ),
+      catalogProperties: propertyFilter
+        ? nativeProperties.filter(propertyFilter)
+        : nativeProperties,
+      search: "",
+    });
+  }, [systemCatalog.metrics, isSimulator, source, properties, propertyFilter]);
   const searchedCatalogProperties = useMemo(() => {
     const catalogProperties = buildTraceFilterProperties(
       searchedCatalog.metrics || [],
@@ -1783,20 +1951,14 @@ function PropertyPicker({
       ? catalogProperties.filter(propertyFilter)
       : catalogProperties;
   }, [isSimulator, propertyFilter, searchedCatalog.metrics, source]);
-  const allSearchCatalogProperties = useMemo(() => {
-    const catalogProperties = buildTraceFilterProperties(
-      allSearchCatalog.metrics || [],
-      {
-        isSimulator,
-        sourceScope: source,
-      },
-    );
-    return propertyFilter
-      ? catalogProperties.filter(propertyFilter)
-      : catalogProperties;
-  }, [allSearchCatalog.metrics, isSimulator, propertyFilter, source]);
   const allSearchCatalogHasExactCounts = Boolean(
-    allSearchCatalog.categoryCountsExact && allSearchCatalog.categoryCounts,
+    allSearchCatalog.categoryCountsExact &&
+      allSearchCatalog.categoryCounts &&
+      !allSearchCatalog.isPlaceholderData &&
+      !allSearchCatalog.isRemoteCatalogSearchPending &&
+      !allSearchCatalog.isError &&
+      !allSearchCatalog.cursorChainStopped &&
+      !allSearchCatalog.legacyFallbackRequired,
   );
   const searchedCatalogOwnsResults = Boolean(
     unifiedCatalogScopeActive &&
@@ -1810,52 +1972,68 @@ function PropertyPicker({
       trimmedSearch &&
       !catalogSearchSettled,
   );
-  const effectiveCatalogProperties = useMemo(
-    () =>
-      searchedCatalogOwnsResults
-        ? mergeCatalogSearchProperties({
-            baseProperties: properties,
-            catalogProperties: searchedCatalogProperties,
-            search: trimmedSearch,
-            category,
-            hasCategorySidebar,
-          })
-        : properties,
-    [
-      category,
-      hasCategorySidebar,
-      properties,
-      searchedCatalogOwnsResults,
-      searchedCatalogProperties,
-      trimmedSearch,
-    ],
-  );
+  const effectiveCatalogProperties = useMemo(() => {
+    const scopedProperties = searchedCatalogOwnsResults
+      ? mergeCatalogSearchProperties({
+          baseProperties: properties,
+          catalogProperties: searchedCatalogProperties,
+          search: trimmedSearch,
+          category,
+          hasCategorySidebar,
+        })
+      : properties;
+    // Render the same canonical system inventory used for the totals, so
+    // local search aliases and excluded types cannot produce hidden extras.
+    return currentCatalogActive && systemInventoryComplete
+      ? [
+          ...completeSystemProperties,
+          ...scopedProperties.filter(
+            (property) => property.category !== "system",
+          ),
+        ]
+      : scopedProperties;
+  }, [
+    currentCatalogActive,
+    systemInventoryComplete,
+    completeSystemProperties,
+    category,
+    hasCategorySidebar,
+    properties,
+    searchedCatalogOwnsResults,
+    searchedCatalogProperties,
+    trimmedSearch,
+  ]);
   const supplementedAllSearchCategoryCounts = useMemo(
     () =>
-      supplementCatalogSearchCategoryCounts({
-        categoryCounts: allSearchCatalog.categoryCounts,
-        baseProperties: properties,
-        catalogProperties: allSearchCatalogProperties,
-        search: trimmedSearch,
-      }),
+      currentCatalogActive
+        ? allSearchCatalog.categoryCounts
+        : supplementCatalogSearchCategoryCounts({
+            categoryCounts: allSearchCatalog.categoryCounts,
+            baseProperties: properties,
+            // Counts describe returned catalog definitions. Check ownership before
+            // UI eligibility filters remove native date/boolean fields, otherwise
+            // their local replacements are incorrectly counted as extra fields.
+            catalogProperties: (allSearchCatalog.metrics || []).map(
+              metricToTraceFilterProperty,
+            ),
+            search: trimmedSearch,
+          }),
     [
+      currentCatalogActive,
       allSearchCatalog.categoryCounts,
-      allSearchCatalogProperties,
+      allSearchCatalog.metrics,
       properties,
       trimmedSearch,
     ],
   );
   const searchCountsOwnSidebar = Boolean(
-    trimmedSearch &&
+    unifiedCatalogActive &&
+      trimmedSearch &&
       catalogSearchSettled &&
-      searchedCatalogOwnsResults &&
       allSearchCatalogHasExactCounts,
   );
   const searchCountsPending = Boolean(
-    trimmedSearch &&
-      catalogSearchSettled &&
-      searchedCatalogOwnsResults &&
-      !allSearchCatalogHasExactCounts,
+    unifiedCatalogActive && trimmedSearch && !searchCountsOwnSidebar,
   );
   // Category navigation only changes the visible result page. Search-wide
   // counts always come from the independent All-search request; until that
@@ -2060,11 +2238,43 @@ function PropertyPicker({
         category,
         search,
         hasCategorySidebar,
+        catalogSearchMatches:
+          searchedCatalogOwnsResults && trimmedSearch
+            ? searchedCatalogProperties
+            : [],
       }),
-    [propertiesWithExactAttribute, category, search, hasCategorySidebar],
+    [
+      propertiesWithExactAttribute,
+      category,
+      search,
+      hasCategorySidebar,
+      searchedCatalogOwnsResults,
+      searchedCatalogProperties,
+      trimmedSearch,
+    ],
   );
 
   const counts = useMemo(() => {
+    // Dataset columns are a complete local inventory. Catalog totals (when
+    // supplied) do not describe this picker's client-side text search.
+    if (source === "dataset" && !unifiedCatalogActive && search.trim()) {
+      const matchingProperties = filterPropertiesForPicker({
+        properties: propertiesWithExactAttribute,
+        search,
+      });
+      const localCounts = {
+        all: matchingProperties.length,
+        system: 0,
+        eval: 0,
+        annotation: 0,
+        attribute: 0,
+        dataset: 0,
+      };
+      for (const property of matchingProperties)
+        localCounts[property.category] =
+          (localCounts[property.category] || 0) + 1;
+      return localCounts;
+    }
     const c = { all: propertiesWithExactAttribute.length };
     for (const p of propertiesWithExactAttribute)
       c[p.category] = (c[p.category] || 0) + 1;
@@ -2074,7 +2284,46 @@ function PropertyPicker({
       c.eval = effectiveCatalogCategoryCounts.eval_metric;
       c.annotation = effectiveCatalogCategoryCounts.annotation_metric;
       c.attribute = effectiveCatalogCategoryCounts.custom_attribute;
+      if (currentCatalogActive) {
+        c.system = systemInventoryComplete
+          ? filterPropertiesForPicker({
+              properties: completeSystemProperties,
+              search,
+            }).length
+          : null;
+        // Annotator is a frontend-owned filter, not a persisted label
+        // definition. Add it exactly once when it is actually selectable.
+        c.annotation += filterPropertiesForPicker({
+          properties: properties.filter(
+            (property) =>
+              property.registryId === ANNOTATOR_FILTER_PROPERTY.registryId,
+          ),
+          search,
+        }).length;
+        if (propertyFilter) {
+          // An arbitrary caller predicate cannot be applied to unseen pages.
+          c.eval = null;
+          c.annotation = null;
+          c.attribute = null;
+        }
+        c.all = [c.system, c.eval, c.annotation, c.attribute].every(
+          Number.isSafeInteger,
+        )
+          ? c.system + c.eval + c.annotation + c.attribute
+          : null;
+      }
       return c;
+    }
+    if (unifiedCatalogActive) {
+      // A current-catalog page is only a window into the inventory, even
+      // when its cursor is exhausted. Missing optional counts stay unknown.
+      return {
+        all: null,
+        system: null,
+        eval: null,
+        annotation: null,
+        attribute: null,
+      };
     }
     const exactLookupOwnsAttributeInventory =
       (legacyAttributeFallbackOwnsInventory || enableExactAttributeLookup) &&
@@ -2105,14 +2354,58 @@ function PropertyPicker({
     legacyAttributeFallbackOwnsInventory,
     propertiesWithExactAttribute,
     source,
+    unifiedCatalogActive,
+    currentCatalogActive,
+    systemInventoryComplete,
+    completeSystemProperties,
+    properties,
+    propertyFilter,
+    search,
   ]);
   const visibleProperties = filtered.slice(0, visiblePropertyLimit);
   const hiddenCount = Math.max(filtered.length - visiblePropertyLimit, 0);
-  const displayedPropertyCount = search.trim()
-    ? Number.isSafeInteger(counts[category])
-      ? counts[category]
-      : filtered.length
-    : counts.all;
+  const displayedPropertyCount =
+    unifiedCatalogActive || source === "dataset"
+      ? counts[hasCategorySidebar ? category : "all"]
+      : search.trim()
+        ? Number.isSafeInteger(counts[category])
+          ? counts[category]
+          : filtered.length
+        : counts.all;
+  const isCategoryCountLoading = (categoryKey) => {
+    if (!unifiedCatalogActive) {
+      return (
+        ["all", "attribute"].includes(categoryKey) &&
+        Boolean(
+          effectiveAttributeLoading || effectiveIsFetchingNextAttributePage,
+        )
+      );
+    }
+    // Only the search-wide first-page request owns these counts. Loading a
+    // category or continuation page cannot recover omitted count metadata.
+    if (trimmedSearch) {
+      if (unifiedCatalogSearchPending) return true;
+      if (
+        allSearchCatalog.isLoading ||
+        allSearchCatalog.isRemoteCatalogSearchPending
+      )
+        return true;
+    } else if (catalogLoading) {
+      return true;
+    }
+    return Boolean(
+      currentCatalogActive &&
+        effectiveCatalogCategoryCountsExact &&
+        ["all", "system"].includes(categoryKey) &&
+        !systemInventoryComplete &&
+        !systemCatalog.isError &&
+        !systemCatalog.isFetchNextPageError &&
+        !systemCatalog.cursorChainStopped &&
+        (systemCatalog.isLoading ||
+          systemCatalog.isFetching ||
+          systemCatalog.hasNextPage),
+    );
+  };
   const catalogCategoryCanContinue = (
     unifiedCatalogActive
       ? ["all", "system", "eval", "annotation", "attribute"]
@@ -2287,9 +2580,6 @@ function PropertyPicker({
             maxHeight: 380,
             display: "flex",
             flexDirection: "column",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 2,
           }}
         >
           <Box sx={{ p: 1.5 }}>
@@ -2304,7 +2594,7 @@ function PropertyPicker({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear"
                       width={16}
                       sx={{ color: "text.disabled" }}
                     />
@@ -2315,13 +2605,13 @@ function PropertyPicker({
                     <Typography
                       variant="caption"
                       aria-label="Property search result count"
-                      sx={{ color: "text.disabled", fontSize: 11 }}
+                      sx={{ color: "text.disabled", fontSize: 12 }}
                     >
                       {displayedPropertyCount}
                     </Typography>
                   </InputAdornment>
                 ),
-                sx: { fontSize: 13 },
+                sx: { fontSize: 12 },
               }}
             />
             {(enableExactAttributeLookup || legacyAttributeFallbackActive) &&
@@ -2330,7 +2620,7 @@ function PropertyPicker({
               effectiveAttributeReadState !== "complete" && (
                 <Typography
                   role="status"
-                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                  sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
                 >
                   {getAttributeLookupMessage(effectiveAttributeReadState)}
                 </Typography>
@@ -2340,7 +2630,7 @@ function PropertyPicker({
                 role="status"
                 sx={{ mt: 0.75, display: "flex", alignItems: "center", gap: 1 }}
               >
-                <Typography sx={{ fontSize: 11, color: "warning.main" }}>
+                <Typography sx={{ fontSize: 12, color: "warning.main" }}>
                   Exact attribute search could not be completed. Retained
                   matches remain available.
                 </Typography>
@@ -2348,7 +2638,7 @@ function PropertyPicker({
                   size="small"
                   onClick={loadNextExactAttributePage}
                   disabled={isFetchingNextExactPage}
-                  sx={{ p: 0, minWidth: 0, fontSize: 11, whiteSpace: "nowrap" }}
+                  sx={{ p: 0, minWidth: 0, whiteSpace: "nowrap" }}
                 >
                   Retry exact attribute search
                 </Button>
@@ -2361,7 +2651,7 @@ function PropertyPicker({
               !effectiveAttributeLoading && (
                 <Typography
                   role="status"
-                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                  sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
                 >
                   {getAttributeLookupMessage(effectiveAttributeReadState)}
                 </Typography>
@@ -2369,7 +2659,7 @@ function PropertyPicker({
             {effectiveCatalogError && (
               <Typography
                 role="status"
-                sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
               >
                 {getQueryReadMessage("error")}
               </Typography>
@@ -2383,7 +2673,7 @@ function PropertyPicker({
                 <Button
                   size="small"
                   onClick={() => effectiveRefetchAttributePages?.()}
-                  sx={{ mt: 0.5, px: 0, minWidth: 0, fontSize: 11 }}
+                  sx={{ mt: 0.5, px: 0, minWidth: 0 }}
                 >
                   Retry attribute suggestions
                 </Button>
@@ -2454,17 +2744,23 @@ function PropertyPicker({
                       <Typography
                         aria-label={
                           counts[cat.key] === null
-                            ? `${cat.label} property count unavailable`
+                            ? `${cat.label} property count ${isCategoryCountLoading(cat.key) ? "loading" : "unavailable"}`
                             : `${cat.label} property count`
                         }
                         title={
                           counts[cat.key] === null
-                            ? "Exact count is still loading"
+                            ? isCategoryCountLoading(cat.key)
+                              ? "Loading exact count"
+                              : "Exact count unavailable"
                             : undefined
                         }
-                        sx={{ fontSize: 10, color: "text.disabled" }}
+                        sx={{ fontSize: 12, color: "text.disabled" }}
                       >
-                        {counts[cat.key] === null ? "…" : counts[cat.key]}
+                        {counts[cat.key] === null
+                          ? isCategoryCountLoading(cat.key)
+                            ? "…"
+                            : "—"
+                          : counts[cat.key]}
                       </Typography>
                     )}
                   </Box>
@@ -2526,7 +2822,7 @@ function PropertyPicker({
                     }}
                   >
                     <CircularProgress size={16} />
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                       {trimmedSearch
                         ? "Searching property catalog…"
                         : "Loading properties…"}
@@ -2549,7 +2845,7 @@ function PropertyPicker({
                     }}
                   >
                     <CircularProgress size={14} />
-                    <Typography sx={{ fontSize: 11 }}>
+                    <Typography sx={{ fontSize: 12 }}>
                       Searching property catalog…
                     </Typography>
                   </Box>
@@ -2578,19 +2874,10 @@ function PropertyPicker({
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
-                  <Typography
-                    noWrap
-                    title={prop.name}
-                    sx={{
-                      fontSize: 13,
-                      flex: 1,
-                      maxWidth: 250,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {prop.name}
-                  </Typography>
+                  <OverflowText
+                    text={prop.name}
+                    sx={{ fontSize: 12, flex: 1, maxWidth: 250 }}
+                  />
                   {prop.outputType && (
                     <Chip
                       size="small"
@@ -2602,7 +2889,7 @@ function PropertyPicker({
                             ? "P/F"
                             : prop.outputType
                       }
-                      sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+                      sx={{ flexShrink: 0 }}
                     />
                   )}
                   {hasCategorySidebar && prop.category && (
@@ -2611,10 +2898,7 @@ function PropertyPicker({
                       variant="outlined"
                       label={prop.category}
                       sx={{
-                        height: 16,
-                        fontSize: 9,
                         flexShrink: 0,
-                        textTransform: "capitalize",
                       }}
                     />
                   )}
@@ -2643,7 +2927,7 @@ function PropertyPicker({
                   }}
                 >
                   <Iconify
-                    icon="mdi:plus-circle-outline"
+                    icon="solar:add-circle-linear"
                     width={16}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
@@ -2655,7 +2939,7 @@ function PropertyPicker({
                     size="small"
                     variant="outlined"
                     label="text"
-                    sx={{ height: 16, fontSize: 9, flexShrink: 0 }}
+                    sx={{ flexShrink: 0 }}
                   />
                 </Box>
               )}
@@ -2665,7 +2949,7 @@ function PropertyPicker({
                   sx={{
                     px: 1.5,
                     pt: 0.75,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "warning.main",
                   }}
                 >
@@ -2730,6 +3014,29 @@ const boundExactValueSearchInput = (value, maxUtf8Bytes) =>
 const pickerValueKey = (value, storageType) =>
   getPickerValueIdentity(value, storageType);
 
+// A one-line label (a field name, a value) that names itself in full on hover,
+// only when the line cuts it off (the shared OverflowTooltip measures on hover).
+// Long ids have no spaces, so the tooltip may break them anywhere.
+function OverflowText({ text, sx }) {
+  return (
+    <OverflowTooltip
+      title={
+        <Box component="span" sx={{ wordBreak: "break-all" }}>
+          {text}
+        </Box>
+      }
+    >
+      <Typography noWrap sx={sx}>
+        {text}
+      </Typography>
+    </OverflowTooltip>
+  );
+}
+OverflowText.propTypes = {
+  text: PropTypes.string,
+  sx: PropTypes.object,
+};
+
 function ValuePicker({
   propertyId,
   propertyCategory,
@@ -2792,7 +3099,8 @@ function ValuePicker({
     source: filterValueSource,
   });
 
-  const isIdOnlyField = !hasStaticChoices &&
+  const isIdOnlyField =
+    !hasStaticChoices &&
     isNativeIdField(propertyId, property?.apiColType || propertyCategory);
 
   // Backend search: every non-static cursor-backed vocabulary. A real
@@ -3059,21 +3367,16 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             return (
-              <Typography
+              <OverflowText
                 key={pickerValueKey(v, selectedValueTypes[0])}
-                noWrap
-                title={displayLabel}
+                text={displayLabel}
                 sx={{
                   fontSize: 12,
                   color: "text.primary",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
                   minWidth: 0,
                   flex: 1,
                 }}
-              >
-                {displayLabel}
-              </Typography>
+              />
             );
           })()
         ) : (
@@ -3090,44 +3393,57 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             const secondaryLabel = getPickerOptionSecondaryLabel(match);
+            const chipLabel =
+              metricType === "custom_attribute" && selectedType
+                ? `${displayLabel} · ${selectedType}`
+                : displayLabel;
             const chipTitle = secondaryLabel
-              ? `${displayLabel} (${secondaryLabel})`
-              : displayLabel;
+              ? `${chipLabel} (${secondaryLabel})`
+              : chipLabel;
             return (
-              <Chip
+              <OverflowTooltip
                 key={pickerValueKey(v, selectedType)}
-                label={displayLabel}
-                title={chipTitle}
-                size="small"
-                onDelete={(e) => {
-                  e.stopPropagation();
-                  onChange(
-                    selectedValues.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                    selectedValueTypes.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                  );
-                }}
-                deleteIcon={<Iconify icon="mdi:close" width={10} />}
-                sx={{
-                  height: 20,
-                  fontSize: 10,
-                  maxWidth: 70,
-                  "& .MuiChip-label": { px: 0.5 },
-                }}
-              />
+                title={
+                  <Box component="span" sx={{ wordBreak: "break-all" }}>
+                    {chipTitle}
+                  </Box>
+                }
+              >
+                <Chip
+                  label={chipLabel}
+                  size="small"
+                  onDelete={(e) => {
+                    e.stopPropagation();
+                    onChange(
+                      selectedValues.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                      selectedValueTypes.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                    );
+                  }}
+                  deleteIcon={<Iconify icon="solar:close-linear" width={12} />}
+                  sx={{
+                    maxWidth: 70,
+                    "& .MuiChip-label": { px: 0.5 },
+                  }}
+                />
+              </OverflowTooltip>
             );
           })
         )}
         {!singleSelect && selectedValues.length > 3 && (
-          <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             +{selectedValues.length - 3}
           </Typography>
         )}
         <Iconify
-          icon={anchorEl ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            anchorEl
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
           width={14}
           sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
         />
@@ -3169,7 +3485,7 @@ function ValuePicker({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="mdi:magnify"
+                    icon="solar:magnifier-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -3179,7 +3495,7 @@ function ValuePicker({
             }}
           />
           <Typography
-            sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
+            sx={{ fontSize: 12, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
             {singleSelect
               ? "Select a single value"
@@ -3195,7 +3511,7 @@ function ValuePicker({
           {customSearchValueTooLong && (
             <Typography
               role="alert"
-              sx={{ px: 1.5, py: 1, fontSize: 11, color: "error.main" }}
+              sx={{ px: 1.5, py: 1, fontSize: 12, color: "error.main" }}
             >
               Exact values are limited to {exactValueMaxUtf8Bytes / 1024} KiB (
               {exactValueMaxUtf8Bytes.toLocaleString("en-US")} UTF-8 bytes).
@@ -3214,7 +3530,7 @@ function ValuePicker({
               }}
             >
               <CircularProgress size={16} />
-              <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                 Loading values…
               </Typography>
             </Box>
@@ -3233,7 +3549,7 @@ function ValuePicker({
             >
               <Typography
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   color:
                     readState === "sampled" ? "text.secondary" : "warning.main",
                 }}
@@ -3247,7 +3563,7 @@ function ValuePicker({
                   onClick={() =>
                     void Promise.resolve(refetchOptions?.()).catch(() => {})
                   }
-                  sx={{ minWidth: "auto", fontSize: 11, flexShrink: 0 }}
+                  sx={{ minWidth: "auto", flexShrink: 0 }}
                 >
                   {isRetryingDashboardOptions ? "Retrying…" : "Retry"}
                 </Button>
@@ -3279,7 +3595,9 @@ function ValuePicker({
             const optionValue = getPickerOptionValue(opt);
             const optionType = getPickerOptionType(opt);
             const label = getPickerOptionLabel(opt);
-            const secondaryLabel = getPickerOptionSecondaryLabel(opt);
+            const secondaryLabel = getPickerOptionSecondaryLabel(opt, {
+              showType: metricType === "custom_attribute",
+            });
             const isSelected = selectedIndexFor(optionValue, optionType) >= 0;
             return (
               <Box
@@ -3299,42 +3617,39 @@ function ValuePicker({
                   "&:hover": { bgcolor: "action.hover" },
                 }}
               >
-                <Iconify
-                  icon={
-                    singleSelect
-                      ? isSelected
-                        ? "mdi:radiobox-marked"
-                        : "mdi:radiobox-blank"
-                      : isSelected
-                        ? "mdi:checkbox-marked"
-                        : "mdi:checkbox-blank-outline"
-                  }
-                  width={18}
-                  sx={{
-                    color: isSelected ? "primary.main" : "text.secondary",
-                    flexShrink: 0,
-                  }}
-                />
+                {singleSelect ? (
+                  <Radio
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                ) : (
+                  <Checkbox
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    noWrap
-                    title={label}
+                  <OverflowText
+                    text={label}
                     sx={{
                       fontSize: 12,
-                      fontWeight: isSelected ? 600 : 400,
+                      fontWeight: isSelected ? 500 : 400,
                       color: "text.primary",
                     }}
-                  >
-                    {label}
-                  </Typography>
+                  />
                   {secondaryLabel && (
-                    <Typography
-                      noWrap
-                      title={secondaryLabel}
-                      sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
-                    >
-                      {secondaryLabel}
-                    </Typography>
+                    <OverflowText
+                      text={secondaryLabel}
+                      sx={{ fontSize: 12, color: "text.secondary", mt: 0.1 }}
+                    />
                   )}
                 </Box>
               </Box>
@@ -3373,8 +3688,8 @@ function ValuePicker({
                 }}
               >
                 <Iconify
-                  icon="mdi:plus-circle-outline"
-                  width={18}
+                  icon="solar:add-circle-linear"
+                  width={20}
                   sx={{
                     color: "primary.main",
                     flexShrink: 0,
@@ -3395,7 +3710,7 @@ function ValuePicker({
                 sx={{
                   px: 1.5,
                   py: 0.75,
-                  fontSize: 11,
+                  fontSize: 12,
                   color: "text.secondary",
                 }}
               >
@@ -3434,15 +3749,13 @@ function ValuePicker({
                 py: 0.75,
               }}
             >
-              <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                 {selectedValues.length} selected
               </Typography>
               <Button
                 size="small"
                 onClick={() => onChange([], [])}
                 sx={{
-                  textTransform: "none",
-                  fontSize: 11,
                   p: 0,
                   minWidth: 0,
                   color: "text.secondary",
@@ -3478,6 +3791,7 @@ function FilterRow({
   enableExactAttributeLookup = true,
   unifiedCatalogActive = false,
   isSimulator = false,
+  catalogLoading = false,
   catalogError = false,
   hasNextCatalogPage = false,
   catalogContinuationKey = null,
@@ -3486,6 +3800,7 @@ function FilterRow({
   loadNextCatalogPage,
   catalogCategoryCounts,
   catalogCategoryCountsExact,
+  catalogQueryProvenance,
   attributeSource,
   propertyFilter,
 }) {
@@ -3556,14 +3871,41 @@ function FilterRow({
         prop.type === "text" ||
         prop.type === "annotator"
           ? prop.type
-          : normalizeFieldType(prop.type);
+          : normalizeFieldType(prop.type, prop.attributeTypes);
       // Native identifiers default to exact membership; raw keys keep their type.
       // defaultOperatorForType: optional per-flow { type: op } override.
-      const defaultOp = isNativeIdField(prop.id, prop.apiColType || prop.category)
+      const typeDefaultOp = isNativeIdField(
+        prop.id,
+        prop.apiColType || prop.category,
+      )
         ? "in"
         : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // A field that lists its own operators may not allow the type default
+      // (e.g. a latency range with no "equals"); start on the first one it
+      // declares.
+      const propOps = getOperatorsForFilter(
+        {
+          field: prop.id,
+          fieldType: nt,
+          fieldCategory: prop.category,
+          apiColType: prop.apiColType,
+        },
+        prop,
+      );
+      const allowedOps = operatorFilter
+        ? propOps.filter(operatorFilter)
+        : propOps;
+      const findOp = (value) => allowedOps.find((op) => op.value === value);
+      const defaultOpDef =
+        findOp(typeDefaultOp) ||
+        (prop.operators || []).map(findOp).find(Boolean) ||
+        allowedOps[0];
+      const defaultOp = defaultOpDef?.value || typeDefaultOp;
       let defaultValue;
-      if (nt === "number" || nt === "date" || nt === "map") defaultValue = "";
+      if ((nt === "number" || nt === "date") && defaultOpDef?.range)
+        defaultValue = ["", ""];
+      else if (nt === "number" || nt === "date" || nt === "map")
+        defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
       else if (nt === "text") defaultValue = "";
       else defaultValue = [];
@@ -3581,7 +3923,7 @@ function FilterRow({
         valueTypes: [],
       });
     },
-    [index, filter, onChange, defaultOperatorForType],
+    [index, filter, onChange, defaultOperatorForType, operatorFilter],
   );
 
   const handleOperatorChange = useCallback(
@@ -3659,9 +4001,6 @@ function FilterRow({
           disabled
           sx={{
             flex: 1,
-            textTransform: "none",
-            fontSize: 12,
-            height: 28,
             borderColor: "divider",
           }}
         >
@@ -3688,12 +4027,8 @@ function FilterRow({
             height: 28,
           }}
         >
-          <MenuItem value="true" sx={{ fontSize: 12 }}>
-            true
-          </MenuItem>
-          <MenuItem value="false" sx={{ fontSize: 12 }}>
-            false
-          </MenuItem>
+          <MenuItem value="true">true</MenuItem>
+          <MenuItem value="false">false</MenuItem>
         </Select>
       );
     }
@@ -3725,10 +4060,10 @@ function FilterRow({
               }}
               sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
-                style: { fontSize: 11, height: 12, padding: "6px 6px" },
+                style: { fontSize: 12, height: 12, padding: "6px 6px" },
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
@@ -3744,7 +4079,7 @@ function FilterRow({
               }}
               sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
-                style: { fontSize: 11, height: 12, padding: "6px 6px" },
+                style: { fontSize: 12, height: 12, padding: "6px 6px" },
               }}
             />
           </Stack>
@@ -3758,7 +4093,7 @@ function FilterRow({
           onChange={(e) => updateRow({ value: e.target.value })}
           sx={{ flex: "1 1 160px", minWidth: 0, maxWidth: "100%" }}
           inputProps={{
-            style: { fontSize: 11, height: 12, padding: "6px 6px" },
+            style: { fontSize: 12, height: 12, padding: "6px 6px" },
           }}
         />
       );
@@ -3803,7 +4138,7 @@ function FilterRow({
               }}
               FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
@@ -3886,7 +4221,18 @@ function FilterRow({
       );
     }
 
-    if (usesFreeTextValue(filter.fieldType, source)) {
+    // Dataset columns provide their own suggestions; do not bypass that picker.
+    // A field with fixed choices (a pick-several enum on the shared panel)
+    // lists them in the picker instead of asking for typed text.
+    const hasFixedChoices =
+      selectedProp?.category !== "annotation" &&
+      Array.isArray(selectedProp?.choices) &&
+      selectedProp.choices.length > 0;
+    if (
+      !ValuePickerOverride &&
+      !hasFixedChoices &&
+      usesFreeTextValue(filter.fieldType, source)
+    ) {
       return (
         <TextField
           size="small"
@@ -3923,7 +4269,12 @@ function FilterRow({
           }
         }
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={SINGLE_VALUE_OPS.has(safeOperator) && !isArray}
+        // `singleValue` properties hold exactly one value even on list
+        // operators, for screens whose query takes a scalar.
+        singleSelect={
+          (SINGLE_VALUE_OPS.has(safeOperator) && !isArray) ||
+          Boolean(selectedProp?.singleValue)
+        }
         onChange={(newVal, newValueTypes = []) =>
           updateRow(
             { value: newVal, valueTypes: newValueTypes },
@@ -3950,47 +4301,28 @@ function FilterRow({
         mb: rowHasInvalidNumeric || rowHasInvalidMap ? 1.5 : 0,
       }}
     >
-      <CustomTooltip
-        show={!!(selectedProp?.name || filter.fieldName || filter.field)}
-        arrow
+      <Button
+        ref={(el) => el}
         size="small"
-        type="black"
-        title={selectedProp?.name || filter.fieldName || filter.field || ""}
+        variant="outlined"
+        onClick={(e) => setPickerAnchor(e.currentTarget)}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+        sx={{
+          flex: "1 1 150px",
+          minWidth: 0,
+          maxWidth: { xs: "100%", sm: 180 },
+          borderColor: "divider",
+          color: filter.field ? "text.primary" : "text.disabled",
+          justifyContent: "space-between",
+        }}
       >
-        <Button
-          ref={(el) => el}
-          size="small"
-          variant="outlined"
-          onClick={(e) => setPickerAnchor(e.currentTarget)}
-          endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontSize: 12,
-            height: 28,
-            flex: "1 1 150px",
-            minWidth: 0,
-            maxWidth: { xs: "100%", sm: 180 },
-            borderColor: "divider",
-            color: filter.field ? "text.primary" : "text.disabled",
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography
-            noWrap
-            sx={{
-              fontSize: 12,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {selectedProp?.name ||
-              filter.fieldName ||
-              filter.field ||
-              "Property"}
-          </Typography>
-        </Button>
-      </CustomTooltip>
+        <OverflowText
+          text={
+            selectedProp?.name || filter.fieldName || filter.field || "Property"
+          }
+          sx={{ fontSize: 12, maxWidth: "100%" }}
+        />
+      </Button>
       <PropertyPicker
         anchorEl={pickerAnchor}
         open={Boolean(pickerAnchor)}
@@ -4004,6 +4336,7 @@ function FilterRow({
         enableExactAttributeLookup={enableExactAttributeLookup}
         unifiedCatalogActive={unifiedCatalogActive}
         isSimulator={isSimulator}
+        catalogLoading={catalogLoading}
         catalogError={catalogError}
         hasNextCatalogPage={hasNextCatalogPage}
         catalogContinuationKey={catalogContinuationKey}
@@ -4012,6 +4345,7 @@ function FilterRow({
         loadNextCatalogPage={loadNextCatalogPage}
         catalogCategoryCounts={catalogCategoryCounts}
         catalogCategoryCountsExact={catalogCategoryCountsExact}
+        catalogQueryProvenance={catalogQueryProvenance}
         propertyFilter={propertyFilter}
       />
 
@@ -4028,7 +4362,7 @@ function FilterRow({
           }}
         >
           {FILTER_INPUT_TYPES.map((t) => (
-            <MenuItem key={t.value} value={t.value} sx={{ fontSize: 12 }}>
+            <MenuItem key={t.value} value={t.value}>
               {t.label}
             </MenuItem>
           ))}
@@ -4048,7 +4382,7 @@ function FilterRow({
         }}
       >
         {ops.map((op) => (
-          <MenuItem key={op.value} value={op.value} sx={{ fontSize: 12 }}>
+          <MenuItem key={op.value} value={op.value}>
             {op.label}
           </MenuItem>
         ))}
@@ -4061,7 +4395,7 @@ function FilterRow({
         onClick={() => onRemove(index)}
         sx={{ p: 0.25, flexShrink: 0, ml: "auto" }}
       >
-        <Iconify icon="mdi:close" width={14} />
+        <Iconify icon="solar:close-linear" width={14} />
       </IconButton>
     </Stack>
   );
@@ -4099,6 +4433,8 @@ const TraceFilterPanel = ({
   operatorFilter,
   defaultOperatorForType,
   panelWidth,
+  placement = "bottom-start",
+  aiPlaceholder,
   defaultRow: defaultRowOverride,
   isSimulator = false,
   freeSoloValues = false,
@@ -4141,6 +4477,7 @@ const TraceFilterPanel = ({
   const {
     data: dynamicProperties = [],
     isLoading: dynamicPropsLoading,
+    isFetching: isFetchingDynamicProps,
     isError: dynamicPropsError,
     hasNextPage: hasNextDynamicPropsPage,
     continuationKey: dynamicPropsContinuationKey,
@@ -4149,6 +4486,7 @@ const TraceFilterPanel = ({
     isFetchNextPageError: isNextDynamicPropsPageError,
     categoryCounts: dynamicPropertyCategoryCounts,
     categoryCountsExact: dynamicPropertyCategoryCountsExact,
+    queryProvenance: dynamicPropertyQueryProvenance,
     usesUnifiedCatalog,
   } = useTraceFilterProperties(observeId, {
     // Several pages keep trace/session/voice filter panels mounted at once.
@@ -4453,22 +4791,29 @@ const TraceFilterPanel = ({
   // QueryInput needs a unique UI identity for same-id fields. The converter
   // below maps that identity back to the raw backend id before applying.
   const queryFilterFields = useMemo(() => {
-    return queryPropertyEntries.map(([identity, p]) => ({
-      value: identity,
-      label: p.name,
-      type: p.type || "string",
-      choices: p.choices,
-      allowCustomValue:
-        p.allowCustomValue === true ||
-        (p.category === "annotation" && p.type === "categorical"),
-      panelType: p.type || "string",
-      category: p.category, // system, eval, annotation, attribute
-      rawCategory: p.rawCategory,
-      registryId: p.registryId || p.property_id,
-      apiColType: p.apiColType,
-      attributeTypes: p.attributeTypes,
-      attributeTypesExact: p.attributeTypesExact,
-    }));
+    return queryPropertyEntries.map(([identity, p]) => {
+      const type =
+        p.type === "json" &&
+        normalizeFieldType(p.type, p.attributeTypes) === "string"
+          ? "string"
+          : p.type || "string";
+      return {
+        value: identity,
+        label: p.name,
+        type,
+        choices: p.choices,
+        allowCustomValue:
+          p.allowCustomValue === true ||
+          (p.category === "annotation" && p.type === "categorical"),
+        panelType: type,
+        category: p.category, // system, eval, annotation, attribute
+        rawCategory: p.rawCategory,
+        registryId: p.registryId || p.property_id,
+        apiColType: p.apiColType,
+        attributeTypes: p.attributeTypes,
+        attributeTypesExact: p.attributeTypesExact,
+      };
+    });
   }, [queryPropertyEntries]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
@@ -4779,8 +5124,8 @@ const TraceFilterPanel = ({
         const queryFieldDef = queryFieldMap[t.field];
         const prop = queryPropertyById[t.field];
         const fieldType =
-          prop?.type ||
           queryFieldDef?.panelType ||
+          prop?.type ||
           (queryFieldDef?.type === "enum" ? "categorical" : "string");
         const value = NO_VALUE_OPS.has(t.operator)
           ? ""
@@ -4990,8 +5335,14 @@ const TraceFilterPanel = ({
       open={open}
       anchorEl={anchorEl}
       onClose={onClose}
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
+      anchorOrigin={{
+        vertical: "bottom",
+        horizontal: placement === "bottom-end" ? "right" : "left",
+      }}
+      transformOrigin={{
+        vertical: "top",
+        horizontal: placement === "bottom-end" ? "right" : "left",
+      }}
       slotProps={{
         paper: {
           sx: {
@@ -5015,7 +5366,8 @@ const TraceFilterPanel = ({
               placeholder={
                 aiLoading
                   ? "Parsing with AI..."
-                  : "Ask AI — e.g. 'show traces with errors on gpt-4'"
+                  : aiPlaceholder ||
+                    "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
               onChange={(e) => {
@@ -5030,7 +5382,11 @@ const TraceFilterPanel = ({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon={aiLoading ? "mdi:loading" : "mdi:creation"}
+                      icon={
+                        aiLoading
+                          ? "mdi:loading"
+                          : "solar:stars-minimalistic-linear"
+                      }
                       width={16}
                       sx={{
                         color: "primary.main",
@@ -5055,17 +5411,17 @@ const TraceFilterPanel = ({
                         onClick={handleAiFilter}
                         sx={{ p: 0.25 }}
                       >
-                        <Iconify icon="mdi:arrow-right" width={16} />
+                        <Iconify icon="solar:arrow-right-linear" width={16} />
                       </IconButton>
                     </InputAdornment>
                   ) : null,
-                sx: { fontSize: 13, height: 32 },
+                sx: { fontSize: 12, height: 32 },
               }}
             />
             {aiError && (
               <Typography
                 variant="caption"
-                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+                sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
               </Typography>
@@ -5073,7 +5429,7 @@ const TraceFilterPanel = ({
             {aiEmpty && !aiError && !aiLoading && (
               <Typography
                 variant="caption"
-                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+                sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}
               >
                 Could not derive filters from that query. Try rephrasing or add
                 a filter manually below.
@@ -5087,17 +5443,10 @@ const TraceFilterPanel = ({
           <Tabs
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
-            sx={{
-              minHeight: 24,
+            sx={{ boxShadow: "none",
               borderBottom: "1px solid",
               borderColor: "divider",
               "& .MuiTab-root": {
-                minHeight: 24,
-                py: 0.25,
-                px: 1,
-                textTransform: "none",
-                fontSize: 13,
-                fontWeight: 500,
                 minWidth: 0,
               },
             }}
@@ -5117,7 +5466,7 @@ const TraceFilterPanel = ({
                   sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
                 >
                   <CircularProgress size={14} />
-                  <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                     Loading properties…
                   </Typography>
                 </Box>
@@ -5145,7 +5494,14 @@ const TraceFilterPanel = ({
                         exactAttributeSource === "spans"),
                   )}
                   unifiedCatalogActive={unifiedPropertyCatalogActive}
+                  catalogQueryProvenance={dynamicPropertyQueryProvenance}
                   isSimulator={isSimulator}
+                  catalogLoading={Boolean(
+                    propsLoading ||
+                      (!skipDynamicProperties &&
+                        isFetchingDynamicProps &&
+                        !isFetchingNextDynamicPropsPage),
+                  )}
                   catalogError={
                     skipDynamicProperties
                       ? externalCatalogError
@@ -5203,13 +5559,11 @@ const TraceFilterPanel = ({
             >
               <Button
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() =>
                   setRows((prev) => [...prev, { ...effectiveDefaultRow }])
                 }
                 sx={{
-                  textTransform: "none",
-                  fontSize: 12,
                   color: "text.secondary",
                 }}
               >
@@ -5220,7 +5574,6 @@ const TraceFilterPanel = ({
                   size="small"
                   data-filter-panel-action="clear"
                   onClick={handleClear}
-                  sx={{ textTransform: "none", fontSize: 12 }}
                 >
                   Clear all
                 </Button>
@@ -5331,7 +5684,7 @@ const TraceFilterPanel = ({
             {shouldFetchQueryValues && queryValuesMessage && (
               <Typography
                 role="status"
-                sx={{ fontSize: 11, color: "warning.main", mt: 0.75, px: 0.5 }}
+                sx={{ fontSize: 12, color: "warning.main", mt: 0.75, px: 0.5 }}
               >
                 {queryValuesMessage}
               </Typography>
@@ -5346,13 +5699,12 @@ const TraceFilterPanel = ({
                 size="small"
                 data-filter-panel-action="clear"
                 onClick={handleClear}
-                sx={{ textTransform: "none", fontSize: 12 }}
               >
                 Clear all
               </Button>
             </Stack>
             <Typography
-              sx={{ fontSize: 11, color: "text.disabled", mt: 1, px: 0.5 }}
+              sx={{ fontSize: 12, color: "text.disabled", mt: 1, px: 0.5 }}
             >
               Type property → pick operator → pick/type value. Backspace to
               undo. Click chip to edit.
@@ -5385,6 +5737,8 @@ TraceFilterPanel.propTypes = {
   operatorFilter: PropTypes.func,
   defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
+  placement: PropTypes.oneOf(["bottom-start", "bottom-end"]),
+  aiPlaceholder: PropTypes.string,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),

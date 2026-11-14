@@ -17,8 +17,8 @@ criteria: "You are evaluating whether the translated output accurately conveys t
   \ 1.0 if translation accurately conveys full meaning, sounds natural, and preserves tone.\n\n## Inputs\n\n<input>{{input}}</input>\n\
   \n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Text
+- Translation
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

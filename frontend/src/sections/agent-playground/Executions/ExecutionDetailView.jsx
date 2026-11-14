@@ -1,3 +1,4 @@
+import ErrorState from "src/components/error-state";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
@@ -154,18 +155,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
   if (isError) {
     return (
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Typography typography="s2" color="error.main">
-          Failed to load execution details
-        </Typography>
-      </Box>
+      <ErrorState title="Failed to load execution details" sx={{ flex: 1 }} />
     );
   }
 

@@ -15,10 +15,12 @@ class JsonValueField(serializers.JSONField):
     """Arbitrary JSON value field — use ONLY for genuinely open-shape values.
 
     Emits ``x-json-value: true`` in the OpenAPI schema, detected by the
-    ``x-json-value`` branch in ``openapi-contract.js``, which maps to
-    ``z.any()``.  Because ``z.any()`` removes all contract knowledge of the
-    field shape, this field should only be used when the value is genuinely
-    open (e.g. provider-specific config dicts whose keys vary per provider).
+    ``x-json-value`` branch in ``openapi-contract.js``, which maps to its
+    recursive ``JSON_VALUE_SCHEMA`` (any valid JSON value, so ``undefined`` or
+    a class instance still fails).  Because that drops all contract knowledge
+    of the field shape, this field should only be used when the value is
+    genuinely open (e.g. provider-specific config dicts whose keys vary per
+    provider).
 
     For fields with a known shape use a typed serializer or ``StringOrObjectField``
     for ``string | object`` unions.
@@ -58,9 +60,7 @@ class StringOrObjectField(serializers.JSONField):
         # caller) would persist ``model: []`` happily.
         if isinstance(data, (str, dict)):
             return data
-        raise serializers.ValidationError(
-            "Expected a string or a JSON object."
-        )
+        raise serializers.ValidationError("Expected a string or a JSON object.")
 
     class Meta:
         swagger_schema_fields = {
@@ -89,9 +89,7 @@ class StringOrArrayField(serializers.JSONField):
         # or ``content: {}`` happily.
         if isinstance(data, (str, list)):
             return data
-        raise serializers.ValidationError(
-            "Expected a string or a JSON array."
-        )
+        raise serializers.ValidationError("Expected a string or a JSON array.")
 
     class Meta:
         swagger_schema_fields = {

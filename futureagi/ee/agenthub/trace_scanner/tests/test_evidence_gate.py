@@ -38,7 +38,9 @@ class TestEvidenceIsQuotable:
         assert _evidence_is_quotable("total 80.27 seconds, 9.21 seconds average", TRACE)
 
     def test_quote_with_different_whitespace_and_case_passes(self):
-        assert _evidence_is_quotable("Total 80.27   Seconds, 9.21 Seconds Average", TRACE)
+        assert _evidence_is_quotable(
+            "Total 80.27   Seconds, 9.21 Seconds Average", TRACE
+        )
 
     def test_trimmed_trailing_clause_passes(self):
         """Models routinely quote the head of a sentence and drop the tail."""
@@ -74,8 +76,12 @@ class TestFailedDimensionsNeedEvidence:
                 "goal": {"evidence": "", "verdict": "PASS"},
             },
             "issues": [
-                {"dim": "grounding", "cat": "Tool Output Misinterpretation",
-                 "conf": "H", "brief": "agent fabricated the timing figures"}
+                {
+                    "dim": "grounding",
+                    "cat": "Tool Output Misinterpretation",
+                    "conf": "H",
+                    "brief": "agent fabricated the timing figures",
+                }
             ],
         }
 
@@ -110,7 +116,10 @@ class TestFailedDimensionsNeedEvidence:
             "dimensions": {"goal": {"evidence": "", "verdict": "PASS"}},
             "issues": [{"dim": "goal", "cat": "Goal Deviation", "brief": "x"}],
         }
-        assert TraceScanner._v8_to_trace_output(parsed, "some trace text here")["issues"] == []
+        assert (
+            TraceScanner._v8_to_trace_output(parsed, "some trace text here")["issues"]
+            == []
+        )
 
 
 class TestBreadcrumbsDoNotInventQuotes:
@@ -123,10 +132,13 @@ class TestBreadcrumbsDoNotInventQuotes:
     def test_unmatchable_excerpt_yields_no_quote(self):
         from ee.agenthub.trace_scanner.compress import recover_verbatim
 
-        assert recover_verbatim(
-            "agent refused escalation request entirely",
-            "The user asked about billing. The agent transferred them to support.",
-        ) == ""
+        assert (
+            recover_verbatim(
+                "agent refused escalation request entirely",
+                "The user asked about billing. The agent transferred them to support.",
+            )
+            == ""
+        )
 
     def test_matchable_excerpt_returns_the_real_sentence(self):
         from ee.agenthub.trace_scanner.compress import recover_verbatim
@@ -148,16 +160,26 @@ class TestLowConfidenceIsWithheldNotForced:
     @staticmethod
     def _parsed(conf):
         return {
-            "dimensions": {"goal": {"evidence": "the agent never answered", "verdict": "FAIL"}},
-            "issues": [{"dim": "goal", "cat": "Goal Deviation",
-                        "brief": "did not answer the question", "conf": conf}],
+            "dimensions": {
+                "goal": {"evidence": "the agent never answered", "verdict": "FAIL"}
+            },
+            "issues": [
+                {
+                    "dim": "goal",
+                    "cat": "Goal Deviation",
+                    "brief": "did not answer the question",
+                    "conf": conf,
+                }
+            ],
         }
 
     SEEN = "user asked a question. the agent never answered it."
 
     def test_low_confidence_is_not_surfaced(self):
         out = TraceScanner._v8_to_trace_output(self._parsed("L"), self.SEEN)
-        assert out["issues"] == [], "an issue the model itself could not establish was shown"
+        assert out["issues"] == [], (
+            "an issue the model itself could not establish was shown"
+        )
 
     @pytest.mark.parametrize("conf", ["H", "M"])
     def test_established_findings_still_surface(self, conf):
@@ -171,11 +193,14 @@ class TestLowConfidenceIsWithheldNotForced:
         assert out["issues"][0]["conf"] == "M"
 
     def test_lowercase_l_is_still_withheld(self):
-        assert TraceScanner._v8_to_trace_output(self._parsed("l"), self.SEEN)["issues"] == []
+        assert (
+            TraceScanner._v8_to_trace_output(self._parsed("l"), self.SEEN)["issues"]
+            == []
+        )
 
 
 class TestAbsenceClaimsAreVerifiedNotQuoted:
-    """"The agent returned nothing" is unquotable exactly when it is TRUE.
+    """ "The agent returned nothing" is unquotable exactly when it is TRUE.
 
     Demanding a quote for the completion dimension blinded it: 94 of 124 gate
     drops on a 350-trace run landed on this one dimension. So the model names
@@ -202,9 +227,13 @@ class TestAbsenceClaimsAreVerifiedNotQuoted:
 
         cut = (
             "Here is the full breakdown of every invoice you asked about, "
-            "starting with the oldest" + SCANNER_TRUNCATION_MARK + ", 900 chars omitted⟩"
+            "starting with the oldest"
+            + SCANNER_TRUNCATION_MARK
+            + ", 900 chars omitted⟩"
         )
-        assert not _completion_claim_holds(cut), "our truncation was reported as an incomplete answer"
+        assert not _completion_claim_holds(cut), (
+            "our truncation was reported as an incomplete answer"
+        )
 
     @staticmethod
     def _parsed_completion(span):
@@ -213,36 +242,58 @@ class TestAbsenceClaimsAreVerifiedNotQuoted:
             dim["span"] = span
         return {
             "dimensions": {"completion": dim},
-            "issues": [{"dim": "completion", "cat": "Incomplete Response",
-                        "brief": "agent returned nothing", "conf": "H"}],
+            "issues": [
+                {
+                    "dim": "completion",
+                    "cat": "Incomplete Response",
+                    "brief": "agent returned nothing",
+                    "conf": "H",
+                }
+            ],
         }
 
     @staticmethod
     def _trace(root_out):
         """Root span plus one child with real output — the tool result that
         must never be allowed to stand in for the missing final answer."""
-        return {"trace_id": "t", "spans": [{
-            "span_id": "root", "span_name": "agent",
-            "span_attributes": {"input.value": "list my invoices",
-                                **({"output.value": root_out} if root_out else {})},
-            "child_spans": [{
-                "span_id": "tool-1", "span_name": "fetch_invoices",
-                "span_attributes": {"output.value": '{"invoices": [412.90]}'},
-                "child_spans": [],
-            }],
-        }]}
+        return {
+            "trace_id": "t",
+            "spans": [
+                {
+                    "span_id": "root",
+                    "span_name": "agent",
+                    "span_attributes": {
+                        "input.value": "list my invoices",
+                        **({"output.value": root_out} if root_out else {}),
+                    },
+                    "child_spans": [
+                        {
+                            "span_id": "tool-1",
+                            "span_name": "fetch_invoices",
+                            "span_attributes": {
+                                "output.value": '{"invoices": [412.90]}'
+                            },
+                            "child_spans": [],
+                        }
+                    ],
+                }
+            ],
+        }
 
     def test_fail_naming_a_span_with_no_output_survives(self):
         """The genuine failure: the agent produced nothing, and the model names
         the span that should have carried the answer."""
         out = TraceScanner._v8_to_trace_output(
-            self._parsed_completion("root"), "seen", self._trace(""),
+            self._parsed_completion("root"),
+            "seen",
+            self._trace(""),
         )
         assert len(out["issues"]) == 1, "a real empty-output failure was gated away"
 
     def test_fail_naming_a_span_with_a_complete_answer_is_dropped(self):
         out = TraceScanner._v8_to_trace_output(
-            self._parsed_completion("root"), "seen",
+            self._parsed_completion("root"),
+            "seen",
             self._trace("Your three invoices total $412.90, due on the 14th."),
         )
         assert out["issues"] == []
@@ -251,13 +302,17 @@ class TestAbsenceClaimsAreVerifiedNotQuoted:
         """An absence claim that names nothing cannot be verified against
         anything, and an unverifiable claim does not reach the user."""
         out = TraceScanner._v8_to_trace_output(
-            self._parsed_completion(None), "seen", self._trace(""),
+            self._parsed_completion(None),
+            "seen",
+            self._trace(""),
         )
         assert out["issues"] == []
 
     def test_fail_with_an_invented_span_id_is_dropped(self):
         out = TraceScanner._v8_to_trace_output(
-            self._parsed_completion("no-such-span"), "seen", self._trace(""),
+            self._parsed_completion("no-such-span"),
+            "seen",
+            self._trace(""),
         )
         assert out["issues"] == []
 
@@ -267,7 +322,9 @@ class TestAbsenceClaimsAreVerifiedNotQuoted:
         the unwrapped response, not the wrapper."""
         envelope = '{"choices": [{"message": {"content": null}}], "usage": {}}'
         out = TraceScanner._v8_to_trace_output(
-            self._parsed_completion("root"), "seen", self._trace(envelope),
+            self._parsed_completion("root"),
+            "seen",
+            self._trace(envelope),
         )
         assert len(out["issues"]) == 1, "an empty answer hid inside its envelope"
 
@@ -282,15 +339,29 @@ class TestSilentAgentIsNotConfusedWithSilentRecorder:
     """
 
     PARSED = {
-        "dimensions": {"completion": {"evidence": "", "verdict": "FAIL", "span": "root"}},
-        "issues": [{"dim": "completion", "cat": "Incomplete Response",
-                    "brief": "agent returned nothing", "conf": "H"}],
+        "dimensions": {
+            "completion": {"evidence": "", "verdict": "FAIL", "span": "root"}
+        },
+        "issues": [
+            {
+                "dim": "completion",
+                "cat": "Incomplete Response",
+                "brief": "agent returned nothing",
+                "conf": "H",
+            }
+        ],
     }
-    TRACE = {"trace_id": "t", "spans": [{
-        "span_id": "root", "span_name": "agent",
-        "span_attributes": {"input.value": "list my invoices"},
-        "child_spans": [],
-    }]}
+    TRACE = {
+        "trace_id": "t",
+        "spans": [
+            {
+                "span_id": "root",
+                "span_name": "agent",
+                "span_attributes": {"input.value": "list my invoices"},
+                "child_spans": [],
+            }
+        ],
+    }
 
     def test_claim_is_dropped_when_the_trace_captured_nothing(self):
         out = TraceScanner._v8_to_trace_output(
@@ -307,31 +378,45 @@ class TestSilentAgentIsNotConfusedWithSilentRecorder:
     def test_content_is_detected_through_nested_spans(self):
         """Content usually lives on a child span, so a root-only check reads a
         fully-instrumented trace as empty."""
-        trace = {"spans": [{
-            "span_name": "root",
-            "span_attributes": {"span.kind": "CHAIN"},
-            "child_spans": [{
-                "span_name": "llm",
-                "span_attributes": {"output.value": "the real answer"},
-                "child_spans": [],
-            }],
-        }]}
+        trace = {
+            "spans": [
+                {
+                    "span_name": "root",
+                    "span_attributes": {"span.kind": "CHAIN"},
+                    "child_spans": [
+                        {
+                            "span_name": "llm",
+                            "span_attributes": {"output.value": "the real answer"},
+                            "child_spans": [],
+                        }
+                    ],
+                }
+            ]
+        }
         assert _trace_has_captured_content(trace)
 
     def test_spans_without_values_read_as_empty(self):
-        trace = {"spans": [{
-            "span_name": "kylin.http.request",
-            "span_attributes": {"span.kind": "CHAIN"},
-            "child_spans": [],
-        }]}
+        trace = {
+            "spans": [
+                {
+                    "span_name": "kylin.http.request",
+                    "span_attributes": {"span.kind": "CHAIN"},
+                    "child_spans": [],
+                }
+            ]
+        }
         assert not _trace_has_captured_content(trace)
 
     def test_whitespace_only_values_do_not_count_as_content(self):
-        trace = {"spans": [{
-            "span_name": "root",
-            "span_attributes": {"output.value": "   \n  "},
-            "child_spans": [],
-        }]}
+        trace = {
+            "spans": [
+                {
+                    "span_name": "root",
+                    "span_attributes": {"output.value": "   \n  "},
+                    "child_spans": [],
+                }
+            ]
+        }
         assert not _trace_has_captured_content(trace)
 
 
@@ -351,30 +436,51 @@ class TestAbsenceSurvivesFrameworkScaffolding:
     @staticmethod
     def _scaffolded(final_out):
         """A silent agent under a middleware span that echoes the prompt."""
-        return {"trace_id": "t", "spans": [{
-            "span_id": "root", "span_name": "deepthink_agent",
-            "span_attributes": {"input.value": "summarise the call"},
-            "child_spans": [{
-                "span_id": "wrapper", "span_name": "LangGraph",
-                "span_attributes": {"span.kind": "CHAIN"},
-                "child_spans": [
-                    {"span_id": "mw", "span_name": "PatchToolCallsMiddleware.before_agent",
-                     "span_attributes": {"span.kind": "CHAIN", "output.value":
-                                         '{"messages": "Overwrite(value=[SystemMessage'
-                                         '(content=You are an analytics assistant)])"}'},
-                     "child_spans": []},
-                    {"span_id": "gen", "span_name": "ChatAnthropic",
-                     "span_attributes": {"span.kind": "CHAIN", "output.value":
-                                         '{"generations": [[{"text": "%s"}]]}' % final_out},
-                     "child_spans": []},
-                ],
-            }],
-        }]}
+        return {
+            "trace_id": "t",
+            "spans": [
+                {
+                    "span_id": "root",
+                    "span_name": "deepthink_agent",
+                    "span_attributes": {"input.value": "summarise the call"},
+                    "child_spans": [
+                        {
+                            "span_id": "wrapper",
+                            "span_name": "LangGraph",
+                            "span_attributes": {"span.kind": "CHAIN"},
+                            "child_spans": [
+                                {
+                                    "span_id": "mw",
+                                    "span_name": "PatchToolCallsMiddleware.before_agent",
+                                    "span_attributes": {
+                                        "span.kind": "CHAIN",
+                                        "output.value": '{"messages": "Overwrite(value=[SystemMessage'
+                                        '(content=You are an analytics assistant)])"}',
+                                    },
+                                    "child_spans": [],
+                                },
+                                {
+                                    "span_id": "gen",
+                                    "span_name": "ChatAnthropic",
+                                    "span_attributes": {
+                                        "span.kind": "CHAIN",
+                                        "output.value": '{"generations": [[{"text": "%s"}]]}'
+                                        % final_out,
+                                    },
+                                    "child_spans": [],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
 
     def test_middleware_echo_does_not_refute_a_genuine_silence(self):
         out = TraceScanner._v8_to_trace_output(
             TestAbsenceClaimsAreVerifiedNotQuoted._parsed_completion("gen"),
-            "seen", self._scaffolded(""),
+            "seen",
+            self._scaffolded(""),
         )
         assert len(out["issues"]) == 1, "scaffolding suppressed a real empty response"
 
@@ -389,20 +495,37 @@ class TestAbsenceSurvivesFrameworkScaffolding:
     def test_duplicate_span_ids_are_judged_by_the_copy_that_answered(self):
         """Some producers emit a subtree twice. Resolving to whichever copy a
         walk reaches first would decide the claim by traversal order."""
-        trace = {"trace_id": "t", "spans": [{
-            "span_id": "root", "span_name": "agent",
-            "span_attributes": {"input.value": "hi"},
-            "child_spans": [
-                {"span_id": "dup", "span_name": "turn",
-                 "span_attributes": {"span.kind": "LLM"}, "child_spans": []},
-                {"span_id": "dup", "span_name": "turn",
-                 "span_attributes": {"span.kind": "LLM",
-                                     "output.value": "Yes, that is booked for Friday."},
-                 "child_spans": []},
+        trace = {
+            "trace_id": "t",
+            "spans": [
+                {
+                    "span_id": "root",
+                    "span_name": "agent",
+                    "span_attributes": {"input.value": "hi"},
+                    "child_spans": [
+                        {
+                            "span_id": "dup",
+                            "span_name": "turn",
+                            "span_attributes": {"span.kind": "LLM"},
+                            "child_spans": [],
+                        },
+                        {
+                            "span_id": "dup",
+                            "span_name": "turn",
+                            "span_attributes": {
+                                "span.kind": "LLM",
+                                "output.value": "Yes, that is booked for Friday.",
+                            },
+                            "child_spans": [],
+                        },
+                    ],
+                }
             ],
-        }]}
+        }
         out = TraceScanner._v8_to_trace_output(
-            TestAbsenceClaimsAreVerifiedNotQuoted._parsed_completion("dup"), "seen", trace,
+            TestAbsenceClaimsAreVerifiedNotQuoted._parsed_completion("dup"),
+            "seen",
+            trace,
         )
         assert out["issues"] == [], "an absence held against only one copy of the span"
 
@@ -422,25 +545,42 @@ class TestTruncationIsQuotedButAbsenceIsNot:
 
     @staticmethod
     def _trace(out):
-        return {"trace_id": "t", "spans": [{
-            "span_id": "root", "span_name": "agent",
-            "span_attributes": {"input.value": "list my invoices",
-                                "output.value": out},
-            "child_spans": [],
-        }]}
+        return {
+            "trace_id": "t",
+            "spans": [
+                {
+                    "span_id": "root",
+                    "span_name": "agent",
+                    "span_attributes": {
+                        "input.value": "list my invoices",
+                        "output.value": out,
+                    },
+                    "child_spans": [],
+                }
+            ],
+        }
 
     @staticmethod
     def _parsed(evidence):
         return {
-            "dimensions": {"completion": {"evidence": evidence, "verdict": "FAIL",
-                                          "span": "root"}},
-            "issues": [{"dim": "completion", "cat": "Incomplete Response",
-                        "brief": "response stops mid-sentence", "conf": "H"}],
+            "dimensions": {
+                "completion": {"evidence": evidence, "verdict": "FAIL", "span": "root"}
+            },
+            "issues": [
+                {
+                    "dim": "completion",
+                    "cat": "Incomplete Response",
+                    "brief": "response stops mid-sentence",
+                    "conf": "H",
+                }
+            ],
         }
 
     def test_a_real_quote_of_the_cut_ending_survives(self):
         out = TraceScanner._v8_to_trace_output(
-            self._parsed(self.CUT), f"out: {self.CUT}", self._trace(self.CUT),
+            self._parsed(self.CUT),
+            f"out: {self.CUT}",
+            self._trace(self.CUT),
         )
         assert len(out["issues"]) == 1, "a genuine truncation was gated away"
 
@@ -456,7 +596,9 @@ class TestTruncationIsQuotedButAbsenceIsNot:
         """The exemption must survive: there is nothing to quote when the span
         recorded no output at all."""
         out = TraceScanner._v8_to_trace_output(
-            self._parsed(""), "out:", self._trace(""),
+            self._parsed(""),
+            "out:",
+            self._trace(""),
         )
         assert len(out["issues"]) == 1, "the absence exemption was lost"
 
@@ -465,12 +607,15 @@ class TestAFinishedAnswerIsNotReadAsCutOff:
     """The tail test fails open — an ending it does not recognise keeps the
     claim alive and reaches the user, so every plausible finish belongs here."""
 
-    @pytest.mark.parametrize("ending", [
-        "Your three invoices come to a total of 412.90",
-        "Here is the query you asked for:\n```sql\nSELECT 1;\n```",
-        "All three tickets are now closed and resolved 🎉",
-        "The report is attached and the totals reconcile)",
-    ])
+    @pytest.mark.parametrize(
+        "ending",
+        [
+            "Your three invoices come to a total of 412.90",
+            "Here is the query you asked for:\n```sql\nSELECT 1;\n```",
+            "All three tickets are now closed and resolved 🎉",
+            "The report is attached and the totals reconcile)",
+        ],
+    )
     def test_complete_answers_are_not_truncations(self, ending):
         assert not _completion_claim_holds(ending), f"read as cut off: {ending!r}"
 

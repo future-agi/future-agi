@@ -43,7 +43,7 @@ const BottomEventsTab = ({ spanEvents }) => {
           <AccordionSummary
             expandIcon={
               <Iconify
-                icon="material-symbols:arrow-forward-ios-rounded"
+                icon="solar:alt-arrow-right-linear"
                 sx={{ color: "text.secondary" }}
                 width={20}
               />
@@ -81,7 +81,7 @@ const BottomEventsTab = ({ spanEvents }) => {
                 <Typography
                   variant="s1"
                   sx={{
-                    color: "blue.500",
+                    color: "status.info.fg",
                     fontWeight: "fontWeightMedium",
                   }}
                 >
@@ -148,11 +148,14 @@ const BottomEventsTab = ({ spanEvents }) => {
                             </Box>
                             <Box
                               component="span"
-                              sx={{ color: "pink.500", px: 0.5 }}
+                              sx={{ color: "text.secondary", px: 0.5 }}
                             >
                               =
                             </Box>
-                            <Box component="span" sx={{ color: "green.500" }}>
+                            <Box
+                              component="span"
+                              sx={{ color: "status.success.fg" }}
+                            >
                               {event.attributes["exception.type"]}
                             </Box>
                           </Typography>
@@ -178,11 +181,14 @@ const BottomEventsTab = ({ spanEvents }) => {
                             </Box>
                             <Box
                               component="span"
-                              sx={{ color: "pink.500", px: 0.5 }}
+                              sx={{ color: "text.secondary", px: 0.5 }}
                             >
                               =
                             </Box>
-                            <Box component="span" sx={{ color: "green.500" }}>
+                            <Box
+                              component="span"
+                              sx={{ color: "status.success.fg" }}
+                            >
                               &quot;{event.attributes["exception.message"]}
                               &quot;
                             </Box>
@@ -215,12 +221,15 @@ const BottomEventsTab = ({ spanEvents }) => {
                               {k}
                               <Box
                                 component="span"
-                                sx={{ color: "pink.500", px: 0.5 }}
+                                sx={{ color: "text.secondary", px: 0.5 }}
                               >
                                 =
                               </Box>
                             </Box>
-                            <Box component="span" sx={{ color: "green.500" }}>
+                            <Box
+                              component="span"
+                              sx={{ color: "status.success.fg" }}
+                            >
                               {typeof v === "object"
                                 ? JSON.stringify(v)
                                 : String(v)}
@@ -262,7 +271,7 @@ const BottomEventsTab = ({ spanEvents }) => {
                         wordBreak: "break-word",
                         whiteSpace: "pre-wrap",
                         fontWeight: "fontWeightRegular",
-                        color: "green.500",
+                        color: "status.success.fg",
                       }}
                     >
                       {typeof value === "object"

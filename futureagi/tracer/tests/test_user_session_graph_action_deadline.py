@@ -554,7 +554,7 @@ def _call_project_user_action(
     def execute_ch_query(_query, _params, **kwargs):
         events.append("graph_dispatch")
         dispatched.append(kwargs)
-        return SimpleNamespace(data=[])
+        return SimpleNamespace(data=[], columns=[])
 
     analytics = SimpleNamespace(
         supports_per_query_read_settings=True,

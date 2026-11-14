@@ -1091,12 +1091,11 @@ class TestObservationSpanGraphMethodsAPI:
 
         from tracer.views.observation_span import ObservationSpanView
 
+        # The view now uses the CH25 graph helper, not the legacy analytics
+        # service. Patch the actual boundary so this test cannot schedule a
+        # live Temporal refresh when a developer has local workers running.
         monkeypatch.setattr(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
-            lambda self, query_type: True,
-        )
-        monkeypatch.setattr(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
+            "tracer.views.observation_span.fetch_system_metric_graph_ch",
             lambda *args, **kwargs: (_ for _ in ()).throw(
                 ServerException("private timeout detail", code=159)
             ),

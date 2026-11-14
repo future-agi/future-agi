@@ -1,31 +1,30 @@
 import { IconButton } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
-import { styled } from "@mui/system";
 
-const StyledIconButton = styled(IconButton)(({ theme }) => ({
-  width: 36,
-  height: 36,
-  border: "1px solid var(--border-default)",
-  borderRadius: "8px",
-  backgroundColor: theme.palette.background.neutral,
-  color: theme.palette.text.secondary,
-  "&:hover": {
-    backgroundColor: theme.palette.background.neutral,
-    borderColor: theme.palette.divider,
-  },
-}));
-
-const ActionButtons = ({ icon, ...rest }) => {
+const ActionButtons = ({ icon, sx, ...rest }) => {
   return (
-    <StyledIconButton {...rest} disableTouchRipple disableFocusRipple>
+    <IconButton
+      {...rest}
+      disableTouchRipple
+      disableFocusRipple
+      sx={[
+        {
+          border: "1px solid",
+          borderColor: "border.default",
+          color: "text.secondary",
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
+    >
       {icon}
-    </StyledIconButton>
+    </IconButton>
   );
 };
 
 ActionButtons.propTypes = {
-  icon: PropTypes.string,
+  icon: PropTypes.node,
+  sx: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
 };
 
 export default ActionButtons;

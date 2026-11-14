@@ -345,7 +345,7 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
     const { container } = render(<DashboardDetailView />);
     // The card header holds the title row and nothing else.
     const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+      '[data-widget-id="w-1"] > div > div > div',
     );
     expect(header.children).toHaveLength(1);
   });
@@ -362,8 +362,32 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
     ];
     const { container } = render(<DashboardDetailView />);
     const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+      '[data-widget-id="w-1"] > div > div > div',
     );
     expect(header.children).toHaveLength(1);
   });
+});
+
+it("keeps a custom calendar day on apply / close / reopen without a phantom day", () => {
+  h.canEdit = { ...WRITER };
+  h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+  render(<DashboardDetailView />);
+  fireEvent.click(screen.getByText("Custom", { exact: true }));
+  for (const label of ["Start Date", "End Date"]) {
+    fireEvent.change(screen.getByLabelText(label), {
+      target: { value: "2026-11-01" },
+    });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  const expected = {
+    start: new Date(2026, 10, 1).toISOString(),
+    end: new Date(2026, 10, 2).toISOString(),
+  };
+  expect(h.widgetChartProps.globalDateRange).toEqual(expected);
+  fireEvent.click(screen.getByText("Nov 01 - Nov 01", { exact: true }));
+  expect(screen.getByLabelText("Start Date")).toHaveValue("2026-11-01");
+  expect(screen.getByLabelText("End Date")).toHaveValue("2026-11-01");
+  expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(h.widgetChartProps.globalDateRange).toEqual(expected);
 });

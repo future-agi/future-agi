@@ -33,7 +33,7 @@ export const AgentActionMenu = ({ agent, onDelete }) => {
     <>
       <Box height={"100%"} display={"flex"} alignItems={"center"}>
         <IconButton size="small" onClick={handleClick}>
-          <Iconify icon={"ri:more-fill"} width={22} height={22} />
+          <Iconify icon={"solar:menu-dots-linear"} width={20} height={20} />
         </IconButton>
       </Box>
       <Menu
@@ -42,18 +42,15 @@ export const AgentActionMenu = ({ agent, onDelete }) => {
         onClose={handleClose}
         PaperProps={{
           sx: {
-            minWidth: 100,
+            minWidth: 200,
             p: 0.5,
-            borderRadius: "4px !important",
+            borderRadius: "8px !important",
           },
         }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
-        <MenuItem
-          onClick={handleDelete}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
-        >
+        <MenuItem onClick={handleDelete} sx={{ px: 1.25, py: 0.75 }}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"
@@ -66,7 +63,7 @@ export const AgentActionMenu = ({ agent, onDelete }) => {
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

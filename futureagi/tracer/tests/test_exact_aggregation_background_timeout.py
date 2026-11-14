@@ -15,9 +15,9 @@ class _DedicatedClient:
         self.server_profile_locked = False
         self.instances.append(self)
 
-    def execute_read(self, query, params, *, timeout_ms, settings):
+    def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
         self.calls.append((query, params, timeout_ms, settings))
-        return [(1,)], [("value", "UInt8")], 1.0
+        return [(1,)], [("value", "UInt8")], 1.0, 1, 8
 
     def close(self):
         self.closed = True
@@ -78,7 +78,10 @@ def test_exact_observe_lane_owns_fresh_background_client(monkeypatch):
     }
     assert [call[2] for call in first.calls] == [None, None]
     assert [call[2] for call in second.calls] == [None, None]
-    assert all(call[3]["max_execution_time"] == 0 for call in first.calls)
+    # Every statement asks the server to stop at what is left of the worker's
+    # wall (test_exact_worker_server_cap), never "no limit".
+    wall_s = settings.GRAPH_BACKGROUND_WALL_MS / 1000
+    assert all(0 < call[3]["max_execution_time"] <= wall_s for call in first.calls)
     assert first.closed is True
     assert second.closed is True
 

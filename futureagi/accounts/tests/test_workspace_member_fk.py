@@ -56,7 +56,6 @@ def _null_the_fk(ws_mem):
 
 @pytest.mark.django_db
 class TestListWorkspaceMembersSelector:
-
     def test_returns_member_with_org_role_when_fk_set(
         self, organization, workspace, user
     ):
@@ -176,7 +175,6 @@ class TestListWorkspaceMembersSelector:
 
 @pytest.mark.django_db
 class TestWorkspaceMemberListViewFKFallback:
-
     def test_response_renders_org_role_when_fk_null(
         self, auth_client, organization, workspace
     ):
@@ -196,7 +194,6 @@ class TestWorkspaceMemberListViewFKFallback:
 
 @pytest.mark.django_db
 class TestWorkspaceMembershipFKInvariant:
-
     def test_no_null_fk_rows_for_active_memberships(
         self, organization, workspace, user
     ):

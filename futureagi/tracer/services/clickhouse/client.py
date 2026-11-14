@@ -408,20 +408,24 @@ class ClickHouseClient:
             else {"use_numpy": False, "max_block_size": 100000}
         )
 
-        return CHDriver(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            database=self.database,
-            connect_timeout=self.connect_timeout,
-            send_receive_timeout=(
-                max(self.send_timeout, self.receive_timeout)
-                if send_receive_timeout_seconds is None
-                else send_receive_timeout_seconds
-            ),
-            settings=driver_settings,
-            compression="lz4",
+        from tfc.telemetry.instrumentation import instrument_clickhouse_client
+
+        return instrument_clickhouse_client(
+            CHDriver(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                connect_timeout=self.connect_timeout,
+                send_receive_timeout=(
+                    max(self.send_timeout, self.receive_timeout)
+                    if send_receive_timeout_seconds is None
+                    else send_receive_timeout_seconds
+                ),
+                settings=driver_settings,
+                compression="lz4",
+            )
         )
 
     def _get_client(self) -> CHDriver:

@@ -46,11 +46,19 @@ export function getPickerOptionLabel(option) {
   return option?.label ?? option?.value ?? "";
 }
 
-export function getPickerOptionSecondaryLabel(option) {
+export function getPickerOptionSecondaryLabel(option, { showType = false } = {}) {
   if (typeof option === "string") return "";
   const label = getPickerOptionLabel(option);
   const email = option?.email || option?.description || "";
-  return email && email !== label ? email : "";
+  // Presentation only: typed values keep their original value, search text,
+  // and selection identity. Always label typed custom options so collisions
+  // remain distinguishable even when the other type is on another page.
+  return [
+    email && email !== label ? email : "",
+    showType ? getPickerOptionType(option) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function getPickerOptionSearchText(option) {

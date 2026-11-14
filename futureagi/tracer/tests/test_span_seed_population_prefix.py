@@ -23,6 +23,7 @@ from tracer.tests.test_span_physical_identity_latest import (
 )
 from tracer.tests.test_span_physical_identity_latest import engine as engine
 from tracer.tests.test_span_population_time_discovery import _engine_population_page
+from tracer.tests.test_span_probe_index_witness import without_index_hints
 
 
 @pytest.fixture
@@ -85,10 +86,8 @@ def test_prefix_population_contains_only_raw_keys_and_immutable_scope(op, value)
     assert "project_id" in raw and "toStartOfHour(start_time)" in raw
     for forbidden in ("is_deleted", "project_version_id", "LIMIT", "SAMPLE", "['tag']"):
         assert forbidden not in raw
-    assert "FROM spans FINAL" in sql
+    assert "argMax(tuple(" in sql and "FINAL" not in sql
     assert "AND is_deleted = 0" in sql
-    assert "use_skip_indexes_if_final = 0" in sql
-    assert "enable_optimize_predicate_expression_to_final_subquery = 0" in sql
     assert "tag" in params.values()
 
 
@@ -426,23 +425,33 @@ def reference_rows(reference, execute, filters):
     "kind,value", [("number", 0), ("boolean", False), ("text", "Kelvin")]
 )
 @pytest.mark.parametrize("op", ["equals", "in"])
-def test_value_population_keeps_seed_witness_and_uses_thin_text_discovery(kind, value, op):
+def test_value_population_keeps_seed_witness_and_uses_index_witness_discovery(
+    kind, value, op
+):
     start, end = START - timedelta(days=365), START + timedelta(hours=1)
     leaf = scalar("value", [value] if op == "in" else value, kind, op)
     target = builder(filters=[time_filter(start, end), leaf])
     raw = raw_population(query(target)[0])
     probe, params = target.build_filter_population_time_discovery_query(
-        slice_start=end - timedelta(days=1) if kind == "text" else start,
-        slice_end=end
+        slice_start=end - timedelta(days=1) if kind == "text" else start, slice_end=end
     )
     assert "latest_filter_param_0" in raw
-    if kind == "text":
-        assert "attrs_" not in probe and "latest_filter_param_0" not in params
-        assert target.recommended_filter_population_time_discovery_windows() == (timedelta(days=1),)
-    else:
+    evaluated = without_index_hints(probe)
+    if kind == "boolean":
+        # Boolean Map values carry no physical value index and cost a byte a
+        # row, so the compiler's full raw witness stays the cheapest proof.
         assert raw.rsplit("WHERE ", 1)[-1].strip() in probe
-        assert "latest_filter_param_0" in params
-        assert target.recommended_filter_population_time_discovery_windows()[-1] == end - start
+    else:
+        # Indexed value types hand the planner their blooms and evaluate key
+        # presence only; the value comparison stays in the exact seed.
+        column = "attrs_string" if kind == "text" else "attrs_number"
+        assert f"has({column}.keys, %(latest_filter_key_0)s)" in evaluated
+        assert f"{column}[" not in evaluated
+    assert target.recommended_filter_population_time_discovery_windows() == (
+        (timedelta(days=1),)
+        if kind == "text"
+        else (timedelta(days=7), timedelta(days=28), end - start)
+    )
     assert target.recommended_filter_cursor_seed_batch_size() is None
     assert target.recommended_filter_cursor_adaptive_seed_batch_size() is None
     assert "FINAL" not in probe and "LIMIT" not in raw + probe
@@ -540,11 +549,14 @@ def test_mixed_text_single_witness_does_not_change_joint_membership(
 
 
 def assert_mixed_result_queries_unchanged(target, filters, leaves):
-    class PreviousPopulationPolicy(SpanListQueryBuilderV2):
-        def _mixed_population_plans(self):
-            return []
+    # Discovery is built from its own witness metadata, so seed acquisition
+    # and the latest-state classifier keep the complete conjunction. Pin that
+    # against a builder whose discovery support is switched off entirely.
+    class NoDiscovery(SpanListQueryBuilderV2):
+        def supports_filter_population_time_discovery(self):
+            return False
 
-    previous = PreviousPopulationPolicy(
+    previous = NoDiscovery(
         project_id=PROJECT, filters=filters, bounded_internal_scan=True
     )
     assert query(target) == query(previous)
@@ -562,28 +574,55 @@ def assert_mixed_result_queries_unchanged(target, filters, leaves):
 @pytest.mark.parametrize("leaf_count", [2, 5, 10])
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("value", [0, 7])
-def test_mixed_gap_uses_one_numeric_witness_without_changing_seed_or_schedule(leaf_count, reverse, value):
+def test_mixed_gap_keeps_every_witness_at_the_text_lane_rung(
+    leaf_count, reverse, value
+):
     start, end = START - timedelta(days=30), START + timedelta(days=1)
     leaves = [scalar("number", value), scalar("text", "wanted", "text")]
-    leaves += [scalar(f"extra{i}", None, op="is_null") if i % 2 == 0
-               else scalar(f"extra{i}", "wanted", "text") for i in range(2, leaf_count)]
+    leaves += [
+        scalar(f"extra{i}", None, op="is_null")
+        if i % 2 == 0
+        else scalar(f"extra{i}", "wanted", "text")
+        for i in range(2, leaf_count)
+    ]
     filters = [time_filter(start, end), *(reversed(leaves) if reverse else leaves)]
     target = builder(filters=filters)
     # Do not narrow the shared plan list used by actual seed/prefix acquisition.
     assert len(target._filter_population_plans()) >= 2
+    # A text leaf holds the lane at the daily rung; the widening ladder that
+    # used to hand this shape a month-wide probe is gone.
     assert target.recommended_filter_population_time_discovery_windows() == (
-        timedelta(days=7), timedelta(days=28), end - start)
-    assert target.recommended_filter_population_time_discovery_window() == end - start
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=end)
-    assert "attrs_number" in sql and "attrs_string" not in sql and "attrs_bool" not in sql
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"number"}
-    assert any(v == value for k, v in params.items() if k.startswith("latest_filter_param_"))
-    assert params["population_start_us"] == (START - datetime(1970, 1, 1)) // timedelta(microseconds=1)
-    assert params["population_end_us"] == (end - datetime(1970, 1, 1)) // timedelta(microseconds=1)
+        timedelta(days=1),
+    )
+    assert target.recommended_filter_population_time_discovery_window() == timedelta(
+        hours=24
+    )
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1)
+    )
+    evaluated = without_index_hints(sql)
+    # Every cheap necessary conjunct is kept: one common value alone revisits
+    # hours that hold no joint match. None of them opens a Map value stream.
+    assert "attrs_number" in sql and "attrs_string" in sql and "attrs_bool" not in sql
+    assert "attrs_string[" not in evaluated and "attrs_number[" not in evaluated
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} >= {
+        "number",
+        "text",
+    }
+    assert params["population_start_us"] == (START - datetime(1970, 1, 1)) // timedelta(
+        microseconds=1
+    )
+    assert params["population_end_us"] == (
+        START + timedelta(days=1) - datetime(1970, 1, 1)
+    ) // timedelta(microseconds=1)
     assert params["project_id"] == PROJECT and "FROM spans" in sql
-    assert all(part not in sql for part in ("FINAL", "is_deleted", "project_version_id", "LIMIT", "SAMPLE"))
+    assert all(
+        part not in sql
+        for part in ("FINAL", "is_deleted", "project_version_id", "LIMIT", "SAMPLE")
+    )
     seed, bound = query(target)
-    assert "FROM spans FINAL" in seed and "toStartOfHour(start_time)" in seed
+    assert "argMax(tuple(" in seed and "toStartOfHour(start_time)" in seed
+    assert "FINAL" not in seed
     assert_mixed_result_queries_unchanged(target, filters, leaves)
     assert "attrs_string" in seed and "attrs_number" in seed
 
@@ -591,70 +630,133 @@ def test_mixed_gap_uses_one_numeric_witness_without_changing_seed_or_schedule(le
 @pytest.mark.unit
 @pytest.mark.parametrize("first_kind", ["number", "boolean"])
 @pytest.mark.parametrize("leading_null", [False, True])
-def test_mixed_gap_uses_all_explicit_raw_witnesses_and_skips_absence(first_kind, leading_null):
+def test_mixed_gap_uses_all_explicit_raw_witnesses_and_skips_absence(
+    first_kind, leading_null
+):
     other_kind = "boolean" if first_kind == "number" else "number"
     leaves = [scalar("text", "wanted", "text")]
     if leading_null:
         leaves.append(scalar("null-only", None, op="is_null"))
     # Native-looking NAME remains a Map attribute because col_type is explicit.
-    leaves += [scalar("latency_ms", False if first_kind == "boolean" else 0, first_kind),
-               scalar("later", False if other_kind == "boolean" else 0, other_kind)]
-    filters = [time_filter(START - timedelta(days=30), START + timedelta(days=1)), *leaves]
+    leaves += [
+        scalar("latency_ms", False if first_kind == "boolean" else 0, first_kind),
+        scalar("later", False if other_kind == "boolean" else 0, other_kind),
+    ]
+    filters = [
+        time_filter(START - timedelta(days=30), START + timedelta(days=1)),
+        *leaves,
+    ]
     target = builder(filters=filters)
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
-    assert "attrs_number" in sql and "attrs_bool" in sql and "attrs_string" not in sql
-    assert params[f"latest_filter_key_{int(leading_null)}"] == "latency_ms"
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"latency_ms", "later"}
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1)
+    )
+    assert all(
+        column in sql for column in ("attrs_number", "attrs_bool", "attrs_string")
+    )
+    # Indexed types evaluate key presence only; Boolean keeps its byte-wide
+    # value comparison. Absence leaves still have no necessary raw witness.
+    evaluated = without_index_hints(sql)
+    assert "attrs_string[" not in evaluated and "attrs_number[" not in evaluated
+    assert "attrs_bool[" in evaluated
+    assert params[f"latest_filter_key_{int(leading_null) + 1}"] == "latency_ms"
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {
+        "text",
+        "latency_ms",
+        "later",
+    }
     seed, bound = query(target)
     assert_mixed_result_queries_unchanged(target, filters, leaves)
-    assert all(column in seed for column in ("attrs_string", "attrs_number", "attrs_bool"))
+    assert all(
+        column in seed for column in ("attrs_string", "attrs_number", "attrs_bool")
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("other_kind", ["number", "boolean"])
 def test_without_text_both_raw_witnesses_and_schedules_remain(other_kind):
     start, end = START - timedelta(days=30), START + timedelta(days=1)
-    filters = [time_filter(start, end), scalar("number", 7),
-               scalar("other", False if other_kind == "boolean" else 0, other_kind)]
+    filters = [
+        time_filter(start, end),
+        scalar("number", 7),
+        scalar("other", False if other_kind == "boolean" else 0, other_kind),
+    ]
     target = builder(filters=filters)
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=end)
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"number", "other"}
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=end
+    )
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {
+        "number",
+        "other",
+    }
     assert "attrs_number" in sql and ("attrs_bool" in sql) is (other_kind == "boolean")
-    assert target.recommended_filter_population_time_discovery_windows() == (timedelta(days=7), timedelta(days=28), end - start)
+    assert target.recommended_filter_population_time_discovery_windows() == (
+        timedelta(days=7),
+        timedelta(days=28),
+        end - start,
+    )
 
 
 @pytest.mark.unit
 def test_native_numeric_metric_is_not_misclassified_as_raw_attribute():
-    target = builder(filters=[time_filter(START - timedelta(days=7), START + timedelta(days=1)),
-        scalar("latency_ms", 7, col_type="SYSTEM_METRIC"), scalar("text", "wanted", "text")])
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
+    target = builder(
+        filters=[
+            time_filter(START - timedelta(days=7), START + timedelta(days=1)),
+            scalar("latency_ms", 7, col_type="SYSTEM_METRIC"),
+            scalar("text", "wanted", "text"),
+        ]
+    )
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1)
+    )
     assert "attrs_string" in sql and "attrs_number" not in sql
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"text"}
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {
+        "text"
+    }
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("op", ["is_null", "not_equals"])
 def test_numeric_absence_or_negative_is_never_promoted_to_raw_value(op):
-    filters = [time_filter(START - timedelta(days=7), START + timedelta(days=1)),
-               scalar("number", None if op == "is_null" else 7, op=op),
-               scalar("text", "wanted", "text")]
+    filters = [
+        time_filter(START - timedelta(days=7), START + timedelta(days=1)),
+        scalar("number", None if op == "is_null" else 7, op=op),
+        scalar("text", "wanted", "text"),
+    ]
     target = builder(filters=filters)
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1)
+    )
     # Null has no necessary key presence; negative values allow ONLY the
     # compiler's presence witness, never the forbidden comparison itself.
     if op == "is_null":
         assert "attrs_number" not in sql and "number" not in params.values()
-    assert not any(v == 7 for k, v in params.items() if k.startswith("latest_filter_param_"))
+    assert not any(
+        v == 7 for k, v in params.items() if k.startswith("latest_filter_param_")
+    )
     assert "maxOrNull" in sql and "FINAL" not in sql
 
 
 @pytest.mark.unit
 def test_mixed_picker_leaf_cannot_be_reduced_to_its_numeric_or_branch():
-    leaves = [scalar("picker", ["wanted", 7], "text", "in",
-                     attribute_value_types=["string", "number"]),
-              scalar("text", "wanted", "text")]
-    target = builder(filters=[time_filter(START - timedelta(days=7), START + timedelta(days=1)), *leaves])
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
+    leaves = [
+        scalar(
+            "picker",
+            ["wanted", 7],
+            "text",
+            "in",
+            attribute_value_types=["string", "number"],
+        ),
+        scalar("text", "wanted", "text"),
+    ]
+    target = builder(
+        filters=[
+            time_filter(START - timedelta(days=7), START + timedelta(days=1)),
+            *leaves,
+        ]
+    )
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1)
+    )
     assert "attrs_number" in sql and "attrs_string" in sql and " OR " in sql
     assert "picker" in params.values()
 
@@ -669,14 +771,21 @@ def test_mixed_value_discovery_replays_stale_hours_and_preserves_reference_order
     execute, insert = seed_engine
     primary_kind, other_kind = pair.split("_")
     primary_column = "attrs_bool" if primary_kind == "boolean" else "attrs_number"
-    if other_kind == "text" and not execute("SELECT count() AS n FROM system.functions WHERE name = 'lowerUTF8'")[0]["n"]:
+    if (
+        other_kind == "text"
+        and not execute(
+            "SELECT count() AS n FROM system.functions WHERE name = 'lowerUTF8'"
+        )[0]["n"]
+    ):
         pytest.skip("Full Unicode CH25 engine required; reduced chdb lacks lowerUTF8")
     start = START + timedelta(minutes=15, microseconds=123456)
     end = START + timedelta(days=365, minutes=45, microseconds=654321)
     other_column = "attrs_bool" if other_kind == "boolean" else "attrs_string"
     good, bad = (0, 1) if other_kind == "boolean" else ("wanted", "other")
-    leaves = [scalar("number", False if primary_kind == "boolean" else 0, primary_kind),
-              scalar("flag", False if other_kind == "boolean" else good, other_kind)]
+    leaves = [
+        scalar("number", False if primary_kind == "boolean" else 0, primary_kind),
+        scalar("flag", False if other_kind == "boolean" else good, other_kind),
+    ]
     numeric = {} if primary_kind == "boolean" else {"number": 0}
     for index in range(2, leaf_count):
         leaves.append(
@@ -717,25 +826,64 @@ def test_mixed_value_discovery_replays_stale_hours_and_preserves_reference_order
             **(values | replacement),
         )
     for name, before, after in (
-        ("before", start + timedelta(microseconds=1), start - timedelta(microseconds=1)),
+        (
+            "before",
+            start + timedelta(microseconds=1),
+            start - timedelta(microseconds=1),
+        ),
         ("after", end - timedelta(microseconds=1), end),
     ):
         insert(id=name, start_time=before, **values)
         insert(id=name, start_time=after, _version=2, **values)
     # Same external IDs in another trace/hour are different physical keys.
-    insert(id="wanted", trace_id="other-trace", start_time=START + timedelta(days=1), _version=99, is_deleted=1, **values)
+    insert(
+        id="wanted",
+        trace_id="other-trace",
+        start_time=START + timedelta(days=1),
+        _version=99,
+        is_deleted=1,
+        **values,
+    )
     insert(id="cross-hour", start_time=START + timedelta(days=2, minutes=20), **values)
-    insert(id="cross-hour", start_time=START + timedelta(days=2, hours=1, minutes=20), _version=99, is_deleted=1, **values)
+    insert(
+        id="cross-hour",
+        start_time=START + timedelta(days=2, hours=1, minutes=20),
+        _version=99,
+        is_deleted=1,
+        **values,
+    )
     # Equal-version ties are coherent: either possible winner fails the AND.
     stamp = START + timedelta(days=310)
-    insert(id="tie-split", start_time=stamp, _version=9, **(values | {other_column: {"flag": bad}}))
-    insert(id="tie-split", start_time=stamp, _version=9, **(values | {primary_column: values[primary_column] | {"number": 1}}))
+    insert(
+        id="tie-split",
+        start_time=stamp,
+        _version=9,
+        **(values | {other_column: {"flag": bad}}),
+    )
+    insert(
+        id="tie-split",
+        start_time=stamp,
+        _version=9,
+        **(values | {primary_column: values[primary_column] | {"number": 1}}),
+    )
     # A missing selected Map key is not zero/False, even if another physical
     # Map contains the numeric-looking string.
-    insert(id="wrong-map-zero", start_time=START + timedelta(days=3), **(values | {
-        primary_column: {}, "attrs_string": values.get("attrs_string", {}) | {"number": "0"}}))
+    insert(
+        id="wrong-map-zero",
+        start_time=START + timedelta(days=3),
+        **(
+            values
+            | {
+                primary_column: {},
+                "attrs_string": values.get("attrs_string", {}) | {"number": "0"},
+            }
+        ),
+    )
     expected = reference_rows(span_reference, execute, filters)
-    assert len(expected) == 4 and {row["id"] for row in expected} == {"wanted", "cross-hour"}
+    assert len(expected) == 4 and {row["id"] for row in expected} == {
+        "wanted",
+        "cross-hour",
+    }
     target = builder(filters=filters)
     page = _engine_population_page(execute, target, filters, page_size=2)
     assert page.complete and page.has_more
@@ -748,12 +896,14 @@ def test_mixed_value_discovery_replays_stale_hours_and_preserves_reference_order
         cursor_order_token=target.bounded_filter_row_order_token(page.rows[-1]),
     )
     assert next_page.complete and not next_page.has_more
+
     def identity(row):
         return (
             target.bounded_filter_row_identity(row),
             row["start_time"],
             int(row["_version"]),
         )
+
     assert list(map(identity, page.rows + next_page.rows)) == list(
         map(identity, expected)
     )
@@ -825,11 +975,13 @@ def test_dense_equality_and_typed_picker_union_keep_all_winners(
     else:
         pytest.fail("finite dense fixture did not exhaust its keyset")
     assert actual == execute(*query(builder(previous=True, filters=filters), limit=100))
+
     def identity(row):
         return (
             target.bounded_filter_row_identity(row),
             int(row["_version"]),
         )
+
     assert list(map(identity, actual)) == list(map(identity, expected))
     page = _engine_population_page(execute, target, filters)
     assert page.complete and page.has_more
@@ -847,10 +999,17 @@ def test_picker_value_index_preserves_unicode_and_latest_winners(
         ("str_values", "arrayMap(x -> lower(x), mapValues(attrs_string))"),
         ("num_values", "mapValues(attrs_number)"),
     ):
-        execute(f"ALTER TABLE spans ADD INDEX {name} {expression} TYPE bloom_filter GRANULARITY 1")
+        execute(
+            f"ALTER TABLE spans ADD INDEX {name} {expression} TYPE bloom_filter GRANULARITY 1"
+        )
     selected = scalar(
-        "value", ["K", 7, False] if mixed else ["K", "7"], "text", "in",
-        attribute_value_types=["string", "number", "boolean"] if mixed else ["string", "string"],
+        "value",
+        ["K", 7, False] if mixed else ["K", "7"],
+        "text",
+        "in",
+        attribute_value_types=["string", "number", "boolean"]
+        if mixed
+        else ["string", "string"],
     )
     filters = [time_filter(START, START + timedelta(days=2)), selected]
     for identity, maps in (
@@ -862,7 +1021,11 @@ def test_picker_value_index_preserves_unicode_and_latest_winners(
         ("wrong-key", {"attrs_string": {"other": "K"}}),
         ("missing", {}),
     ):
-        insert(id=identity, attrs_number=maps.get("attrs_number", {}), **{k:v for k,v in maps.items() if k != "attrs_number"})
+        insert(
+            id=identity,
+            attrs_number=maps.get("attrs_number", {}),
+            **{k: v for k, v in maps.items() if k != "attrs_number"},
+        )
     for identity, correction in (
         ("removed", {"attrs_string": {}}),
         ("changed", {"attrs_string": {"value": "different"}}),
@@ -873,13 +1036,15 @@ def test_picker_value_index_preserves_unicode_and_latest_winners(
     insert(id="foreign", project_id=OTHER_PROJECT, attrs_string={"value": "K"})
     expected = reference_rows(span_reference, execute, filters)
     assert {r["id"] for r in expected} == (
-        {"ascii", "kelvin", "numeric", "false"} if mixed
+        {"ascii", "kelvin", "numeric", "false"}
+        if mixed
         else {"ascii", "kelvin", "string-number"}
     )
     target = builder(filters=filters)
     sql, params = query(target)
     assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in raw_population(sql)
     actual = execute(sql, params)
+
     def identity(r):
         return target.bounded_filter_row_identity(r), int(r["_version"])
 

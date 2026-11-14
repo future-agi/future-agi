@@ -1,4 +1,5 @@
 import { Box, Button, Checkbox, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactApexChart from "react-apexcharts";
@@ -8,14 +9,14 @@ import CompareDatasetSummaryIcon from "../CompareDatasetSummaryIcon";
 import TotalRowCount from "./TotalRowCount";
 import { cleanChoiceLabel } from "src/sections/develop-detail/DataTab/common";
 
-const getDefaultOptions = (isDark) => ({
+const getDefaultOptions = (isDark, axis) => ({
   chart: {
     type: "donut",
     background: "transparent",
     toolbar: {
       show: false,
     },
-    foreColor: isDark ? "#a1a1aa" : undefined,
+    foreColor: axis.foreColor,
   },
   theme: { mode: isDark ? "dark" : "light" },
   tooltip: { theme: isDark ? "dark" : "light" },
@@ -54,7 +55,10 @@ const DonutChart = ({
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
+  const defaultOptions = useMemo(
+    () => getDefaultOptions(isDark, chartAxisColors(theme)),
+    [isDark, theme],
+  );
   const chartRef = useRef(null);
   const [visibleSeries, setVisibleSeries] = useState([]);
 
@@ -100,7 +104,6 @@ const DonutChart = ({
               variant={"outlined"}
               {...(item.active && { color: "primary" })}
               sx={{
-                borderRadius: "4px",
                 color: "text.secondary",
                 ...((currentIndex != null || currentIndex != undefined) && {
                   padding: "8px",
@@ -154,7 +157,7 @@ const DonutChart = ({
             <Typography
               typography={"s1"}
               fontWeight={"fontWeightMedium"}
-              color="green.500"
+              color="status.success.fg"
             >
               {headerValue.map(cleanChoiceLabel).join(", ")}
               {/* {headerValue.map((item) => `${item} ${(headerData?.average[item])?.toFixed(0)}%`).join(", ")} */}

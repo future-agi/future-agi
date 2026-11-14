@@ -12,6 +12,7 @@ import { enqueueSnackbar } from "notistack";
 import logger from "src/utils/logger";
 import { useGetJsonColumnSchema } from "src/api/develop/develop-detail";
 import { isMappingPath } from "src/sections/evals/utils/evalMappingPath";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 const RunEvaluationChild = ({
   onClose,
   allColumns,
@@ -276,10 +277,12 @@ const RunCompareEvaluation = ({
     setConfirmationModalOpen(false);
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       variant="persistent"
       PaperProps={{
@@ -287,8 +290,7 @@ const RunCompareEvaluation = ({
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

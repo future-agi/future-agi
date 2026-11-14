@@ -23,7 +23,7 @@ export default function CardWrapper({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         ...sx,
       }}
     >

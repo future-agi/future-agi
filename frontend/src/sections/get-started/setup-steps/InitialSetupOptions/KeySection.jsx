@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React, { useMemo } from "react";
 import { useApiKeysStatus } from "src/api/model/api-keys";
 import KeyCard from "src/sections/develop-detail/Common/ConfigureKeys/KeyCard";
@@ -49,15 +49,14 @@ const KeySection = ({ setCurrentLabel }) => {
           title="Add Keys"
           description="This tour will guide you through the key features and functionalities"
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.disabled" }}
           onClick={() => setCurrentLabel("createFirstDataset")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
       <Box
         sx={{

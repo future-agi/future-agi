@@ -17,6 +17,7 @@ import { useExecuteCodeStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -146,7 +147,7 @@ export const ExecuteCodeChild = ({
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Execute Code" : "Execute Custom Code"}
           </Typography>
           <IconButton
@@ -156,7 +157,7 @@ export const ExecuteCodeChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -179,7 +180,7 @@ export const ExecuteCodeChild = ({
             />
           )}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Typography fontWeight={700} fontSize="12px" color="text.secondary">
+            <Typography fontWeight={600} fontSize="12px" color="text.secondary">
               Python code to be executed
             </Typography>
             <Box sx={{ borderRadius: "8px", overflow: "hidden" }}>
@@ -259,10 +260,12 @@ const ExecuteCode = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExecuteCode);
   return (
     <Drawer
       anchor="right"
       open={openExecuteCode}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -270,8 +273,7 @@ const ExecuteCode = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

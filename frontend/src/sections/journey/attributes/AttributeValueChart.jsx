@@ -26,7 +26,7 @@ const AttributeValueChart = ({ data, type: _type }) => {
     dataLabels: {
       enabled: true,
       formatter: (val) => `${val.toFixed(1)}%`,
-      style: { fontSize: "11px" },
+      style: { fontSize: "12px" },
     },
     xaxis: {
       categories: data.map((d) =>

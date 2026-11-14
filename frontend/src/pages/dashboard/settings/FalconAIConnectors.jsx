@@ -6,7 +6,7 @@ export default function FalconAIConnectors() {
   return (
     <>
       <Helmet>
-        <title>Falcon AI Connectors | FutureAGI</title>
+        <title>Connectors | FutureAGI</title>
       </Helmet>
       <CapabilityGate feature="falcon_ai">
         <ConnectorSettingsPage />

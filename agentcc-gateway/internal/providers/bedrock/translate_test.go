@@ -2,12 +2,14 @@ package bedrock
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/netguard"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -32,6 +34,23 @@ func mockImageDownloadClient(t *testing.T, mediaType, body string) {
 	t.Cleanup(func() {
 		sharedDownloadClient = original
 	})
+}
+
+// An image URL in a request must not reach an internal address, including
+// the metadata services outside link-local.
+func TestDownloadImageAsBase64_RefusesInternalAddresses(t *testing.T) {
+	for _, url := range []string{
+		"http://127.0.0.1/cat.png",
+		"http://100.64.0.1/cat.png",
+		"http://100.100.100.200/latest/meta-data", // Alibaba Cloud metadata
+		"http://168.63.129.16/machine",            // Azure WireServer
+	} {
+		_, _, err := downloadImageAsBase64(url)
+		var blocked *netguard.BlockedError
+		if !errors.As(err, &blocked) {
+			t.Errorf("downloadImageAsBase64(%q) = %v, want the connection refused", url, err)
+		}
+	}
 }
 
 // ===========================================================================

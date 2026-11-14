@@ -1,0 +1,19 @@
+# Render only; install under normal OS authority after review.
+[Unit]
+Description=Future AGI source-checkout update opportunity
+
+[Service]
+Type=oneshot
+User=${user}
+WorkingDirectory=${working_directory}
+Environment=${environment}
+ExecStart=${command}
+StandardInput=null
+StandardOutput=null
+StandardError=null
+UMask=0077
+Restart=no
+KillMode=control-group
+TimeoutStartSec=${timeout}
+TimeoutStopSec=60
+# Private runner events are bounded; raw hook output is never a public log.

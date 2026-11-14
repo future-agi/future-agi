@@ -5,14 +5,24 @@ Tests for login, token refresh, and authentication flows.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
 
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
+
+
+def _wrapped_timeout():
+    error = ConnectionInterrupted(connection=None)
+    error.__cause__ = RedisTimeoutError("Timeout reading from socket")
+    return error
+
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -260,3 +270,32 @@ class TestAuthenticatedEndpoints:
         response = api_client.get("/accounts/user-info/")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["email"] == user.email
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RedisTimeoutError("Timeout reading from socket"),
+            _wrapped_timeout(),
+        ],
+        ids=["redis", "django_redis"],
+    )
+    def test_token_store_timeout_authenticates_when_database_confirms_token(
+        self, api_client, user, error
+    ):
+        """Cache transport failure does not invalidate a DB-confirmed session."""
+        access_token = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        ).json()["access"]
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        with patch("accounts.authentication.cache") as token_store:
+            token_store.get.side_effect = error
+            response = api_client.get("/accounts/user-info/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == user.email
+        token_store.get.assert_called_once()
+        token_store.set.assert_not_called()
+        token_store.delete.assert_not_called()

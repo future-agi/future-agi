@@ -90,7 +90,7 @@ const AnnotatorsPopover = ({
             <Typography
               variant="s2"
               color="text.secondary"
-              fontWeight={700}
+              fontWeight={600}
               ref={menuAnchor}
               sx={{ cursor: "pointer" }}
             >
@@ -176,11 +176,9 @@ const AnnotatorsPopover = ({
                   sx={{
                     width: 24,
                     height: 24,
-                    border: "1px solid",
-                    borderColor: "primary.light",
+
+
                     padding: 1,
-                    backgroundColor: "action.hover",
-                    color: "text.secondary",
                     fontSize: "12px",
                   }}
                 />

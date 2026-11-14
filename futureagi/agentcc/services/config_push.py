@@ -7,16 +7,19 @@ import copy
 
 import structlog
 from django.conf import settings as django_settings
+from pydantic import ValidationError
 
 from agentcc.contracts.gateway_admin import (
-    OrgConfig as GatewayOrgConfig,
+    AlertChannelConfig as GatewayAlertChannelConfig,
 )
-from agentcc.contracts.gateway_admin import (
-    ProviderConfig as GatewayProviderConfig,
-)
+from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
+from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_settings import normalize_saved_guardrail_settings
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
+from tfc.temporal.drop_in import temporal_activity
 
 logger = structlog.get_logger(__name__)
 
@@ -79,6 +82,14 @@ def _contract_input_names(contract_model):
 
 
 _PROVIDER_INPUT_FIELDS = _contract_input_names(GatewayProviderConfig)
+_ALERT_RULE_INPUT_FIELDS = _contract_input_names(GatewayAlertRuleConfig)
+_ALERT_CHANNEL_INPUT_FIELDS = _contract_input_names(GatewayAlertChannelConfig)
+
+# Keys the Monitoring UI stores on alert rules/channels to drive its own
+# rendering (severity chip, Active/Disabled status). The gateway has no
+# equivalent, so they are projected out here — and not logged, because they are
+# expected rather than a misconfiguration.
+_UI_ONLY_ALERTING_KEYS = frozenset({"enabled", "severity", "severity_filter"})
 
 
 class UnsupportedProviderCredentialFields(ValueError):
@@ -117,11 +128,14 @@ def _normalize_eval_ids(cfg):
         cfg.pop("eval_id", None)
 
 
-def _inject_guardrail_credentials(checks):
+def _inject_guardrail_credentials(checks, org_id):
     """
     Decrypt and inject real credentials into guardrail checks, replacing
     "__encrypted__" sentinel values with actual secrets from the policy's
     encrypted_check_configs blob.
+
+    Only the org's own policies are decrypted. A reference to another org's
+    policy is treated like a deleted one, so its credentials never leave it.
     """
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
     from integrations.services.credentials import CredentialManager
@@ -140,7 +154,7 @@ def _inject_guardrail_credentials(checks):
 
     # Bulk-load policies and decrypt their credential blobs
     policies = AgentccGuardrailPolicy.no_workspace_objects.filter(
-        id__in=policy_ids, deleted=False
+        id__in=policy_ids, organization_id=org_id, deleted=False
     ).only("id", "encrypted_check_configs")
     decrypted_map = {}  # {policy_id: {check_name: {key: value}}}
     for policy in policies:
@@ -194,14 +208,14 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
-    guardrails_data = copy.deepcopy(guardrails_data)
+    guardrails_data = normalize_saved_guardrail_settings(copy.deepcopy(guardrails_data))
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
 
     # Checks as list (from guardrail_sync — merged policies)
     if isinstance(raw_checks, list) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         checks = {}
         for rule in raw_checks:
@@ -233,7 +247,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as dict (from frontend saves via OrgConfig)
     if isinstance(raw_checks, dict) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         mapped = {}
         for name, cfg in raw_checks.items():
@@ -245,18 +259,26 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 else cfg
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
+            if isinstance(clean_cfg, dict) and name in _RULE_PROVIDER_DEFAULTS:
+                if not isinstance(inner, dict):
+                    inner = {}
+                    clean_cfg["config"] = inner
+                inner.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
             _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
         return {**guardrails_data, "checks": mapped}
 
-    # Convert rules array → checks map
-    if not isinstance(rules, list) or not rules:
+    # A populated rules array takes precedence over an empty checks placeholder.
+    # Even an empty rules array must be projected to the gateway's checks map.
+    if not isinstance(rules, list):
+        if raw_checks == []:
+            guardrails_data["checks"] = {}
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
-    _inject_guardrail_credentials(rules)
+    _inject_guardrail_credentials(rules, org_id)
 
     checks = {}
     for rule in rules:
@@ -453,18 +475,71 @@ def _assemble_providers(org_id):
     return providers
 
 
+def _as_named_entries(value):
+    """
+    Coerce an alerting rules/channels collection into a list of dicts.
+
+    Two writers produce two shapes: Settings → Alerting saves an array, while
+    Monitoring → Create Rule saves a name-keyed object so its patch can add one
+    entry without clobbering the rest. Returns None when the value is neither.
+    """
+    if isinstance(value, dict):
+        return [
+            {"name": name, **entry} if isinstance(entry, dict) else {"name": name}
+            for name, entry in value.items()
+        ]
+    if isinstance(value, list):
+        return [entry for entry in value if isinstance(entry, dict)]
+    return None
+
+
+def _project_alerting_entries(entries, allowed_fields, kind):
+    """
+    Drop disabled entries and any key the gateway's alerting contract forbids.
+
+    The gateway evaluates every rule it is given — it has no per-rule enable
+    switch — so a rule stored with `enabled: false` is omitted rather than
+    forwarded with the flag stripped.
+    """
+    projected = []
+    unknown = set()
+    for entry in entries:
+        if entry.get("enabled") is False:
+            continue
+        projected.append({k: v for k, v in entry.items() if k in allowed_fields})
+        unknown.update(
+            k
+            for k in entry
+            if k not in allowed_fields and k not in _UI_ONLY_ALERTING_KEYS
+        )
+
+    if unknown:
+        logger.warning("alerting_fields_ignored", kind=kind, keys=sorted(unknown))
+    return projected
+
+
 def _normalize_alerting(alerting):
-    """Normalize alerting config so rules/channels are always arrays (Go expects arrays)."""
+    """
+    Project stored alerting config onto the gateway admin contract.
+
+    The `alerting` column is a free-form JSONField that the UI writes directly,
+    but `AlertingConfig` is `extra="forbid"`. Without this projection any key
+    the UI adds for its own use fails validation, and because the bulk sync
+    endpoint validates every org in one pass, a single such rule takes the whole
+    fleet's config sync down.
+    """
     if not alerting or not isinstance(alerting, dict):
         return alerting
+
     result = {**alerting}
-    for key in ("rules", "channels"):
-        val = result.get(key)
-        if isinstance(val, dict):
-            result[key] = [
-                {"name": name, **cfg} if isinstance(cfg, dict) else {"name": name}
-                for name, cfg in val.items()
-            ]
+    for key, allowed_fields in (
+        ("rules", _ALERT_RULE_INPUT_FIELDS),
+        ("channels", _ALERT_CHANNEL_INPUT_FIELDS),
+    ):
+        entries = _as_named_entries(result.get(key))
+        if entries is None:
+            continue
+        result[key] = _project_alerting_entries(entries, allowed_fields, key)
     return result
 
 
@@ -599,6 +674,30 @@ def _build_payload(org_id, config):
     )
 
 
+class OrgConfigRejected(ValueError):
+    """The gateway contract does not accept an org config."""
+
+
+def validate_org_config(config):
+    """
+    Raise OrgConfigRejected if the gateway cannot accept `config`.
+
+    Call it before a config version becomes active. The gateway pulls every
+    active config through the same contract, so a version the contract rejects
+    stops that org's sync until someone repairs the row.
+    """
+    try:
+        _build_payload(str(config.organization_id), config)
+    except ValidationError as e:
+        fields = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in e.errors()
+        )
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {fields}"
+        ) from e
+
+
 def push_org_config(org_id, config):
     """
     Push an org config to the gateway.
@@ -666,3 +765,13 @@ def push_all_org_configs():
             failed += 1
 
     logger.info("config_push_all_complete", success=success, failed=failed)
+
+
+@temporal_activity(max_retries=0, time_limit=900, queue="default")
+def push_all_org_configs_activity():
+    """Re-sync every active org config to the gateway off the request path.
+
+    The gateway health check dispatches this on a cold sync cache instead of
+    pushing every organization's config while the user's request waits.
+    """
+    push_all_org_configs()

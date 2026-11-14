@@ -22,6 +22,13 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
+from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
+    graph_monetary_rows_sql,
+)
+from tracer.services.clickhouse.query_builders.time_series import (
+    graph_cost_coverage,
+    graph_cost_flags_sql,
+)
 
 AGENT_GRAPH_MAX_VISIBLE_NODES = 64
 AGENT_GRAPH_OTHER_NODE_ID = "aggregate:__other_nodes__"
@@ -107,6 +114,14 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
+        expressions.extend(
+            (
+                "toInt64(prompt_tokens)",
+                "toInt64(completion_tokens)",
+                graph_cost_flags_sql(),
+            )
+        )
+        aliases.extend(("prompt_tokens", "completion_tokens", "graph_cost_flags"))
         for index, predicate in enumerate(row_predicates):
             expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             aliases.append(f"graph_row_match_{index}")
@@ -135,7 +150,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             f"addMicroseconds({prefix}start_time, toInt64(greatest("
             f"toFloat64({prefix}latency_ms), 0) * 1000))))), "
             f"toFloat64({prefix}latency_ms), toInt64({prefix}total_tokens), "
-            f"toFloat64({prefix}cost), {prefix}status)"
+            f"toFloat64({prefix}cost), {prefix}status, {prefix}graph_cost_flags)"
         )
 
     def build(self) -> tuple[str, dict[str, Any]]:
@@ -215,14 +230,38 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         physical_window = ""
         if not plan.predicates:
             physical_window = (
-                "\n                  AND start_time >= %(start_date)s"
-                "\n                  AND start_time < %(end_date)s"
+                "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
+                "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
             )
 
+        monetary_rows = graph_monetary_rows_sql(
+            source="graph_latest_spans",
+            child_condition=output_window,
+            columns=(
+                "id",
+                "parent_span_id",
+                "name",
+                "observation_type",
+                "start_time",
+                "end_time",
+                "latency_ms",
+                "total_tokens",
+                "cost",
+                "status",
+                "prompt_tokens",
+                "completion_tokens",
+                "graph_cost_flags",
+                *(f"graph_row_match_{index}" for index in range(len(plan.predicates))),
+                *(
+                    f"graph_contribution_match_{index}"
+                    for index in range(len(plan.contribution_predicates))
+                ),
+            ),
+        )
         span_tuple = self._span_tuple("")
         # Tuple indexes in ``graph_spans``:
         #   1 id, 2 parent id, 3 name, 4 type, 5 start-us, 6 end-us,
-        #   7 latency, 8 tokens, 9 cost, 10 status.
+        #   7 latency, 8 tokens, 9 cost, 10 status, 11 monetary flags.
         node_events = """arrayMap(
                     graph_span -> tuple(
                         'node',
@@ -234,7 +273,8 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                         tupleElement(graph_span, 8),
                         tupleElement(graph_span, 9),
                         toUInt8(upper(tupleElement(graph_span, 10)) IN
-                            ('ERROR', 'ERRORED', 'FAILED'))
+                            ('ERROR', 'ERRORED', 'FAILED')),
+                        tupleElement(graph_span, 11)
                     ),
                     graph_spans
                 )"""
@@ -266,7 +306,8 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                                 tupleElement(graph_child, 8),
                                 tupleElement(graph_child, 9),
                                 toUInt8(upper(tupleElement(graph_child, 10)) IN
-                                    ('ERROR', 'ERRORED', 'FAILED'))
+                                    ('ERROR', 'ERRORED', 'FAILED')),
+                                tupleElement(graph_child, 11)
                             ),
                             tupleElement(graph_sibling_set, 1)
                         ),
@@ -280,10 +321,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         query = f"""
         WITH graph_latest_spans AS (
             SELECT
+                project_id,
                 trace_id,
 {projection_sql}
             FROM (
                 SELECT
+                    project_id,
                     trace_id,
                     argMax(
                         tuple(
@@ -304,6 +347,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ),
+        graph_monetary_spans AS ({monetary_rows}),
         graph_traces AS (
             SELECT
                 trace_id,
@@ -312,7 +356,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                     {contribution_condition}
                 ) AS graph_spans
 {trace_projection}
-            FROM graph_latest_spans
+            FROM graph_monetary_spans
             GROUP BY trace_id
             HAVING {trace_having_sql}
         ),
@@ -399,7 +443,10 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 sum(tupleElement(graph_event, 6)) AS trace_latency_sum,
                 sum(tupleElement(graph_event, 7)) AS trace_total_tokens,
                 sum(tupleElement(graph_event, 8)) AS trace_total_cost,
-                sum(tupleElement(graph_event, 9)) AS trace_error_count
+                sum(tupleElement(graph_event, 9)) AS trace_error_count,
+                sumIf(tupleElement(graph_event, 8), tupleElement(graph_event, 10).1) AS trace_cost_known_subtotal,
+                countIf(tupleElement(graph_event, 10).1) AS trace_known_cost_fact_count,
+                countIf(tupleElement(graph_event, 10).2) AS trace_unknown_cost_fact_count
             FROM graph_events
             GROUP BY
                 trace_id,
@@ -420,6 +467,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 sum(trace_latency_sum) AS latency_sum,
                 sum(trace_total_tokens) AS total_tokens,
                 sum(trace_total_cost) AS total_cost,
+                sum(trace_cost_known_subtotal) AS cost_known_subtotal,
+                sum(trace_known_cost_fact_count) AS known_cost_fact_count,
+                sum(trace_unknown_cost_fact_count) AS unknown_cost_fact_count,
                 sum(trace_error_count) AS error_count,
                 count() AS trace_count
             FROM graph_trace_events
@@ -493,6 +543,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 latency_sum AS mapped_latency_sum,
                 total_tokens AS mapped_total_tokens,
                 total_cost AS mapped_total_cost,
+                cost_known_subtotal AS mapped_cost_known_subtotal,
+                known_cost_fact_count AS mapped_known_cost_fact_count,
+                unknown_cost_fact_count AS mapped_unknown_cost_fact_count,
                 error_count AS mapped_error_count,
                 trace_count AS mapped_trace_count,
                 graph_source_visible,
@@ -525,7 +578,10 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             max(graph_total_nodes) AS graph_total_nodes,
             if(row_kind = 'node', count(), 0) AS aggregate_member_count,
             toUInt8(graph_source_visible) AS source_endpoint_exact,
-            toUInt8(graph_target_visible) AS target_endpoint_exact
+            toUInt8(graph_target_visible) AS target_endpoint_exact,
+            sum(mapped_cost_known_subtotal) AS cost_known_subtotal,
+            sum(mapped_known_cost_fact_count) AS known_cost_fact_count,
+            sum(mapped_unknown_cost_fact_count) AS unknown_cost_fact_count
         FROM graph_mapped_events
         GROUP BY
             row_kind,
@@ -595,6 +651,17 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             source_endpoint_exact = bool(value(row, "source_endpoint_exact", 14, True))
             target_endpoint_exact = bool(value(row, "target_endpoint_exact", 15, True))
 
+            cost_coverage = {}
+            if (
+                isinstance(row, dict) and "known_cost_fact_count" in row
+            ) or "known_cost_fact_count" in names:
+                cost_coverage = {
+                    "cost_coverage": graph_cost_coverage(
+                        subtotal=float(value(row, "cost_known_subtotal", 16, 0)),
+                        known=int(value(row, "known_cost_fact_count", 17, 0)),
+                        unknown=int(value(row, "unknown_cost_fact_count", 18, 0)),
+                    )
+                }
             source_id = (
                 self._make_node_id(source_name, source_type)
                 if source_endpoint_exact
@@ -611,6 +678,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                         "avg_latency_ms": round(avg_latency, 2),
                         "total_tokens": total_tokens,
                         "total_cost": round(total_cost, 6),
+                        **cost_coverage,
                         "error_count": error_count,
                         "trace_count": trace_count,
                         **(
@@ -639,6 +707,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 "avg_latency_ms": round(avg_latency, 2),
                 "total_tokens": total_tokens,
                 "total_cost": round(total_cost, 6),
+                **cost_coverage,
                 "error_count": error_count,
                 "trace_count": trace_count,
                 "is_self_loop": source_id == target_id,

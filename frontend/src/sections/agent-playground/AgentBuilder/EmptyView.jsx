@@ -30,7 +30,7 @@ const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
           alignItems: "center",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           height: "66px",
           width: "66px",
           borderStyle: "dashed",
@@ -156,7 +156,7 @@ export default function EmptyView() {
           }}
           typography={"s2_1"}
           fontWeight={"fontWeightMedium"}
-          color={"black.500"}
+          color={"text.secondary"}
         >
           Or
         </Typography>
@@ -168,7 +168,7 @@ export default function EmptyView() {
             <Typography
               typography={"s1_2"}
               fontWeight={"fontWeightMedium"}
-              color={"black.1000"}
+              color={"text.primary"}
             >
               Build with AI
             </Typography>

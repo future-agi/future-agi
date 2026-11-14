@@ -14,6 +14,7 @@ This module provides comprehensive OpenTelemetry instrumentation for:
 LLM instrumentation uses traceAI (https://github.com/future-agi/traceAI).
 """
 
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -422,43 +423,63 @@ def trace_clickhouse_query(func: Callable) -> Callable:
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        tracer = _get_clickhouse_tracer()
-
-        # Extract query from args or kwargs
-        query = args[0] if args else kwargs.get("query", "unknown")
-        if not isinstance(query, str):
-            query = str(query)
-
-        # Extract operation type
-        operation = query.strip().split()[0].upper() if query.strip() else "QUERY"
-
-        with tracer.start_as_current_span(
-            f"clickhouse.{operation.lower()}",
-            attributes={
-                "db.system": "clickhouse",
-                "db.operation": operation,
-                "db.statement": query[:1000] if len(query) > 1000 else query,
-            },
+        name, kind, attributes = _clickhouse_span_args(args, kwargs)
+        with _get_clickhouse_tracer().start_as_current_span(
+            name, kind=kind, attributes=attributes
         ) as span:
             try:
                 result = func(*args, **kwargs)
-
-                # Capture result metadata
-                if result is not None:
-                    if hasattr(result, "__len__"):
-                        span.set_attribute("db.rows_returned", len(result))
-                    elif isinstance(result, int):
-                        span.set_attribute("db.rows_affected", result)
-
+                _record_clickhouse_result(span, result, kwargs)
                 return result
 
             except Exception as e:
-                from opentelemetry.trace import Status, StatusCode
-
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.set_attribute("error.type", type(e).__name__)
-                span.set_attribute("error.message", str(e))
+                _record_clickhouse_error(span, e)
                 raise
+
+    return wrapper
+
+
+def trace_clickhouse_stream(func: Callable) -> Callable:
+    """Trace a streaming query (``execute_iter`` / ``query_row_block_stream``).
+
+    The span ends when the returned iterator or stream context is exhausted,
+    closed, or fails, so it carries the real duration and server errors.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        name, kind, attributes = _clickhouse_span_args(args, kwargs)
+        span = _get_clickhouse_tracer().start_span(
+            name, kind=kind, attributes=attributes
+        )
+        try:
+            stream = func(*args, **kwargs)
+        except Exception as e:
+            _record_clickhouse_error(span, e)
+            span.end()
+            raise
+
+        def rows():
+            try:
+                yield from stream
+            except Exception as e:
+                _record_clickhouse_error(span, e)
+                raise
+            finally:
+                span.end()
+
+        @contextmanager
+        def blocks():
+            try:
+                with stream as entered:
+                    yield entered
+            except Exception as e:
+                _record_clickhouse_error(span, e)
+                raise
+            finally:
+                span.end()
+
+        return blocks() if hasattr(stream, "__enter__") else rows()
 
     return wrapper
 
@@ -468,38 +489,67 @@ def trace_clickhouse_query_async(func: Callable) -> Callable:
 
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        tracer = _get_clickhouse_tracer()
-
-        query = args[0] if args else kwargs.get("query", "unknown")
-        if not isinstance(query, str):
-            query = str(query)
-
-        operation = query.strip().split()[0].upper() if query.strip() else "QUERY"
-
-        with tracer.start_as_current_span(
-            f"clickhouse.{operation.lower()}",
-            attributes={
-                "db.system": "clickhouse",
-                "db.operation": operation,
-                "db.statement": query[:1000] if len(query) > 1000 else query,
-            },
+        name, kind, attributes = _clickhouse_span_args(args, kwargs)
+        with _get_clickhouse_tracer().start_as_current_span(
+            name, kind=kind, attributes=attributes
         ) as span:
             try:
                 result = await func(*args, **kwargs)
-
-                if result is not None and hasattr(result, "__len__"):
-                    span.set_attribute("db.rows_returned", len(result))
-
+                _record_clickhouse_result(span, result, kwargs)
                 return result
 
             except Exception as e:
-                from opentelemetry.trace import Status, StatusCode
-
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.set_attribute("error.type", type(e).__name__)
+                _record_clickhouse_error(span, e)
                 raise
 
     return wrapper
+
+
+def _clickhouse_span_args(args: tuple, kwargs: dict) -> tuple[str, Any, dict]:
+    """Span name, kind and attributes for a query taken from the call arguments."""
+    from opentelemetry.trace import SpanKind
+
+    query = args[0] if args else kwargs.get("query", "unknown")
+    if not isinstance(query, str):
+        query = str(query)
+    stripped = query.strip()
+    operation = stripped.split(maxsplit=1)[0].upper() if stripped else "QUERY"
+    return (
+        f"clickhouse.{operation.lower()}",
+        SpanKind.CLIENT,
+        {
+            "db.system": "clickhouse",
+            "db.operation": operation,
+            "db.statement": query[:1000] if len(query) > 1000 else query,
+        },
+    )
+
+
+def _record_clickhouse_result(span: Any, result: Any, kwargs: dict) -> None:
+    """Record row counts; ``with_column_types`` wraps rows in a (rows, types) tuple."""
+    if kwargs.get("with_column_types") and isinstance(result, tuple):
+        result = result[0]
+    if isinstance(result, int):
+        span.set_attribute("db.rows_affected", result)
+    elif hasattr(result, "__len__") and not isinstance(result, str):
+        span.set_attribute("db.rows_returned", len(result))
+    elif isinstance(getattr(result, "row_count", None), int):
+        # clickhouse-connect QueryResult exposes row_count, not __len__.
+        span.set_attribute("db.rows_returned", result.row_count)
+
+
+def _record_clickhouse_error(span: Any, error: Exception) -> None:
+    from opentelemetry.trace import Status, StatusCode
+
+    span.set_status(Status(StatusCode.ERROR, str(error)))
+    span.set_attribute("error.type", type(error).__name__)
+    span.set_attribute("error.message", str(error))
+
+
+# Query entry points of clickhouse-driver (native) and clickhouse-connect (HTTP).
+_CLICKHOUSE_QUERY_METHODS = ("execute", "query", "command")
+# Streaming entry points whose result is consumed after the call returns.
+_CLICKHOUSE_STREAM_METHODS = ("execute_iter", "query_row_block_stream")
 
 
 def instrument_clickhouse_client(client: Any) -> Any:
@@ -515,17 +565,25 @@ def instrument_clickhouse_client(client: Any) -> Any:
         client: ClickHouse client instance
 
     Returns:
-        Instrumented client
+        Instrumented client (unchanged when OTEL is disabled)
     """
-    if hasattr(client, "execute"):
-        original_execute = client.execute
-        client.execute = trace_clickhouse_query(original_execute)
-        client._otel_instrumented = True
-        logger.info("instrumented", library="clickhouse", method="execute")
+    from . import config
 
-    if hasattr(client, "execute_iter"):
-        original_execute_iter = client.execute_iter
-        client.execute_iter = trace_clickhouse_query(original_execute_iter)
+    if not config.OTEL_ENABLED or getattr(client, "_otel_instrumented", False) is True:
+        return client
+
+    for name in _CLICKHOUSE_QUERY_METHODS + _CLICKHOUSE_STREAM_METHODS:
+        method = getattr(client, name, None)
+        if not callable(method):
+            continue
+        tracer = (
+            trace_clickhouse_stream
+            if name in _CLICKHOUSE_STREAM_METHODS
+            else trace_clickhouse_query
+        )
+        setattr(client, name, tracer(method))
+    client._otel_instrumented = True
+    logger.debug("instrumented", library="clickhouse")
 
     return client
 

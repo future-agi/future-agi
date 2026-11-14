@@ -46,6 +46,7 @@ import {
   getLegacyVoiceCallNavigationTotal,
 } from "./voiceCallDetailCursorNavigation";
 import { LIST_CURSOR_CONTINUATION_NOTICE } from "src/sections/projects/LLMTracing/listCursorPagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const BaselineVsReplayHeader = lazy(() => import("./BasLineCompare/Header"));
 
@@ -107,10 +108,10 @@ const TestDetailSideDrawerChild = ({
       data?.observation_span?.[0]?.observation_type === "conversation" ||
       data?.simulation_call_type === "voice");
   const { data: voiceDetail, isLoading: isVoiceDetailLoading } =
-    useVoiceCallDetail(
-      traceId,
-      urlModule === "project" && isVoiceCall && !!traceId,
-    );
+    useVoiceCallDetail(traceId, {
+      enabled: urlModule === "project" && isVoiceCall && !!traceId,
+      projectId: resolvedProjectId,
+    });
 
   // Fetch full call execution detail for simulate calls. The list response
   // strips `transcript` when `detail_mode=false` (see
@@ -607,8 +608,9 @@ const TestDetailSideDrawerChild = ({
         rootSpanId: rootObsSpanId,
         module: urlModule,
         callExecutionId: data?.id,
+        projectId: resolvedProjectId,
       }),
-    [traceId, rootObsSpanId, urlModule, data?.id],
+    [traceId, rootObsSpanId, urlModule, data?.id, resolvedProjectId],
   );
   const hasCurrentTerminalNavigator =
     urlModule === "project" &&
@@ -630,6 +632,10 @@ const TestDetailSideDrawerChild = ({
     rowIndex: updatedRowIndex,
     totalCount: navigationTotalCount,
     totalCountIsLowerBound: navigationTotalCountIsLowerBound,
+  });
+
+  const covered = useDrawerCovered(annotationSidebarOpen, {
+    overlay: true,
   });
 
   if (!data || isFetching === "initial") {
@@ -785,7 +791,7 @@ const TestDetailSideDrawerChild = ({
                   backgroundColor: "background.neutral",
 
                   padding: "14px",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   border: "1px solid",
                   borderColor: "divider",
                 }}
@@ -798,7 +804,7 @@ const TestDetailSideDrawerChild = ({
                     variant="rectangular"
                     width="100%"
                     height={140}
-                    sx={{ borderRadius: 0.5 }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 ) : (
                   <AudioPlayerCustom data={mergedData} />
@@ -874,9 +880,10 @@ const TestDetailSideDrawerChild = ({
       <Drawer
         anchor="right"
         open={annotationSidebarOpen}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setAnnotationSidebarOpen(false)}
         PaperProps={{
-          sx: { width: 360, zIndex: 20 },
+          sx: { width: 480, zIndex: 20 },
         }}
         ModalProps={{
           BackdropProps: {
@@ -955,9 +962,11 @@ const TestDetailSideDrawer = ({
   const effectiveOrigin = urlOrigin || origin;
   const effectiveModule = module || "simulate";
 
+  const coveredSecond = useDrawerCovered(isDrawerOpen);
   return (
     <Drawer
       open={isDrawerOpen}
+      sx={coveredDrawerSx(coveredSecond)}
       keepMounted={hasUrlRowIndex}
       onClose={handleClose}
       anchor="right"
@@ -972,7 +981,6 @@ const TestDetailSideDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "0px !important",
           backgroundColor: "background.default",
           display: "flex",

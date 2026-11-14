@@ -789,18 +789,28 @@ def test_session_candidate_equals_keeps_one_microsecond_window(builder_class):
     )
 
     candidate_sql, candidate_params = builder.build_candidate_page_query()
-    metrics_sql, metrics_params = builder.build_page_metrics_query(
+    metrics_sql, metrics_params = builder.build_page_hydration_query(
         ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
     )
 
-    for query, params in (
-        (candidate_sql, candidate_params),
-        (metrics_sql, metrics_params),
+    # The candidate statement reads its window through the root scan's own
+    # bindings, so a bounded slice can raise that floor without moving the
+    # request window the statement's other scans read. Unsliced, as here, the
+    # two are the same instant - asserted below, so the microsecond window is
+    # still proved end to end.
+    for query, params, low, high in (
+        (
+            candidate_sql,
+            candidate_params,
+            "candidate_root_scan_start_us",
+            "candidate_root_scan_end_us",
+        ),
+        (metrics_sql, metrics_params, "start_date_us", "end_date_us"),
     ):
-        assert "fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')" in query
-        assert "fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')" in query
-        assert params["start_date_us"] == _micros(VALUE)
-        assert params["end_date_us"] == _micros(VALUE + ONE_MICROSECOND)
+        assert f"fromUnixTimestamp64Micro(%({low})s, 'UTC')" in query
+        assert f"fromUnixTimestamp64Micro(%({high})s, 'UTC')" in query
+        assert params[low] == params["start_date_us"] == _micros(VALUE)
+        assert params[high] == params["end_date_us"] == _micros(VALUE + ONE_MICROSECOND)
         assert params["start_date_us"] < params["end_date_us"]
 
 
@@ -813,7 +823,11 @@ def test_session_candidate_normalizes_offset_datetime_to_utc_microseconds():
 
     query, params = builder.build_candidate_page_query()
 
-    assert "fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')" in query
+    # As above: the candidate statement's window reaches it through the root
+    # scan's bindings, which are the request window until a slice moves them.
+    assert "fromUnixTimestamp64Micro(%(candidate_root_scan_start_us)s, 'UTC')" in query
+    assert params["candidate_root_scan_start_us"] == params["start_date_us"]
+    assert params["candidate_root_scan_end_us"] == params["end_date_us"]
     assert params["start_date_us"] == _micros(VALUE)
     assert params["end_date_us"] == _micros(VALUE + ONE_MICROSECOND)
 

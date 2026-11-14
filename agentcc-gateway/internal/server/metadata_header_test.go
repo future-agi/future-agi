@@ -34,9 +34,9 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"tenant"},
 		},
 		{
-			name:       "malformed json is ignored",
+			name:       "malformed json is flagged, not recorded",
 			header:     `not json`,
-			wantMeta:   map[string]string{},
+			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
 			wantCustom: nil,
 		},
 		{
@@ -48,10 +48,22 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"beta", "depth", "tenant"},
 		},
 		{
-			name:       "a non-object body is ignored",
+			name:       "a non-object body is flagged, not recorded",
 			header:     `["a","b"]`,
-			wantMeta:   map[string]string{},
+			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
 			wantCustom: nil,
+		},
+		{
+			name:       "null is flagged, not recorded",
+			header:     `null`,
+			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
+			wantCustom: nil,
+		},
+		{
+			name:       "a caller cannot set the flag itself",
+			header:     `{"metadata_error":"forged","tenant":"ok"}`,
+			wantMeta:   map[string]string{"tenant": "ok"},
+			wantCustom: []string{"tenant"},
 		},
 	}
 
@@ -403,5 +415,39 @@ func TestDialectHandlersCaptureCallerExtrasBeforeThePipeline(t *testing.T) {
 			t.Errorf("%s captures caller extras after the pipeline runs; the OTel "+
 				"plugin reads rc.CallerExtras inside it, so they would be exported empty", file)
 		}
+	}
+}
+
+// A request with a malformed header still goes through, so a caller sending
+// one today does not start to fail, but the response says why its dimensions
+// are missing.
+func TestMalformedMetadataHeaderIsReportedToTheCaller(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+	srv := createTestServer(t, mock.URL)
+
+	for _, tc := range []struct {
+		name, header, want string
+	}{
+		{"not json", `{application: "billing"`, "x-agentcc-metadata is not a JSON object"},
+		{"valid", `{"application":"billing"}`, ""},
+		{"absent", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}`
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+			if tc.header != "" {
+				req.Header.Set("x-agentcc-metadata", tc.header)
+			}
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200. Body: %s", w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("x-agentcc-metadata-error"); got != tc.want {
+				t.Errorf("x-agentcc-metadata-error = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

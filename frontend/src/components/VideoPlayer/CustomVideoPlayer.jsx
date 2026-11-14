@@ -8,7 +8,7 @@ import {
   MediaTimeDisplay,
 } from "media-chrome/react";
 import ReactPlayer from "react-player";
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { Icon } from "@iconify/react";
 import Image from "../image";
@@ -100,7 +100,7 @@ const CustomVideoPlayer = ({ videoSrc, thumbnail }) => {
           position: "relative",
           borderRadius: "4px",
           overflow: "hidden",
-          backgroundColor: "#000",
+          backgroundColor: "common.black",
         }}
       >
         {!showPlayer ? (
@@ -113,7 +113,7 @@ const CustomVideoPlayer = ({ videoSrc, thumbnail }) => {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor: "#000",
+              backgroundColor: "common.black",
             }}
             onClick={handleClickPreview}
           >
@@ -129,7 +129,7 @@ const CustomVideoPlayer = ({ videoSrc, thumbnail }) => {
               />
             ) : (
               <Box
-                style={{ color: theme.palette.common.white, fontSize: "8px" }}
+                style={{ color: theme.palette.common.white, fontSize: "12px" }}
               >
                 No thumbnail available
               </Box>
@@ -149,7 +149,7 @@ const CustomVideoPlayer = ({ videoSrc, thumbnail }) => {
                 alignItems: "center",
                 justifyContent: "center",
                 color: "common.white",
-                fontSize: "10px",
+                fontSize: "12px",
               }}
             >
               <Icon
@@ -221,26 +221,18 @@ const CustomVideoPlayer = ({ videoSrc, thumbnail }) => {
                       }}
                     />
                     {/* Exit button */}
-                    <Box
+                    <IconButton
                       onClick={handleExitPlayer}
-                      style={{
-                        cursor: "pointer",
-                        padding: "8px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: "none",
-                        border: "none",
-                        color: "#ffffff",
-                      }}
+                      aria-label="Exit fullscreen"
+                      sx={{ color: "common.white" }}
                     >
                       <Icon
-                        icon={"mingcute:fullscreen-exit-2-line"}
+                        icon={"solar:quit-full-screen-linear"}
                         width={20}
                         height={20}
                         color="white"
                       />
-                    </Box>
+                    </IconButton>
                   </Box>
                 </Box>
               </Box>

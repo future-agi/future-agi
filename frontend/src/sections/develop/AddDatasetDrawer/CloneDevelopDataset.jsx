@@ -91,7 +91,13 @@ const CloneDevelopDataset = ({ open, onClose, refreshGrid }) => {
   );
 
   return (
-    <Dialog open={open} onClose={onCloseClick} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           gap: "10px",
@@ -107,11 +113,11 @@ const CloneDevelopDataset = ({ open, onClose, refreshGrid }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} fontSize="18px">
+          <Typography fontWeight={600} fontSize="16px">
             Add from existing dataset
           </Typography>
           <IconButton onClick={onCloseClick}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

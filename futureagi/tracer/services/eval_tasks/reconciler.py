@@ -5,6 +5,7 @@ scope change; running it twice is a no-op.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import defaultdict
 from copy import copy
@@ -16,6 +17,7 @@ from django.db import transaction
 from django.db.models import Case, CharField, Value, When
 from django.utils import timezone
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import EvalTask, RowType, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.selectors.eval_tasks.row_resolver import (
@@ -24,7 +26,11 @@ from tracer.selectors.eval_tasks.row_resolver import (
 )
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_CURSOR_OVERLAP
-from tracer.services.eval_tasks.entries import materialize_pending
+from tracer.services.eval_tasks.entries import (
+    materialize_pending,
+    soft_delete_eval_results,
+)
+from tracer.services.eval_tasks.recalculate import put_back_dropped_replacements
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -44,13 +50,24 @@ class ReconcileResult:
     dropped: int = 0
 
 
+@primary_required
 def reconcile(task: EvalTask) -> ReconcileResult:
     """Make the task's live entries match its desired config + row set.
 
-    Creates missing pending entries (streamed), re-queues stale / errored /
-    skipped in-scope entries, and drops out-of-scope *pending* entries while
-    keeping out-of-scope *completed* results (paid data). For continuous tasks,
-    advances the forward cursor so the next pass scans only the new tail.
+    Creates missing pending entries (streamed), re-queues in-scope entries whose
+    eval config changed (stale hash) plus errored / skipped entries whose row
+    is proven to have changed since they last ran, and drops out-of-scope
+    *pending* entries while keeping out-of-scope *completed* results (paid
+    data). For continuous tasks, advances the forward cursor so the next pass
+    scans only the new tail.
+
+    The whole pass reads from the primary. The task's eval set (``task.evals``)
+    is written by the create / edit request a moment before the workflow runs
+    this, and a replica that has not applied it yet returns no evals (the task
+    finishes with no results) or the pre-edit set (the removed eval runs, the
+    added one never does). Pinning the pass as one block, rather than each
+    read, also keeps the revision taken before the lock and the one taken
+    under it on the same database, so they can only differ on a real edit.
     """
     if isinstance(task, EvalTask):
         # Callers may retain the model instance across passes while the previous
@@ -58,6 +75,11 @@ def reconcile(task: EvalTask) -> ReconcileResult:
         # from a fresh database snapshot so that ordinary sequential passes do
         # not look like concurrent edits to the revision fence.
         task = EvalTask.objects.get(id=task.id)
+
+    if getattr(task, "sampling_policy", None):
+        from tracer.services.eval_tasks.sampling.service import reconcile_policy
+
+        return reconcile_policy(task)
 
     now = timezone.now()
     force_full = _continuous_requires_full_reclassification(task)
@@ -113,11 +135,36 @@ def _apply_resolved(
     else:
         requeued, dropped = _requeue_and_drop(task, resolved=resolved)
         result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
+    if result.created or result.requeued:
+        _stamp_last_run(task, now)
     # Candidate overflow catch-up may prove only a strict prefix of the frozen
     # arrival window. Advance from that exact proof ceiling, in this same DB
     # transaction, never from the later wall-clock ceiling the pass requested.
     _advance_continuous_cursor(task, resolved.covered_through or now)
+    if resolved.full_state:
+        _stamp_reclassified_revision(task)
     return result
+
+
+def _stamp_last_run(task: EvalTask, now: datetime) -> None:
+    """Stamp the list's "Last Run": the last pass that produced work (created
+    or requeued entries), not the last poll."""
+    if not isinstance(task, EvalTask):
+        return
+    task.last_run = now
+    EvalTask.objects.filter(id=task.id).update(last_run=now)
+
+
+def _stamp_reclassified_revision(task: EvalTask) -> None:
+    """Record that a full pass covered the current eval-config revision, so the
+    next polls of a continuous task are deltas until the eval set changes."""
+    if not isinstance(task, EvalTask) or task.run_type != RunType.CONTINUOUS:
+        return
+    revision = _evals_revision(task)
+    if task.reclassified_evals_revision == revision:
+        return
+    task.reclassified_evals_revision = revision
+    EvalTask.objects.filter(id=task.id).update(reclassified_evals_revision=revision)
 
 
 def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
@@ -143,13 +190,18 @@ def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
 
 
 def _live_count(task: EvalTask) -> int:
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).count()
+    # Primary, on the reconcile transaction's own connection: the count must
+    # include the entries this pass just inserted (uncommitted) and any a
+    # lagging replica has not applied, or ``created`` and the requeue branch
+    # are decided from a stale zero.
+    return EvalLogger.objects.using("default").filter(eval_task_id=str(task.id)).count()
 
 
 def _requeue_and_drop(
     task: EvalTask,
     *,
     resolved: ResolvedRowSet,
+    scope_to_candidates: bool = False,
 ) -> tuple[int, int]:
     hashes = {cfg.id: resolved_config_hash(cfg) for cfg in task.evals.all()}
     current_eval_ids = set(hashes)
@@ -159,8 +211,23 @@ def _requeue_and_drop(
     requeue_by_cfg: dict[object, list] = defaultdict(list)
     drop_ids: list = []
     full_state = resolved.full_state
+    # Floor of the arrival/change window this delta proved — the resolver's
+    # ``_continuous_floor``, read before ``_advance_continuous_cursor`` moves
+    # it on. Candidacy alone only places a row inside that window; the floor is
+    # what turns it into a statement about *when* the row changed.
+    window_floor = getattr(task, "continuous_cursor", None)
     # Stream the live entries — we only collect ids, never hold all objects.
-    for entry in EvalLogger.objects.filter(eval_task_id=str(task.id)).iterator():
+    # Primary: a replica that still shows an entry as RUNNING (or an old hash)
+    # would skip a requeue this full proof is the only pass to make.
+    entries = EvalLogger.objects.using("default").filter(eval_task_id=str(task.id))
+    if scope_to_candidates:
+        field = {
+            RowType.SPANS: "observation_span_id",
+            RowType.TRACES: "trace_id",
+            RowType.SESSIONS: "trace_session_id",
+        }[task.row_type]
+        entries = entries.filter(**{f"{field}__in": candidates})
+    for entry in entries.iterator():
         cfg_id = entry.custom_eval_config_id
         current_eval = cfg_id in current_eval_ids
         identity = _entry_identity(entry, task.row_type)
@@ -184,7 +251,40 @@ def _requeue_and_drop(
             and in_desired_read
             and entry.status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED)
         ):
-            requeue_by_cfg[cfg_id].append(entry.id)
+            # A terminal failure converges: under the same eval config and the
+            # same row it will fail the same way, so re-running it every pass
+            # only burns evaluations (and media downloads) forever. Retry only
+            # when something that can change the outcome changed — the eval
+            # config (stale hash) or, on a continuous delta, the row itself.
+            #
+            # Candidacy is NOT that proof on its own. The cursor is parked an
+            # overlap behind the ceiling, so every pass re-admits the same
+            # unchanged rows for the whole overlap window and a converged
+            # failure would be re-run on each poll until it aged out of it.
+            # The watermark that closes the gap is ``entry.updated_at``, which
+            # ``mark_terminal`` / the reaper stamp at the moment the entry
+            # reached its terminal state. A candidate's change version lies in
+            # ``[window_floor, ceiling)``; so when the entry terminalized
+            # *before* ``window_floor`` that version is necessarily newer than
+            # the state the entry was evaluated against — a real change. When
+            # the entry terminalized at or after the floor we cannot separate a
+            # change from the overlap re-read, so it stays terminal.
+            #
+            # This still converges on a genuine change: the floor advances
+            # every pass, so it crosses the entry's terminal stamp within one
+            # overlap and the retry fires then. The retry's own ``mark_terminal``
+            # re-stamps ``updated_at`` past the row's version, so a row that did
+            # not change again cannot fire a second time.
+            stale = bool(entry.config_hash) and entry.config_hash != hashes[cfg_id]
+            row_changed = (
+                not full_state
+                and identity in candidates
+                and window_floor is not None
+                and entry.updated_at is not None
+                and entry.updated_at < window_floor
+            )
+            if stale or row_changed:
+                requeue_by_cfg[cfg_id].append(entry.id)
         elif (
             current_eval
             and in_desired_read
@@ -219,40 +319,58 @@ def _requeue_and_drop(
                 status=EvalEntryStatus.PENDING,
                 config_hash=hash_case,
                 error=False,
+                # ``error_message`` goes with ``error``: a pending entry that
+                # still carries the previous run's message describes a run that
+                # no longer exists. Leaving it behind is also what made requeued
+                # rows indistinguishable from fresh inserts when reading the
+                # entry table.
+                error_message=None,
                 skipped_reason=None,
             )
     dropped = 0
     if drop_ids:
-        dropped = EvalLogger.objects.filter(id__in=drop_ids).update(
-            deleted=True, deleted_at=timezone.now()
-        )
+        # A dropped entry may be a Recalculate's replacement the engine took
+        # over: its previous result comes back rather than staying retired.
+        dropped = put_back_dropped_replacements(drop_ids)
+        dropped += soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
     return requeued, dropped
 
 
 def _continuous_requires_full_reclassification(task: EvalTask) -> bool:
-    """Detect config/eval-set changes even when edited outside task views."""
+    """One cursor-less full pass per eval-config revision.
+
+    A full pass re-reads the task's whole history and re-queues every in-scope
+    entry whose hash is stale, so it must run when the eval set changes (add,
+    remove, edit — even outside the task views) and never otherwise. The
+    persisted ``reclassified_evals_revision`` marker is the sole trigger: the
+    entry table is not consulted because legacy NULL hashes and out-of-scope
+    completed rows keep an old hash forever and would latch a scan-based
+    trigger into a full pass on every poll. An unstamped task adopts the
+    current revision as its baseline (side effect) and reports no full pass.
+    """
 
     if not isinstance(task, EvalTask):
         return False
     if task.run_type != RunType.CONTINUOUS or task.continuous_cursor is None:
         return False
-    evals = list(task.evals.all())
-    if not evals:
+    if not task.evals.exists():
         return False
-    task_entries = EvalLogger.objects.filter(eval_task_id=str(task.id))
-    if task_entries.exists() and any(
-        not task_entries.filter(custom_eval_config_id=cfg.id).exists() for cfg in evals
-    ):
-        return True
-    for cfg in evals:
-        expected_hash = resolved_config_hash(cfg)
-        if (
-            task_entries.filter(custom_eval_config_id=cfg.id)
-            .exclude(config_hash__in=("", expected_hash))
-            .exists()
-        ):
-            return True
-    return False
+    if task.reclassified_evals_revision is None:
+        # Never stamped (task created before the marker existed, or a task that
+        # has only ever run deltas). Adopt the current eval set as the baseline
+        # and keep polling as deltas: there is nothing known to have changed,
+        # and a surprise cursor-less pass would re-admit history from before
+        # the cursor.
+        _stamp_reclassified_revision(task)
+        return False
+    return task.reclassified_evals_revision != _evals_revision(task)
+
+
+def _evals_revision(task: EvalTask) -> str:
+    """Content revision of the task's eval set: the sorted (config id, hash)
+    pairs. Changes whenever an eval is added, removed, or edited."""
+    pairs = sorted((str(cfg.id), resolved_config_hash(cfg)) for cfg in task.evals.all())
+    return hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
 
 
 def _task_revision(task: EvalTask) -> str:
@@ -267,6 +385,7 @@ def _task_revision(task: EvalTask) -> str:
         "id": str(task.id),
         "filters": task.filters,
         "sampling_rate": task.sampling_rate,
+        "sampling_policy": task.sampling_policy,
         "spans_limit": task.spans_limit,
         "run_type": task.run_type,
         "row_type": task.row_type,

@@ -5,11 +5,12 @@ import {
   extractChoiceLabel,
 } from "src/sections/develop-detail/DataTab/common";
 
-const statusColor = {
+// Boolean eval results and their role in the one status map.
+const statusRole = {
   Passed: "success",
   pass: "success",
-  error: "error",
-  Failed: "error",
+  error: "danger",
+  Failed: "danger",
 };
 
 export const parseArrayString = (value) => {
@@ -111,18 +112,19 @@ export const getChipLabel = (data) => {
   return normalized;
 };
 
-export const getChipColor = (data) => {
+export const getChipRole = (data) => {
   if (data?.dataType === "boolean" || data?.cellValue === "error") {
-    return statusColor[data?.cellValue] || "default";
+    return statusRole[data?.cellValue] || "neutral";
   }
   if (data?.dataType === "array" || data?.dataType === "float")
     return "success";
-  return "error";
+  return "danger";
 };
 
 const mod = (n, m) => ((n % m) + m) % m;
 
 export const getColorByIndex = (index) => {
+  /* eslint-disable no-restricted-syntax -- ds: data colour (category encoding by index) */
   const colors = [
     { bg: "primary.lighter", text: "primary.light" },
     { bg: "primary.lighter", text: "primary.dark" },
@@ -135,6 +137,7 @@ export const getColorByIndex = (index) => {
     { bg: "pink.100", text: "pink.400" },
     { bg: "pink.200", text: "pink.700" },
   ];
+  /* eslint-enable no-restricted-syntax */
   return colors[mod(index, colors.length)];
 };
 

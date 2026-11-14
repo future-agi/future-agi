@@ -36,7 +36,6 @@ const WarningGroupRow = ({ group }) => {
             color="warning"
             variant="outlined"
             size="small"
-            sx={{ fontSize: "10px", height: 18 }}
           />
         ))}
         <Typography variant="caption" color="text.secondary">
@@ -62,44 +61,24 @@ WarningGroupRow.propTypes = {
 };
 
 const KeyValueOrChip = ({ label, value }) => {
+  const tone =
+    value > 0
+      ? label === "Success"
+        ? { bg: "status.success.bg", border: "status.success.border" }
+        : label === "Errors"
+          ? { bg: "transparent", border: "transparent" }
+          : { bg: "status.neutral.bg", border: "status.neutral.border" }
+      : { bg: "transparent", border: "transparent" };
   const chipStyle = {
-    backgroundColor:
-      value > 0
-        ? label === "Success"
-          ? "green"
-          : label === "Errors"
-            ? "#DB2F2D00"
-            : "gray"
-        : "transparent",
-    borderColor:
-      value > 0
-        ? label === "Success"
-          ? "green"
-          : label === "Errors"
-            ? "#DB2F2D00"
-            : "gray"
-        : "transparent",
+    backgroundColor: tone.bg,
+    borderColor: tone.border,
     borderWidth: "1px",
     borderStyle: "solid",
     color: "text.primary",
 
     "&:hover": {
-      backgroundColor:
-        value > 0
-          ? label === "Success"
-            ? "rgba(0, 128, 0, 0.8)"
-            : label === "Errors"
-              ? "#DB2F2D00"
-              : "rgba(128, 128, 128, 0.8)"
-          : "transparent",
-      borderColor:
-        value > 0
-          ? label === "Success"
-            ? "rgba(0, 128, 0, 0.8)"
-            : label === "Errors"
-              ? "#DB2F2D00"
-              : "rgba(128, 128, 128, 0.8)"
-          : "transparent",
+      backgroundColor: tone.bg,
+      borderColor: tone.border,
     },
   };
 
@@ -219,10 +198,10 @@ const TaskLogs = ({ evalTaskId }) => {
             my: 2,
           }}
         >
-          <Typography fontSize="14px" minWidth={"200px"}>
+          <Typography fontSize="12px" minWidth={"200px"}>
             Success: {data?.success_count ?? data?.successCount}
           </Typography>
-          <Typography fontSize="14px">
+          <Typography fontSize="12px">
             Task Run:{" "}
             {(() => {
               const startTime = data?.start_time ?? data?.startTime;
@@ -234,10 +213,10 @@ const TaskLogs = ({ evalTaskId }) => {
         </Box>
         {/* Second Row */}
         <Box sx={{ display: "flex", mb: 2 }}>
-          <Typography fontSize="14px" minWidth={"200px"}>
+          <Typography fontSize="12px" minWidth={"200px"}>
             Skips: 0
           </Typography>
-          <Typography fontSize="14px">
+          <Typography fontSize="12px">
             Errors: {data?.errors_count ?? data?.errorsCount}
           </Typography>
         </Box>
@@ -258,10 +237,10 @@ const TaskLogs = ({ evalTaskId }) => {
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <Iconify
                 icon="solar:danger-triangle-linear"
-                width={18}
+                width={20}
                 color="warning.main"
               />
-              <Typography fontSize="14px" fontWeight={600}>
+              <Typography fontSize="12px" fontWeight={600}>
                 Runs with warnings: {warningsCount}
               </Typography>
             </Box>
@@ -315,7 +294,7 @@ const TaskLogs = ({ evalTaskId }) => {
                   >
                     {/* Icon */}
                     <Iconify
-                      icon="material-symbols:warning-outline"
+                      icon="solar:danger-triangle-linear"
                       width={20}
                       color="error.main"
                     />

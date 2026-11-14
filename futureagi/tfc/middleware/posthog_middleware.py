@@ -65,6 +65,16 @@ class PostHogMiddleware:
         response = self.get_response(request)
         duration_ms = round((time.time() - start_time) * 1000, 2)
 
+        # The key-gated PostHog integration is optional.  The self-hosted
+        # sales stream is independent and records only an allowlisted,
+        # actor-aware request envelope with a durable local outbox.
+        try:
+            from tfc.deployment_telemetry.events import record_request_event
+
+            record_request_event(request, response, duration_ms)
+        except Exception:
+            logger.debug("deployment_telemetry_request_event_failed", exc_info=True)
+
         # Only track if PostHog is enabled and user is authenticated
         if not self.tracker.is_enabled:
             return response

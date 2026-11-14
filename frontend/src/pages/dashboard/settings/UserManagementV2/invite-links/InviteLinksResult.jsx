@@ -8,7 +8,6 @@ import {
   TextField,
   Button,
   IconButton,
-  alpha,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CopyLinkButton from "./CopyLinkButton";
@@ -45,9 +44,11 @@ export default function InviteLinksResult({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={false}
       fullWidth
-      PaperProps={{ sx: { borderRadius: 2, bgcolor: "background.paper" } }}
+      PaperProps={{
+        sx: { maxWidth: 720, borderRadius: 2, bgcolor: "background.paper" },
+      }}
     >
       <Box sx={{ p: 3 }}>
         <Stack direction="row" alignItems="flex-start">
@@ -70,7 +71,7 @@ export default function InviteLinksResult({
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
 
@@ -89,7 +90,7 @@ export default function InviteLinksResult({
                 borderRadius: 1,
                 border: "1px solid",
                 borderColor: "divider",
-                bgcolor: (t) => alpha(t.palette.common.white, 0.02),
+                bgcolor: "background.neutral",
               }}
             >
               <Typography

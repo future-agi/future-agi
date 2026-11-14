@@ -95,20 +95,14 @@ const DatasetOptimizationDetail = ({
           />
         }
       >
-        <Typography
-          component={Button}
+        <Button
           size="small"
-          typography="s1"
-          fontWeight="fontWeightMedium"
-          color="text.secondary"
+          variant="text"
           onClick={onBack}
-          sx={{
-            px: "10px",
-            "&:hover": { backgroundColor: "transparent" },
-          }}
+          sx={{ color: "text.secondary" }}
         >
           Optimization Runs
-        </Typography>
+        </Button>
         <Typography
           typography="s1"
           fontWeight="fontWeightMedium"

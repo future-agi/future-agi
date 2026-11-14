@@ -30,9 +30,9 @@ trace_provider = register(
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.EXPERIMENT,
-    project_name: "FUTURE_AGI",
-    project_version_name: "openai-exp",
+    projectType: ProjectType.EXPERIMENT,
+    projectName: "FUTURE_AGI",
+    projectVersionName: "openai-exp",
 });
 """,
 }
@@ -46,15 +46,14 @@ from fi_instrumentation.fi_types import ProjectType
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="FUTURE_AGI",            # Your project name
-    session_name="chat-bot"               # Session name
 )
 """,
     "TypeScript": """
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.OBSERVE,
-    project_name: "openai_project",
+    projectType: ProjectType.OBSERVE,
+    projectName: "openai_project",
 });
 """,
 }
@@ -70,6 +69,14 @@ os.environ["FI_SECRET_KEY"] = "{}"
 process.env.FI_API_KEY = "{}";
 process.env.FI_SECRET_KEY = "{}";
 """,
+}
+
+# Appended to ORG_KEYS off Future AGI Cloud (tracer.views.project): both SDKs
+# default FI_BASE_URL to Cloud, so a self-hosted snippet points them at the
+# install's own collector.
+ORG_BASE_URL = {
+    "Python": 'os.environ["FI_BASE_URL"] = "{}"\n',
+    "TypeScript": 'process.env.FI_BASE_URL = "{}";\n',
 }
 
 INSTRUMENTORS = {
@@ -154,7 +161,7 @@ MCPInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/bedrock",
             "code": """from traceai_bedrock import BedrockInstrumentor
 
-BedrockInstrumentor().instrument(tracer_provider=trace_provider))
+BedrockInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },
@@ -374,7 +381,7 @@ OpenAIInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/portkey",
             "code": """from traceai_portkey import PortkeyInstrumentor
 
-PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
+PortkeyInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },

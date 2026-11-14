@@ -13,6 +13,7 @@ import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
 import { useNavigate } from "react-router";
 import { isJson } from "../getSpanData";
+import { normalizeMessageRole } from "src/utils/message-role";
 
 function CustomTabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -165,21 +166,9 @@ const LLMSpan = ({
               aria-label="llm tabs"
               textColor="primary"
               indicatorColor="primary"
-              sx={{
+              sx={{ boxShadow: "none",
                 borderBottom: (theme) => theme.spacing(1),
                 borderColor: "divider",
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                },
-                "& .MuiTab-root": {
-                  color: "text.secondary",
-                  typography: "s2",
-                  fontWeight: "fontWeightRegular",
-                },
-                "& .Mui-selected": {
-                  color: theme.palette.primary.main,
-                  fontWeight: "fontWeightSemiBold",
-                },
                 "& .MuiTab-root:not(:last-of-type)": {
                   marginRight: (theme) => theme.spacing(2),
                   marginTop: (theme) => theme.spacing(0),
@@ -220,7 +209,7 @@ const LLMSpan = ({
                       <Stack
                         key={index}
                         border={"1px solid var(--border-default)"}
-                        borderRadius={0.5}
+                        borderRadius="4px"
                         padding={1}
                       >
                         {" "}
@@ -231,7 +220,7 @@ const LLMSpan = ({
                     <Stack
                       key={index}
                       border={"1px solid var(--border-default)"}
-                      borderRadius={0.5}
+                      borderRadius="4px"
                       padding={1}
                     >
                       <CustomJsonViewer object={tabData[key]} />
@@ -247,16 +236,17 @@ const LLMSpan = ({
                       {Array.isArray(tabData[key]) ? (
                         <Stack spacing={2}>
                           {" "}
-                          {tabData[key]?.map(({ role, content }) => (
-                            <CustomDataPointCard
-                              key={role}
-                              value={{ cellValue: content }}
-                              label={
-                                role?.charAt(0).toUpperCase() + role?.slice(1)
-                              }
-                              allowCopy
-                            />
-                          ))}
+                          {tabData[key]?.map(({ role, content }) => {
+                            const label = normalizeMessageRole(role);
+                            return (
+                              <CustomDataPointCard
+                                key={label}
+                                value={{ cellValue: content }}
+                                label={label.charAt(0).toUpperCase() + label.slice(1)}
+                                allowCopy
+                              />
+                            );
+                          })}
                         </Stack>
                       ) : (
                         <CustomJsonViewer

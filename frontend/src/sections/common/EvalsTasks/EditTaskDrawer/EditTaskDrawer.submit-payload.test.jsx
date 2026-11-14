@@ -51,7 +51,7 @@ vi.mock("src/sections/develop-detail/AccordianElements", async () => {
   };
 });
 vi.mock("src/components/ComplexFilter/FilterErrorBoundary", () => ({ default: ({ children }) => children }));
-vi.mock("../NewTaskDrawer/NewTaskFilterBox", async () => {
+vi.mock("src/sections/tasks/components/TaskFilterBar", async () => {
   const { useWatch } = await import("react-hook-form");
   return { default: function MockTaskFilterBox({ setValue, control }) {
     const rows = useWatch({ control, name: "filters" });

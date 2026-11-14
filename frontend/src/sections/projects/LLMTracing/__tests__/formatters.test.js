@@ -59,6 +59,20 @@ describe("formatCost", () => {
     expect(formatCost(0.0001)).toBe("$0.0001");
   });
 
+  it("keeps costs below $0.0001 visible instead of rounding to $0.0000", () => {
+    // Real OpenRouter generation costs from the R2 run.
+    expect(formatCost(0.00003054)).toBe("$0.0000305");
+    expect(formatCost(0.0000237)).toBe("$0.0000237");
+    expect(formatCost(0.000009)).toBe("$0.000009");
+    expect(formatCost(0.00009999)).toBe("$0.0001");
+    expect(formatCost(0.0000001)).toBe("$0.0000001");
+  });
+
+  it("reads costs that would round to zero as below the smallest shown", () => {
+    expect(formatCost(0.00000004)).toBe("< $0.0000001");
+    expect(formatCost(1e-12)).toBe("< $0.0000001");
+  });
+
   it("formats larger values with 2 decimals", () => {
     expect(formatCost(0.01)).toBe("$0.01");
     expect(formatCost(1.23)).toBe("$1.23");

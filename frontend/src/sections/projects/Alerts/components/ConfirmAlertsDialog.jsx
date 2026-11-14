@@ -25,7 +25,7 @@ const RowItem = ({ name, onRemove, disabled }) => {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1.5,
       }}
     >
@@ -139,8 +139,8 @@ export default function ConfirmAlertsDialog() {
       PaperProps={{
         sx: {
           p: 2,
-          maxWidth: "540px",
-          minWidth: "540px",
+          maxWidth: "560px",
+          minWidth: "560px",
         },
       }}
       open={actionModal.state}
@@ -159,7 +159,7 @@ export default function ConfirmAlertsDialog() {
         <Typography
           variant="m3"
           color={"text.primary"}
-          fontWeight={"fontWeightBold"}
+          fontWeight={"fontWeightSemiBold"}
         >
           {actionTitle}
         </Typography>

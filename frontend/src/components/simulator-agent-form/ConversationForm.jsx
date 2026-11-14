@@ -24,7 +24,7 @@ const ConversationForm = ({ control, errors }) => {
           control={control}
           placeholder={"Enter duration"}
           label={
-            <Typography typography={"s1"} fontWeight={"fontWeightBold"}>
+            <Typography typography={"s1"} fontWeight={600}>
               Max call duration (in mins.)
             </Typography>
           }
@@ -45,7 +45,7 @@ const ConversationForm = ({ control, errors }) => {
           control={control}
           placeholder={"Enter duration"}
           label={
-            <Typography typography={"s1"} fontWeight={"fontWeightBold"}>
+            <Typography typography={"s1"} fontWeight={600}>
               Initial message delay (in sec)
             </Typography>
           }
@@ -68,7 +68,7 @@ const ConversationForm = ({ control, errors }) => {
         placeholder={"Enter message"}
         fieldName={"initialMessage"}
         label={
-          <Typography typography={"s1"} fontWeight={"fontWeightBold"}>
+          <Typography typography={"s1"} fontWeight={600}>
             Initial Message
           </Typography>
         }

@@ -11,15 +11,26 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockLocalLimiter struct {
-	calls    int
-	allowed  bool
-	remain   int
-	resetSec int
+	calls       int
+	tokenCalls  int
+	tokensAdded int
+	allowed     bool
+	remain      int
+	resetSec    int
 }
 
 func (m *mockLocalLimiter) Allow(key string, limit int) (bool, int, int) {
 	m.calls++
 	return m.allowed, m.remain, m.resetSec
+}
+
+func (m *mockLocalLimiter) AllowTokens(key string, limit int) (bool, int, int) {
+	m.tokenCalls++
+	return m.allowed, m.remain, m.resetSec
+}
+
+func (m *mockLocalLimiter) AddTokens(key string, tokens int) {
+	m.tokensAdded += tokens
 }
 
 func (m *mockLocalLimiter) Stop() {}

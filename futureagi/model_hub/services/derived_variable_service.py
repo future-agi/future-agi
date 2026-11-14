@@ -513,7 +513,7 @@ def get_dataset_derived_variables(dataset_id: str, organization) -> Dict[str, An
 
         # Build mapping of run_prompter_id to derived variables
         for run_prompter in run_prompters:
-            column = column_by_source_id.get(run_prompter.id)
+            column = column_by_source_id.get(str(run_prompter.id))
             if not column:
                 continue
 

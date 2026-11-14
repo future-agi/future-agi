@@ -24,12 +24,50 @@ vi.mock("src/api/shared-links", () => ({
   useResolveSharedLink: mocks.useResolveSharedLink,
 }));
 
+vi.mock("src/pages/dashboard/error-feed/ErrorFeedDetailView", async () => {
+  const { useSharedIssue } = await import(
+    "src/pages/dashboard/error-feed/sharedIssueContext"
+  );
+  return {
+    default: function MockIssuePage() {
+      const shared = useSharedIssue();
+      return (
+        <div data-testid="issue-page" data-token={shared?.token}>
+          {shared?.issue?.row?.error?.name}
+        </div>
+      );
+    },
+  };
+});
+
 vi.mock("src/components/traceDetail/TraceTreeV2", () => ({
   default: () => <div>trace tree</div>,
 }));
 
 vi.mock("src/components/traceDetail/SpanDetailPane", () => ({
   default: () => <div>span detail</div>,
+}));
+
+vi.mock("src/components/VoiceDetailDrawerV2/CallDetailsBar", () => ({
+  default: ({ data }) => (
+    <div data-testid="call-details-bar" data-module={data?.module}>
+      {data?.status}
+    </div>
+  ),
+}));
+
+vi.mock("src/components/VoiceDetailDrawerV2/VoiceAudioBridge", () => ({
+  default: ({ data }) => (
+    <div data-testid="voice-audio">{data?.recordings?.stereo}</div>
+  ),
+}));
+
+vi.mock("src/components/VoiceDetailDrawerV2/TranscriptView", () => ({
+  default: ({ transcript }) => (
+    <div data-testid="voice-transcript">
+      {transcript.map((turn) => turn.content).join("|")}
+    </div>
+  ),
 }));
 
 describe("SharedView dashboard rendering", () => {
@@ -144,4 +182,161 @@ describe("SharedView dashboard rendering", () => {
     expect(screen.getByText("Viewing shared eval_run")).toBeInTheDocument();
     expect(screen.getByText(/Unsupported eval/)).toBeInTheDocument();
   });
+});
+
+describe("SharedView simulation call rendering", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  const resolved = (data) => ({
+    data: {
+      resource_type: "call_execution",
+      resource_id: "call-execution-1234567890",
+      access_type: "public",
+      data,
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
+
+  it("renders a shared simulation voice call with recording and transcript", () => {
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolved({
+        id: "call-execution-1234567890",
+        simulation_call_type: "voice",
+        scenario: "Refund request",
+        status: "completed",
+        duration: 42,
+        recordings: { stereo: "https://audio.example/stereo.wav" },
+        transcript: [
+          {
+            speaker_role: "agent",
+            content: "Hello, how can I help?",
+            start_time: 0,
+            end_time: 2,
+          },
+          {
+            speaker_role: "customer",
+            content: "I want a refund.",
+            start_time: 2,
+            end_time: 4,
+          },
+        ],
+        function_calls: [],
+      }),
+    );
+
+    render(<SharedView />);
+
+    expect(screen.getByText("Shared voice call")).toBeInTheDocument();
+    expect(screen.getByText("Refund request")).toBeInTheDocument();
+    expect(screen.getByTestId("call-details-bar")).toHaveAttribute(
+      "data-module",
+      "simulate",
+    );
+    expect(screen.getByTestId("voice-audio")).toHaveTextContent(
+      "https://audio.example/stereo.wav",
+    );
+    expect(screen.getByTestId("voice-transcript")).toHaveTextContent(
+      "Hello, how can I help?|I want a refund.",
+    );
+    expect(screen.queryByText(/Viewing shared/)).not.toBeInTheDocument();
+  });
+
+  it("renders a shared simulation chat as a read-only transcript", () => {
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolved({
+        id: "call-execution-1234567890",
+        simulation_call_type: "text",
+        scenario: "Cancel subscription",
+        status: "completed",
+        turn_count: 2,
+        transcript: [
+          { role: "user", content: "Please cancel my plan." },
+          { role: "assistant", content: "Your plan is cancelled." },
+        ],
+        function_calls: [],
+      }),
+    );
+
+    render(<SharedView />);
+
+    expect(screen.getByText("Shared chat")).toBeInTheDocument();
+    expect(screen.getByText("Cancel subscription")).toBeInTheDocument();
+    expect(screen.getByText("Please cancel my plan.")).toBeInTheDocument();
+    expect(screen.getByText("Your plan is cancelled.")).toBeInTheDocument();
+    expect(screen.queryByTestId("voice-transcript")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /annotate|rerun|edit/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("SharedView Error Feed issue", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  it("renders a shared issue as the read-only issue page", () => {
+    mocks.useResolveSharedLink.mockReturnValue({
+      data: {
+        resource_type: "error_feed_issue",
+        resource_id: "E-LOCAL01",
+        data: {
+          issue: {
+            row: {
+              cluster_id: "E-LOCAL01",
+              error: { name: "Agent promises refunds", type: "Policy" },
+            },
+          },
+          overview: null,
+          traces: null,
+          trends: null,
+          sidebar: null,
+        },
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<SharedView />);
+
+    const page = screen.getByTestId("issue-page");
+    expect(page).toHaveTextContent("Agent promises refunds");
+    expect(page).toHaveAttribute("data-token", "share-token");
+    expect(screen.getByText("Shared issue")).toBeInTheDocument();
+    expect(screen.getByText("E-LOCAL01")).toBeInTheDocument();
+    expect(screen.queryByText("E-LOCAL01...")).not.toBeInTheDocument();
+    expect(screen.getByText("View only")).toBeInTheDocument();
+  });
+});
+
+describe("SharedView error states", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  it.each([
+    [401, "Sign in required"],
+    [403, "Access denied"],
+    [404, "Link not found"],
+    [410, "Link expired"],
+  ])(
+    "shows the %s screen from the interceptor's status",
+    (statusCode, title) => {
+      mocks.useResolveSharedLink.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: { statusCode, message: "<b>server text</b>", error: "raw" },
+      });
+
+      render(<SharedView />);
+
+      expect(screen.getByText(title)).toBeInTheDocument();
+      expect(screen.queryByText(/server text|raw/)).not.toBeInTheDocument();
+    },
+  );
 });

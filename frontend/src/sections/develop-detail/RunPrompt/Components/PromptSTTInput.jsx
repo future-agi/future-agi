@@ -35,7 +35,7 @@ export default function PromptSTTInput({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: (theme) => theme.spacing(1.5),
         display: "flex",
         flexDirection: "column",
@@ -55,7 +55,7 @@ export default function PromptSTTInput({
             color={"text.primary"}
           >
             Voice Input
-            <Typography component={"span"} color={"red.500"}>
+            <Typography component={"span"} color={"status.danger.fg"}>
               *
             </Typography>
           </Typography>

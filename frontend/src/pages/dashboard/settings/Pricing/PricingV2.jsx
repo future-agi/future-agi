@@ -1,4 +1,5 @@
 import { Box, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
 import React, { useRef, useState, useEffect } from "react";
 import BasicPricingCard from "./BasicPricingCard";
 import GrowthPricingCard from "./GrowthPricingCard";
@@ -108,25 +109,11 @@ const PricingV2 = () => {
         right: "77px",
       }}
     >
-      <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight={"fontWeightSemiBold"}
-        >
-          Plans & Pricing
-        </Typography>
-        <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
-          <Typography
-            typography="s1"
-            color="text.primary"
-            fontWeight={"fontWeightRegular"}
-          >
-            Scale your AI evaluations and prompts with feasible pricing that
-            grows with your needs
-          </Typography>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Plans & pricing"
+        description="Scale your AI evaluations and prompts with feasible pricing that grows with your needs"
+        sx={{ mb: 0 }}
+      />
       <Box
         sx={{
           display: "flex",

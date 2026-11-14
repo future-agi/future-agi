@@ -1,4 +1,5 @@
-import { Card, Container, Tab, Tabs, Typography } from "@mui/material";
+import { Container, Tab, Tabs, Typography } from "@mui/material";
+import Section from "src/components/section";
 import React, { useCallback, useState } from "react";
 import { useSettingsContext } from "src/components/settings";
 import DataConnectors from "../data-connectors";
@@ -18,7 +19,8 @@ export default function DataConnectView() {
       <Container maxWidth={settings.themeStretch ? false : "lg"}>
         <Typography variant="h4">Data Upload & Jobs</Typography>
 
-        <Card
+        <Section
+          variant="panel"
           sx={{
             p: 2,
           }}
@@ -30,7 +32,7 @@ export default function DataConnectView() {
 
           {currentTab === "connectData" && <DataConnectors></DataConnectors>}
           {currentTab === "jobs" && <DataImportJobs></DataImportJobs>}
-        </Card>
+        </Section>
       </Container>
     </>
   );

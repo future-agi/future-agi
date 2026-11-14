@@ -1015,6 +1015,7 @@ class AttributeRegistry:
             "embeddings": "embedding",
             "execute_tool": "tool",
             "invoke": "chain",
+            "invoke_agent": "agent",
             # Standard span kinds
             "llm": "llm",
             "chain": "chain",
@@ -1026,6 +1027,7 @@ class AttributeRegistry:
             "guardrail": "guardrail",
             "evaluator": "evaluator",
             "conversation": "conversation",
+            "internal": "internal",
         }
 
         return direct_map.get(value, "unknown")

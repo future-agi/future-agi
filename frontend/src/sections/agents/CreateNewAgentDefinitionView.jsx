@@ -4,7 +4,7 @@ import {
   Divider,
   Grid,
   Typography,
-  useTheme,
+  ButtonBase,
 } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -32,15 +32,19 @@ import AgentBehaviourStepRightSection from "./CreateNewAgent/AgentBehaviourStep/
 import AgentBehaviourStep from "./CreateNewAgent/AgentBehaviourStep/AgentBehaviourStep";
 import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
-import { AGENT_TYPES, isLiveKitProvider, supportsConcurrency } from "./constants";
+import {
+  AGENT_TYPES,
+  isLiveKitProvider,
+  supportsConcurrency,
+} from "./constants";
 import { useAuthContext } from "src/auth/hooks";
+import { agentDefinitionEventFields } from "./agentDefinitionEventFields";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const CreateNewAgentDefinitionView = () => {
   const { role } = useAuthContext();
   const { currentStep, reset, nextStep, prevStep, setStepValidated } =
     useCreateNewAgentStore();
-  const theme = useTheme();
   const methods = useForm({
     mode: "onSubmit",
     resolver: zodResolver(createAgentDefinitionSchema(), undefined, {
@@ -218,10 +222,8 @@ const CreateNewAgentDefinitionView = () => {
         delete payload.livekit_max_concurrency;
       }
 
-      // Strip secrets and internal fields before analytics/submit
-      const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.createAgentDefClicked, {
-        [PropertyName.formFields]: safePayload,
+        [PropertyName.formFields]: agentDefinitionEventFields(payload),
       });
 
       if (payload?.authentication_method !== "api_key") {
@@ -316,17 +318,18 @@ const CreateNewAgentDefinitionView = () => {
               gap: "12px",
             }}
           >
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.disabled"
+            <ButtonBase
               onClick={() => {
                 navigate(paths.dashboard.simulate.agentDefinition);
               }}
-              sx={{ cursor: "pointer" }}
+              sx={{
+                typography: "m3",
+                fontWeight: "fontWeightMedium",
+                color: "text.disabled",
+              }}
             >
               All Agent Definitions
-            </Typography>
+            </ButtonBase>
             <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
             <Typography typography="m3" fontWeight="fontWeightMedium">
               Create new agent definition
@@ -370,8 +373,8 @@ const CreateNewAgentDefinitionView = () => {
                 overflow: "auto",
                 "&::-webkit-scrollbar": { width: "6px" },
                 "&::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
                 "&::-webkit-scrollbar-track": {
                   backgroundColor: "transparent",
@@ -409,7 +412,7 @@ const CreateNewAgentDefinitionView = () => {
               <Button
                 startIcon={
                   <Iconify
-                    icon="line-md:chevron-left"
+                    icon="solar:alt-arrow-left-linear"
                     width={16}
                     height={16}
                     color={"text.primary"}
@@ -420,10 +423,6 @@ const CreateNewAgentDefinitionView = () => {
                 variant="outlined"
                 sx={{
                   color: "text.primary",
-                  padding: theme.spacing(0.125, 1.5),
-                  height: 32,
-                  fontWeight: "fontWeightMedium",
-                  borderRadius: theme.spacing(0.5),
                   borderColor: "action.selected",
                 }}
               >
@@ -434,7 +433,7 @@ const CreateNewAgentDefinitionView = () => {
                 <Button
                   endIcon={
                     <Iconify
-                      icon="line-md:chevron-right"
+                      icon="solar:alt-arrow-right-linear"
                       width={16}
                       height={16}
                     />
@@ -443,13 +442,6 @@ const CreateNewAgentDefinitionView = () => {
                   disabled={!canProceed}
                   variant="contained"
                   color="primary"
-                  sx={{
-                    padding: theme.spacing(0.125, 1.5),
-                    height: 32,
-                    fontWeight: "fontWeightMedium",
-                    borderRadius: theme.spacing(0.5),
-                    borderColor: "action.selected",
-                  }}
                 >
                   Next
                 </Button>
@@ -457,7 +449,7 @@ const CreateNewAgentDefinitionView = () => {
                 <LoadingButton
                   endIcon={
                     <Iconify
-                      icon="line-md:chevron-right"
+                      icon="solar:alt-arrow-right-linear"
                       width={16}
                       height={16}
                     />
@@ -469,13 +461,6 @@ const CreateNewAgentDefinitionView = () => {
                     !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
                   }
                   color="primary"
-                  sx={{
-                    padding: theme.spacing(0.125, 1.5),
-                    height: 32,
-                    fontWeight: "fontWeightMedium",
-                    borderRadius: theme.spacing(0.5),
-                    borderColor: "action.selected",
-                  }}
                 >
                   Create agent definition
                 </LoadingButton>

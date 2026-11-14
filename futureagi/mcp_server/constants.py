@@ -39,7 +39,7 @@ TOOL_GROUPS = {
     },
     "agents": {
         "name": "Agents & Simulation",
-        "description": "Manage agents, versions, scenarios, test executions, and call results",
+        "description": "Browse agents, scenarios and test executions, and run saved simulation tests",
     },
     "simulation": {
         "name": "Simulation",
@@ -49,17 +49,17 @@ TOOL_GROUPS = {
         "name": "Prompt Workbench",
         "description": "Manage prompt templates, versions, labels, folders, simulations, and evaluations",
     },
-    "users": {
-        "name": "Users & Workspaces",
-        "description": "User management, workspace operations, organization settings, and API key management",
-    },
     "usage": {
         "name": "Usage & Costs",
         "description": "Cost analytics and billing information",
     },
-    "docs": {
-        "name": "Docs & Guides",
-        "description": "Search and query Future AGI documentation, setup guides, and API references",
+    "gateway": {
+        "name": "AI Gateway",
+        "description": "Gateway configuration, request logs, and analytics",
+    },
+    "dashboards": {
+        "name": "Dashboards",
+        "description": "Dashboards, widgets, metric discovery, and chart data queries",
     },
 }
 
@@ -75,34 +75,23 @@ DEFAULT_TOOL_GROUPS = [
     "agents",
     "simulation",
     "prompts",
-    "users",
     "usage",
-    "docs",
+    "gateway",
+    "dashboards",
 ]
-
-# Maps ai_tools category → MCP tool group
-CATEGORY_TO_GROUP = {
-    "context": "context",
-    "evaluations": "evaluations",
-    "datasets": "datasets",
-    "annotations": "annotations",
-    "optimization": "optimization",
-    "tracing": "observability",
-    "error_feed": "error_feed",
-    "experiments": "experiments",
-    "agents": "agents",
-    "simulation": "simulation",
-    "prompts": "prompts",
-    "users": "users",
-    "usage": "usage",
-    "docs": "docs",
-}
 
 RATE_LIMITS = {
     "free": {"per_minute": 200, "per_day": 5000, "concurrent_sessions": 5},
     "pro": {"per_minute": 100, "per_day": 10_000, "concurrent_sessions": 5},
     "enterprise": {"per_minute": 500, "per_day": 100_000, "concurrent_sessions": None},
 }
+
+# Public OAuth token endpoint defaults (overridable via MCP_OAUTH_TOKEN_* Django settings).
+DEFAULT_OAUTH_TOKEN_IP_THROTTLE_RATE = "30/min"
+DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE = "10/min"
+DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT = 5
+DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS = 300
+DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS = 300
 
 SESSION_STATUS_CHOICES = [
     ("active", "Active"),

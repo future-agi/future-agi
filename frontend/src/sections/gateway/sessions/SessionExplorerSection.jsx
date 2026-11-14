@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Stack,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -14,13 +13,15 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Skeleton,
-  Card,
   InputAdornment,
   IconButton,
 } from "@mui/material";
+import Section from "src/components/section";
 import { Tooltip } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import ListToolbar from "src/components/list-toolbar";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -29,6 +30,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import { useSessions, useCloseSession } from "./hooks/useSessions";
 import SessionDetailDrawer from "./SessionDetailDrawer";
 import { formatDateTime as formatDate } from "../utils/formatters";
+import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -74,7 +76,7 @@ const SessionExplorerSection = () => {
         <Stack direction="row" justifyContent="space-between" mb={3}>
           <Skeleton width={200} height={40} />
         </Stack>
-        <Card>
+        <Section variant="panel">
           {[...Array(5)].map((_, i) => (
             <Stack
               key={i}
@@ -93,7 +95,7 @@ const SessionExplorerSection = () => {
               <Skeleton width="20%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -112,67 +114,59 @@ const SessionExplorerSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.sessions}
         title="Sessions"
         subtitle="Browse and manage active conversation sessions"
       />
 
-      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton
-              key={f.value}
-              value={f.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-
-        <TextField
-          placeholder="Search by session ID or name..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 300 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Stack>
+      {sessions?.length !== 0 && (
+        <ListToolbar>
+          <TextField
+            placeholder="Search by session ID or name..."
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ width: 280 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify icon="solar:magnifier-linear" width={16} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <ToggleButtonGroup
+            value={statusFilter}
+            exclusive
+            onChange={(_, val) => val !== null && setStatusFilter(val)}
+            size="small"
+          >
+            {STATUS_FILTERS.map((f) => (
+              <ToggleButton key={f.value} value={f.value}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </ListToolbar>
+      )}
 
       {filteredSessions.length === 0 ? (
-        <Box display="flex" flexDirection="column" alignItems="center" py={8}>
-          <Iconify
-            icon="mdi:timeline-outline"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            {sessions?.length === 0
+        <EmptyState
+          variant={sessions?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:graph-new-linear"
+          title={
+            sessions?.length === 0
               ? "No sessions yet"
-              : "No sessions match your filters"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={1}>
-            Sessions are automatically created when requests include a session
-            ID
-          </Typography>
-        </Box>
+              : "No sessions match your filters"
+          }
+          description={
+            sessions?.length === 0
+              ? "Sessions appear here when your requests include a session ID."
+              : undefined
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <>
           <TableContainer>
@@ -184,7 +178,12 @@ const SessionExplorerSection = () => {
                   <TableCell>Status</TableCell>
                   <TableCell>Requests</TableCell>
                   <TableCell>Created</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Actions
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -226,12 +225,12 @@ const SessionExplorerSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
+                      <StatusBadge
+                        status={session.status}
                         label={session.status}
-                        color={
-                          session.status === "active" ? "success" : "default"
+                        role={
+                          session.status === "active" ? "success" : "neutral"
                         }
-                        size="small"
                       />
                     </TableCell>
                     <TableCell>
@@ -247,17 +246,19 @@ const SessionExplorerSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
                       align="right"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {session.status === "active" && (
                         <IconButton
+                          className="row-hover-action"
                           size="small"
                           title="Close session"
                           onClick={() => handleClose(session.id)}
                           disabled={closeMutation.isPending}
                         >
-                          <Iconify icon="mdi:stop-circle-outline" width={20} />
+                          <Iconify icon="solar:stop-circle-linear" width={20} />
                         </IconButton>
                       )}
                     </TableCell>

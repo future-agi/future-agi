@@ -133,7 +133,7 @@ const OptmizationLoaderComponent = ({
               sx={{
                 height: 22,
                 width: 22,
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
               }}
             />
           </Box>
@@ -232,7 +232,7 @@ const OptmizationLoaderComponent = ({
               variant="outlined"
               size="medium"
               startIcon={
-                <Iconify icon="pajamas:retry" width="22px" height="22px" />
+                <Iconify icon="solar:refresh-linear" width="22px" height="22px" />
               }
               onClick={() => {
                 navigate("/dashboard/settings/billing");

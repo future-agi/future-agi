@@ -37,6 +37,7 @@ from accounts.serializers.contracts import (
     DeleteUserResponseSerializer,
     ResendInviteResponseSerializer,
     SwitchWorkspaceResponseSerializer,
+    TeamCreateErrorResponseSerializer,
     TeamCreateResponseSerializer,
     TeamRemoveResponseSerializer,
     TeamUsersResponseSerializer,
@@ -69,6 +70,7 @@ from accounts.services.workspace_membership import (
 from accounts.utils import (
     generate_password,
     persist_pending_org_invite,
+    refresh_pending_invite_expiration,
     resolve_org,
     resolve_org_role,
 )
@@ -1343,9 +1345,11 @@ class ResendInviteAPIView(APIView):
             if current_workspace and current_workspace.organization != organization:
                 current_workspace = None
 
-            # Generate new password and send email
-            from accounts.utils import generate_password
+            # Refresh the matching OrganizationInvite's expiry too, so this
+            # path behaves the same as InviteResendAPIView (#2437).
+            refresh_pending_invite_expiration(organization, target_user.email)
 
+            # Generate new password and send email
             new_password = generate_password()
             target_user.set_password(new_password)
             target_user.save()
@@ -1929,7 +1933,11 @@ class ManageTeamView(APIView):
 
     @validated_request(
         request_serializer=TeamCreateRequestSerializer,
-        responses={201: TeamCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: TeamCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+            400: TeamCreateErrorResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -2151,9 +2159,14 @@ class ManageTeamView(APIView):
                         ).first()
 
                         if existing_user:
-                            return self._gm.bad_request(
-                                "User is already a member of this organization"
+                            errors.append(
+                                {
+                                    "index": index,
+                                    "email": member_data["email"],
+                                    "error": "User is already a member of this organization",
+                                }
                             )
+                            continue
 
                         # Check if user exists in other organizations
                         user_in_other_org = (
@@ -2234,53 +2247,68 @@ class ManageTeamView(APIView):
                             #     )
                             #     continue
 
-                        # Create new user for this organization
-                        new_member = User.objects.create(
-                            email=member_data["email"],
-                            name=member_data["name"],
-                            organization=organization,
-                            organization_role=org_role,  # None for workspace-level roles
-                            is_active=False,
-                            invited_by=request.user,
-                        )
-                        password = generate_password()
-                        new_member.set_password(password)
-                        new_member.save()
+                        # Keep the member, membership and accept-invite record
+                        # together. Email failure must not roll back these records.
+                        with transaction.atomic():
+                            new_member = User.objects.create(
+                                email=member_data["email"],
+                                name=member_data["name"],
+                                organization=organization,
+                                organization_role=org_role,  # None for workspace-level roles
+                                is_active=False,
+                                invited_by=request.user,
+                            )
+                            password = generate_password()
+                            new_member.set_password(password)
+                            new_member.save()
 
-                        # Add user to workspace with determined workspace role
-                        self._add_user_to_workspace(
-                            new_member,
-                            workspace,
-                            workspace_role,
-                            request.user,
-                        )
+                            # Add user to workspace with determined workspace role
+                            self._add_user_to_workspace(
+                                new_member,
+                                workspace,
+                                workspace_role,
+                                request.user,
+                            )
 
-                        persist_pending_org_invite(
-                            organization=organization,
-                            target_email=member_data["email"],
-                            org_role=org_role,
-                            workspace_role=workspace_role,
-                            workspaces=[workspace],
-                            invited_by=request.user,
-                        )
+                            persist_pending_org_invite(
+                                organization=organization,
+                                target_email=member_data["email"],
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=[workspace],
+                                invited_by=request.user,
+                            )
 
-                        token = default_token_generator.make_token(new_member)
-                        uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
-                        email_helper(
-                            f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
-                            "member_invite.html",
-                            {
-                                "password": password,
-                                "email": member_data["email"],
-                                "uid": str(uidb64),
-                                "token": token,
-                                "workspace_name": workspace.name,
-                                "app_url": settings.APP_URL,
-                                "ssl": ssl,
-                            },
-                            [member_data["email"]],
-                        )
-                        created_members.append(UserSerializer(new_member).data)
+                        member_response = UserSerializer(new_member).data
+                        try:
+                            token = default_token_generator.make_token(new_member)
+                            uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
+                            email_helper(
+                                f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
+                                "member_invite.html",
+                                {
+                                    "password": password,
+                                    "email": member_data["email"],
+                                    "uid": str(uidb64),
+                                    "token": token,
+                                    "workspace_name": workspace.name,
+                                    "app_url": settings.APP_URL,
+                                    "ssl": ssl,
+                                },
+                                [member_data["email"]],
+                            )
+                        except Exception:
+                            # Mail exceptions can contain credentials or invite links.
+                            logger.warning(
+                                "invite_email_failed",
+                                user_id=str(new_member.id),
+                            )
+                            member_response["invite_email_warning"] = (
+                                "Member added, but the invitation email could not be sent. "
+                                "Open Members to resend the invite or copy an invite link "
+                                "if available."
+                            )
+                        created_members.append(member_response)
 
                     except IntegrityError:
                         errors.append(
@@ -2314,6 +2342,9 @@ class ManageTeamView(APIView):
             track_mixpanel_event(MixpanelEvents.SET_UP_ORG.value, properties)
 
             if errors:
+                response_data["message"] = (
+                    "Some members could not be added. Correct the errors and try again."
+                )
                 response_data["errors"] = errors
                 return self._gm.bad_request(response_data)
 

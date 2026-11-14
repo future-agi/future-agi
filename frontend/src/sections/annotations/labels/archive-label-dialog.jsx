@@ -65,7 +65,13 @@ export default function ArchiveLabelDialog({ label, onClose }) {
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <DialogTitle>Archive Label</DialogTitle>
       <DialogContent>
         <Typography>

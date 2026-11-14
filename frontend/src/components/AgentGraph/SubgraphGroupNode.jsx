@@ -33,9 +33,7 @@ const SubgraphGroupNode = ({ data }) => {
     getDefaultColor(theme),
   );
   const borderColor = selected ? theme.palette.primary.main : statusBorderColor;
-  const defaultBgColor = isDark
-    ? "rgba(59, 130, 246, 0.04)"
-    : "rgba(59, 130, 246, 0.03)";
+  const defaultBgColor = theme.palette.action.hover;
   const statusBg = getStatusBackgroundColor(nodeStatus, theme, isDark);
   // Use a subtler tint for the large subgraph container
   const backgroundColor = statusBg
@@ -106,7 +104,7 @@ const SubgraphGroupNode = ({ data }) => {
           sx={{
             width: 18,
             height: 18,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             border: "1px solid",
             borderColor: "divider",
             display: "flex",
@@ -120,7 +118,7 @@ const SubgraphGroupNode = ({ data }) => {
             sx={{
               width: 14,
               height: 14,
-              bgcolor: config.color ?? "blue.600",
+              bgcolor: config.color ?? "status.info.solid",
             }}
           />
         </Box>

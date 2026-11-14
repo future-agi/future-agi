@@ -3,12 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Paper,
   Skeleton,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
@@ -60,6 +60,10 @@ const FeatureGateOverlay = ({
   const resolvedImage = isDark ? imageDark || image : image;
   const usingSkeleton = !children && !resolvedImage;
   const effectiveBlurFrom = usingSkeleton ? 0 : blurFrom;
+  // A preview blurred all over is blurred as an element. A backdrop blur
+  // leaves the sharp preview painted under it, and Chromium can thin that
+  // blur toward the layer's edges, so text near an edge showed through.
+  const blurWhole = effectiveBlurFrom === 0;
 
   let backdrop = <PreviewSkeleton />;
   if (children) {
@@ -104,6 +108,7 @@ const FeatureGateOverlay = ({
           minHeight,
           pointerEvents: "none",
           userSelect: "none",
+          ...(blurWhole && { filter: `blur(${blur}px)` }),
         }}
       >
         {backdrop}
@@ -117,8 +122,10 @@ const FeatureGateOverlay = ({
           right: 0,
           top: effectiveBlurFrom,
           bottom: 0,
-          backdropFilter: `blur(${blur}px)`,
-          WebkitBackdropFilter: `blur(${blur}px)`,
+          ...(!blurWhole && {
+            backdropFilter: `blur(${blur}px)`,
+            WebkitBackdropFilter: `blur(${blur}px)`,
+          }),
           background: isDark
             ? `linear-gradient(to bottom, ${alpha(
                 theme.palette.background.default,
@@ -143,16 +150,13 @@ const FeatureGateOverlay = ({
           p: 3,
         }}
       >
-        <Paper
-          elevation={12}
+        <Section
+          variant="panel"
           sx={{
             width: "100%",
             maxWidth: maxCardWidth,
             p: 3.5,
-            borderRadius: 2,
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
           }}
         >
           <Stack spacing={2.5}>
@@ -162,11 +166,11 @@ const FeatureGateOverlay = ({
                   alignSelf: "flex-start",
                   px: 1,
                   py: 0.25,
-                  borderRadius: 0.75,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
+                  borderRadius: "4px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: 0,
+                  textTransform: "none",
                   color: "primary.main",
                   bgcolor: alpha(theme.palette.primary.main, 0.1),
                   border: "1px solid",
@@ -178,7 +182,7 @@ const FeatureGateOverlay = ({
             )}
 
             {title && (
-              <Typography variant="h5" fontWeight="fontWeightBold">
+              <Typography variant="h5" fontWeight={600}>
                 {title}
               </Typography>
             )}
@@ -194,7 +198,7 @@ const FeatureGateOverlay = ({
                 <Typography
                   variant="overline"
                   color="text.disabled"
-                  sx={{ fontWeight: 700 }}
+                  sx={{ fontWeight: 600 }}
                 >
                   What to do next
                 </Typography>
@@ -215,7 +219,7 @@ const FeatureGateOverlay = ({
                         alignItems: "center",
                         justifyContent: "center",
                         fontSize: 12,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         color: "primary.main",
                         bgcolor: alpha(theme.palette.primary.main, 0.1),
                         border: "1px solid",
@@ -256,7 +260,15 @@ const FeatureGateOverlay = ({
                 href={onPrimary ? undefined : primaryHref}
                 target={onPrimary ? undefined : "_blank"}
                 rel={onPrimary ? undefined : "noopener"}
-                endIcon={<Iconify icon="solar:arrow-right-up-linear" />}
+                endIcon={
+                  <Iconify
+                    icon={
+                      onPrimary
+                        ? "solar:arrow-right-linear"
+                        : "solar:arrow-right-up-linear"
+                    }
+                  />
+                }
               >
                 {primaryLabel}
               </Button>
@@ -280,7 +292,7 @@ const FeatureGateOverlay = ({
               </Stack>
             )}
           </Stack>
-        </Paper>
+        </Section>
       </Box>
     </Box>
   );

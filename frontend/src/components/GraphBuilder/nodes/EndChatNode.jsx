@@ -38,7 +38,7 @@ const EndChatNode = ({ id, data, isConnectable }) => {
     <Box
       sx={{
         width: 400,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         borderStyle: "solid",
         borderWidth: activeNodeId === id ? "2px" : "1px",
         borderColor: borderColor,
@@ -78,7 +78,7 @@ const EndChatNode = ({ id, data, isConnectable }) => {
           Message
         </Typography>
         <ShowComponent condition={!data?.prompt?.length}>
-          <Typography typography="s2" color="red.500">
+          <Typography typography="s2" color="status.danger.fg">
             No Message Specified
           </Typography>
         </ShowComponent>

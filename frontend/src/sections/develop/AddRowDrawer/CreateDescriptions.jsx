@@ -110,10 +110,10 @@ const CreateDescriptions = ({ fields, control }) => {
                     sx={{ display: "flex", marginTop: "2px" }}
                   >
                     <Iconify
-                      icon="material-symbols:info-outline-rounded"
+                      icon="solar:info-circle-linear"
                       color="text.secondary"
-                      width={15}
-                      height={15}
+                      width={16}
+                      height={16}
                     />
                   </CustomTooltip>
                 </Box>

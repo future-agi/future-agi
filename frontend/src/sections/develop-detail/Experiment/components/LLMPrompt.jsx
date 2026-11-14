@@ -35,7 +35,11 @@ export default function LLMPrompt({
         <Typography
           id={`invalid-variables-message.${index}`}
           typography="s2"
-          color={allInvalidVariables?.length > 0 ? "red.500" : "text.primary"}
+          color={
+            allInvalidVariables?.length > 0
+              ? "status.danger.fg"
+              : "text.primary"
+          }
           fontWeight={"fontWeightRegular"}
           sx={{
             mt: (theme) => theme.spacing(1),
@@ -48,15 +52,13 @@ export default function LLMPrompt({
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <Button
           size="medium"
-          startIcon={<Iconify icon="material-symbols:add" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => {
             append({ id: getRandomId(), role: "user", content: "" });
           }}
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "4px",
-            padding: "6px 16px",
             color: "text.primary",
           }}
         >

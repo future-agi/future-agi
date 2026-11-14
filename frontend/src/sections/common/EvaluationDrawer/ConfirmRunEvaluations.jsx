@@ -22,6 +22,11 @@ const ConfirmRunEvaluations = ({
   onConfirm,
   selectedUserEvalList,
   loading,
+  getNote,
+  title,
+  description = "This will overwrite previous evaluation results.",
+  cancelLabel = "Cancel",
+  confirmLabel = "Run Evaluations",
 }) => {
   const theme = useTheme();
   const [evalsToRun, setEvalsToRun] = useState([]);
@@ -43,6 +48,8 @@ const ConfirmRunEvaluations = ({
   const handleConfirm = () => {
     onConfirm(evalsToRun);
   };
+  // Read from the current list, so removing an eval also drops its note.
+  const note = getNote ? getNote(evalsToRun) : null;
   return (
     <Dialog
       open={open}
@@ -50,7 +57,7 @@ const ConfirmRunEvaluations = ({
       fullWidth
       PaperProps={{
         sx: {
-          maxWidth: 533,
+          maxWidth: 560,
           maxHeight: 400,
           display: "flex",
           flexDirection: "column",
@@ -66,17 +73,26 @@ const ConfirmRunEvaluations = ({
         }}
       >
         <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography fontSize={16} fontWeight={700} color="text.primary">
-            Are you sure you want to run the following evaluation
-            {evalsToRun.length !== 1 && "s"}?
+          <Typography fontSize={16} fontWeight={600} color="text.primary">
+            {title ?? (
+              <>
+                Are you sure you want to run the following evaluation
+                {evalsToRun.length !== 1 && "s"}?
+              </>
+            )}
           </Typography>
           <IconButton onClick={onClose} sx={{ p: 0 }}>
-            <Iconify icon="line-md:close" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
         <Typography variant="body2" color="text.secondary">
-          This will overwrite previous evaluation results.
+          {description}
         </Typography>
+        {note && (
+          <Typography variant="body2" color="text.secondary">
+            {note}
+          </Typography>
+        )}
       </DialogTitle>
 
       <DialogContent
@@ -115,17 +131,17 @@ const ConfirmRunEvaluations = ({
               p={theme.spacing(1.5)}
               borderRadius="8px"
             >
-              <Typography fontSize={14} fontWeight={500}>
+              <Typography fontSize={12} fontWeight={500}>
                 {evalItem.name}
               </Typography>
               {evalsToRun.length > 1 && (
                 <IconButton
                   aria-label="remove-eval"
                   onClick={() => handleRemoveEval(evalItem.id)}
-                  sx={{ width: 16, height: 16, p: 0 }}
+                  sx={{ width: 16, p: 0 }}
                 >
                   <Iconify
-                    icon="line-md:close"
+                    icon="solar:close-linear"
                     color="text.primary"
                     width={16}
                     height={16}
@@ -150,14 +166,10 @@ const ConfirmRunEvaluations = ({
           onClick={onClose}
           size="small"
           sx={{
-            fontSize: "12px",
-            fontWeight: 500,
             lineHeight: "18px",
-            paddingX: "24px",
-            paddingY: "6px",
           }}
         >
-          Cancel
+          {cancelLabel}
         </Button>
         <LoadingButton
           loading={loading}
@@ -167,14 +179,10 @@ const ConfirmRunEvaluations = ({
           onClick={handleConfirm}
           disabled={evalsToRun.length === 0}
           sx={{
-            fontSize: "12px",
-            fontWeight: 500,
             lineHeight: "18px",
-            paddingX: "24px",
-            paddingY: "6px",
           }}
         >
-          Run Evaluations
+          {confirmLabel}
         </LoadingButton>
       </DialogActions>
     </Dialog>
@@ -187,6 +195,11 @@ ConfirmRunEvaluations.propTypes = {
   onConfirm: PropTypes.func,
   selectedUserEvalList: PropTypes.array,
   loading: PropTypes.bool,
+  getNote: PropTypes.func,
+  title: PropTypes.node,
+  description: PropTypes.node,
+  cancelLabel: PropTypes.node,
+  confirmLabel: PropTypes.node,
 };
 
 export default ConfirmRunEvaluations;

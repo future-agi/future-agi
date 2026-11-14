@@ -24,7 +24,7 @@ const ConfigureMetricModal = ({ open, onClose }) => {
           onClick={() => onClose()}
           sx={{ position: "absolute", top: "12px", right: "12px" }}
         >
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
         <Typography variant="h5">Define Metric</Typography>
         <Typography
@@ -33,7 +33,7 @@ const ConfigureMetricModal = ({ open, onClose }) => {
         >{`You haven't defined a metric`}</Typography>
         <Box sx={{ display: "flex", justifyContent: "end" }}>
           <Button
-            startIcon={<Iconify icon="eva:diagonal-arrow-right-up-fill" />}
+            startIcon={<Iconify icon="solar:arrow-right-up-linear" />}
             color="primary"
             onClick={() => navigate(`/dashboard/models/${id}/custom-metrics`)}
           >

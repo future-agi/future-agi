@@ -58,7 +58,10 @@ config:
         else:
             n = len(labels)
             correct = sum(1 for p, l in zip(preds, labels) if p == l)
-            nc = len(cats)
-            mcc = (correct/n - 1/nc) / (1 - 1/nc) if nc > 1 else 0.0
+            t = [labels.count(c) for c in cats]
+            q = [preds.count(c) for c in cats]
+            cov = correct * n - sum(a * b for a, b in zip(t, q))
+            d = math.sqrt((n*n - sum(b*b for b in q)) * (n*n - sum(a*a for a in t)))
+            mcc = cov / d if d > 0 else 0.0
         score = (mcc + 1) / 2
         return {"score": float(score), "reason": f"MCC: {mcc:.4f}, normalized={score:.4f}"}

@@ -1,18 +1,19 @@
 import React from "react";
-import { Box, Grid, Skeleton, Typography, Card } from "@mui/material";
+import { Box, Grid, Skeleton, Typography } from "@mui/material";
+import Section from "src/components/section";
 
 const PerformanceSkeleton = () => {
   return (
     <Grid container spacing={2}>
-      {/* --- CALL DETAILS --- */}
+      {/* --- Call details --- */}
       <Grid item xs={12} md={2}>
-        <Card sx={{ p: 2, borderRadius: 2 }}>
+        <Section variant="panel" sx={{ p: 2 }}>
           <Typography
             typography="s2_1"
             color="text.primary"
             fontWeight={"fontWeightMedium"}
           >
-            CALL DETAILS
+            Call details
           </Typography>
 
           <Box sx={{ display: "flex", alignItems: "center", gap: 2, my: 2 }}>
@@ -30,18 +31,18 @@ const PerformanceSkeleton = () => {
               <Skeleton width={100} height={16} />
             </Box>
           </Box>
-        </Card>
+        </Section>
       </Grid>
 
       {/* --- SYSTEM METRICS --- */}
       <Grid item xs={12} md={4}>
-        <Card sx={{ p: 2, borderRadius: 2 }}>
+        <Section variant="panel" sx={{ p: 2 }}>
           <Typography
             typography="s2_1"
             color="text.primary"
             fontWeight={"fontWeightMedium"}
           >
-            SYSTEM METRICS
+            System metrics
           </Typography>
 
           <Grid
@@ -63,18 +64,18 @@ const PerformanceSkeleton = () => {
               </Grid>
             ))}
           </Grid>
-        </Card>
+        </Section>
       </Grid>
 
       {/* --- EVALUATION METRICS --- */}
       <Grid item xs={12} md={6}>
-        <Card sx={{ p: 2, borderRadius: 2 }}>
+        <Section variant="panel" sx={{ p: 2 }}>
           <Typography
             typography="s2_1"
             color="text.primary"
             fontWeight={"fontWeightMedium"}
           >
-            EVALUATION METRICS
+            Evaluation metrics
           </Typography>
 
           <Box
@@ -88,7 +89,7 @@ const PerformanceSkeleton = () => {
               <Skeleton variant="rectangular" height={10} width="100%" />
             </Box>
           ))}
-        </Card>
+        </Section>
       </Grid>
     </Grid>
   );

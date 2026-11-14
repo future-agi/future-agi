@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Grid,
   Typography,
   Skeleton,
@@ -10,19 +9,17 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
+import { monoSeriesColors, seriesLabelColors } from "src/theme/data-colors";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
-import { formatCost } from "../utils/formatters";
+import { formatCost, formatCostTick } from "../utils/formatters";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const GROUP_BY_OPTIONS = [
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
-];
 
 const TOP_N = 10;
 
@@ -32,51 +29,18 @@ function toNumericCost(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart color palette
-// ---------------------------------------------------------------------------
-
-function getChartColors(theme) {
-  if (theme.palette.mode === "dark") {
-    return [
-      "#60A5FA",
-      "#F87171",
-      "#34D399",
-      "#FBBF24",
-      "#A78BFA",
-      "#F472B6",
-      "#22D3EE",
-      "#FB7185",
-      "#2DD4BF",
-      "#F59E0B",
-    ];
-  }
-
-  return [
-    "#2563EB",
-    "#DC2626",
-    "#059669",
-    "#D97706",
-    "#7C3AED",
-    "#DB2777",
-    "#0891B2",
-    "#EA580C",
-    "#0F766E",
-    "#9333EA",
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // Chart option builders
 // ---------------------------------------------------------------------------
 
 function buildBarChartOptions(theme, categories) {
+  const colors = monoSeriesColors(theme);
   return {
     chart: {
       type: "bar",
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors,
     plotOptions: {
       bar: {
         horizontal: true,
@@ -88,14 +52,19 @@ function buildBarChartOptions(theme, categories) {
     dataLabels: {
       enabled: true,
       formatter: (val) => formatCost(val),
-      style: { fontSize: "11px", fontWeight: 600 },
+      style: {
+        fontSize: "12px",
+        fontWeight: 600,
+        colors: seriesLabelColors(theme, colors),
+      },
       offsetX: 5,
     },
     xaxis: {
       categories,
+      tickAmount: 5,
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        formatter: (val) => formatCost(val),
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+        formatter: (val) => formatCostTick(val),
       },
     },
     yaxis: {
@@ -134,7 +103,7 @@ function buildDonutChartOptions(theme, labels) {
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors: monoSeriesColors(theme),
     labels,
     dataLabels: {
       enabled: false,
@@ -150,15 +119,15 @@ function buildDonutChartOptions(theme, labels) {
             name: { show: false },
             value: {
               show: true,
-              fontSize: "14px",
-              fontWeight: 700,
+              fontSize: "12px",
+              fontWeight: 600,
               formatter: (val) => formatCost(Number(val)),
             },
             total: {
               show: true,
               showAlways: true,
               label: "Total",
-              fontSize: "13px",
+              fontSize: "12px",
               formatter: (w) => {
                 const total = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
                 return formatCost(total);
@@ -194,7 +163,7 @@ function buildDonutChartOptions(theme, labels) {
               donut: {
                 size: "70%",
                 labels: {
-                  value: { fontSize: "13px" },
+                  value: { fontSize: "12px" },
                   total: { fontSize: "12px" },
                 },
               },
@@ -206,14 +175,14 @@ function buildDonutChartOptions(theme, labels) {
         breakpoint: 600,
         options: {
           chart: { height: 300 },
-          legend: { position: "bottom", fontSize: "11px" },
+          legend: { position: "bottom", fontSize: "12px" },
           plotOptions: {
             pie: {
               customScale: 0.78,
               donut: {
                 labels: {
                   value: { fontSize: "12px" },
-                  total: { fontSize: "11px" },
+                  total: { fontSize: "12px" },
                 },
               },
             },
@@ -231,6 +200,9 @@ function buildDonutChartOptions(theme, labels) {
 const CostAnalytics = ({ start, end, gatewayId }) => {
   const theme = useTheme();
   const [groupBy, setGroupBy] = useState("model");
+  const groupByLabel = REQUEST_DIMENSION_OPTIONS.find(
+    (opt) => opt.value === groupBy,
+  )?.label;
 
   const { data, isLoading } = useAnalyticsCost({
     start,
@@ -311,7 +283,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
           <Typography variant="subtitle1" fontWeight={600}>
             Total Cost:
           </Typography>
-          <Typography variant="h5" fontWeight={700} color="primary.main">
+          <Typography variant="h5" fontWeight={600} color="primary.main">
             {formatCost(data?.total_cost)}
           </Typography>
         </Stack>
@@ -332,17 +304,8 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
             size="small"
             sx={{ flexWrap: "wrap" }}
           >
-            {GROUP_BY_OPTIONS.map((opt) => (
-              <ToggleButton
-                key={opt.value}
-                value={opt.value}
-                sx={{
-                  px: 1.5,
-                  py: 0.25,
-                  textTransform: "none",
-                  fontSize: "0.8125rem",
-                }}
-              >
+            {REQUEST_DIMENSION_OPTIONS.map((opt) => (
+              <ToggleButton key={opt.value} value={opt.value}>
                 {opt.label}
               </ToggleButton>
             ))}
@@ -353,9 +316,9 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
       <Grid container spacing={3}>
         {/* Cost breakdown bar chart */}
         <Grid item xs={12} md={7}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Cost by {groupBy === "model" ? "Model" : "Provider"}
+              Cost by {groupByLabel}
             </Typography>
             {isLoading ? (
               <Skeleton
@@ -382,12 +345,12 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
 
         {/* Cost distribution donut chart */}
         <Grid item xs={12} md={5}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Cost Distribution
             </Typography>
@@ -419,7 +382,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
       </Grid>
     </Box>

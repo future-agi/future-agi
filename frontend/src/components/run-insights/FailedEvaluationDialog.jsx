@@ -68,7 +68,8 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
       aria-labelledby="failed-evaluations-dialog-title"
     >
@@ -78,14 +79,10 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
           padding: (theme) => theme.spacing(2),
           typography: "m3",
           color: "text.primary",
-          fontWeight: "fontWeightBold",
+          fontWeight: 600,
         }}
       >
-        <Typography
-          variant="m3"
-          fontWeight="fontWeightBold"
-          color="text.primary"
-        >
+        <Typography variant="m3" fontWeight={600} color="text.primary">
           {data?.errorTitle}
         </Typography>
         <IconButton
@@ -98,7 +95,7 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="oui:cross" sx={{ color: "text.primary" }} />
+          <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
         </IconButton>
       </DialogTitle>
 
@@ -120,8 +117,12 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
           >
             <Box width={18} height={18}>
               <Iconify
-                icon="fluent:warning-24-regular"
-                color={data?.errorType == "PARTIAL" ? "orange.400" : "red.500"}
+                icon="solar:danger-triangle-linear"
+                color={
+                  data?.errorType == "PARTIAL"
+                    ? "status.warning.fg"
+                    : "status.danger.fg"
+                }
               />
             </Box>
 
@@ -157,14 +158,9 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
             fullWidth
             size="small"
             sx={{
-              paddingY: (theme) => theme.spacing(0.75),
-              paddingX: (theme) => theme.spacing(3),
               borderColor: "divider",
-              borderRadius: (theme) => theme.spacing(1),
               color: "text.disabled",
               width: "90px",
-              typography: "s2",
-              fontWeight: "fontWeightMedium",
             }}
           >
             Dismiss
@@ -176,11 +172,6 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
               color="primary"
               fontWeight="fontWeightRegular"
               size="small"
-              sx={{
-                typography: "s2",
-                paddingY: (theme) => theme.spacing(0.75),
-                paddingX: (theme) => theme.spacing(3),
-              }}
             >
               Upgrade Plan
             </Button>
@@ -192,11 +183,6 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
               color="primary"
               fontWeight="fontWeightRegular"
               size="small"
-              sx={{
-                typography: "s2",
-                paddingY: (theme) => theme.spacing(0.75),
-                paddingX: (theme) => theme.spacing(3),
-              }}
             >
               Add Credits
             </Button>
@@ -208,11 +194,6 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
               color="primary"
               fontWeight="fontWeightRegular"
               size="small"
-              sx={{
-                typography: "s2",
-                paddingY: (theme) => theme.spacing(0.75),
-                paddingX: (theme) => theme.spacing(3),
-              }}
             >
               Re-run Evaluation
             </LoadingButton>

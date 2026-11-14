@@ -12,7 +12,10 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.selectors.eval_tasks.row_resolver import iter_desired_rows
+from tracer.selectors.eval_tasks.row_resolver import (
+    iter_desired_rows,
+    resolve_desired_rows,
+)
 from tracer.tests._ch_seed import seed_ch_spans
 
 
@@ -225,6 +228,69 @@ class TestScopingAndFilters:
         assert set(_ids(task)) == {s.id for s in spans}
 
 
+def _pasted_ids_not_in_task(project, excluded_ids, *, run_type=RunType.HISTORICAL):
+    """Production task shape: one free-text member holding comma-joined ids."""
+    return _make_task(
+        project,
+        row_type=RowType.TRACES,
+        run_type=run_type,
+        # Trace filter witnesses bound the historical page count.
+        spans_limit=100,
+        filters={
+            "filters": [
+                {
+                    "column_id": "whatfix.ent_id",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_op": "not_in",
+                        "filter_type": "text",
+                        "filter_value": [", ".join(excluded_ids)],
+                    },
+                }
+            ]
+        },
+    )
+
+
+def _traces_by_ent_id(project, ent_ids):
+    trace_ids = {}
+    for index, ent_id in enumerate(ent_ids):
+        trace = Trace.objects.create(project=project, name=f"ent-{index}")
+        _make_spans(
+            project,
+            2,
+            shared_trace=trace,
+            span_attributes={"whatfix.ent_id": ent_id},
+            prefix=f"ent{index}",
+        )
+        trace_ids[ent_id] = str(trace.id)
+    return trace_ids
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestCommaJoinedIdListFilters:
+    def test_not_in_pasted_ids_excludes_traces_carrying_any_of_them(self, project):
+        excluded = [str(uuid.uuid4()) for _ in range(4)]
+        kept = str(uuid.uuid4())
+        trace_ids = _traces_by_ent_id(project, [*excluded, kept])
+        task = _pasted_ids_not_in_task(project, excluded)
+
+        assert set(_ids(task)) == {trace_ids[kept]}
+
+    def test_continuous_not_in_pasted_ids_matches_only_other_traces(self, project):
+        excluded = [str(uuid.uuid4()) for _ in range(4)]
+        kept = str(uuid.uuid4())
+        trace_ids = _traces_by_ent_id(project, [*excluded, kept])
+        task = _pasted_ids_not_in_task(project, excluded, run_type=RunType.CONTINUOUS)
+        task.start_time = datetime.now(UTC) - timedelta(hours=1)
+
+        resolved = resolve_desired_rows(task, ceiling=datetime.now(UTC))
+
+        assert set(resolved.candidate_ids) == set(trace_ids.values())
+        assert set(resolved.matched_ids) == {trace_ids[kept]}
+
+
 def _builder_ids(builder):
     """Run a UI builder's build_id_query against CH and return its id set."""
     from tracer.services.clickhouse.v2 import get_reader
@@ -284,3 +350,93 @@ class TestApiFilterParity:
         _make_spans(project, 4, observation_type="llm", prefix="llm")
         task = _make_task(project, row_type=RowType.VOICE_CALLS, sampling_rate=100.0)
         assert set(_ids(task)) == {c.id for c in calls}
+
+
+class TestExplicitIdRows:
+    """A historical task naming its traces outright is read by id."""
+
+    @staticmethod
+    def _task(filters):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            run_type=RunType.HISTORICAL,
+            row_type=RowType.TRACES,
+            filters=filters,
+            project_id=uuid.uuid4(),
+        )
+
+    @staticmethod
+    def _reader(monkeypatch, present):
+        from contextlib import contextmanager
+
+        from tracer.selectors.eval_tasks import row_resolver
+
+        class Reader:
+            def root_ids_by_trace_ids(self, ids, project_ids):
+                return [i for i in ids if i in present]
+
+        @contextmanager
+        def get_reader():
+            yield Reader()
+
+        monkeypatch.setattr(row_resolver, "get_reader", get_reader)
+
+    def test_the_limit_counts_rows_that_exist(self, monkeypatch):
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        self._reader(monkeypatch, present={"b", "c", "d"})
+        rows = _explicit_id_rows(
+            self._task({"trace_id": ["a", "b", "c", "d"]}),
+            limit=2,
+            sampling_rate=100.0,
+        )
+        assert rows.matched_ids == ("b", "c")
+
+    def test_ids_with_a_date_range_keep_the_bounded_proof(self, monkeypatch):
+        """This read doesn't apply a range, so a saved task with ids and a
+        date range is not read by id (it would evaluate rows outside it)."""
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        self._reader(monkeypatch, present={"a"})
+        task = self._task(
+            {"trace_id": ["a"], "date_range": ["2026-01-01", "2026-01-02"]}
+        )
+        assert _explicit_id_rows(task, limit=None, sampling_rate=100.0) is None
+
+    def test_sessions_are_read_by_their_own_roots_not_a_project_scan(self, monkeypatch):
+        """Session ids are checked through ``roots_by_session_ids`` (only
+        those sessions and their remap groups), not the FINAL project scan
+        behind ``distinct_session_ids_with_filters``; an id comes back as it
+        was asked."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        from tracer.selectors.eval_tasks import row_resolver
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        asked = []
+
+        class Reader:
+            def roots_by_session_ids(self, ids, *, project_id):
+                asked.append(list(ids))
+                return [
+                    SimpleNamespace(trace_session_id=i, trace_id=f"t-{i}")
+                    for i in ids
+                    if i != "gone"
+                ]
+
+        @contextmanager
+        def get_reader():
+            yield Reader()
+
+        monkeypatch.setattr(row_resolver, "get_reader", get_reader)
+        task = SimpleNamespace(
+            run_type=RunType.HISTORICAL,
+            row_type=RowType.SESSIONS,
+            filters={"session_id": ["a", "gone", "b", "c"]},
+            project_id=uuid.uuid4(),
+        )
+        rows = _explicit_id_rows(task, limit=2, sampling_rate=100.0)
+        assert rows.matched_ids == ("a", "b")
+        assert asked == [["a", "gone", "b", "c"]]

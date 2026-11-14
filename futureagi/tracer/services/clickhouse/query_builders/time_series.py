@@ -5,26 +5,137 @@ Replaces ``get_all_system_metrics()`` and ``get_system_metric_data()`` from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered dashboard queries read from the ``spans_hourly_rollup``
-  pre-aggregated AggregatingMergeTree (v2 schema 010) using ``countMerge`` /
-  ``sumMerge`` / ``quantilesTDigestMerge`` combinators. The rollup is fed
-  directly from the v2 typed-JSON ``spans`` table via an incremental MV.
-- When attribute filters are present, falls back to scanning the v2
-  ``spans`` table directly.
+- Unfiltered queries read ``spans``'s own hourly aggregate states through
+  ``hourly_aggregate_state_source`` and combine them with ``countMerge`` /
+  ``sumMerge`` / ``quantilesTDigestMerge``. The states live in projections
+  maintained inside ``spans``, per physical part: unmerged row versions and
+  retained ``is_deleted`` tombstones are counted, so the result is an
+  approximation of the latest live rows and is published as inexact.
+- When attribute filters are present, scans the v2 ``spans`` table directly.
 
-CH25 close-out (2026-05-28): cut over from the legacy ``span_metrics_hourly``
-(fed by ``spans_mv`` ← ``tracer_observation_span`` CDC mirror) to
-``spans_hourly_rollup``. Removes the last dashboard read-path dependency on
-the legacy CDC-based aggregate.
+Both branches therefore read one physical table. The unfiltered branch used to
+read the separate ``spans_hourly_rollup`` materialized view, which counted
+insert deliveries the ``ReplacingMergeTree`` base had already collapsed and so
+answered "All" at a multiple of the sum of its own filtered parts; see
+``hourly_aggregate_states`` for the mechanism and the measurements.
 """
 
+import math
 import re
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
+    graph_monetary_rows_sql,
+)
+from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
+    ERROR_RATE_MERGE_EXPRESSION,
+    hourly_aggregate_state_source,
+)
+from tracer.services.clickhouse.query_builders.trace_usage import usage_coverage_sql
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+
+class GraphCostCoverage(TypedDict):
+    status: Literal["complete", "partial", "unknown"]
+    known_subtotal: float
+    known_fact_count: int
+    unknown_fact_count: int
+
+
+class GraphCostCoverageBucket(GraphCostCoverage):
+    timestamp: str
+
+
+def graph_cost_flags_sql(*, prefix: str = "") -> str:
+    """Monetary counters plus summary/nonadditive proof bits on the scalar winner.
+
+    Keep the shared classifier's nonadditive and unknown rules. A zero-cost
+    tokenless tool is not a monetary fact; an explicit provider zero is. The
+    nonadditive bit also excludes source summaries from graph token totals.
+    """
+    attrs = f"{prefix}attrs_string"
+    coverage = usage_coverage_sql(attrs=attrs, prefix=prefix)
+    eligible = " OR ".join(
+        f"{prefix}{column} > 0"
+        for column in ("total_tokens", "prompt_tokens", "completion_tokens")
+    )
+    eligible += (
+        f" OR {prefix}observation_type = 'llm' OR {prefix}cost != 0"
+        f" OR {attrs}['fi.usage.scope'] = 'turn'"
+        f" OR {attrs}['fi.cost.kind'] IN ('provider_reported', 'estimated')"
+    )
+    return (
+        f"tuple(toUInt8(NOT tupleElement({coverage}, 1) AND "
+        f"NOT tupleElement({coverage}, 2) AND ({eligible})), "
+        f"toUInt8(NOT tupleElement({coverage}, 1) AND tupleElement({coverage}, 2)), "
+        f"toUInt8({attrs}['gen_ai.operation.name'] = 'invoke_agent'), "
+        f"toUInt8(tupleElement({coverage}, 1)))"
+    )
+
+
+def graph_cost_coverage(
+    *, subtotal: float, known: int, unknown: int
+) -> GraphCostCoverage:
+    """Money coverage is independent of query exactness and traffic counts."""
+    if not math.isfinite(subtotal) or subtotal < 0 or known < 0 or unknown < 0:
+        raise ValueError("Invalid monetary coverage counters")
+    return {
+        "status": "partial"
+        if unknown and known
+        else "unknown"
+        if unknown
+        else "complete",
+        "known_subtotal": float(subtotal),
+        "known_fact_count": int(known),
+        "unknown_fact_count": int(unknown),
+    }
+
+
+def graph_cost_coverage_series(
+    *,
+    builder: BaseQueryBuilder,
+    rows: list,
+    columns: list[str],
+    interval: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[GraphCostCoverageBucket]:
+    """Zero-fill bounded bucket counters using the metric's own bucket alignment."""
+    names = ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count")
+    # Older legacy-only query shapes may omit the optional companion entirely.
+    if not all(name in columns for name in names) and not (
+        rows and isinstance(rows[0], dict) and all(name in rows[0] for name in names)
+    ):
+        return []
+
+    def value(row, name):
+        return row[name] if isinstance(row, dict) else row[columns.index(name)]
+
+    buckets = builder.format_time_series(
+        rows=[
+            (value(row, "time_bucket"), *(value(row, name) for name in names))
+            for row in rows
+        ],
+        columns=["time_bucket", *names],
+        interval=interval,
+        start_date=start_date,
+        end_date=end_date,
+        value_keys=list(names),
+    )
+    return [
+        {
+            "timestamp": bucket["timestamp"],
+            **graph_cost_coverage(
+                subtotal=bucket["cost_known_subtotal"],
+                known=bucket["known_cost_fact_count"],
+                unknown=bucket["unknown_cost_fact_count"],
+            ),
+        }
+        for bucket in buckets
+    ]
 
 
 class TimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -50,15 +161,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             reserved for future per-model breakdowns).
     """
 
-    # Pre-aggregated table (AggregatingMergeTree)
-    # CH25 close-out (2026-05-28): switched from the legacy
-    # `span_metrics_hourly` (fed by `spans_mv` ← `tracer_observation_span` CDC
-    # mirror) to the v2 `spans_hourly_rollup` (fed directly from the v2 typed-
-    # JSON `spans` table — no CDC). The v2 rollup uses AggregateFunction
-    # columns + `*Merge()` combinators (real AggregatingMergeTree pattern)
-    # whereas the legacy table stored already-summed Int64s.
-    AGG_TABLE = "spans_hourly_rollup"
-    # Denormalized raw table (for filtered queries)
+    # Denormalized raw table. Both the filtered scan and the unfiltered
+    # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
 
     def __init__(
@@ -162,6 +266,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 exact_filter_plan.required_matches,
                 exact_filter_plan.match_condition_groups,
                 exact_filter_plan.contribution_predicates,
+                root_contribution=exact_filter_plan.root_contribution,
             )
         if extra_where:
             return self._build_raw_query(extra_where)
@@ -313,6 +418,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             value_keys=["value"],
         )
 
+        coverage = graph_cost_coverage_series(
+            builder=self,
+            rows=rows,
+            columns=columns,
+            interval=self.interval,
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
+        if coverage:
+            for point, companion in zip(cost_data, coverage, strict=True):
+                point["cost_coverage"] = {
+                    key: value for key, value in companion.items() if key != "timestamp"
+                }
+
         return {
             "latency": latency_data,
             "tokens": tokens_data,
@@ -331,20 +450,23 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     def _build_agg_query(self) -> tuple[str, dict[str, Any]]:
-        """Build a query against the pre-aggregated ``spans_hourly_rollup`` table.
+        """Build the unfiltered query from ``spans``'s own hourly states.
 
-        Uses ``*Merge()`` aggregate combinators (``countMerge``,
-        ``sumMerge``, ``quantilesTDigestMerge``) to reconstruct metrics
-        from the ``AggregatingMergeTree`` state columns. See
-        ``tracer/services/clickhouse/v2/schema/010_hourly_downsample.sql``
-        for the rollup table definition.
+        The inner source emits aggregate states at ``(project_id, hour,
+        status)`` grain — the grain ``spans``'s aggregate projections are
+        maintained at — and this level merges them into the requested bucket.
+        Those states are rebuilt with the parts they belong to, so replayed
+        deliveries stop counting once merged, which the separate hourly rollup
+        this replaced never did. They are still per part, not latest-live:
+        see ``hourly_aggregate_states``.
         """
         bucket_fn = self.time_bucket_expr(self.interval)
 
         # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
-        # The v2 rollup stores 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
+        # The stored states hold 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
         # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
-        # to preserve the dashboard contract.
+        # to preserve the dashboard contract. This is the same statistic the
+        # retired rollup rendered, so the line does not change meaning here.
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
@@ -356,12 +478,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             countMerge(n) AS traffic_count,
             sumMerge(prompt_tokens_sum) AS prompt_tokens,
             sumMerge(completion_tokens_sum) AS completion_tokens,
-            countIfMerge(error_count) * 100.0 / greatest(countMerge(n), 1)
-                AS error_rate
-        FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
-          AND hour >= %(start_date)s
-          AND hour < %(end_date)s
+            {ERROR_RATE_MERGE_EXPRESSION} AS error_rate
+        FROM {
+            hourly_aggregate_state_source(
+                self.project_filter_sql(),
+                table=self.RAW_TABLE,
+            )
+        }
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
@@ -395,7 +518,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     def _exact_span_candidate_plan(self) -> Any | None:
         """One necessary typed-Map leaf; never replace graph membership truth."""
         if not (
-            self.exact_snapshot and self.observe_type == "span"
+            self.exact_snapshot
+            and self.observe_type == "span"
             and self.resolve_span_versions
         ):
             return None
@@ -407,25 +531,38 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             attributes = []
             for item in self.filters:
                 config = item.get("filter_config") or item.get("filterConfig") or {}
-                if str(config.get("col_type") or config.get("colType") or "").upper() == "SPAN_ATTRIBUTE":
+                if (
+                    str(config.get("col_type") or config.get("colType") or "").upper()
+                    == "SPAN_ATTRIBUTE"
+                ):
                     attributes.append(item)
             plans, _ = partition_span_filter_plans(attributes)
         except (TypeError, ValueError):
             return None  # A graph-only shape retains its existing exact route.
         candidates = [
-            plan for plan in plans
+            plan
+            for plan in plans
             if plan.raw_graph_value_witness_predicate
-            and plan.scope == "span" and not plan.exclude_group_matches
-            and plan.aggregates and all(
-                any(column in aggregate for column in ("span_attr_num", "span_attr_str", "span_attr_bool"))
+            and plan.scope == "span"
+            and not plan.exclude_group_matches
+            and plan.aggregates
+            and all(
+                any(
+                    column in aggregate
+                    for column in ("span_attr_num", "span_attr_str", "span_attr_bool")
+                )
                 for aggregate in plan.aggregates
             )
         ]
         # Cost order only: numeric value proofs before wider string maps.
-        return min(candidates, key=lambda plan: (
-            "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
-            plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
-        ), default=None)
+        return min(
+            candidates,
+            key=lambda plan: (
+                "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
+                plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
+            ),
+            default=None,
+        )
 
     def _exact_latest_scalar_source(
         self,
@@ -436,6 +573,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
         candidate_span_predicate: str = "",
+        candidate_partition: bool = False,
+        with_version: bool = False,
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
 
@@ -468,6 +607,15 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
+        scalar_expressions.extend(
+            ("id", "parent_span_id", "name", "observation_type", graph_cost_flags_sql())
+        )
+        scalar_aliases.extend(
+            ("id", "parent_span_id", "name", "observation_type", "graph_cost_flags")
+        )
+        if with_version:
+            scalar_expressions.append("_version")
+            scalar_aliases.append("_version")
         for index, predicate in enumerate(row_predicates):
             scalar_expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             scalar_aliases.append(f"graph_row_match_{index}")
@@ -489,26 +637,43 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             if candidate_trace_ids_param
             else ""
         )
-        candidate_span_fragment = ""
-        if candidate_span_predicate:
-            # Only the immutable full key crosses this boundary. Replay every
-            # version, including clears/tombstones, before exact graph truth.
-            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-            candidate_span_fragment = f"""
-                  AND ({identity}) IN (
-                      SELECT {identity}
-                      FROM {self.RAW_TABLE}
+        if self.raw_trace_candidate_predicate and not candidate_trace_ids_param:
+            self.params.update(self.raw_trace_candidate_params)
+            candidate_trace_fragment = f"""
+                  AND trace_id IN (
+                      SELECT trace_id FROM {self.RAW_TABLE}
                       PREWHERE {self.project_filter_sql()}
                         AND start_time >= %({scan_start_param})s
                         AND start_time < %({scan_end_param})s
-                      WHERE ({candidate_span_predicate})
+                      WHERE is_deleted = 0 AND ({self.raw_trace_candidate_predicate})
+                      GROUP BY trace_id
                   )"""
-        return f"""(
+        candidate_span_fragment = ""
+        if candidate_span_predicate or candidate_partition:
+            seed_start = (
+                "graph_partition_start" if candidate_partition else scan_start_param
+            )
+            seed_end = "graph_partition_end" if candidate_partition else scan_end_param
+            # Keep the whole candidate trace: an unselected child can prove
+            # that a selected Pydantic wrapper repeats usage. Filters still run
+            # on the winning row, after monetary classification.
+            candidate_span_fragment = f"""
+                  AND (project_id, trace_id) IN (
+                      SELECT project_id, trace_id
+                      FROM {self.RAW_TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %({seed_start})s
+                        AND start_time < %({seed_end})s
+                      WHERE ({candidate_span_predicate or "1 = 1"})
+                  )"""
+        latest_source = f"""(
             SELECT
+                project_id,
                 trace_id,
 {projected_scalars}
             FROM (
                 SELECT
+                    project_id,
                     trace_id,
                     argMax(
                         tuple(
@@ -530,6 +695,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ) AS graph_latest_spans"""
+        monetary_rows = graph_monetary_rows_sql(
+            source=latest_source,
+            columns=tuple(scalar_aliases),
+            child_condition="start_time >= %(start_date)s AND start_time < %(end_date)s",
+        )
+        return f"({monetary_rows}) AS graph_monetary_spans"
 
     def _raw_scalar_source(
         self,
@@ -538,6 +709,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         """Project append-only physical span rows to the graph scalars.
 
@@ -552,11 +724,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "start_time",
             "toInt64(latency_ms) AS latency_ms",
             "toInt64(total_tokens) AS total_tokens",
-            "cost",
+            "if(attrs_string['fi.usage.contribution'] = 'none', 0, cost) AS cost",
             "toInt64(prompt_tokens) AS prompt_tokens",
             "toInt64(completion_tokens) AS completion_tokens",
             "status",
         ]
+        scalar_columns.append(f"{graph_cost_flags_sql()} AS graph_cost_flags")
+        if with_version:
+            scalar_columns.append("_version")
         scalar_columns.extend(
             f"toUInt8(ifNull(({predicate}), 0)) AS graph_row_match_{index}"
             for index, predicate in enumerate(row_predicates)
@@ -597,8 +772,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                     f"duplicate raw trace candidate params: {duplicate_params}"
                 )
             self.params.update(self.raw_trace_candidate_params)
+            # GLOBAL IN broadcasts one materialised set to every shard and is
+            # required only when the source is a cluster table. On a single
+            # node it forces that same temporary set where a plain IN lets the
+            # reader use the subquery as an index condition instead.
+            set_operator = "GLOBAL IN" if self.raw_replica_shard_cluster else "IN"
             candidate_trace_fragment = f"""
-              AND trace_id GLOBAL IN (
+              AND trace_id {set_operator} (
                   SELECT trace_id
                   FROM {candidate_source}
                   PREWHERE project_id = toUUID(%(project_id)s)
@@ -626,19 +806,35 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         if self.resolve_span_versions:
+            # Replay the complete replacement-key hours before applying mutable
+            # output timestamps. Cost and coverage must not select an old poll.
+            for source, target, upper in (
+                (scan_start_param, "graph_scalar_scan_start", False),
+                (scan_end_param, "graph_scalar_scan_end", True),
+            ):
+                boundary = self.params[source]
+                rounded = boundary.replace(minute=0, second=0, microsecond=0)
+                self.params[target] = (
+                    rounded + timedelta(hours=1)
+                    if upper and rounded < boundary
+                    else rounded
+                )
             return self._exact_latest_scalar_source(
                 row_predicates=row_predicates,
                 contribution_predicates=contribution_predicates,
-                scan_start_param=scan_start_param,
-                scan_end_param=scan_end_param,
+                scan_start_param="graph_scalar_scan_start",
+                scan_end_param="graph_scalar_scan_end",
+                with_version=with_version,
             )
         return self._raw_scalar_source(
             row_predicates=row_predicates,
             contribution_predicates=contribution_predicates,
             scan_start_param=scan_start_param,
             scan_end_param=scan_end_param,
+            with_version=with_version,
         )
 
     def build_exact_trace_contribution_batch(
@@ -737,6 +933,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 toDecimal128(toString(ifNull(cost, 0.0)), 18),
                 {contribution_condition}
             ) AS cost_sum,
+            sumIf(cost, ({contribution_condition}) AND graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(({contribution_condition}) AND graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(({contribution_condition}) AND graph_cost_flags.2) AS unknown_cost_fact_count,
             countIf({contribution_condition}) AS traffic_count,
             sumIf(toInt64(prompt_tokens), {contribution_condition})
                 AS prompt_tokens,
@@ -855,15 +1054,28 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
             candidate_predicate, candidate_params = _namespace_params(
                 rewrite_v1_sql_to_v2(candidate_plan.raw_graph_value_witness_predicate),
-                candidate_plan.params, filter_index="span_seed",
+                candidate_plan.params,
+                filter_index="span_seed",
             )
             self.params.update(candidate_params)
+        # A summary and its child can occupy different partitions. Seed only
+        # traces touching this partition, then replay their full request window
+        # for the proof; exact_row_filter still owns the output partition.
+        snapshot_start = self.start_date.replace(minute=0, second=0, microsecond=0)
+        snapshot_end = self.end_date.replace(minute=0, second=0, microsecond=0)
+        if snapshot_end < self.end_date:
+            snapshot_end += timedelta(hours=1)
+        self.params.update(
+            graph_partition_snapshot_start=snapshot_start,
+            graph_partition_snapshot_end=snapshot_end,
+        )
         latest_source = self._exact_latest_scalar_source(
             row_predicates=exact_filter_plan.predicates,
             contribution_predicates=exact_filter_plan.contribution_predicates,
-            scan_start_param="graph_partition_start",
-            scan_end_param="graph_partition_end",
+            scan_start_param="graph_partition_snapshot_start",
+            scan_end_param="graph_partition_snapshot_end",
             candidate_span_predicate=candidate_predicate,
+            candidate_partition=True,
         )
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
@@ -872,6 +1084,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(toInt64(latency_ms)) AS latency_sum,
             sum(toInt64(total_tokens)) AS total_tokens,
             sum(cost) AS cost_sum,
+            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(graph_cost_flags.2) AS unknown_cost_fact_count,
             count() AS traffic_count,
             sum(toInt64(prompt_tokens)) AS prompt_tokens,
             sum(toInt64(completion_tokens)) AS completion_tokens,
@@ -893,6 +1108,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         required_matches: tuple[bool, ...],
         match_condition_groups: tuple[tuple[tuple[int, bool], ...], ...],
         contribution_predicates: tuple[str, ...],
+        *,
+        root_contribution: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Aggregate the configured scalar source over the bounded window.
 
@@ -903,8 +1120,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         so this is emitted as an explicit pruning subquery rather than a named
         shared-scan claim. Neither route uses ``FINAL`` or sampling.
 
-        For a filtered trace graph the raw scan immediately collapses rows to
-        ``(trace_id, output bucket)``. Attribute/Map/JSON columns are consumed
+        The latest scalar source first proves monetary summaries with two
+        events per live row, grouped by immediate-parent identity. A filtered
+        trace graph then collapses those rows to ``(trace_id, output bucket)``. Attribute/Map/JSON columns are consumed
         by local ``max(predicate)`` aggregates and never cross that boundary.
         A second compact aggregation computes each trace's any-sibling flags
         and packs its exact additive bucket states; the outer query merges
@@ -984,7 +1202,30 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 contribution_predicates=contribution_predicates,
                 scan_start_param="graph_witness_start_date",
                 scan_end_param="graph_witness_end_date",
+                with_version=root_contribution,
             )
+
+            # A voice call contributes its root once per bucket. A re-polled
+            # root stays several live physical rows until ClickHouse merges
+            # them, so take the newest version's scalars, as the Voice list
+            # does, instead of adding every version.
+            def contributed(value: str) -> str:
+                if root_contribution:
+                    return f"argMaxIf({value}, _version, {contribution_condition})"
+                return f"sumIf({value}, {contribution_condition})"
+
+            if root_contribution:
+                row_count = f"toUInt64(countIf({contribution_condition}) > 0)"
+                error_count = (
+                    f"toUInt64(upper({contributed('status')})"
+                    " IN ('ERROR', 'ERRORED', 'FAILED'))"
+                )
+            else:
+                row_count = f"countIf({contribution_condition})"
+                error_count = f"""countIf(
+                            ({contribution_condition})
+                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
+                        )"""
             source = f"""(
             SELECT
                 graph_output_bucket
@@ -1001,7 +1242,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             graph_row_count,
                             graph_prompt_tokens_sum,
                             graph_completion_tokens_sum,
-                            graph_error_count
+                            graph_error_count,
+                            graph_cost_known_subtotal,
+                            graph_known_cost_fact_count,
+                            graph_unknown_cost_fact_count
                         ),
                         graph_in_output_window = 1 AND graph_row_count > 0
                     ) AS graph_output_buckets
@@ -1014,21 +1258,21 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             {sentinel_bucket}
                         ) AS graph_bucket,
                         toUInt8({output_window}) AS graph_in_output_window,
-                        sumIf(toInt64(latency_ms), {contribution_condition})
+                        {contributed("toInt64(latency_ms)")}
                             AS graph_latency_sum,
-                        sumIf(toInt64(total_tokens), {contribution_condition})
+                        {contributed("toInt64(total_tokens)")}
                             AS graph_total_tokens_sum,
-                        sumIf(cost, {contribution_condition})
+                        {contributed("cost")}
                             AS graph_cost_sum,
-                        countIf({contribution_condition}) AS graph_row_count,
-                        sumIf(toInt64(prompt_tokens), {contribution_condition})
+                        {row_count} AS graph_row_count,
+                        {contributed("toInt64(prompt_tokens)")}
                             AS graph_prompt_tokens_sum,
-                        sumIf(toInt64(completion_tokens), {contribution_condition})
+                        {contributed("toInt64(completion_tokens)")}
                             AS graph_completion_tokens_sum,
-                        countIf(
-                            ({contribution_condition})
-                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
-                        ) AS graph_error_count,
+                        {error_count} AS graph_error_count,
+                        {contributed("if(graph_cost_flags.1, cost, 0)")} AS graph_cost_known_subtotal,
+                        {contributed("toUInt64(graph_cost_flags.1)")} AS graph_known_cost_fact_count,
+                        {contributed("toUInt64(graph_cost_flags.2)")} AS graph_unknown_cost_fact_count,
 {local_match_columns}
                     FROM {latest_source}
                     GROUP BY trace_id, graph_bucket, graph_in_output_window
@@ -1053,7 +1297,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(tupleElement(graph_output_bucket, 7)) AS completion_tokens,
             sum(tupleElement(graph_output_bucket, 8)) * 100.0
                 / greatest(sum(tupleElement(graph_output_bucket, 5)), 1)
-                AS error_rate
+                AS error_rate,
+            sum(tupleElement(graph_output_bucket, 9)) AS cost_known_subtotal,
+            sum(tupleElement(graph_output_bucket, 10)) AS known_cost_fact_count,
+            sum(tupleElement(graph_output_bucket, 11)) AS unknown_cost_fact_count
         FROM {source}
         GROUP BY time_bucket
         ORDER BY time_bucket
@@ -1093,7 +1340,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(prompt_tokens) AS prompt_tokens,
             sum(completion_tokens) AS completion_tokens,
             countIf(upper(status) IN ('ERROR', 'ERRORED', 'FAILED'))
-                * 100.0 / greatest(count(), 1) AS error_rate
+                * 100.0 / greatest(count(), 1) AS error_rate,
+            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(graph_cost_flags.2) AS unknown_cost_fact_count
         FROM {latest_source}
         WHERE {exact_row_filter}
         GROUP BY time_bucket

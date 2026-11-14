@@ -19,8 +19,8 @@ const headerOptions = [
     value: 0,
     valueKey: "avgTokens",
     unit: "",
-    backgroundColor: "orange.o5",
-    color: "orange.500",
+    backgroundColor: "status.warning.bg",
+    color: "status.warning.fg",
   },
   {
     id: "2",
@@ -29,8 +29,8 @@ const headerOptions = [
     value: 0,
     valueKey: "avgTime",
     unit: "ms",
-    backgroundColor: "blue.o5",
-    color: "blue.500",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   {
     id: "3",
@@ -39,8 +39,8 @@ const headerOptions = [
     value: 0,
     valueKey: "avgCost",
     unit: "$",
-    backgroundColor: "green.o5",
-    color: "green.500",
+    backgroundColor: "status.success.bg",
+    color: "status.success.fg",
   },
 ];
 
@@ -241,9 +241,9 @@ const DatasetComparePromptSummary = (props) => {
           sx={{
             marginTop: "16px",
             borderRadius: "4px",
-            backgroundColor: "blue.o5",
+            backgroundColor: "status.info.bg",
             border: "1px solid",
-            borderColor: "blue.200",
+            borderColor: "status.info.border",
             padding: "12px",
             display: "flex",
             flexDirection: "column",
@@ -253,14 +253,14 @@ const DatasetComparePromptSummary = (props) => {
           <Typography
             typography={"s1"}
             fontWeight={"fontWeightSemiBold"}
-            color="blue.500"
+            color="status.info.fg"
           >
             There are no common columns to compare
           </Typography>
           <Typography
             typography={"s3"}
             fontWeight={"fontWeightRegular"}
-            color="blue.500"
+            color="status.info.fg"
           >
             {"We've"} summarized each dataset. Please select one to view and
             compare individually.

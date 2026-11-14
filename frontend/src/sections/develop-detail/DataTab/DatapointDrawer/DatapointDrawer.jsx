@@ -15,6 +15,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
 import DatapointCard from "../../../common/DatapointCard";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import { useMutation } from "@tanstack/react-query";
@@ -38,6 +39,7 @@ import {
   runDatasetPointReadAction,
 } from "../dataset_point_read";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const SkeletonLoader = () => (
   <Box
@@ -69,7 +71,7 @@ const StatusCellRenderer = (data) => {
         sx={{
           marginLeft: theme.spacing(1),
           color: theme.palette.error.main,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         Error
@@ -104,12 +106,12 @@ const StatusCellRenderer = (data) => {
             label={"None"}
             size="small"
             sx={{
-              backgroundColor: theme.palette.red.o10,
-              color: theme.palette.red[500],
+              backgroundColor: theme.palette.status.danger.bg,
+              color: theme.palette.status.danger.fg,
               marginRight: "10px",
               transition: "none",
               "&:hover": {
-                backgroundColor: theme.palette.red.o10, // Lock it to same color
+                backgroundColor: theme.palette.status.danger.bg, // Lock it to same color
                 boxShadow: "none",
               },
             }}
@@ -232,7 +234,8 @@ const DatapointDrawerChild = ({
 
   useEffect(() => {
     setLoading(true);
-    setTimeout(() => setLoading(false), 300);
+    const timeout = setTimeout(() => setLoading(false), 300);
+    return () => clearTimeout(timeout);
   }, [datapoint]);
 
   const audioColumnIds = allColumns
@@ -593,7 +596,8 @@ const DatapointDrawerChild = ({
             width: "550px",
             position: "relative",
             overflowY: "auto",
-            borderRight: "2px solid rgba(147, 143, 163, 0.2)",
+            borderRight: "1px solid",
+            borderColor: "divider",
           }}
         >
           <Box
@@ -643,13 +647,13 @@ const DatapointDrawerChild = ({
                 marginBottom: "25px",
               }}
             >
-              <Typography fontWeight={500} fontSize={14} color="text.primary">
+              <Typography fontWeight={500} fontSize={12} color="text.primary">
                 Score
               </Typography>
               <Box>
                 {runEval?.status === "error" ? (
                   <Box
-                    sx={{ color: theme.palette.error.main, fontSize: "14px" }}
+                    sx={{ color: theme.palette.error.main, fontSize: "12px" }}
                   >
                     Error
                   </Box>
@@ -681,12 +685,13 @@ const DatapointDrawerChild = ({
                             label={"None"}
                             size="small"
                             sx={{
-                              backgroundColor: theme.palette.red.o10,
-                              color: theme.palette.red[500],
+                              backgroundColor: theme.palette.status.danger.bg,
+                              color: theme.palette.status.danger.fg,
                               marginRight: "10px",
                               transition: "none",
                               "&:hover": {
-                                backgroundColor: theme.palette.red[500], // Lock it to same color
+                                backgroundColor:
+                                  theme.palette.status.danger.solid, // Lock it to same color
                                 boxShadow: "none",
                               },
                             }}
@@ -730,7 +735,7 @@ const DatapointDrawerChild = ({
                 overflowWrap: "break-word",
               }}
             >
-              <Typography fontWeight={500} fontSize={14} color="text.primary">
+              <Typography fontWeight={500} fontSize={12} color="text.primary">
                 Explanation
               </Typography>
               <Box
@@ -846,10 +851,6 @@ const DatapointDrawerChild = ({
                   setEvalDrawer(false);
                   setDataPointDrawerData(false);
                 }}
-                sx={{
-                  fontSize: "14px",
-                  height: "40px",
-                }}
               >
                 Improve Prompt
               </Button>
@@ -886,10 +887,6 @@ const DatapointDrawerChild = ({
                     runEval?.evalMetricId || currentColumn?.col?.sourceId,
                   [PropertyName.rowIdentifier]: datapoint?.rowData?.rowId,
                 });
-              }}
-              sx={{
-                fontSize: "14px",
-                height: "40px",
               }}
             >
               Add Feedback
@@ -937,7 +934,6 @@ const DatapointDrawerChild = ({
                 paddingLeft: "15px",
                 borderColor: theme.palette.divider,
                 color: theme.palette.text.secondary,
-                fontWeight: "fontWeightRegular",
                 typography: "s1",
               }}
             >
@@ -947,7 +943,7 @@ const DatapointDrawerChild = ({
                   marginLeft: theme.spacing(1),
                   color: theme.palette.text.secondary,
                 }}
-                icon="akar-icons:chevron-up-small"
+                icon="solar:alt-arrow-up-linear"
               />
             </LoadingButton>
             <LoadingButton
@@ -962,7 +958,6 @@ const DatapointDrawerChild = ({
                 paddingLeft: "15px",
                 borderColor: theme.palette.divider,
                 color: theme.palette.text.secondary,
-                fontWeight: "fontWeightRegular",
                 typography: "s1",
               }}
             >
@@ -972,11 +967,14 @@ const DatapointDrawerChild = ({
                   marginLeft: theme.spacing(1),
                   color: theme.palette.text.secondary,
                 }}
-                icon="akar-icons:chevron-down-small"
+                icon="solar:alt-arrow-down-linear"
               />
             </LoadingButton>
             <IconButton onClick={onClose} size="small">
-              <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+              <Iconify
+                icon="solar:close-linear"
+                sx={{ color: "text.primary" }}
+              />
             </IconButton>
           </Box>
         </Box>
@@ -1130,10 +1128,12 @@ const DatapointDrawer = ({
     }
   }, [datapoint, datapoint?.rowData, currentColumn]);
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
@@ -1141,8 +1141,7 @@ const DatapointDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

@@ -109,7 +109,7 @@ const TotpSection = ({ totp, onStatusChange }) => {
                 }}
               >
                 <Iconify
-                  icon="mdi:check-circle"
+                  icon="solar:check-circle-bold"
                   sx={{
                     width: "16px",
                     height: "16px",
@@ -179,7 +179,8 @@ const TotpSection = ({ totp, onStatusChange }) => {
       <Dialog
         open={disableOpen}
         onClose={handleDisableClose}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>

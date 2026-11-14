@@ -1,0 +1,4 @@
+# CI only: over examples/bundled.yaml and ci/digests.yaml, for a mirror that
+# re-pushes the images: no Future AGI image is pinned.
+image:
+  pinDigests: false

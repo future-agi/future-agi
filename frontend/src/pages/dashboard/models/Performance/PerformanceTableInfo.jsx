@@ -1,3 +1,4 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React from "react";
 import PropType from "prop-types";
 import PerformanceTableCell from "./PerformanceTableCell";
@@ -18,7 +19,7 @@ const PerformanceTableInfo = ({ row, setSelectedTags }) => {
     return (
       <PerformanceTableCell colSpan={3}>
         <Box sx={{ display: "flex", justifyContent: "center" }}>
-          <Chip label="Processing" color="success" size="small" />
+          <StatusBadge status="Processing" role="success" />
         </Box>
       </PerformanceTableCell>
     );
@@ -55,9 +56,6 @@ const PerformanceTableInfo = ({ row, setSelectedTags }) => {
                 label={getTabLabel(tag)}
                 clickable
                 size="small"
-                sx={{
-                  fontSize: "11px",
-                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   setSelectedTags((existingArr) => {

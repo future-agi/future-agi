@@ -78,7 +78,13 @@ export default function AddressNewForm({ open, onClose, onCreate }) {
   });
 
   return (
-    <Dialog fullWidth maxWidth="sm" open={open} onClose={onClose}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      open={open}
+      onClose={onClose}
+    >
       <FormProvider methods={methods} onSubmit={onSubmit}>
         <DialogTitle>New address</DialogTitle>
 

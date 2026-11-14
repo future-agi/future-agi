@@ -227,3 +227,39 @@ class TestCutoverUnpause:
         assert spy["start"]
         historical_task.refresh_from_db()
         assert historical_task.status == EvalTaskStatus.PENDING
+
+    def test_unpause_recovers_a_failed_task(self, auth_client, historical_task, spy):
+        """A task whose workflow died has no other way back: a control activity
+        that exhausts its retry budget writes FAILED, and nothing else restarts
+        a task. Its entries are untouched, so a fresh run reconciles, reaps and
+        drains them."""
+        historical_task.status = EvalTaskStatus.FAILED
+        historical_task.save(update_fields=["status"])
+
+        resp = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.id}",
+            {},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert spy["start"] == [str(historical_task.id)]
+        historical_task.refresh_from_db()
+        assert historical_task.status == EvalTaskStatus.PENDING
+
+    def test_unpause_still_refuses_a_completed_task(
+        self, auth_client, historical_task, spy
+    ):
+        """Only paused/failed are resumable — resuming a completed task would
+        re-spend evaluations on work that already produced results."""
+        historical_task.status = EvalTaskStatus.COMPLETED
+        historical_task.save(update_fields=["status"])
+
+        resp = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.id}",
+            {},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not spy["start"]

@@ -1,5 +1,6 @@
 import React from "react";
 import { Drawer, Box, Typography, Button, IconButton } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import AnnotationFieldWrapper from "src/sections/develop-detail/Annotations/CreateEditLabel/AnnotationFieldWrapper";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -15,11 +16,13 @@ const AnnotateRunDrawer = ({
   observationName,
   onSubmit,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       BackdropProps={{ invisible: true }}
       PaperProps={{
         sx: {
@@ -51,7 +54,7 @@ const AnnotateRunDrawer = ({
           >
             <Typography variant="h6">Annotate - {runName}</Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
 

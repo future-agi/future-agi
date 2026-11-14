@@ -28,10 +28,10 @@ const LeftSection = () => {
       <Box sx={{ paddingTop: "120px", paddingLeft: "90px" }}>
         <Logo width={185} height={43} sx={{ width: "185px", height: "43px" }} />
         <Box height="15px" />
-        <Typography fontWeight={600} fontSize="32px">
+        <Typography fontWeight={600} fontSize="24px">
           Sign-up to get world&apos;s most advanced
         </Typography>
-        <Typography fontWeight={600} fontSize="32px">
+        <Typography fontWeight={600} fontSize="24px">
           <Box
             component="span"
             sx={{
@@ -51,7 +51,7 @@ const LeftSection = () => {
         <List>
           {[
             {
-              icon: <SvgColor src="/assets/icons/auth/ic_bulb_brain.svg" />,
+              icon: <SvgColor width={24} src="/assets/icons/auth/ic_bulb_brain.svg" />,
               primary: "Exponentially better than Manual process:",
               secondary:
                 "Critique AI agent saves 95% of human effort, time and cost",
@@ -62,7 +62,7 @@ const LeftSection = () => {
               secondary: "Open source solutions are not working for most teams",
             },
             {
-              icon: <SvgColor src="/assets/icons/auth/ic_scale_up.svg" />,
+              icon: <SvgColor width={24} src="/assets/icons/auth/ic_scale_up.svg" />,
               primary: "Highly Scalable for enterprise grade apps:",
               secondary:
                 "Can handle billions of inferences instead of just a sample",
@@ -80,11 +80,7 @@ const LeftSection = () => {
               sx={{ mb: 2, paddingLeft: 0 }}
             >
               <ListItemIcon sx={{}}>
-                <Avatar
-                  sx={{ bgcolor: "background.paper", color: "primary.main" }}
-                >
-                  {item.icon}
-                </Avatar>
+                <Avatar>{item.icon}</Avatar>
               </ListItemIcon>
               <ListItemText
                 primary={
@@ -93,7 +89,7 @@ const LeftSection = () => {
                   </Typography>
                 }
                 secondary={
-                  <Typography fontSize="14px">{item.secondary}</Typography>
+                  <Typography fontSize="12px">{item.secondary}</Typography>
                 }
               />
             </ListItem>

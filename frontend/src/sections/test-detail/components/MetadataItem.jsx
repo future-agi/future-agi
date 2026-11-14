@@ -42,16 +42,13 @@ const MetadataItem = ({
         size="small"
         sx={{
           typography: "s1",
-          fontWeight: "fontWeightMedium",
-          color: "blue.700",
-          bgcolor: "blue.o10",
-          borderRadius: 0.25,
-          paddingX: 1,
+          color: "status.info.fg",
+          bgcolor: "status.info.bg",
           "&:hover": {
-            bgcolor: "blue.o10",
+            bgcolor: "status.info.bg",
           },
           "& .MuiChip-icon": {
-            color: "blue.700",
+            color: "status.info.fg",
           },
           ...sx,
         }}

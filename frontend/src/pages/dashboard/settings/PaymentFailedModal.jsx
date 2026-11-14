@@ -36,7 +36,7 @@ const PaymentFailedModal = ({ open, onClose }) => {
         >
           <Typography variant="h6">Your payment has failed!</Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

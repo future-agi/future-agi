@@ -1,10 +1,4 @@
-import {
-  Box,
-  CircularProgress,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Box, Stack, TextField, Typography } from "@mui/material";
 import React, { useState, useEffect, useTransition } from "react";
 import { useFormContext, Controller } from "react-hook-form";
 import { useGlobalVariablesDrawerStoreShallow } from "../../store";
@@ -20,6 +14,7 @@ import { useUpdateDatasetCell } from "../../../../api/agent-playground/agent-pla
 import useWorkflowExecution from "../../hooks/useWorkflowExecution";
 import useCanEditAgent from "../../hooks/useCanEditAgent";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function FormField({ label, value, onChange, readOnly }) {
   return (
@@ -28,7 +23,7 @@ function FormField({ label, value, onChange, readOnly }) {
       gap={0}
       sx={{
         border: "1px solid",
-        borderColor: "whiteScale.500",
+        borderColor: "divider",
         borderRadius: (theme) => theme.spacing(0.5, 0.5, 0, 0),
         overflow: "hidden",
         ...(readOnly && { opacity: 0.6 }),
@@ -36,13 +31,10 @@ function FormField({ label, value, onChange, readOnly }) {
     >
       <Box
         sx={{
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "background.paper"
-              : "whiteScale.200",
+          bgcolor: "background.neutral",
           padding: 1,
           borderBottom: "1px solid",
-          borderColor: "whiteScale.500",
+          borderColor: "divider",
         }}
       >
         <Typography
@@ -164,7 +156,7 @@ export default function ManualVariablesForm({
             height: 200,
           }}
         >
-          <CircularProgress size={24} />
+          <ContentSkeleton variant="panel" />
         </Box>
       ) : (
         <Box>
