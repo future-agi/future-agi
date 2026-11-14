@@ -402,6 +402,34 @@ const TurnRow = React.forwardRef(
             </Tooltip>
           )}
 
+          {showTemporalMetadata && turn.slowResponse && (
+            <Tooltip
+              title={`Slow response: ${turn.silenceBefore.toFixed(1)}s of silence before the agent spoke`}
+              arrow
+            >
+              <Box
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "2px",
+                  // Same weight as the timestamp and duration beside it:
+                  // monospace, small, regular, no fill; only the warning
+                  // color makes it noticeable.
+                  fontFamily: "monospace",
+                  fontSize: 10,
+                  fontWeight: 400,
+                  color: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.warning.main
+                      : theme.palette.warning.darker,
+                }}
+              >
+                <Iconify icon="mdi:timer-sand" width={10} />
+                {` slow ${turn.silenceBefore.toFixed(1)}s`}
+              </Box>
+            </Tooltip>
+          )}
+
           <Box sx={{ flex: 1 }} />
 
           {/* Hover actions */}
@@ -572,6 +600,8 @@ const TranscriptView = ({
   // intervals. Disabling temporal features prevents those weights from being
   // rendered as seconds or interpreted as voice interruptions.
   enableTemporalFeatures = true,
+  // Call view only: keep system rows out of timing and hide them.
+  hideSystemRows = false,
 }) => {
   const colors = useSpeakerColors();
 
@@ -587,10 +617,16 @@ const TranscriptView = ({
   // user clicks a row, clicks "Follow playback", or jumps via the timeline.
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const turns = useMemo(
-    () => enrichTurns(transcript, { enableTemporalFeatures }),
-    [transcript, enableTemporalFeatures],
-  );
+  // With hideSystemRows (call view only), system rows are passed in so an
+  // agent turn right after one is not flagged slow, then dropped here. Other
+  // callers get the transcript exactly as before.
+  const turns = useMemo(() => {
+    if (!hideSystemRows) return enrichTurns(transcript, { enableTemporalFeatures });
+    return enrichTurns(transcript, {
+      enableTemporalFeatures,
+      skipSystemRows: true,
+    }).filter((t) => t.role !== "system");
+  }, [transcript, enableTemporalFeatures, hideSystemRows]);
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
 
@@ -1029,6 +1065,7 @@ TranscriptView.propTypes = {
   talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
   hideSilenceMarkers: PropTypes.bool,
   enableTemporalFeatures: PropTypes.bool,
+  hideSystemRows: PropTypes.bool,
   embedded: PropTypes.bool,
 };
 
