@@ -905,7 +905,7 @@ agentccGateway:
     httpEnabled: true
     # -- Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3.
     minVersion: "1.2"
-    # -- Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 60s.
+    # -- Certificate polling interval [AGENTCC_TLS_RELOAD_INTERVAL]: `1s` to `60s`, `1m`, or `1ms` to `60000ms`. The gateway refuses an interval that is not above zero and at most a minute.
     reloadInterval: 30s
   # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too.
   config:

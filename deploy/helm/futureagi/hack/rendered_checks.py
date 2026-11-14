@@ -1640,6 +1640,18 @@ def check_native_tls(name: str, docs: list[dict]) -> list[str]:
                 failed.append(f"{name}: {component(doc)} needs the public gateway URL")
             if https_only and env.get("SSL_CERT_FILE") != CA_PATH:
                 failed.append(f"{name}: {component(doc)} must trust gateway CA")
+            # The HTTPS dashboard's origin, plus the HTTP one only while that
+            # listener is on (config.extraCsrfOrigins in ci/tls.yaml).
+            origins = ["https://app.example.com"] + (
+                [] if https_only else ["http://app.example.com"]
+            )
+            if component(doc) == "backend" and (
+                env.get("CORS_ALLOWED_ORIGINS", "").split(",") != origins
+                or set(origins) - set(env.get("EXTRA_CSRF_ORIGINS", "").split(","))
+            ):
+                failed.append(
+                    f"{name}: backend CORS and CSRF origins must be {origins}"
+                )
     return failed
 
 

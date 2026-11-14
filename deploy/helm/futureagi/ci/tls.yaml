@@ -10,3 +10,7 @@ frontend:
 urls:
   gateway: https://gateway.example.com
   api: https://api.example.com
+  app: https://app.example.com
+config:
+  # Both listeners on: users still on the HTTP one keep calling the API.
+  extraCsrfOrigins: http://app.example.com

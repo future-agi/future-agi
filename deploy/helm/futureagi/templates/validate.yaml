@@ -141,11 +141,15 @@ Renders nothing when the values are consistent.
 {{- $errors = append $errors "frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled: their routes target plain HTTP" -}}
 {{- end -}}
 {{- if and (not $gw.tls.httpEnabled) (not (or $v.global.caBundle.configMap $v.global.caBundle.secret)) -}}
-{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false requires global.caBundle.configMap or global.caBundle.secret: backend and workers call the gateway in-cluster and must trust its certificate" -}}
+{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false requires global.caBundle.configMap or global.caBundle.secret: backend and workers call the gateway in-cluster and must trust its certificate. As SSL_CERT_FILE and REQUESTS_CA_BUNDLE it replaces the pods' trust store, so it must hold the public roots as well as the gateway CA, e.g. the system ca-certificates bundle with the issuing CA appended (see global.caBundle in the chart README)" -}}
 {{- end -}}
 {{- $apiUrl := include "futureagi.url.api" . -}}
 {{- if and $v.frontend.tls.enabled (hasPrefix "http://" (lower $apiUrl)) (eq (include "futureagi.isLocalUrl" $apiUrl) "") -}}
 {{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.api: a non-local HTTP API URL causes mixed content in the dashboard" -}}
+{{- end -}}
+{{- $appUrl := include "futureagi.url.app" . -}}
+{{- if and $v.frontend.tls.enabled (hasPrefix "http://" (lower $appUrl)) (eq (include "futureagi.isLocalUrl" $appUrl) "") -}}
+{{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.app: CORS and CSRF allow only that origin, so the API would refuse the HTTPS dashboard. While frontend.tls.httpEnabled=true, add the http:// origin to config.extraCsrfOrigins for users still on the HTTP listener" -}}
 {{- end -}}
 {{- $gwRedis := dig "redis" "enabled" "auto" $gw | toString -}}
 {{- if not (has $gwRedis (list "auto" "true" "false")) -}}

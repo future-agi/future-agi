@@ -5,6 +5,8 @@ agentccGateway:
 frontend:
   tls:
     httpEnabled: false
+config:
+  extraCsrfOrigins: ""
 global:
   caBundle:
     secret: gateway-ca

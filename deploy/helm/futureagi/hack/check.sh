@@ -113,6 +113,12 @@ refused=(
   "HTTPS-only gateway without a CA bundle|agentccGateway.tls.httpEnabled=false requires global.caBundle|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
   "HTTPS frontend with remote plain HTTP API|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=http://api.example.com"
   "HTTPS frontend with remote HTTP API, upper-case scheme|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=HTTP://api.example.com"
+  "HTTPS-only gateway: the CA bundle replaces the trust store|it replaces the pods' trust store, so it must hold the public roots as well as the gateway CA|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
+  "HTTPS frontend with remote plain HTTP app URL|frontend.tls.enabled needs an HTTPS urls.app|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=https://api.example.com --set urls.app=http://app.example.com"
+  "HTTPS frontend with remote HTTP app URL, upper-case scheme|frontend.tls.enabled needs an HTTPS urls.app|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=https://api.example.com --set urls.app=HTTP://app.example.com"
+  "a gateway reload interval over a minute|re:reloadInterval.*oes not match pattern|--set agentccGateway.tls.reloadInterval=2m"
+  "a zero gateway reload interval|re:reloadInterval.*oes not match pattern|--set agentccGateway.tls.reloadInterval=0s"
+  "a gateway reload interval that is not a duration|re:reloadInterval.*oes not match pattern|--set-string agentccGateway.tls.reloadInterval=30"
   "recaptcha without its key|config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY|--set config.recaptcha=true"
   "gateway replicas without Redis|agentccGateway runs more than one replica without Redis|--set agentccGateway.replicas=2 --set agentccGateway.redis.enabled=false"
   "gateway Redis over TLS|the gateway has no Redis TLS|--set redis.mode=external --set redis.external.host=r --set redis.external.tls=true --set agentccGateway.redis.enabled=true"
@@ -259,6 +265,18 @@ if KUBECONFIG="$out/no-kubeconfig" "$helm" install futureagi "$chart" --dry-run=
     fail "the install notes misprint a proxy with an odd login"
   }
   echo "ok   host:port only"
+  # An HTTPS-only frontend Service has no http port: forward its https one.
+  KUBECONFIG="$out/no-kubeconfig" "$helm" install futureagi "$chart" --dry-run=client --namespace futureagi \
+    -f "$chart/examples/bundled.yaml" --set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe \
+    --set frontend.tls.httpEnabled=false >"$out/notes-tls.txt" 2>&1 || { cat "$out/notes-tls.txt" >&2; fail "install notes with an HTTPS-only frontend"; }
+  sed -n '/^NOTES:/,$p' "$out/notes-tls.txt" >"$out/notes-tls-only.txt"
+  if ! grep -qF 'port-forward svc/futureagi-frontend 3443:443' "$out/notes-tls-only.txt" ||
+    ! grep -qF 'then open https://localhost:3443' "$out/notes-tls-only.txt" ||
+    grep -qF 'svc/futureagi-frontend 3000:' "$out/notes-tls-only.txt"; then
+    cat "$out/notes-tls-only.txt" >&2
+    fail "the install notes forward the HTTP port of an HTTPS-only frontend"
+  fi
+  echo "ok   HTTPS-only frontend port-forward"
 elif grep -q 'cluster unreachable' "$out/notes.txt"; then
   echo "skip (this Helm needs a cluster for a client-side dry run)"
 else

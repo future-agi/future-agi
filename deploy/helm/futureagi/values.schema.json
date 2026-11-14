@@ -2541,7 +2541,8 @@
             },
             "reloadInterval": {
               "type": "string",
-              "description": "Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 60s."
+              "pattern": "^(([1-9]|[1-5][0-9]|60)s|1m|1m0s|([1-9][0-9]{0,3}|[1-5][0-9]{4}|60000)ms)$",
+              "description": "Certificate polling interval [AGENTCC_TLS_RELOAD_INTERVAL]: `1s` to `60s`, `1m`, or `1ms` to `60000ms`. The gateway refuses an interval that is not above zero and at most a minute."
             }
           }
         },

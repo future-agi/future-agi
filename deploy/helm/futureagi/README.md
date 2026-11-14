@@ -691,13 +691,29 @@ urls:
   app: https://app.example.com
   api: https://api.example.com
   gateway: https://gateway.example.com
+config:
+  # Only while frontend.tls.httpEnabled is true, for users still on HTTP.
+  extraCsrfOrigins: http://app.example.com
 ```
 
 Start with **both** listeners enabled; move clients to HTTPS and verify the
-SPA's `/config.js` points to `urls.api` over HTTPS. Then set
-`agentccGateway.tls.httpEnabled: false` and `frontend.tls.httpEnabled: false`
-and provide `global.caBundle.secret` (or `.configMap`) containing the gateway
-CA for the backend and worker pods. With gateway HTTP disabled their internal
+SPA's `/config.js` points to `urls.api` over HTTPS. Set `urls.app` to the
+HTTPS dashboard URL: the API allows browser calls (CORS and CSRF) from that
+one origin, and the chart refuses frontend TLS with a non-local `http://`
+`urls.app`. While users still open the HTTP listener, add its origin to
+`config.extraCsrfOrigins` (for example `extraCsrfOrigins: http://app.example.com`),
+and remove it when HTTP goes off.
+
+Then set `agentccGateway.tls.httpEnabled: false` and
+`frontend.tls.httpEnabled: false`, and provide `global.caBundle.secret` (or
+`.configMap`) for the backend and worker pods. The bundle **replaces** their
+trust store (it becomes `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`), so it must
+hold the public roots as well as the gateway CA; a bundle with only the
+gateway CA breaks every public HTTPS call from those pods (LLM providers,
+webhooks, object storage, the license check). Build it from the system
+bundle, for example
+`cat /etc/ssl/certs/ca-certificates.crt gateway-ca.pem > ca.crt`, and see
+**Custom CA** under [Enterprise](#enterprise). With gateway HTTP disabled their internal
 `AGENTCC_INTERNAL_URL` / `AGENTCC_GATEWAY_INTERNAL_URL` switch to the HTTPS
 Service port. The chart refuses HTTP-only Ingress or Gateway API routes after
 you disable the listener they target; remove those routes or keep HTTP on.
@@ -1575,7 +1591,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `agentccGateway.tls.servicePort` | `8443` | Gateway HTTPS Service port. |
 | `agentccGateway.tls.httpEnabled` | `true` | Keep HTTP on the configured server port during migration [AGENTCC_HTTP_ENABLED]; requires enabled=true when false. |
 | `agentccGateway.tls.minVersion` | `"1.2"` | Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3. |
-| `agentccGateway.tls.reloadInterval` | `"30s"` | Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 60s. |
+| `agentccGateway.tls.reloadInterval` | `"30s"` | Certificate polling interval [AGENTCC_TLS_RELOAD_INTERVAL]: `1s` to `60s`, `1m`, or `1ms` to `60000ms`. The gateway refuses an interval that is not above zero and at most a minute. |
 | `agentccGateway.config` | see values.yaml | Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too. |
 | `agentccGateway.controlPlaneSync` | `true` | Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys. |
 | `agentccGateway.allowPrivateProviderURLs` | `false` | Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL. |
