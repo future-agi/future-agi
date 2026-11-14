@@ -25,7 +25,8 @@ import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPla
    phone (PSTN); `inboundCalls` is the old call-direction binary (on = inbound);
    `agentSpeaksFirst` waits for the agent's greeting. `systemPrompt` is the
    pasted prompt Others and LiveKit need, since neither exposes one to fetch;
-   `livekitUrl` and `apiSecret` are LiveKit-only. */
+   `livekitUrl` and `apiSecret` are LiveKit-only. `providerFields` holds the
+   values of a platform that declares its own `fields` (Copilot Studio, Foundry). */
 const initial = {
   agentType: AGENT_TYPES.VOICE,
   platform: (HOSTED_PLATFORMS_BY_TYPE[AGENT_TYPES.VOICE] || [])[0]?.id || "",
@@ -41,6 +42,7 @@ const initial = {
   agentSpeaksFirst: false,
   systemPrompt: "",
   scenarioCount: DEFAULT_SCENARIOS,
+  providerFields: {},
 };
 
 function reducer(s, a) {
@@ -60,7 +62,7 @@ export default function PanelHostedPlatform() {
   const {
     agentType, platform, id, key, apiSecret, livekitUrl, repoUrl,
     simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, systemPrompt,
-    scenarioCount,
+    scenarioCount, providerFields,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
   // Coming-soon (not-yet-a-connector) platforms sort to the end, so the
@@ -81,11 +83,22 @@ export default function PanelHostedPlatform() {
     set("livekitUrl")("");
     set("repoUrl")("");
     set("systemPrompt")("");
+    set("providerFields")({});
   };
+
+  // A platform's own fields never carry over to another platform.
+  const pickPlatform = (nextPlatform) => {
+    set("platform")(nextPlatform);
+    set("providerFields")({});
+  };
+  const setProviderField = (name) => (value) =>
+    set("providerFields")((prev) => ({ ...prev, [name]: value }));
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
   const isOther = !!chosen?.isOther;
   const isLiveKit = !!chosen?.isLiveKit;
+  const ownFields = Array.isArray(chosen?.fields) ? chosen.fields : null;
+  const fieldValue = (name) => String(providerFields[name] || "").trim();
   // Others has no WebRTC path, so it requires a number regardless of simMode;
   // other voice envs only require it in Phone mode.
   const phoneRequired =
@@ -97,7 +110,9 @@ export default function PanelHostedPlatform() {
     : null;
   const preflightBlockedReason = phoneError ? `Contact number: ${phoneError}` : null;
   const hasPrompt = !!systemPrompt.trim();
-  const credsOk = isOther
+  const credsOk = ownFields
+    ? ownFields.every((f) => !f.required || !!fieldValue(f.name))
+    : isOther
     ? hasPrompt
     : !!id.trim() && !!key.trim() &&
       (!isLiveKit || (!!apiSecret.trim() && !!livekitUrl.trim() && hasPrompt));
@@ -108,7 +123,22 @@ export default function PanelHostedPlatform() {
     agentType,
     provider: chosen?.id,
     scenarioCount: Number(scenarioCount) || undefined,
-    ...(isOther
+    ...(ownFields
+      ? {
+          agentId: fieldValue(ownFields.find((f) => f.agentId)?.name),
+          // Secrets ride in the fields redaction strips; the rest is public config.
+          ...Object.fromEntries(
+            ownFields
+              .filter((f) => f.secret && fieldValue(f.name))
+              .map((f) => [f.secret, fieldValue(f.name)]),
+          ),
+          providerConfig: Object.fromEntries(
+            ownFields
+              .filter((f) => !f.secret)
+              .map((f) => [f.name, fieldValue(f.name)]),
+          ),
+        }
+      : isOther
       ? { agentMode: "prompt", prompt: systemPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
     ...(isLiveKit
@@ -177,7 +207,7 @@ export default function PanelHostedPlatform() {
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 comingSoon={p.comingSoon}
                 on={platform === p.id}
-                onClick={() => set("platform")(p.id)}
+                onClick={() => pickPlatform(p.id)}
               />
             ))}
           </Box>
@@ -185,7 +215,22 @@ export default function PanelHostedPlatform() {
       </Box>
       {chosen && (
         <>
-          {isOther ? (
+          {ownFields ? (
+            ownFields.map((f) => (
+              <Field
+                key={f.name}
+                label={f.label}
+                required={!!f.required}
+                placeholder={f.placeholder}
+                value={providerFields[f.name] || ""}
+                onChange={setProviderField(f.name)}
+                {...(f.secret ? { type: "password" } : {})}
+                autoComplete="new-password"
+                mono
+                helper={f.helper}
+              />
+            ))
+          ) : isOther ? (
             <Field
               label="System prompt"
               required
@@ -257,13 +302,15 @@ export default function PanelHostedPlatform() {
               webOnly={isLiveKit}
             />
           )}
-          <Field
-            label="GitHub repo"
-            placeholder="https://github.com/your-org/your-agent"
-            value={repoUrl} onChange={set("repoUrl")}
-            mono
-            helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
-          />
+          {!ownFields && (
+            <Field
+              label="GitHub repo"
+              placeholder="https://github.com/your-org/your-agent"
+              value={repoUrl} onChange={set("repoUrl")}
+              mono
+              helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
+            />
+          )}
         </>
       )}
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />

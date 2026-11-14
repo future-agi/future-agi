@@ -4,7 +4,8 @@ import { parseGitHubInput, parseEgressDomains } from "src/pages/dashboard/harnes
  * Maps a redacted Phase-1 source draft to a schema-valid `HarnessPreflight`
  * body (or `{ skipped: reason }` when the draft cannot be preflighted for
  * real). Contract: `HarnessSource.kind ∈ {github, archive, remote, provider}`,
- * `HarnessAgent.connector ∈ {livekit, vapi, retell, retell_chat, phone, auto}`
+ * `HarnessAgent.connector ∈ {livekit, vapi, retell, retell_chat, phone, auto,
+ * copilot_studio, foundry}`
  * (openapi-contract.generated.js HarnessSource / HarnessAgent). The body is
  * runtime-validated client-side, so undefined keys are never emitted.
  *
@@ -39,7 +40,16 @@ export const PREFLIGHT_CONNECTOR = {
   RETELL_CHAT: "retell_chat",
   LIVEKIT: "livekit",
   PHONE: "phone",
+  COPILOT_STUDIO: "copilot_studio",
+  FOUNDRY: "foundry",
 };
+
+// Microsoft agents are chat agents read through an Entra app; their public
+// settings travel as `providerConfig`, their secrets as credential values.
+const MICROSOFT_CONNECTORS = new Set([
+  PREFLIGHT_CONNECTOR.COPILOT_STUDIO,
+  PREFLIGHT_CONNECTOR.FOUNDRY,
+]);
 
 // The roster providers that exist in the HarnessAgent.connector enum. `retell`
 // is the voice connector; `retell_chat` is the only real chat connector.
@@ -51,6 +61,8 @@ export const PROVIDER_TO_CONNECTOR = {
   retell_chat: PREFLIGHT_CONNECTOR.RETELL_CHAT,
   livekit: PREFLIGHT_CONNECTOR.LIVEKIT,
   other: PREFLIGHT_CONNECTOR.PHONE,
+  copilot_studio: PREFLIGHT_CONNECTOR.COPILOT_STUDIO,
+  foundry: PREFLIGHT_CONNECTOR.FOUNDRY,
 };
 
 // The contact panel keeps the dial code and the local number apart; the
@@ -194,7 +206,13 @@ function platformPayload(draft, name) {
   }
 
   let config;
-  if (connector === PREFLIGHT_CONNECTOR.PHONE) {
+  if (MICROSOFT_CONNECTORS.has(connector)) {
+    config = Object.fromEntries(
+      Object.entries(draft.providerConfig || {})
+        .map(([key, value]) => [key, String(value ?? "").trim()])
+        .filter(([, value]) => value),
+    );
+  } else if (connector === PREFLIGHT_CONNECTOR.PHONE) {
     const prompt = String(draft.prompt || "").trim();
     if (!prompt) return { skipped: "Others needs the agent's system prompt" };
     // The platform dials the number itself, so the caller can only be the

@@ -144426,7 +144426,9 @@
                         "retell",
                         "retell_chat",
                         "phone",
-                        "auto"
+                        "auto",
+                        "copilot_studio",
+                        "foundry"
                     ]
                 },
                 "mode": {
