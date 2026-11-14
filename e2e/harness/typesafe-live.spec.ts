@@ -10,7 +10,7 @@ import { ApiError } from '../lib/api-client';
 import { E2E } from '../lib/env';
 import {
   MOCK_REFUSAL_TEXT, TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
-  semanticVerdict, unknownModelVerdict,
+  semanticVerdict, unknownModelVerdict, rotateOutcome, gatewayHoldsKey,
 } from '../lib/typesafe-live';
 import type { CallRecord, Verdict } from '../lib/typesafe-live';
 
@@ -30,8 +30,11 @@ import type { CallRecord, Verdict } from '../lib/typesafe-live';
 // the expected cost and a verdict. Findings are soft assertions, so every case
 // runs and the report is complete; any FAIL fails the test.
 //
-// Keys never reach Playwright, so they cannot reach its reports either: not
-// the TypeSafe key, not the gateway keys. Playwright titles an input step with
+// The TypeSafe key never reaches Playwright, so it cannot reach its reports
+// either. (The synthetic gateway keys do: they come back in the bodies of
+// owner.api.post('/agentcc/api-keys/'), which runs through Playwright's request
+// context. They are local to this stack and deleted with it; with trace off
+// they are not recorded.) Playwright titles an input step with
 // the value typed (`Fill "<value>"`), snapshots a failing page's inputs
 // (password fields included) into error-context.md, and stores an API call's
 // log, request headers included, as the step's error on a transport failure;
@@ -109,8 +112,10 @@ const Q = {
 };
 const ALL = { ...Q.noul, ...Q.choice, ...Q.score };
 
-// No key is ever typed into the page (see above); trace, screenshots and video
-// stay off anyway, so a later change cannot capture one by accident.
+// Load-bearing, not just in case: no key is typed into the page (see above),
+// but a trace records every request-context call with its response body, and
+// the gateway keys come back in those bodies. Keep trace, screenshots and video
+// off. scripts/typesafe-live-spec-guard.test.mjs fails if this line changes.
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 
 test.describe('TypeSafe Jev live decision route (opt-in)', () => {
@@ -176,7 +181,9 @@ async function http(base: string, method: string, route: string,
   const headers = Object.fromEntries(Object.entries(opts.headers ?? {}).filter(([, v]) => v !== ''));
   let res: Response;
   try {
-    res = await fetch(new URL(route, base), { method, headers, body: opts.body,
+    // Concatenated as ApiClient does, so a path-prefixed base (attach mode)
+    // keeps its prefix; new URL(route, base) would drop it.
+    res = await fetch(`${base.replace(/\/+$/, '')}${route}`, { method, headers, body: opts.body,
       signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000) });
   } catch (e) {
     const err = e as Error & { cause?: { message?: string; code?: string } };
@@ -224,12 +231,15 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       ? await http(E2E.apiUrl, 'POST', `/agentcc/provider-credentials/${String(typesafe.id)}/rotate/`,
         { headers: ownerHeaders, body: JSON.stringify({ credentials: { api_key: TYPESAFE_KEY } }) })
       : undefined;
-    const synced = rotated ? (json(rotated).result as { gateway_synced?: boolean } | undefined)?.gateway_synced : undefined;
+    const rotate = rotateOutcome(rotated?.status, rotated ? json(rotated) : undefined);
     addCase({ id: '1a', title: 'Dashboard TypeSafe preset saves a provider; the key is set by rotate', ticket: 'Add a TypeSafe provider with a TypeSafe key',
-      verdict: savedStatus === 200 && !!typesafe && rotated?.status === 200 && synced === true ? 'PASS' : 'FAIL',
+      verdict: savedStatus === 200 && !!typesafe && rotate.ok ? 'PASS' : 'FAIL',
       actual: `save status ${savedStatus}; provider ${typesafe ? `saved, models ${JSON.stringify(typesafe.models_list)}` : 'missing'}; `
-        + `key rotate ${rotated?.status ?? 'not run'}, gateway_synced ${String(synced)}`,
+        + rotate.detail,
       calls: [] });
+    // Every billed case after this needs the real key on the gateway. With
+    // the placeholder they would all fail as if TypeSafe refused the key.
+    if (typesafe && !rotate.ok) throw new Error(`TypeSafe key was not set (${rotate.detail}); cannot continue`);
     return typesafe ? { ...typesafe, saveUrl: savedRes.url() } as Record<string, unknown> & { saveUrl: string } : undefined;
   });
   if (!providerCfg) throw new Error('TypeSafe provider was not saved; cannot continue');
@@ -248,10 +258,14 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     await expect.poll(async () => {
       const res = await admin('/-/orgs/configs');
       if (res.status !== 200) return `status ${res.status}`;
-      const providers = (json(res).data?.[owner.organizationId]?.providers ?? {}) as Record<string, unknown>;
-      // Presence only: the response holds the provider keys and is never logged.
-      return [PROVIDER, BAD_KEY_PROVIDER].every(p => p in providers) ? 'ready' : 'waiting';
-    }, { ...CONFIG_VISIBLE, message: 'org providers reach the gateway' }).toBe('ready');
+      const configs = json(res);
+      const providers = (configs.data?.[owner.organizationId]?.providers ?? {}) as Record<string, unknown>;
+      // Booleans only: the response holds the provider keys and is never
+      // logged. The placeholder the dialog saved also makes the provider
+      // present, so the real key must be what the gateway holds.
+      return [PROVIDER, BAD_KEY_PROVIDER].every(p => p in providers)
+        && gatewayHoldsKey(configs, owner.organizationId, PROVIDER, TYPESAFE_KEY) ? 'ready' : 'waiting';
+    }, { ...CONFIG_VISIBLE, message: 'the org providers and the real TypeSafe key reach the gateway' }).toBe('ready');
     await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', auth)).status,
       { ...CONFIG_VISIBLE, message: 'gateway key synced' }).toBe(200);
   });

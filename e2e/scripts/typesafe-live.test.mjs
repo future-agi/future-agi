@@ -52,8 +52,29 @@ test("upstream totals count every 200, also from a call made expecting no upstre
   assert.deepEqual(counters, { upstreamCalls: 2, upstreamInputTokens: 37 });
 });
 
-test("the 20k-token state keeps its size at 6 characters per token", () => {
-  assert.ok(lib.largeState(20_000).length >= 20_000 * 6);
+test("the 20k-token state stays inside the product's Jev input limit", () => {
+  const state = lib.largeState(20_000);
+  // >= 20k tokens for a tokenizer at up to 5.5 characters per token...
+  assert.ok(state.length >= 20_000 * 5.5, `${state.length} characters`);
+  // ...and inside futureagi/ee/jev/mapping.py check_input_size
+  // (characters / 4 <= JEV_MAX_STATE_TOKENS = 30,000), with a margin.
+  assert.ok(state.length / 4 <= 28_000, `${state.length / 4} estimated tokens`);
+});
+
+test("a failed key rotate stops the run", () => {
+  assert.equal(lib.rotateOutcome(200, { result: { gateway_synced: true } }).ok, true);
+  assert.equal(lib.rotateOutcome(200, { result: { gateway_synced: false } }).ok, false);
+  assert.equal(lib.rotateOutcome(500, { result: { gateway_synced: true } }).ok, false);
+  assert.equal(lib.rotateOutcome(undefined, undefined).ok, false);
+  assert.equal(lib.rotateOutcome(200, {}).ok, false);
+});
+
+test("the readiness check wants the real key on the gateway, not a placeholder", () => {
+  const configs = (key) => ({ data: { org: { providers: { typesafe: { api_key: key } } } } });
+  assert.equal(lib.gatewayHoldsKey(configs("ts-real"), "org", "typesafe", "ts-real"), true);
+  assert.equal(lib.gatewayHoldsKey(configs("ts-placeholder-x"), "org", "typesafe", "ts-real"), false);
+  assert.equal(lib.gatewayHoldsKey({ data: {} }, "org", "typesafe", "ts-real"), false);
+  assert.equal(lib.gatewayHoldsKey(configs(""), "org", "typesafe", ""), false);
 });
 
 test("Case 3 dry run: the body must be the mock's bytes, not just equal JSON", () => {
@@ -122,12 +143,17 @@ test("Case 6c live: TypeSafe accepting an odd question is a note, a 5xx fails", 
   assert.equal(lib.semanticVerdict([call('{"error":{}}', { status: 502, headers: { "x-agentcc-upstream-status": "500" } })], { dryRun: false }), "FAIL");
 });
 
-test("Case 6f live: passed-through refusals other than 404 are a note; 502 fails", () => {
+test("Case 6f: live refusals other than 404 are a note; dry run wants the mock's pass-through 400; 502 fails", () => {
   const err = (status, code, upstream) => call(JSON.stringify({ error: { code } }),
     { status, headers: upstream ? { "x-agentcc-upstream-status": upstream } : {} });
   assert.equal(lib.unknownModelVerdict(err(404, "model_not_found", "404"), { dryRun: false }), "PASS");
   assert.equal(lib.unknownModelVerdict(err(400, "upstream_rejected", "400"), { dryRun: false }), "NOTE");
   assert.equal(lib.unknownModelVerdict(err(502, "upstream_error", "500"), { dryRun: false }), "FAIL");
-  assert.equal(lib.unknownModelVerdict(err(400, "upstream_rejected", "400"), { dryRun: true }), "NOTE");
+  const mockRefusal = call(JSON.stringify({ error: { code: "upstream_rejected", message: "invalid synthetic decision request" } }),
+    { status: 400, headers: { "x-agentcc-upstream-status": "400" } });
+  assert.equal(lib.unknownModelVerdict(mockRefusal, { dryRun: true }), "PASS");
+  // A dry run tells a pass-through from a local refusal or a 200.
+  assert.equal(lib.unknownModelVerdict(err(400, "upstream_rejected", ""), { dryRun: true }), "FAIL");
+  assert.equal(lib.unknownModelVerdict(call(mockText({ type: "noul" })), { dryRun: true }), "FAIL");
   assert.equal(lib.unknownModelVerdict(err(502, "upstream_error", "500"), { dryRun: true }), "FAIL");
 });

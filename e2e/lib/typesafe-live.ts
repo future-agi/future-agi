@@ -31,12 +31,41 @@ export const TICKET = 'Synthetic support ticket #E2E-4471: the customer says the
 export function largeState(minTokens: number): string {
   const lorem = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore '
     + 'et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip. ';
-  // English runs at about 4 characters per token; Jev's tokenizer is unknown,
-  // so size for 6, which keeps a tokenizer up to 50% more efficient above
-  // minTokens. Two such calls cost under $0.004 at $0.042/M.
-  return `${TICKET}\n${lorem.repeat(Math.ceil((minTokens * CHARS_PER_TOKEN) / lorem.length))}`;
+  // English runs at about 4 characters per token; Jev's tokenizer is unknown.
+  // Sized at 5.5 characters per token, so a tokenizer up to 37% more efficient
+  // than English still sees minTokens, while the product's own input check
+  // (futureagi/ee/jev/mapping.py check_input_size: characters / 4 must not
+  // exceed JEV_MAX_STATE_TOKENS, 30,000) still accepts it. Two such calls cost
+  // under $0.004 at $0.042/M.
+  const repeats = Math.ceil((minTokens * CHARS_PER_TOKEN - TICKET.length - 1) / lorem.length);
+  const state = `${TICKET}\n${lorem.repeat(Math.max(0, repeats))}`;
+  if (state.length / 4 > MAX_STATE_ESTIMATE_TOKENS) {
+    throw new Error(`a ${minTokens}-token state would be over the product's Jev input limit`);
+  }
+  return state;
 }
-const CHARS_PER_TOKEN = 6;
+export const CHARS_PER_TOKEN = 5.5;
+// futureagi/ee/jev/mapping.py: JEV_MAX_STATE_TOKENS (30,000) at 4 characters
+// per token, less a margin, so the 20k-token state stays inside it.
+export const MAX_STATE_ESTIMATE_TOKENS = 28_000;
+
+// The real key reaches the gateway only through the provider's rotate API
+// (the dialog saves a placeholder). A run whose rotate did not succeed, or
+// whose config push did not reach the gateway, would send every billed case
+// with the placeholder: it must stop instead.
+export function rotateOutcome(status: number | undefined, body: unknown): { ok: boolean; detail: string } {
+  const synced = (body as { result?: { gateway_synced?: boolean } } | undefined)?.result?.gateway_synced;
+  return { ok: status === 200 && synced === true, detail: `key rotate ${status ?? 'not run'}, gateway_synced ${String(synced)}` };
+}
+
+// True when the gateway's org config holds exactly this key for the provider.
+// Returns a boolean only: the configs response carries provider keys and is
+// never logged or attached.
+export function gatewayHoldsKey(configs: unknown, orgId: string, provider: string, key: string): boolean {
+  const providers = (configs as { data?: Record<string, { providers?: Record<string, { api_key?: unknown }> }> })
+    ?.data?.[orgId]?.providers;
+  return !!key && providers?.[provider]?.api_key === key;
+}
 
 // The mock's exact bytes for one question "resolved" (e2e/stack/mock-llm/server.mjs:
 // model echoed, then answers, then usage with 37 input tokens; JSON.stringify).
@@ -150,9 +179,16 @@ export function refusalVerdict(c: CallRecord, opts: { dryRun: boolean }): Verdic
 // Case 6f: a model TypeSafe does not know. The ticket asks for the refusal to
 // be passed through, not turned into a 502. Live, 404 model_not_found is the
 // prediction: it passes, another passed-through 4xx is recorded as a note.
+export const MOCK_UNKNOWN_MODEL_MESSAGE = 'invalid synthetic decision request';
 export function unknownModelVerdict(c: CallRecord, opts: { dryRun: boolean }): Verdict {
   if (c.status >= 500) return 'FAIL';
-  if (opts.dryRun) return 'NOTE';
+  // The mock refuses an unknown model with this 400 (e2e/stack/mock-llm), and
+  // the gateway passes it through with the upstream status: anything else in
+  // a dry run (a 200, or a local refusal with no upstream status) is a FAIL.
+  if (opts.dryRun) {
+    return c.status === 400 && c.headers['x-agentcc-upstream-status'] === '400'
+      && errorOf(c).message === MOCK_UNKNOWN_MODEL_MESSAGE ? 'PASS' : 'FAIL';
+  }
   if (c.status === 404 && errorOf(c).code === 'model_not_found' && c.headers['x-agentcc-upstream-status'] === '404') return 'PASS';
   return c.status >= 400 && c.headers['x-agentcc-upstream-status'] ? 'NOTE' : 'FAIL';
 }
