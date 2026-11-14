@@ -1139,6 +1139,7 @@ import type {
   SDKConfigureEvaluationsResponseApi,
   SDKErrorResponseApi,
   SDKEvalTemplateResponseApi,
+  SDKEvaluationDenialResponseApi,
   SDKGetEvalsResponseApi,
   SDKSimulationAnalyticsResponseApi,
   SDKSimulationMetricsResponseApi,
@@ -31248,9 +31249,14 @@ export type modelHubDatasetJsonSchemaListResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetJsonSchemaListResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetJsonSchemaListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetJsonSchemaListResponseSuccess =
@@ -31263,6 +31269,7 @@ export type modelHubDatasetJsonSchemaListResponseError = (
   | modelHubDatasetJsonSchemaListResponse404
   | modelHubDatasetJsonSchemaListResponse409
   | modelHubDatasetJsonSchemaListResponse500
+  | modelHubDatasetJsonSchemaListResponse503
   | modelHubDatasetJsonSchemaListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -36161,9 +36168,14 @@ export type modelHubDevelopsDownloadDatasetListResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsDownloadDatasetListResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDevelopsDownloadDatasetListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsDownloadDatasetListResponseSuccess =
@@ -36176,6 +36188,7 @@ export type modelHubDevelopsDownloadDatasetListResponseError = (
   | modelHubDevelopsDownloadDatasetListResponse404
   | modelHubDevelopsDownloadDatasetListResponse409
   | modelHubDevelopsDownloadDatasetListResponse500
+  | modelHubDevelopsDownloadDatasetListResponse503
   | modelHubDevelopsDownloadDatasetListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -38254,6 +38267,11 @@ export type modelHubEvalPlaygroundCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubEvalPlaygroundCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubEvalPlaygroundCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -38269,6 +38287,11 @@ export type modelHubEvalPlaygroundCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubEvalPlaygroundCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubEvalPlaygroundCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -38276,7 +38299,10 @@ export type modelHubEvalPlaygroundCreateResponse500 = {
 
 export type modelHubEvalPlaygroundCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubEvalPlaygroundCreateResponseSuccess =
@@ -38285,9 +38311,11 @@ export type modelHubEvalPlaygroundCreateResponseSuccess =
   };
 export type modelHubEvalPlaygroundCreateResponseError = (
   | modelHubEvalPlaygroundCreateResponse400
+  | modelHubEvalPlaygroundCreateResponse402
   | modelHubEvalPlaygroundCreateResponse403
   | modelHubEvalPlaygroundCreateResponse404
   | modelHubEvalPlaygroundCreateResponse409
+  | modelHubEvalPlaygroundCreateResponse429
   | modelHubEvalPlaygroundCreateResponse500
   | modelHubEvalPlaygroundCreateResponseDefault
 ) & {
@@ -54025,6 +54053,11 @@ export type modelHubTestEvaluationCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubTestEvaluationCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubTestEvaluationCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -54040,6 +54073,11 @@ export type modelHubTestEvaluationCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubTestEvaluationCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubTestEvaluationCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -54047,7 +54085,10 @@ export type modelHubTestEvaluationCreateResponse500 = {
 
 export type modelHubTestEvaluationCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubTestEvaluationCreateResponseSuccess =
@@ -54056,9 +54097,11 @@ export type modelHubTestEvaluationCreateResponseSuccess =
   };
 export type modelHubTestEvaluationCreateResponseError = (
   | modelHubTestEvaluationCreateResponse400
+  | modelHubTestEvaluationCreateResponse402
   | modelHubTestEvaluationCreateResponse403
   | modelHubTestEvaluationCreateResponse404
   | modelHubTestEvaluationCreateResponse409
+  | modelHubTestEvaluationCreateResponse429
   | modelHubTestEvaluationCreateResponse500
   | modelHubTestEvaluationCreateResponseDefault
 ) & {
@@ -55769,6 +55812,16 @@ export type sdkApiV1EvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1EvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1EvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1EvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -55776,7 +55829,7 @@ export type sdkApiV1EvalCreateResponse500 = {
 
 export type sdkApiV1EvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1EvalCreateResponseSuccess =
@@ -55785,6 +55838,8 @@ export type sdkApiV1EvalCreateResponseSuccess =
   };
 export type sdkApiV1EvalCreateResponseError = (
   | sdkApiV1EvalCreateResponse400
+  | sdkApiV1EvalCreateResponse402
+  | sdkApiV1EvalCreateResponse429
   | sdkApiV1EvalCreateResponse500
   | sdkApiV1EvalCreateResponseDefault
 ) & {
@@ -56113,6 +56168,16 @@ export type sdkApiV1NewEvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1NewEvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1NewEvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1NewEvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -56120,7 +56185,7 @@ export type sdkApiV1NewEvalCreateResponse500 = {
 
 export type sdkApiV1NewEvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1NewEvalCreateResponseSuccess =
@@ -56129,6 +56194,8 @@ export type sdkApiV1NewEvalCreateResponseSuccess =
   };
 export type sdkApiV1NewEvalCreateResponseError = (
   | sdkApiV1NewEvalCreateResponse400
+  | sdkApiV1NewEvalCreateResponse402
+  | sdkApiV1NewEvalCreateResponse429
   | sdkApiV1NewEvalCreateResponse500
   | sdkApiV1NewEvalCreateResponseDefault
 ) & {
@@ -82160,18 +82227,37 @@ export type tracerProjectReadResponse200 = {
   status: 200;
 };
 
+export type tracerProjectReadResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectReadResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectReadResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
 };
 
 export type tracerProjectReadResponseSuccess = tracerProjectReadResponse200 & {
   headers: ApiResponseHeaders;
 };
-export type tracerProjectReadResponseError =
-  tracerProjectReadResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerProjectReadResponseError = (
+  | tracerProjectReadResponse400
+  | tracerProjectReadResponse404
+  | tracerProjectReadResponse503
+  | tracerProjectReadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerProjectReadResponse =
   | tracerProjectReadResponseSuccess
@@ -82285,19 +82371,38 @@ export type tracerProjectDeleteResponse204 = {
   status: 204;
 };
 
+export type tracerProjectDeleteResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectDeleteResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectDeleteResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 503>;
 };
 
 export type tracerProjectDeleteResponseSuccess =
   tracerProjectDeleteResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type tracerProjectDeleteResponseError =
-  tracerProjectDeleteResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerProjectDeleteResponseError = (
+  | tracerProjectDeleteResponse400
+  | tracerProjectDeleteResponse404
+  | tracerProjectDeleteResponse503
+  | tracerProjectDeleteResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerProjectDeleteResponse =
   | tracerProjectDeleteResponseSuccess
@@ -82325,19 +82430,38 @@ export type tracerProjectUpdateTagsResponse200 = {
   status: 200;
 };
 
+export type tracerProjectUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
 };
 
 export type tracerProjectUpdateTagsResponseSuccess =
   tracerProjectUpdateTagsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerProjectUpdateTagsResponseError =
-  tracerProjectUpdateTagsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerProjectUpdateTagsResponseError = (
+  | tracerProjectUpdateTagsResponse400
+  | tracerProjectUpdateTagsResponse404
+  | tracerProjectUpdateTagsResponse503
+  | tracerProjectUpdateTagsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerProjectUpdateTagsResponse =
   | tracerProjectUpdateTagsResponseSuccess

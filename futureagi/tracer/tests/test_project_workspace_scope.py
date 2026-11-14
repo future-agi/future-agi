@@ -331,10 +331,7 @@ class TestProjectWorkspaceScope:
             {"tags": ["leaked"]},
             format="json",
         )
-        assert tags.status_code in (
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
-        )
+        assert tags.status_code == status.HTTP_404_NOT_FOUND
 
         _assert_not_mutated(other_project.id, **original)
 
@@ -429,7 +426,7 @@ class TestProjectWorkspaceScope:
 
         response = auth_client.delete(f"/tracer/project/{other_project.id}/")
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         assert Project.no_workspace_objects.get(id=other_project.id).deleted is False
         assert ProjectVersion.all_objects.get(id=other_run.id).deleted is False
         assert Trace.all_objects.get(id=other_trace.id).deleted is False

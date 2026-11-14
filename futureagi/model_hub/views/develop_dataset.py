@@ -23,7 +23,14 @@ import pandas as pd
 import requests
 import structlog
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, close_old_connections, connection, transaction
+from django.db import (
+    DatabaseError,
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    connection,
+    transaction,
+)
 from django.db.models import (
     Case,
     Count,
@@ -2501,7 +2508,7 @@ class GetDatasetTableView(APIView):
                     deleted=False,
                 )
             except Dataset.DoesNotExist:
-                return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             if exact_snapshot:
                 try:
@@ -7244,13 +7251,14 @@ class DownloadDatasetView(APIView):
                 schema=openapi.Schema(type=openapi.TYPE_FILE),
             ),
             **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
         }
     )
     def get(self, request, dataset_id, *args, **kwargs):
-        try:
-            # Get dataset and verify it exists
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+        # Get dataset and verify it exists
+        dataset = get_object_or_404(Dataset, id=dataset_id)
 
+        try:
             # Get all columns in the correct order
             _exp_sources = [
                 SourceChoices.EXPERIMENT.value,
@@ -7320,9 +7328,10 @@ class DownloadDatasetView(APIView):
             )
 
             return response
-
-        except Exception as e:
-            logger.exception(f"Error in downloading the dataset: {str(e)}")
+        except (OperationalError, InterfaceError):
+            raise
+        except Exception:
+            logger.exception("dataset_download_failed")
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_DOWNLOAD_DATASET")
             )
@@ -16937,21 +16946,17 @@ class GetJsonColumnSchemaView(APIView):
         responses={
             200: DatasetJsonSchemaResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: ModelHubErrorResponseSerializer,
         }
     )
     def get(self, request, dataset_id, *args, **kwargs):
-        try:
-            dataset = get_object_or_404(
-                Dataset,
-                id=dataset_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
+        dataset = get_object_or_404(
+            Dataset,
+            id=dataset_id,
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
+            deleted=False,
+        )
 
-            result = get_json_column_schemas(dataset)
-            return self._gm.success_response(result)
-
-        except Exception as e:
-            logger.exception(f"Error getting JSON schema: {e}", dataset_id=dataset_id)
-            return self._gm.bad_request(str(e))
+        result = get_json_column_schemas(dataset)
+        return self._gm.success_response(result)

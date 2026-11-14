@@ -28,6 +28,7 @@ from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 
 logger = structlog.get_logger(__name__)
 
@@ -324,6 +325,8 @@ def run_eval_func(
                     "API call not allowed : Error validating the api call."
                 )
 
+            raise_if_rate_limited(api_call_log_row)
+
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
         else:
@@ -582,6 +585,9 @@ def run_eval_func(
 
         return output
 
+    except EvaluationDenied:
+        # The ledger already records RATE_LIMITED with no charge.
+        raise
     except Exception as e:
         try:
             if api_call_log_row:
@@ -816,5 +822,8 @@ def run_eval_func_task(
         )
 
         logger.info(f"Evaluation for feedback completed for {log_id}")
+    except EvaluationDenied as denial:
+        logger.warning("feedback_evaluation_denied", code=denial.code)
+        return {"status": "denied", "denial": denial.as_dict(), "output": None}
     except Exception as e:
         logger.exception(f"Error running evaluation for feedback: {str(e)}")

@@ -5,10 +5,12 @@ import structlog
 from django.conf import settings
 from django.db import models
 from django.db.models import Count
+from django.http import Http404
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -108,6 +110,8 @@ from tracer.utils.helper import (
     get_default_project_version_config,
     get_sort_query,
 )
+from tracer.utils.parsers import NestingSafeJSONParser
+from tracer.utils.project_tags import TAGS_TOO_DEEP_TO_STORE, tag_validation_error
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
@@ -206,6 +210,8 @@ def _bounded_project_user_action(*, log_event: str, unavailable_message: str):
 
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
+    # The default parsers, with a too-deeply nested JSON body reported as a 400.
+    parser_classes = [NestingSafeJSONParser, MultiPartParser]
     _gm = GeneralMethods()
     serializer_class = ProjectSerializer
 
@@ -243,6 +249,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def _soft_delete_projects(self, projects, project_type):
         soft_delete_projects(projects, project_type)
 
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # Django's default detail names the model; keep the product copy.
+            raise NotFound(get_error_message("PROJECT_NOT_FOUND")) from None
+
     def get_queryset(self):
         # Request scope is authoritative here.  ``Project.objects`` also applies
         # the ambient ContextVar workspace, so starting through the generic
@@ -255,6 +268,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         project_id = self.kwargs.get("pk")
 
         if project_id:
+            # Validate before ORM filtering, which raises a non-DRF ValidationError.
+            project_id = serializers.UUIDField().run_validation(project_id)
             return queryset.filter(id=project_id)
 
         # Apply filters
@@ -381,29 +396,31 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.exception(f"Error in creating the project: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_PROJECT"))
 
-    @validated_request(responses={200: ProjectDetailResponseSerializer})
+    @validated_request(
+        responses={
+            200: ProjectDetailResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Get a single project by ID with sampling rate.
         """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        if instance.trace_type == "experiment" and not data.get("config"):
+            data["config"] = get_default_project_version_config()
+
         try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            data = serializer.data
-            if instance.trace_type == "experiment" and not data.get("config"):
-                data["config"] = get_default_project_version_config()
+            scan_config = TraceScanConfig.objects.get(project=instance)
+            data["sampling_rate"] = scan_config.sampling_rate
+        except TraceScanConfig.DoesNotExist:
+            data["sampling_rate"] = 0
 
-            try:
-                scan_config = TraceScanConfig.objects.get(project=instance)
-                data["sampling_rate"] = scan_config.sampling_rate
-            except TraceScanConfig.DoesNotExist:
-                data["sampling_rate"] = 0
-
-            return self._gm.success_response(data)
-
-        except Exception as e:
-            logger.exception(f"Error in retrieving the project: {str(e)}")
-            return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
+        return self._gm.success_response(data)
 
     def delete(self, request, *args, **kwargs):
         """
@@ -430,17 +447,20 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     def destroy(self, request, *args, **kwargs):
-        try:
-            project = self.get_object()
-            self._soft_delete_projects(
-                self._project_scope_queryset().filter(id=project.id),
-                project.trace_type,
-            )
-            return self._gm.success_response("Successfully deleted the project")
-        except Exception as e:
-            logger.exception(f"Error in deleting the project: {str(e)}")
-            return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
+        project = self.get_object()
+        self._soft_delete_projects(
+            self._project_scope_queryset().filter(id=project.id),
+            project.trace_type,
+        )
+        return self._gm.success_response("Successfully deleted the project")
 
     @action(detail=False, methods=["post"])
     def update_project_config(self, request, *args, **kwargs):
@@ -879,24 +899,36 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("ERROR_FETCHING_PROJECT_LISTS")
             )
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a project."""
+        project = self.get_object()
+        if not isinstance(request.data, dict):
+            return self._gm.bad_request("Request body must be an object")
+        tags = request.data.get("tags")
+        if tags is None:
+            return self._gm.bad_request("tags field is required")
+        if not isinstance(tags, list):
+            return self._gm.bad_request("tags must be a list")
+        error = tag_validation_error(tags)
+        if error:
+            return self._gm.bad_request(error)
+        project.tags = tags
         try:
-            project = self.get_object()
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
-            project.tags = tags
             project.save(update_fields=["tags", "updated_at"])
-            return self._gm.success_response(
-                {"id": str(project.id), "tags": project.tags}
-            )
-        except Exception as e:
-            logger.exception(f"Error updating project tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        except RecursionError:
+            # Defensive: the nesting limit keeps accepted tags far below the
+            # depth where the database adapter's JSON encoder runs out of
+            # stack. If it does, it fails before any query is sent.
+            return self._gm.bad_request(TAGS_TOO_DEEP_TO_STORE)
+        return self._gm.success_response({"id": str(project.id), "tags": project.tags})
 
     @validated_request(
         query_serializer=ProjectGraphDataQuerySerializer,

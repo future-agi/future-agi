@@ -25817,6 +25817,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -30251,6 +30257,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -32218,6 +32230,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
                         }
                     },
                     "default": {
@@ -46743,6 +46767,18 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -48182,6 +48218,18 @@
                             "$ref": "#/definitions/SDKErrorResponse"
                         }
                     },
+                    "402": {
+                        "description": "Billing or usage limit. For a partial batch, resume at failed_index; completed_results have already executed and may be charged.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Evaluation rate limit. No Retry-After is returned without a known reset time. For partial batches, retry only from failed_index.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -48446,6 +48494,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SDKErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "Billing or usage limit. For a partial batch, resume at failed_index; completed_results have already executed and may be charged.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Evaluation rate limit. No Retry-After is returned without a known reset time. For partial batches, retry only from failed_index.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
                         }
                     },
                     "500": {
@@ -71541,6 +71601,24 @@
                             "$ref": "#/definitions/ProjectDetailResponse"
                         }
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71623,6 +71701,24 @@
                     "204": {
                         "description": ""
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71632,7 +71728,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -71664,6 +71761,24 @@
                             "$ref": "#/definitions/Project"
                         }
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71673,7 +71788,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -106336,8 +106452,13 @@
             "properties": {
                 "message": {
                     "title": "Message",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
                 },
                 "send_to_uuid": {
                     "title": "Send to uuid",
@@ -106346,7 +106467,19 @@
                 },
                 "uuid": {
                     "title": "Uuid",
-                    "type": "string"
+                    "description": "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
+                    "type": "string",
+                    "pattern": "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-required-when": {
+                "send_to_uuid": {
+                    "value": true,
+                    "fields": [
+                        "uuid"
+                    ]
                 }
             }
         },
@@ -121472,6 +121605,76 @@
                 },
                 "result": {
                     "$ref": "#/definitions/EvalExecutionResponseResult"
+                }
+            }
+        },
+        "SDKEvaluationDenialResponse": {
+            "required": [
+                "status",
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "errors": {
+                    "title": "Errors",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string"
+                },
+                "dimension": {
+                    "title": "Dimension",
+                    "type": "string"
+                },
+                "current_usage": {
+                    "title": "Current usage",
+                    "type": "number"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "number"
+                },
+                "upgrade_cta": {
+                    "title": "Upgrade cta",
+                    "type": "object"
+                },
+                "completed_results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "failed_index": {
+                    "title": "Failed index",
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },
@@ -171520,6 +171723,60 @@
                 "metadata": {
                     "title": "Metadata",
                     "type": "object",
+                    "x-nullable": true
+                },
+                "configuration_health": {
+                    "description": "Last detected setup problem and next probe; null when no setup problem is recorded.",
+                    "required": [
+                        "status",
+                        "reason_code",
+                        "first_failed_at",
+                        "last_failed_at",
+                        "failure_count",
+                        "next_retry_at"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "title": "Status",
+                            "type": "string",
+                            "enum": [
+                                "misconfigured"
+                            ]
+                        },
+                        "reason_code": {
+                            "title": "Reason code",
+                            "type": "string",
+                            "enum": [
+                                "missing_agent",
+                                "deleted_agent",
+                                "missing_key",
+                                "missing_assistant_id",
+                                "credential_unreadable"
+                            ]
+                        },
+                        "first_failed_at": {
+                            "title": "First failed at",
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "last_failed_at": {
+                            "title": "Last failed at",
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "failure_count": {
+                            "title": "Failure count",
+                            "type": "integer",
+                            "minimum": 1
+                        },
+                        "next_retry_at": {
+                            "title": "Next retry at",
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    },
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "created_at": {

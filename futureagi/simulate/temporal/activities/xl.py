@@ -33,6 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
@@ -45,6 +46,7 @@ from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
@@ -1090,6 +1092,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             eval_config.status = StatusType.COMPLETED.value
             eval_config.save()
 
+    except EvaluationDenied as denial:
+        record_evaluation_denial(call_execution, eval_config, denial)
+        raise
     except Exception as e:
         logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -1331,6 +1336,8 @@ def _run_evaluations_standalone(
                         f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                         f"on call execution {call_execution.id}"
                     )
+            except EvaluationDenied as denial:
+                logger.warning("simulation_evaluation_denied", code=denial.code)
             except Exception as e:
                 logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                 traceback.print_exc()
