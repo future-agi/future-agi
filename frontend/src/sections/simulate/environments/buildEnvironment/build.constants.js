@@ -27,13 +27,21 @@ export const DERIVING_LABEL = {
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
 // Actors, Runs, Improvements and Versions are left out — an environment that is
 // still building (or failed to build) has no draft, runs, fixes or versions yet.
-const NOT_WHILE_BUILDING = new Set(["actors", "runs", "improvements", "versions"]);
-export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
+const NOT_WHILE_BUILDING = new Set([
+  "actors",
+  "runs",
+  "improvements",
+  "versions",
+]);
+export const BUILDING_TABS = WORKSPACE_TABS.filter(
+  (t) => !NOT_WHILE_BUILDING.has(t.id),
+);
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty: "Answer the questions below to kick things off. You can also just start typing.",
+  empty:
+    "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
@@ -169,6 +177,8 @@ export const NUDGE_COPY = {
   },
   reused: (label) => `Same as ${label}, which is the default again.`,
   leftOut: "Left out",
+  restored: "Restored",
+  restoreFailed: "Not restored",
   notChecked: (keys) => `Not checked: ${keys.join(", ")}`,
   agentMoved: (label) => `Agent ${label} is now the default.`,
   agentNotMoved: {
