@@ -84,15 +84,11 @@ try {
       await page.goto(route(state));
       await expect(page.getByText('Run a test', { exact: true })).toBeVisible();
       if (!state && process.env.TEST_VERSION) await expect(page.getByRole('table', { name: 'Verification cells' })).toBeVisible();
-      if (state === 'empty') await expect(page.getByRole('button', { name: 'Run your first test', exact: true })).toBeVisible();
+      // TST2: the empty state has no separate first-run button; the setup's own primary leads.
+      if (state === 'empty') await expect(page.getByRole('button', { name: 'Run your first test', exact: true })).toHaveCount(0);
       if (!state || state === 'empty') await expect(page.getByRole('checkbox', { name: /I accept up to/ })).toBeEnabled();
       if (state === 'error') await expect(page.getByText("Couldn't load application test options.", { exact: true })).toBeVisible();
       await shot(`tests-${state || 'current'}-${mode}`);
-      if (state === 'empty') {
-        await page.getByRole('button', { name: 'Run your first test', exact: true }).click();
-        await expect(page.getByRole('combobox', { name: /^Candidate version/ })).toBeFocused();
-        await shot(`tests-first-run-focus-${mode}`);
-      }
     }
   }
   await page.goto(route());
