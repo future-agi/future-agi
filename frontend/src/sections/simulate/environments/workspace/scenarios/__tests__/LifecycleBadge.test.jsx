@@ -11,6 +11,7 @@ describe("LifecycleBadge", () => {
     ["draft", "Draft"],
     ["validated", "Validated"],
     ["active", "Active"],
+    ["kept_as_written", "Kept as written"],
     ["archived", "Archived"],
   ])("labels the %s state", (state, label) => {
     render(<LifecycleBadge row={row({ state, reason: null, reason_text: null })} />);
@@ -19,20 +20,33 @@ describe("LifecycleBadge", () => {
 
   it("marks a legacy validation and explains it on hover", async () => {
     const user = userEvent.setup();
-    render(<LifecycleBadge row={row({ state: "active", legacy: true, reason_text: null })} />);
+    render(<LifecycleBadge row={row({ state: "kept_as_written", legacy: true, reason_text: null })} />);
     await user.hover(screen.getByTestId("lifecycle-badge"));
     expect(
       await screen.findByText("Validated before checks were recorded. Validate again to confirm."),
     ).toBeInTheDocument();
   });
 
-  it("adds a Kept as written chip for a lane warning, and none otherwise", () => {
-    const { rerender } = render(
-      <LifecycleBadge row={row({ state: "active", warning: "solution_assumed", warning_text: "never ran" })} />,
+  it("reads Kept as written, never Active, for a lane warning and explains it on hover", async () => {
+    const user = userEvent.setup();
+    render(
+      <LifecycleBadge
+        row={row({ state: "kept_as_written", warning: "solution_assumed", warning_text: "never ran" })}
+      />,
     );
-    expect(screen.getByTestId("lifecycle-kept-chip")).toHaveTextContent("Kept as written");
-    rerender(<LifecycleBadge row={row({ state: "active", warning: "legacy_no_negative_control" })} />);
-    expect(screen.queryByTestId("lifecycle-kept-chip")).toBeNull();
+    expect(screen.getByTestId("lifecycle-badge")).toHaveTextContent("Kept as written");
+    expect(screen.getByTestId("lifecycle-badge")).not.toHaveTextContent("Active");
+    await user.hover(screen.getByTestId("lifecycle-badge"));
+    expect(await screen.findByText("never ran")).toBeInTheDocument();
+  });
+
+  it("adds a Not measured chip when a check reads evidence the agent does not give", () => {
+    const { rerender } = render(
+      <LifecycleBadge row={row({ state: "active", warning: "evidence_not_captured", warning_text: "x" })} />,
+    );
+    expect(screen.getByTestId("lifecycle-not-measured-chip")).toHaveTextContent("Not measured at run time");
+    rerender(<LifecycleBadge row={row({ state: "active", warning: null })} />);
+    expect(screen.queryByTestId("lifecycle-not-measured-chip")).toBeNull();
   });
 
   it("shows nothing for an environment without versions", () => {
