@@ -502,16 +502,20 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                             async for message in client.receive_response():
                                 if isinstance(message, ResultMessage):
                                     terminal = message
+                        # Without findings, a missing ffmpeg is the cause to
+                        # report, whatever the agent did after hitting it.
+                        if case.result is None and case.media_tool_error is not None:
+                            raise case.media_tool_error
                         failure_code = _terminal_failure_code(terminal)
                         if failure_code is not None:
                             raise LocalizationFailure(failure_code)
                         if case.result is None:
-                            if case.media_tool_error is not None:
-                                raise case.media_tool_error
                             raise LocalizationFailure(
                                 LocalizationFailureCode.MISSING_FINDINGS
                             )
         except TimeoutError:
+            if case.result is None and case.media_tool_error is not None:
+                raise case.media_tool_error from None
             raise LocalizationFailure(LocalizationFailureCode.TIMEOUT) from None
         finally:
             # CLI prices the wire alias as Claude. Bill the actual Gemini token

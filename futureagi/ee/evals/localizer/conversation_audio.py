@@ -107,11 +107,10 @@ def create_utterance_segments(audio_input, turns):
     """Cut at stored boundaries; never guess missing times or speaker roles."""
     from pydub import AudioSegment
 
-    require_ffmpeg("splitting call audio for error localization", ffprobe=True)
-
     turns = deduplicate_utterance_turns(turns)
     if not turns:
         raise ValueError("No conversation utterances available")
+    require_ffmpeg("splitting call audio for error localization", ffprobe=True)
     raw = (
         audio_input
         if isinstance(audio_input, bytes)

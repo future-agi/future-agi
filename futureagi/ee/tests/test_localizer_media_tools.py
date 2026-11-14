@@ -1,6 +1,7 @@
 """Error localization on audio names a missing ffmpeg instead of failing as
 "could not be chunked" or "invalid request"."""
 
+import asyncio
 import wave
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -72,7 +73,16 @@ async def test_agent_tool_reports_the_named_error(no_ffmpeg):
     assert isinstance(case.media_tool_error, MediaToolUnavailable)
 
 
-async def test_run_without_findings_fails_with_the_named_error(monkeypatch):
+def test_no_utterances_is_reported_before_the_missing_tool(no_ffmpeg):
+    """Rebuilding the image cannot fix a call with no stored utterances."""
+    from ee.evals.localizer.conversation_audio import create_utterance_segments
+
+    with pytest.raises(ValueError, match="^No conversation utterances available$"):
+        create_utterance_segments(_wav(), [])
+
+
+@pytest.mark.parametrize("ending", ["success", "max_turns", "timeout"])
+async def test_run_without_findings_fails_with_the_named_error(monkeypatch, ending):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
 
@@ -93,8 +103,12 @@ async def test_run_without_findings_fails_with_the_named_error(monkeypatch):
             pass
 
         async def receive_response(self):
+            if ending == "timeout":
+                await asyncio.sleep(10)
             yield SimpleNamespace(
-                is_error=False, subtype="success", terminal_reason="completed"
+                is_error=False,
+                subtype="error_max_turns" if ending == "max_turns" else "success",
+                terminal_reason="completed",
             )
 
     @asynccontextmanager
@@ -109,6 +123,10 @@ async def test_run_without_findings_fails_with_the_named_error(monkeypatch):
 
     with pytest.raises(MediaToolUnavailable) as caught:
         await ClaudeAgentLocalizer(**_kwargs())._run(
-            GatewayConfig("http://unused.invalid", "fake", timeout=5)
+            GatewayConfig(
+                "http://unused.invalid",
+                "fake",
+                timeout=0.05 if ending == "timeout" else 5,
+            )
         )
     assert caught.value is missing
