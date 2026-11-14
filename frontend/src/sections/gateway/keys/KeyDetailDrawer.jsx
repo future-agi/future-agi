@@ -31,6 +31,10 @@ import { formatCost, formatDateTime as formatDate } from "../utils/formatters";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { paths } from "src/routes/paths";
 import { policiesForKey } from "../guardrails/hooks/useGuardrailPolicies";
+import {
+  DORMANT_POLICY_LABEL,
+  isDormantPolicy,
+} from "../guardrails/policyStatus";
 
 const InfoRow = ({ label, children }) => (
   <Stack
@@ -267,6 +271,14 @@ const KeyDetailDrawer = ({
                       label={policy.mode === "monitor" ? "Monitor" : "Enforce"}
                       role={policy.mode === "monitor" ? "info" : "warning"}
                     />
+                    {isDormantPolicy(policy) && (
+                      <StatusBadge
+                        status="not_running"
+                        label={DORMANT_POLICY_LABEL}
+                        role="neutral"
+                        data-testid={`key-policy-dormant-${policy.id}`}
+                      />
+                    )}
                   </Stack>
                 ))}
                 {policiesForKey(policies, keyData.id).length === 0 && (

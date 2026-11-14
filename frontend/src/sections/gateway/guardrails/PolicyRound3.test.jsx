@@ -69,7 +69,9 @@ describe("Policies tab, round 3", () => {
   it("says how Monitor and Enforce behave on speech streams", () => {
     render(<PolicyDialog open onClose={vi.fn()} gatewayId="gateway" />);
     const note = screen.getByTestId("policy-mode-speech-note");
-    expect(note).toHaveTextContent(/Monitor policies\s+don.t run/);
+    expect(note).toHaveTextContent(
+      /Monitor policies\s+and Warn or Log checks don.t run/,
+    );
     expect(note).toHaveTextContent(/skipped on speech-to-text streams/);
   });
 });

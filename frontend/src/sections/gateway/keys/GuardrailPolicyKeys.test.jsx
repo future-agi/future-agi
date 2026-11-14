@@ -35,7 +35,8 @@ vi.mock("./hooks/useApiKeys", () => ({
   useRevokeApiKey: () => ({ mutate: vi.fn() }),
   useUpdateApiKey: () => ({ mutate: vi.fn() }),
 }));
-vi.mock("../guardrails/hooks/useGuardrailPolicies", () => ({
+vi.mock("../guardrails/hooks/useGuardrailPolicies", async (importOriginal) => ({
+  ...(await importOriginal()),
   useGuardrailPolicies: () => ({
     data: [
       {
@@ -52,6 +53,8 @@ vi.mock("../guardrails/hooks/useGuardrailPolicies", () => ({
         scope: "key",
         mode: "enforce",
         is_active: true,
+        // Saved before the gateway ran key policies: stored, not sent.
+        runs_on_gateway: false,
         applied_keys: ["dashboard-id"],
       },
       {
@@ -72,10 +75,6 @@ vi.mock("../guardrails/hooks/useGuardrailPolicies", () => ({
       },
     ],
   }),
-  policiesForKey: (policies, id) =>
-    policies.filter(
-      (p) => p.is_active && p.scope === "key" && p.applied_keys.includes(id),
-    ),
 }));
 vi.mock("../analytics/hooks/useAnalyticsOverview", () => ({
   useAnalyticsOverview: () => ({ data: {} }),
@@ -94,7 +93,7 @@ describe("key guardrail policies", () => {
       screen.getByRole("columnheader", { name: "Guardrail policies" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Policy one")).toBeInTheDocument();
-    expect(screen.getByText("Policy two")).toBeInTheDocument();
+    expect(screen.getByText("Policy two · not running")).toBeInTheDocument();
     expect(screen.getByText("+1")).toBeInTheDocument();
     expect(screen.queryByText("Policy three")).not.toBeInTheDocument();
   });
@@ -125,5 +124,52 @@ describe("key guardrail policies", () => {
     expect(
       screen.getByText("Org-wide guardrails also apply to this key."),
     ).toBeInTheDocument();
+  });
+
+  it("marks a dormant policy in the key list and the key drawer", () => {
+    render(<KeyManagementSection />);
+    expect(screen.getByTestId("key-policy-chip-dormant-2")).toHaveTextContent(
+      "Policy two · not running",
+    );
+    expect(
+      screen.queryByTestId("key-policy-chip-dormant-1"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows 'Not running – save to start' for a dormant policy in the drawer", () => {
+    render(
+      <KeyDetailDrawer
+        keyId="dashboard-id"
+        open
+        onClose={vi.fn()}
+        gatewayId="gateway"
+        policies={[
+          {
+            id: "1",
+            name: "Policy one",
+            scope: "key",
+            mode: "enforce",
+            is_active: true,
+            runs_on_gateway: true,
+            applied_keys: ["dashboard-id"],
+          },
+          {
+            id: "2",
+            name: "Policy two",
+            scope: "key",
+            mode: "enforce",
+            is_active: true,
+            runs_on_gateway: false,
+            applied_keys: ["dashboard-id"],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("key-policy-dormant-2")).toHaveTextContent(
+      "Not running – save to start",
+    );
+    expect(
+      screen.queryByTestId("key-policy-dormant-1"),
+    ).not.toBeInTheDocument();
   });
 });

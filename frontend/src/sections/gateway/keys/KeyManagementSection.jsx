@@ -21,6 +21,10 @@ import {
   useGuardrailPolicies,
   policiesForKey,
 } from "../guardrails/hooks/useGuardrailPolicies";
+import {
+  DORMANT_POLICY_LABEL,
+  isDormantPolicy,
+} from "../guardrails/policyStatus";
 import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -292,7 +296,21 @@ const KeyManagementSection = () => {
                           .map((policy) => (
                             <Chip
                               key={policy.id}
-                              label={policy.name}
+                              label={
+                                isDormantPolicy(policy)
+                                  ? `${policy.name} · not running`
+                                  : policy.name
+                              }
+                              title={
+                                isDormantPolicy(policy)
+                                  ? DORMANT_POLICY_LABEL
+                                  : undefined
+                              }
+                              data-testid={
+                                isDormantPolicy(policy)
+                                  ? `key-policy-chip-dormant-${policy.id}`
+                                  : undefined
+                              }
                               size="small"
                               variant="outlined"
                             />
