@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any
 
@@ -16,13 +16,14 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
 
 GRAPH_ACTION_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 logger = structlog.get_logger(__name__)
 
 
 class GraphActionUnavailable(RuntimeError):
-    """A graph action exhausted its wall or PostgreSQL read budget."""
+    """A graph action exhausted its wall or could not complete a read."""
 
 
 def start_graph_action_deadline() -> ReadDeadline:
@@ -46,9 +47,8 @@ def graph_action_remaining_ms(
 
 
 def finish_graph_action_response(deadline: ReadDeadline, response: Any) -> Any:
-    """Refuse to publish a normal response after the action wall expired."""
+    """Preserve a completed response; admission checks belong before reads."""
 
-    graph_action_remaining_ms(deadline)
     return response
 
 
@@ -71,7 +71,7 @@ def bounded_graph_action_request(
                 return finish_graph_action_response(deadline, response)
             except GraphActionUnavailable as exc:
                 logger.warning(
-                    "graph_action_request_deadline_exceeded",
+                    "graph_action_request_read_unavailable",
                     resource=resource,
                     error_type=type(exc).__name__,
                 )
@@ -89,77 +89,28 @@ def bounded_graph_action_request(
     return decorate
 
 
-def _execute_graph_action_pg_query_with_deadline(
-    deadline: ReadDeadline,
-    timeout_cap_ms: int | None,
-    execute,
-    sql,
-    params,
-    many,
-    context,
-):
-    """Shrink each PostgreSQL statement timeout against the shared wall."""
-
-    timeout_ms = graph_action_remaining_ms(deadline, timeout_cap_ms)
-    context["cursor"].cursor.execute(
-        "SELECT set_config('statement_timeout', %s, true)",
-        (str(timeout_ms),),
-    )
-    result = execute(sql, params, many, context)
-    graph_action_remaining_ms(deadline)
-    return result
-
-
 @contextmanager
 def graph_action_postgres_budget(
     deadline: ReadDeadline,
     *,
     timeout_cap_ms: int | None = None,
 ):
-    """Bound every scoped/config ORM read by the same graph-action deadline."""
-
-    transaction_started = False
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        nonlocal transaction_started
-        if (
-            not getattr(connection, "in_atomic_block", False)
-            and not transaction_started
-        ):
-            stack.enter_context(transaction.atomic())
-            transaction_started = True
-        return _execute_graph_action_pg_query_with_deadline(
-            deadline,
-            timeout_cap_ms,
-            execute,
-            sql,
-            params,
-            many,
-            context,
-        )
-
+    """Check request admission without a PostgreSQL statement cap."""
+    del timeout_cap_ms  # Compatibility only; no longer a statement ceiling.
     try:
-        if connection.vendor != "postgresql":
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=lambda: graph_action_remaining_ms(deadline),
+        ):
             yield
-            graph_action_remaining_ms(deadline)
-            return
-
-        # Keep installing the wrapper connection-lazy. The first actual ORM
-        # statement opens one transaction, receives SET LOCAL
-        # statement_timeout, and leaves the transaction alive for every later
-        # statement in this action phase. Pure validation and mocked unit-test
-        # paths never open a database socket.
-        with ExitStack() as stack:
-            stack.enter_context(
-                connection.execute_wrapper(execute_with_remaining_timeout)
-            )
-            yield
-            graph_action_remaining_ms(deadline)
     except GraphActionUnavailable:
         raise
-    except (DatabaseError, ReadDeadlineExceeded) as exc:
+    except ReadDeadlineExceeded as exc:
+        raise GraphActionUnavailable("Graph action request deadline exceeded") from exc
+    except DatabaseError as exc:
         raise GraphActionUnavailable(
-            "Graph action PostgreSQL read exceeded its request budget"
+            "Graph action PostgreSQL read unavailable"
         ) from exc
 
 

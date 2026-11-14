@@ -12,10 +12,13 @@ from rest_framework.views import APIView
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tracer.queries.grouping_redirect import resolve_issue_redirect
 from tracer.serializers.feed import (
     FeedDetailApiResponseSerializer,
     FeedDetailCoreSerializer,
     FeedDetailQuerySerializer,
+    FeedRedirectApiResponseSerializer,
+    FeedRedirectSerializer,
     FeedUpdateBodySerializer,
 )
 from tracer.types.feed_types import FeedUpdatePayload
@@ -103,3 +106,31 @@ class FeedDetailView(ErrorFeedLicenseRequired, APIView):
             return self._gm.not_found(f"Cluster {cluster_id} not found")
 
         return self._gm.success_response(FeedDetailCoreSerializer(detail).data)
+
+
+class FeedRedirectView(ErrorFeedLicenseRequired, APIView):
+    """Resolve an old issue ID to its active redirect target."""
+
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    @validated_request(
+        query_serializer=FeedDetailQuerySerializer,
+        responses={200: FeedRedirectApiResponseSerializer, **ERROR_RESPONSES},
+    )
+    def get(self, request, cluster_id: str):
+        requested_project_id = request.validated_query_data.get("project_id")
+        project_ids = resolve_requested_project_ids(
+            request,
+            str(requested_project_id) if requested_project_id else None,
+        )
+        if project_ids is None or not project_ids:
+            return self._gm.forbidden_response("Access denied to this project")
+        try:
+            redirect = resolve_issue_redirect(cluster_id, project_ids)
+        except Exception:
+            logger.exception("feed_redirect_failed", cluster_id=cluster_id)
+            return self._gm.bad_request("Failed to resolve issue redirect")
+        if redirect is None:
+            return self._gm.not_found(f"Cluster {cluster_id} not found")
+        return self._gm.success_response(FeedRedirectSerializer(redirect).data)

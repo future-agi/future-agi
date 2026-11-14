@@ -17,6 +17,10 @@ from unittest import mock
 import pytest
 
 from tracer.selectors.trace_filter_reads import BoundedFilterPage
+from tracer.tests.test_trace_root_physical_replay import (
+    complete_root_row,
+    content_identity_row,
+)
 
 
 @pytest.mark.unit
@@ -81,6 +85,8 @@ class TestTracesOfSessionPagination:
                         "metadata": "{}",
                         "trace_tags": [],
                     }
+                    if len(identity) == 8:
+                        content_row.update(content_identity_row(identity))
                     # Legacy single-project CH rows do not include project_id;
                     # leaving the key absent lets the view add its exact scope.
                     # A present null is a malformed composite identity.
@@ -97,7 +103,10 @@ class TestTracesOfSessionPagination:
     @staticmethod
     def _bounded_page(trace_rows, *, total, has_more=False):
         return BoundedFilterPage(
-            rows=list(trace_rows),
+            rows=[
+                complete_root_row(row, project_id=row.get("project_id"))
+                for row in trace_rows
+            ],
             has_more=has_more,
             complete=True,
             status="complete",
@@ -382,8 +391,8 @@ class TestTracesOfSessionPagination:
             ).get("requested_attribute_keys")
         )
         assert (
-            "argMax(candidate_attribute_value_json, tuple(start_time, id))"
-            in attr_call.args[0]
+            "argMax(candidate_attribute_value_json, tuple(latest_start_time, id, observation_type, service_name))"
+            in " ".join(attr_call.args[0].split())
         )
         assert "LIMIT" not in attr_call.args[0]
 

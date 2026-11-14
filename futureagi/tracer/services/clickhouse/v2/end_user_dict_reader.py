@@ -96,20 +96,21 @@ def _get_client():
                     username=cfg["user"],
                     password=cfg["password"] or "",
                     database=cfg["database"],
+                    application_read=True,
                 )
             else:
-                import clickhouse_connect
+                from tracer.services.clickhouse.application_read_transport import (
+                    create_application_read_http_client,
+                )
 
-                _client = clickhouse_connect.get_client(
+                _client = create_application_read_http_client(
                     host=cfg["host"],
                     port=cfg["http_port"],
                     username=cfg["user"],
                     password=cfg["password"] or "",
                     database=cfg["database"],
-                    # User-detail membership owns a sub-ten-second request budget.
-                    # Keep the HTTP socket envelope aligned with that ceiling;
-                    # the individual query also receives the smaller remaining
-                    # server-side max_execution_time below.
+                    # Finite initialization only; application response reads
+                    # have no statement cutoff after the client is initialized.
                     send_receive_timeout=9.5,
                 )
     return _client

@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
@@ -26,7 +27,13 @@ const STEP_TITLES = {
   create: "Create New Evaluation",
 };
 
-const EvalPickerContent = ({ onStepChange }) => {
+const EvalPickerContent = ({
+  onStepChange,
+  headerAction,
+  progress,
+  primaryLabel,
+  showClose,
+}) => {
   const theme = useTheme();
   const {
     step,
@@ -38,6 +45,7 @@ const EvalPickerContent = ({ onStepChange }) => {
     skipConfig,
     isEditMode,
     keepOpenAfterSave,
+    keepOpenAfterEditSave,
   } = useEvalPickerContext();
 
   const queryClient = useQueryClient();
@@ -129,8 +137,9 @@ const EvalPickerContent = ({ onStepChange }) => {
       try {
         await onEvalAdded?.(evalConfig);
         if (isEditMode) {
-          // Edit mode: just close, no list to return to
-          onClose?.();
+          // Edit mode closes on save unless the host is walking a queue of
+          // pre-selected evals (keepOpenAfterEditSave) and owns the close.
+          if (!keepOpenAfterEditSave) onClose?.();
         } else {
           setSelectedEval(null);
           setStep("list");
@@ -153,6 +162,7 @@ const EvalPickerContent = ({ onStepChange }) => {
       setSelectedEval,
       setStep,
       keepOpenAfterSave,
+      keepOpenAfterEditSave,
     ],
   );
 
@@ -180,17 +190,17 @@ const EvalPickerContent = ({ onStepChange }) => {
             {STEP_TITLES[step]}
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {headerAction}
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setStep("create")}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               Create New Eval
             </Button>
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
         </Box>
@@ -212,7 +222,7 @@ const EvalPickerContent = ({ onStepChange }) => {
               }}
             >
               <Iconify
-                icon="mdi:alert-circle-outline"
+                icon="solar:danger-circle-linear"
                 width={40}
                 sx={{ color: "error.main" }}
               />
@@ -230,7 +240,6 @@ const EvalPickerContent = ({ onStepChange }) => {
                   handleBackToList();
                   resetErrorBoundary();
                 }}
-                sx={{ textTransform: "none" }}
               >
                 Back to list
               </Button>
@@ -252,6 +261,9 @@ const EvalPickerContent = ({ onStepChange }) => {
               onBack={handleBackToList}
               onSave={handleSaveEval}
               isSaving={isSaving}
+              progress={progress}
+              primaryLabel={primaryLabel}
+              showClose={showClose}
             />
           )}
           {step === "create" && (
@@ -277,6 +289,10 @@ const EvalPickerContent = ({ onStepChange }) => {
  * @param {Array} sourceColumns - Available columns for variable auto-mapping
  * @param {function} onEvalAdded - Called with the configured eval object when user saves
  * @param {Array} existingEvals - Already-added evals (to disable re-adding)
+ * @param {Array} addedEvals - Opt-in: already-added evals ({ id, name, meta }) shown in a collapsible "Added evaluations" box and left out of the list
+ * @param {Object} addedEvalAction - Opt-in: one button per added row ({ label, onClick(addedEval), busyName?, disabled?, show?(addedEval) })
+ * @param {boolean} requireInputs - Opt-in: refuse to add an eval that has no inputs to map
+ * @param {boolean} hideCompositeCreate - Opt-in: "Create new" offers single evals only
  * @param {string} drawerType - MUI Drawer variant: "temporary" (default) or "persistent"
  * @param {number|string} width - Drawer width (default: 700px)
  */
@@ -293,7 +309,7 @@ const EvalPickerDrawer = ({
   onEvalAdded,
   existingEvals = [],
   drawerType = "temporary",
-  width = 900,
+  width = 960,
   // When editing an existing eval, pass its template info here to skip the
   // list step and open directly at the config step.
   initialEval = null,
@@ -314,14 +330,43 @@ const EvalPickerDrawer = ({
   // can queue more evals back-to-back. Used by dataset adds where the
   // picker doubles as a multi-eval entry surface.
   keepOpenAfterSave = false,
+  // Edit-mode counterpart to keepOpenAfterSave. Defaults false so every
+  // existing edit caller keeps closing on save.
+  keepOpenAfterEditSave = false,
+  // Multi-select batch mode (all optional, all default to the current
+  // single-add behavior). `multiSelect` renders a checkbox per list row
+  // driven by `selectedIds`/`onToggleSelect`; `headerAction` sits in the
+  // list header; `progress`/`primaryLabel` decorate the config step's
+  // action bar/primary button; `showClose` adds a close control to the
+  // config header for hosts that walk a queue.
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
+  headerAction = null,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+  // Extra styles merged onto the drawer paper.
+  paperSx = null,
   sourceFilters = null,
   onFiltersChange = null,
   // { startDate, endDate } the source's preview rows are scoped to. Without
   // an explicit created_at filter the backend defaults to a 30-day lookback,
   // so previews for older data come back empty.
   sourceTimeWindow = null,
+  // Opt-in "Added evaluations" box: the evals already on the caller, listed
+  // in their own collapsible box instead of as rows in the list;
+  // `addedEvalAction` adds one button per row.
+  addedEvals = null,
+  addedEvalAction = null,
+  // Opt-in: refuse to add an eval that has no inputs to map.
+  requireInputs = false,
+  // Opt-in: for hosts that can't grade a composite eval, "Create new" drops
+  // its Composite mode.
+  hideCompositeCreate = false,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
@@ -329,6 +374,7 @@ const EvalPickerDrawer = ({
       open={open}
       variant={drawerType}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: (theme) => ({
           width:
@@ -344,6 +390,7 @@ const EvalPickerDrawer = ({
           boxShadow: theme.customShadows?.drawer || theme.shadows[16],
           borderRadius: "0px !important",
           backgroundColor: "background.paper",
+          ...paperSx,
         }),
       }}
       ModalProps={{
@@ -372,11 +419,25 @@ const EvalPickerDrawer = ({
         lockedFilters={lockedFilters}
         requiredColumnId={requiredColumnId}
         keepOpenAfterSave={keepOpenAfterSave}
+        keepOpenAfterEditSave={keepOpenAfterEditSave}
+        multiSelect={multiSelect}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
         sourceFilters={sourceFilters}
         onFiltersChange={onFiltersChange}
         sourceTimeWindow={sourceTimeWindow}
+        addedEvals={addedEvals}
+        addedEvalAction={addedEvalAction}
+        requireInputs={requireInputs}
+        hideCompositeCreate={hideCompositeCreate}
       >
-        <EvalPickerContent onStepChange={setCurrentStep} />
+        <EvalPickerContent
+          onStepChange={setCurrentStep}
+          headerAction={headerAction}
+          progress={progress}
+          primaryLabel={primaryLabel}
+          showClose={showClose}
+        />
       </EvalPickerProvider>
     </Drawer>
   );
@@ -402,12 +463,31 @@ EvalPickerDrawer.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
+  keepOpenAfterEditSave: PropTypes.bool,
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
+  headerAction: PropTypes.node,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
+  paperSx: PropTypes.object,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
   sourceTimeWindow: PropTypes.shape({
     startDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
     endDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
   }),
+  addedEvals: PropTypes.array,
+  addedEvalAction: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+    busyName: PropTypes.string,
+    disabled: PropTypes.bool,
+    show: PropTypes.func,
+  }),
+  requireInputs: PropTypes.bool,
+  hideCompositeCreate: PropTypes.bool,
 };
 
 export default EvalPickerDrawer;

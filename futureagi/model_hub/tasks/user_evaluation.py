@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -6,11 +7,19 @@ import structlog
 from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
-from django.db import close_old_connections
+from django.db import (
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    transaction,
+)
+from django.db.models import Q
+
+from model_hub.services.localization_errors import LocalizationFailure
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.evals.localizer.error_localizer import ErrorLocalizer
+    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
 except ImportError:
     # Activity-aware stub: runs inside Temporal evaluation activities.
     from tfc.ee_stub import _ee_activity_stub
@@ -55,6 +64,8 @@ from tracer.models.observation_span import EvalLogger
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
     from simulate.models.test_execution import CallExecution
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.project import Project
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -97,6 +108,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 source=SourceChoices.EXPERIMENT_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
             ),
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
@@ -110,6 +123,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -873,6 +888,13 @@ def trigger_error_localization_for_column(
     logger.info(f"Created ErrorLocalizerTask for cell {cell.id}")
 
 
+# Statement-level PostgreSQL failures (a statement timeout or cancel, or a
+# dropped connection Django reopens) that the span trigger retries in place.
+_TRANSIENT_DB_ERRORS = (OperationalError, InterfaceError)
+SPAN_LOCALIZATION_ATTEMPTS = 3
+SPAN_LOCALIZATION_RETRY_DELAY_SECONDS = 0.5
+
+
 def trigger_error_localization_for_span(
     eval_template: EvalTemplate,
     eval_logger: EvalLogger,
@@ -881,76 +903,261 @@ def trigger_error_localization_for_span(
     eval_explanation: str,
     log_id: str | None = None,
     eval_config: dict | None = None,
+    *,
+    observation_span: "ObservationSpan",
 ) -> None:
-    try:
-        """
-        Helper function to create ErrorLocalizerTask records for spans.
-        """
-        input_data_dict = mapping
-        input_keys = list(input_data_dict.keys())
-        input_type_dict = _get_input_type(input_data_dict)
+    """Create or refresh localization for an accepted span result.
 
-        task_exists = ErrorLocalizerTask.objects.filter(
-            source_id=eval_logger.id
-        ).exists()
-        workspace = eval_logger.observation_span.project.workspace
-        if not workspace:
-            workspace = Workspace.objects.get(
-                organization=eval_logger.observation_span.project.organization,
-                is_default=True,
-                is_active=True,
+    Runs after the evaluator persisted the result, so nothing raised here
+    reaches the caller. Deliberate refusals log a WARNING. Once the entry is
+    completed nothing else retries localization, so a transient database
+    failure is retried here.
+
+    Each attempt checks the span's context in one short transaction or
+    savepoint and writes in another. Input types are detected between the two,
+    outside any transaction: detection fetches every URL-shaped mapping value
+    over the network, and an open transaction would hold a pooled connection
+    and table locks for the whole fetch. A refused entry never fetches, and a
+    retried write reuses the types already detected.
+    """
+    log_context = {
+        "eval_logger_id": str(eval_logger.id),
+        "span_id": str(observation_span.id),
+    }
+    span_context: dict[str, Any] = {
+        "eval_template": eval_template,
+        "eval_logger": eval_logger,
+        "observation_span": observation_span,
+    }
+    input_types = None
+    for attempt in range(1, SPAN_LOCALIZATION_ATTEMPTS + 1):
+        try:
+            if input_types is None:
+                with transaction.atomic():
+                    if _resolve_span_localization_workspace(**span_context) is None:
+                        return
+                input_types = _get_input_type(mapping)
+            with transaction.atomic():
+                # The owning task is read again: its project may have been
+                # deleted while the media was being fetched.
+                target_workspace = _resolve_span_localization_workspace(**span_context)
+                if target_workspace is None:
+                    return
+                _create_or_refresh_span_localization(
+                    eval_template=eval_template,
+                    eval_logger=eval_logger,
+                    project=observation_span.project,
+                    target_workspace=target_workspace,
+                    value=value,
+                    mapping=mapping,
+                    input_types=input_types,
+                    eval_explanation=eval_explanation,
+                    log_id=log_id,
+                    eval_config=eval_config,
+                )
+        except _TRANSIENT_DB_ERRORS as e:
+            if attempt < SPAN_LOCALIZATION_ATTEMPTS:
+                logger.warning(
+                    "error_localizer_span_trigger_retrying",
+                    **log_context,
+                    attempt=attempt,
+                    error_type=type(e).__name__,
+                )
+                time.sleep(SPAN_LOCALIZATION_RETRY_DELAY_SECONDS * attempt)
+                continue
+            # A sustained outage also fails run_entry's terminal write, which
+            # Temporal retries with the whole entry. Reaching this means a
+            # transient outlasted every attempt while the entry still completed.
+            logger.error(
+                "error_localizer_span_trigger_db_unavailable",
+                **log_context,
+                attempts=attempt,
+                error_type=type(e).__name__,
             )
+        except Exception as e:
+            logger.error(
+                "error_localizer_span_trigger_failed",
+                **log_context,
+                error_type=type(e).__name__,
+            )
+        return
 
-        rule_prompt = (
-            eval_template.config.get("rule_prompt")
-            or eval_template.criteria
-            or eval_template.description
+
+def _resolve_span_localization_workspace(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    observation_span: "ObservationSpan",
+) -> Workspace | None:
+    """Return the workspace that owns this span's localization.
+
+    Uses the evaluator's project-scoped span, which may exist only in CH.
+    Returns None after logging a WARNING when the span's context refuses
+    localization. A repeat call reads only the owning task, and a fallback
+    default workspace, again: the span's project, the config and their
+    workspaces come from relations cached on the instances.
+    """
+    from tracer.models.eval_task import EvalTask
+
+    project = observation_span.project
+    config = eval_logger.custom_eval_config
+    config_project = config.project
+    # The owning task's project is the target. Task create and update accept
+    # only configs from the task's own project, but an existing task may still
+    # reference a config from another project; that pairing is localized only
+    # within the same organization and workspace (checked below). Legacy
+    # entries without a task use the config project as their owner.
+    target_project_id = config.project_id
+    if eval_logger.eval_task_id:
+        target_project_id = (
+            EvalTask.objects.filter(id=eval_logger.eval_task_id)
+            .values_list("project_id", flat=True)
+            .first()
         )
-
-        # Validate required fields before creating/updating task
-        initial_status, error_message = _validate_error_localizer_fields(
-            rule_prompt, input_data_dict, value
+        if target_project_id is None:
+            # A missing or soft-deleted task owns nothing left to localize.
+            logger.warning(
+                "error_localizer_span_context_mismatch",
+                eval_logger_id=str(eval_logger.id),
+                eval_task_id=str(eval_logger.eval_task_id),
+                reason="owning_task_missing",
+            )
+            return None
+    if (
+        str(eval_logger.observation_span_id) != str(observation_span.id)
+        or str(eval_logger.trace_id) != str(observation_span.trace_id)
+        or str(target_project_id) != str(project.id)
+        or config_project.organization_id != project.organization_id
+        or str(config.eval_template_id) != str(eval_template.id)
+    ):
+        logger.warning(
+            "error_localizer_span_context_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="span_context",
         )
+        return None
 
-        pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+    target_workspace = project.workspace
+    if not target_workspace:
+        target_workspace = Workspace.objects.get(
+            organization=project.organization,
+            is_default=True,
+            is_active=True,
+        )
+    # A null author workspace denotes this tenant's default workspace,
+    # not permission to borrow a config into an arbitrary workspace.
+    config_workspace_matches = config_project.workspace_id == target_workspace.id or (
+        config_project.workspace_id is None
+        and target_workspace.is_default
+        and target_workspace.is_active
+    )
+    if target_workspace.organization_id != project.organization_id:
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="target_workspace_organization",
+        )
+        return None
+    if not config_workspace_matches:
+        # A config whose project lies in another workspace is refused; one in
+        # another organization was refused by the span-context check above.
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="cross_workspace_config",
+        )
+        return None
+    return target_workspace
 
-        if task_exists:
-            task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
-            metadata = task.metadata or {}
-            metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
-            task.eval_result = value
-            task.eval_explanation = eval_explanation
-            task.input_data = input_data_dict
-            task.input_keys = input_keys
-            task.input_types = input_type_dict
-            task.status = initial_status
-            task.rule_prompt = rule_prompt
-            task.error_message = error_message
-            task.metadata = metadata
-            task.save()
 
-        else:
-            task = ErrorLocalizerTask(
-                eval_template=eval_template,
-                source=ErrorLocalizerSource.OBSERVE,
+def _create_or_refresh_span_localization(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    project: "Project",
+    target_workspace: Workspace,
+    value: Any,
+    mapping: dict,
+    input_types: dict,
+    eval_explanation: str,
+    log_id: str | None,
+    eval_config: dict | None,
+) -> None:
+    """Write the localization for a span whose context was just resolved."""
+    input_data_dict = mapping
+    input_keys = list(input_data_dict.keys())
+
+    task_exists = ErrorLocalizerTask.objects.filter(source_id=eval_logger.id).exists()
+
+    rule_prompt = (
+        eval_template.config.get("rule_prompt")
+        or eval_template.criteria
+        or eval_template.description
+    )
+
+    # Validate required fields before creating/updating task
+    initial_status, error_message = _validate_error_localizer_fields(
+        rule_prompt, input_data_dict, value
+    )
+
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
+    if task_exists:
+        workspace_scope = Q(workspace=target_workspace)
+        if target_workspace.is_default and target_workspace.is_active:
+            # The workspace migration did not backfill historical tasks.
+            # Adopt only this organization's legacy rows into its default.
+            workspace_scope |= Q(workspace__isnull=True)
+        try:
+            task = ErrorLocalizerTask.objects.get(
+                workspace_scope,
                 source_id=eval_logger.id,
-                input_data=input_data_dict,
-                input_keys=input_keys,
-                input_types=input_type_dict,
-                eval_result=value,
-                eval_explanation=eval_explanation,
-                rule_prompt=rule_prompt,
-                organization=eval_logger.observation_span.project.organization,
-                metadata={"log_id": log_id, "pass_threshold": pass_threshold},
-                workspace=workspace,
-                status=initial_status,
-                error_message=error_message,
+                source=ErrorLocalizerSource.OBSERVE,
+                organization=project.organization,
             )
-            task.save()
+        except ErrorLocalizerTask.DoesNotExist:
+            # This source's localization belongs to another tenant, workspace
+            # or source; leave it untouched rather than raising into the crash
+            # handler. ``unique_source_id`` rules out creating a second row.
+            logger.warning(
+                "error_localizer_span_existing_task_out_of_scope",
+                eval_logger_id=str(eval_logger.id),
+            )
+            return
+        task.workspace = target_workspace
+        metadata = task.metadata or {}
+        metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
+        task.eval_result = value
+        task.eval_explanation = eval_explanation
+        task.input_data = input_data_dict
+        task.input_keys = input_keys
+        task.input_types = input_types
+        task.status = initial_status
+        task.rule_prompt = rule_prompt
+        task.error_message = error_message
+        task.metadata = metadata
+        task.save()
 
-        logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
-    except Exception as e:
-        logger.error(f"Error in trigger_error_localization_for_span: {str(e)}")
+    else:
+        task = ErrorLocalizerTask(
+            eval_template=eval_template,
+            source=ErrorLocalizerSource.OBSERVE,
+            source_id=eval_logger.id,
+            input_data=input_data_dict,
+            input_keys=input_keys,
+            input_types=input_types,
+            eval_result=value,
+            eval_explanation=eval_explanation,
+            rule_prompt=rule_prompt,
+            organization=project.organization,
+            metadata={"log_id": log_id, "pass_threshold": pass_threshold},
+            workspace=target_workspace,
+            status=initial_status,
+            error_message=error_message,
+        )
+        task.save()
+
+    logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
 
 
 def _get_input_keys(input_data):
@@ -1150,6 +1357,11 @@ def trigger_error_localization_for_simulate(
             uuid.NAMESPACE_OID,
             f"simulate:{call_execution.id}:{eval_config.id}",
         )
+        from ee.evals.localizer.conversation_audio import simulation_audio_snapshot
+
+        simulation_audio = simulation_audio_snapshot(
+            call_execution, eval_config, input_type_dict
+        )
         task, _created = ErrorLocalizerTask.no_workspace_objects.update_or_create(
             source_id=source_id,
             deleted=False,
@@ -1168,6 +1380,7 @@ def trigger_error_localization_for_simulate(
                     "log_id": log_id,
                     "call_execution_id": str(call_execution.id),
                     "eval_config_id": str(eval_config.id),
+                    "simulation_audio": simulation_audio,
                     "pass_threshold": resolve_pass_threshold(eval_template, config),
                 },
                 "status": initial_status,
@@ -1182,7 +1395,10 @@ def trigger_error_localization_for_simulate(
         logger.error(f"Error in trigger_error_localization_for_simulate: {str(e)}")
 
 
-@temporal_activity(time_limit=3600, queue="tasks_s", rate_limit="100/s")
+# Error localization launches a Claude Agent SDK subprocess and can make several
+# model/tool turns.  Treat it as XL work so a burst of failed evals cannot launch
+# hundreds of SDK sessions on the high-concurrency ``tasks_s`` worker.
+@temporal_activity(time_limit=3600, queue="tasks_xl", rate_limit="100/s")
 def process_single_error_localization(task_id):
     """
     Process a single error localization task.
@@ -1270,16 +1486,36 @@ def process_single_error_localization(task_id):
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
+                simulation_audio=(
+                    (task.metadata or {}).get("simulation_audio") or {}
+                    if task.source == ErrorLocalizerSource.SIMULATE
+                    and "audio" in (task.input_types or {}).values()
+                    else None
+                ),
             )
+            localizer.gateway_metadata = {
+                "organization_id": str(task.organization_id),
+                "workspace_id": str(task.workspace_id),
+                "error_localizer_task_id": str(task.id),
+            }
 
             result = localizer.localize_errors()
         except Exception as e:
-            import traceback
-
-            logger.error(
-                f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
+            # SDK exceptions can contain prompts or provider bodies. Persist only
+            # our typed reason, and never attach the raw exception to diagnostics.
+            failure_code = (
+                e.code.value
+                if isinstance(e, LocalizationFailure)
+                else "unexpected_error"
             )
-            task.mark_as_failed(str(e))
+            logger.error(
+                "error_localizer_failed",
+                task_id=str(task.id),
+                source_id=str(task.source_id),
+                failure_code=failure_code,
+                error_type=type(e).__name__,
+            )
+            task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
@@ -1309,7 +1545,7 @@ def process_single_error_localization(task_id):
             )
             task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -1414,7 +1650,9 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
             try:
-                eval_logger = EvalLogger.objects.get(id=task.source_id)
+                # Primary: the result may have been written or re-scored a
+                # moment ago, and this merge saves its metadata back whole.
+                eval_logger = EvalLogger.objects.using("default").get(id=task.source_id)
                 output_metadata = eval_logger.output_metadata or {}
                 output_metadata.update(
                     {
@@ -1426,7 +1664,12 @@ def process_single_error_localization(task_id):
                 )
 
                 eval_logger.output_metadata = output_metadata
-                eval_logger.save(update_fields=["output_metadata"])
+                # Primary: save() validates the result's config (full_clean),
+                # which a lagging replica may not have when the eval is new.
+                from tfc.routers import force_primary
+
+                with force_primary():
+                    eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
                 if metadata.get("log_id", None) and APICallLog is not None:

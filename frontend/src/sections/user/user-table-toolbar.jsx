@@ -107,7 +107,8 @@ export default function UserTableToolbar({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>
@@ -116,7 +117,7 @@ export default function UserTableToolbar({
           />
 
           <IconButton onClick={popover.onOpen}>
-            <Iconify icon="eva:more-vertical-fill" />
+            <Iconify icon="solar:menu-dots-vertical-linear" />
           </IconButton>
         </Stack>
       </Stack>

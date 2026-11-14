@@ -1,0 +1,164 @@
+# The published images, as the "Images at a glance" and "Labels" tables of
+# https://docs.futureagi.com/docs/self-hosting/images describe them
+# (rendered by `python3 scripts/docs_site.py`). Sizes are not here: the size
+# column comes from scripts/image_size_budget.json.
+#
+# Checked by deploy/tests/test_image_size_budget.py (every budget entry has an
+# [[image]], and the rendered table states each budget) and
+# deploy/tests/test_image_standards.py (every released image and every OCI
+# label the Dockerfiles set has a row). Links: `#anchor` is a heading of the
+# images page, `repo:PATH` a file of this repository. The image conventions
+# themselves are in TESTING.md, "Image conventions".
+
+glance_intro = '''
+Setups: **Standalone** is the default install (`./bin/install`,
+`docker-compose.yml`). **Distributed** runs one container per service
+(`./bin/install --distributed`, `docker-compose.distributed.yml`). **Helm** is
+Distributed on Kubernetes and uses the same images.
+
+Size budget: the most a `docker pull` may download (compressed MB, 10^6
+bytes, per architecture), from
+[`scripts/image_size_budget.json`](repo:scripts/image_size_budget.json). A
+release checks it on every architecture before it moves a tag.
+'''
+
+[[image]]
+name = "futureagi/standalone"
+runs = "The Standalone app container: API with an embedded Temporal worker, Temporal dev server, fi-collector, agentcc-gateway, code-evals sandbox, UI, Redis and object storage under supervisord. Built on the `-slim` backend"
+setups = "Standalone"
+ports = "3000 UI, 8000 API, 4317/4318 OTLP, 8080 gateway, 9005 object storage"
+user = "root"
+health_check = "the five URLs of the compose `app` healthcheck"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/future-agi"
+runs = "Backend, the default [variant](#backend-variants) (feature-complete): API (`SERVICE_TYPE=backend`), Temporal and Celery workers, bootstrap jobs. Base of the simulation runner and of the EE and cloud images"
+setups = "Distributed, Helm"
+ports = "80 HTTP, 50051 gRPC, 5555 Flower"
+user = "root (runs as `1000:1000` on request)"
+health_check = "`GET /health/` on :80 for the API; roles with no listener are healthy while they run"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/future-agi"
+tag_suffix = "-slim"
+runs = "The same backend, lean: the base of `futureagi/standalone`"
+setups = "Standalone (inside `futureagi/standalone`)"
+ports = "as above"
+user = "as above"
+health_check = "as above"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/frontend"
+runs = "The web UI: the React app served by nginx"
+setups = "Distributed, Helm (Standalone serves the same files from `futureagi/standalone`)"
+ports = "80"
+user = "root master, `nginx` (101) workers"
+health_check = "`GET /` on :80"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/fi-collector"
+runs = "OTLP receiver that writes spans to ClickHouse; also `fi-property-catalog-consumer` and `fi-observed-catalog-backfill`"
+setups = "Distributed, Helm (`fi-collector` and `fi-observed-catalog-backfill` bundled in `standalone`)"
+ports = "4317 gRPC, 4318 HTTP, 9464 admin"
+user = "`nonroot` (65532)"
+health_check = "`GET /healthz` on :9464, for the `fi-collector` command only"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/agentcc-gateway"
+runs = "The LLM gateway"
+setups = "Distributed, Helm (binary bundled in `standalone`)"
+ports = "8080"
+user = "65532"
+health_check = "`GET /healthz` on :8080"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/serving"
+runs = "Embedding and audio/image model server"
+setups = "Standalone (`COMPOSE_PROFILES=ml`), Distributed, Helm"
+ports = "8080"
+user = "root (Helm runs it as `appuser`, 1000)"
+health_check = "`GET /health` on :8080"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/serving"
+tag_suffix = "-gpu"
+runs = "The same with CUDA 12.4 torch"
+setups = "any, on an NVIDIA host"
+ports = "8080"
+user = "root (Helm: 1000)"
+health_check = "`GET /health` on :8080"
+architectures = ["amd64"]
+
+[[image]]
+name = "futureagi/code-executor"
+runs = "nsjail sandbox for untrusted code evals"
+setups = "Standalone (`COMPOSE_PROFILES=sandbox`), Distributed, Helm; needs `privileged`"
+ports = "8060"
+user = "root"
+health_check = "`GET /health` on :8060"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/future-agi-simulation-runner"
+runs = "Temporal worker for the `simulation_runner` queue: the default backend variant plus the Agent Learning Kit SDK"
+setups = "Distributed, Helm"
+ports = "none"
+user = "root (from the backend)"
+health_check = "inherited from the backend: healthy while it runs"
+architectures = ["amd64"]
+
+# The one image without a budget of its own.
+[[image]]
+name = "futureagi/code-executor-base"
+runs = "Build input of `code-executor` (nsjail, Node.js, sandbox libraries); never run on its own"
+setups = "none"
+architectures = ["amd64", "arm64"]
+size = "counted in `code-executor`"
+
+# Every org.opencontainers.image.* label the Dockerfiles set.
+[[label]]
+name = "org.opencontainers.image.title"
+value = "e.g. `Future AGI backend`"
+
+[[label]]
+name = "org.opencontainers.image.description"
+value = "what the image runs"
+
+[[label]]
+name = "org.opencontainers.image.source"
+value = "`https://github.com/future-agi/future-agi`"
+
+[[label]]
+name = "org.opencontainers.image.url"
+value = "`https://futureagi.com`"
+
+[[label]]
+name = "org.opencontainers.image.documentation"
+value = "this page"
+
+[[label]]
+name = "org.opencontainers.image.vendor"
+value = "`Future AGI`"
+
+[[label]]
+name = "org.opencontainers.image.licenses"
+value = "`Apache-2.0`; `Apache-2.0 AND LicenseRef-FutureAGI-Enterprise-1.0` for `future-agi`, `standalone` and the simulation runner, which ship `futureagi/ee/` (see [`LICENSE-EE`](repo:LICENSE-EE))"
+
+[[label]]
+name = "org.opencontainers.image.version"
+value = "the release, e.g. `v1.43.0` (the `-slim` and `-gpu` variants have the same version)"
+
+[[label]]
+name = "org.opencontainers.image.revision"
+value = "the 40-character commit SHA the image was built from"
+
+[[label]]
+name = "org.opencontainers.image.created"
+value = "build time, UTC, RFC 3339"

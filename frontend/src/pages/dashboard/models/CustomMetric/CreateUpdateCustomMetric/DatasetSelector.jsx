@@ -181,7 +181,7 @@ export const DatasetSelector = ({ datasetOptions, control }) => {
                 margin: 0,
               },
             }}
-            startIcon={<Iconify icon="ic:round-plus" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
           ></Button>
         </Box>
         {isError && (
