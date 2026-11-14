@@ -8,11 +8,11 @@ from contextvars import ContextVar
 import psycopg
 import pytest
 from asgiref.sync import sync_to_async
-from django.db import connections, router
+from django.db import OperationalError, connections, router
 from django.db.backends.postgresql.base import DatabaseWrapper
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from tfc.temporal.eval_tasks import activities, get_activities, get_workflows
 from tfc.temporal.eval_tasks.db_errors import database_control_errors
@@ -194,3 +194,202 @@ async def test_historical_claim_connect_failure_recovers(
     if failure:
         assert failures == [failure]
         assert 2 in attempts
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True, databases=["default", "default_direct"])
+@pytest.mark.parametrize("outcome", ["rolled_back", "committed"])
+async def test_historical_lost_claim_reply_completes_without_a_second_claim(
+    workflow_environment, eval_task, make_pending_entries, monkeypatch, outcome
+):
+    """Real PG/Temporal; only paid computation and preseeded reconciliation stubbed.
+
+    The writer's connection drops after the claim SQL was submitted, so the
+    activity cannot know whether the claim committed and raises the
+    non-retryable ``EvalTaskClaimOutcomeUnknown``. A historical task must not
+    fail on it, and must not claim the same batch again while its outcome is
+    unknown:
+
+    * ``rolled_back``: the server connection is terminated between the claim's
+      UPDATE and its COMMIT, so the commit fails on a real dropped connection
+      and the batch stays pending;
+    * ``committed``: the claim commits and the reply is then lost, so the
+      batch stays RUNNING with no evaluation dispatched until the stale-claim
+      reaper requeues it. Its claim is aged past the reaper's threshold right
+      after the commit, standing in for the wait in production.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tfc.temporal.eval_tasks import workflows as wf
+
+    _patch_noop_reconcile(monkeypatch)
+    # One-second finalize waits instead of ten minutes; everything else,
+    # including every retry policy, is production's.
+    monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=1))
+    created = await sync_to_async(make_pending_entries)(eval_task, 3)
+    completions = Counter()
+    claim_calls, lost_batch, statuses = [], [], []
+    original_claim = entries.claim_pending_batch
+    original_set_status = activities._set_task_status_sync
+
+    def complete(entry):
+        completions[str(entry.id)] += 1
+        EvalLogger.objects.filter(id=entry.id).update(
+            status=EvalEntryStatus.COMPLETED, config_hash="0" * 64, error=False
+        )
+        return EvalEntryStatus.COMPLETED
+
+    monkeypatch.setattr("tracer.services.eval_tasks.run_entry.run_entry", complete)
+
+    def record_status(task_id, status, *args, **kwargs):
+        statuses.append(status)
+        return original_set_status(task_id, status, *args, **kwargs)
+
+    monkeypatch.setattr(activities, "_set_task_status_sync", record_status)
+
+    def terminate_after_update(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if sql.lstrip().upper().startswith("UPDATE"):
+            pid = context["connection"].connection.info.backend_pid
+            settings = connections["default"].settings_dict
+            with psycopg.connect(
+                dbname=settings["NAME"],
+                user=settings["USER"],
+                password=settings["PASSWORD"],
+                host=settings["HOST"],
+                port=settings["PORT"],
+                autocommit=True,
+            ) as admin:
+                # Waits until the backend has exited, so the COMMIT that
+                # follows meets a dropped connection rather than racing it.
+                admin.execute("SELECT pg_terminate_backend(%s, 5000)", [pid])
+        return result
+
+    def lose_first_reply(task, n):
+        claim_calls.append(n)
+        if lost_batch:
+            return original_claim(task, n)
+        if outcome == "rolled_back":
+            lost_batch.append(None)
+            with connections["default"].execute_wrapper(terminate_after_update):
+                return original_claim(task, n)
+        claimed = original_claim(task, n)
+        lost_batch.extend(str(entry.id) for entry in claimed)
+        EvalLogger.objects.filter(id__in=lost_batch).update(
+            updated_at=timezone.now() - timedelta(hours=3)
+        )
+        raise OperationalError("writer unavailable") from psycopg.InterfaceError(
+            "the connection is closed"
+        )
+
+    monkeypatch.setattr(entries, "claim_pending_batch", lose_first_reply)
+    queue = f"claim-lost-reply-{uuid.uuid4().hex}"
+    async with Worker(
+        workflow_environment.client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await workflow_environment.client.start_workflow(
+            HistoricalEvalTaskWorkflow.run,
+            EvalTaskWorkflowInput(
+                task_id=str(eval_task.id), task_queue=queue, batch_size=2
+            ),
+            id=f"eval-task-{eval_task.id}",
+            task_queue=queue,
+        )
+        result = await handle.result()
+        history = await handle.fetch_history()
+
+    print(
+        f"lost_claim={outcome} claims={claim_calls} statuses={statuses} completed={dict(completions)}"
+    )
+    assert result.status == "completed" and result.processed == 3
+    assert await _task_status(str(eval_task.id)) == EvalTaskStatus.COMPLETED
+    assert EvalTaskStatus.FAILED not in statuses
+    counts = await _status_counts(str(eval_task.id))
+    assert counts["completed"] == 3 and counts["total"] == 3
+    # Every entry evaluated exactly once: the lost batch was neither run under
+    # its unacknowledged claim nor claimed a second time while it stood.
+    assert completions == Counter({str(entry.id): 1 for entry in created})
+    serialized = history.to_json()
+    assert "EvalTaskClaimOutcomeUnknown" in serialized
+    assert any(
+        b"historical-eval-claim-outcome-unknown-v1" in payload.data
+        for event in history.events
+        for detail in event.marker_recorded_event_attributes.details.values()
+        for payload in detail.payloads
+    )
+    if outcome == "committed":
+        # The lost batch came back only through the reaper, once.
+        requeued = await sync_to_async(
+            lambda: sorted(
+                EvalLogger.objects.filter(id__in=lost_batch).values_list(
+                    "attempts", flat=True
+                )
+            )
+        )()
+        assert len(lost_batch) == 2 and requeued == [1, 1]
+    await Replayer(
+        workflows=[HistoricalEvalTaskWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_historical_lost_claim_replies_in_a_row_are_bounded(
+    workflow_environment, eval_task, make_pending_entries, monkeypatch
+):
+    """A writer that loses every claim reply cannot keep a historical task
+    waiting forever: after the cap of lost replies in a row it fails as it did
+    before, never having dispatched an evaluation."""
+    from datetime import timedelta
+
+    from temporalio.client import WorkflowFailureError
+
+    from tfc.temporal.eval_tasks import workflows as wf
+
+    _patch_noop_reconcile(monkeypatch)
+    monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=0.2))
+    await sync_to_async(make_pending_entries)(eval_task, 2)
+    claim_calls, ran = [], []
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.run_entry.run_entry", lambda e: ran.append(e)
+    )
+
+    def submitted_then_lost(task, n):
+        claim_calls.append(n)
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SELECT 1")  # the claim's SQL reached the server
+        raise OperationalError("writer unavailable") from psycopg.InterfaceError(
+            "the connection is closed"
+        )
+
+    monkeypatch.setattr(entries, "claim_pending_batch", submitted_then_lost)
+    queue = f"claim-lost-cap-{uuid.uuid4().hex}"
+    async with Worker(
+        workflow_environment.client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        with pytest.raises(WorkflowFailureError):
+            await workflow_environment.client.execute_workflow(
+                HistoricalEvalTaskWorkflow.run,
+                EvalTaskWorkflowInput(
+                    task_id=str(eval_task.id), task_queue=queue, batch_size=2
+                ),
+                id=f"eval-task-{eval_task.id}",
+                task_queue=queue,
+            )
+
+    # Each lost reply is one claim attempt, never retried in place.
+    assert len(claim_calls) == wf._MAX_CLAIM_OUTCOME_UNKNOWN_WAITS + 1
+    assert ran == []
+    assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
+    assert (await _status_counts(str(eval_task.id)))["pending"] == 2

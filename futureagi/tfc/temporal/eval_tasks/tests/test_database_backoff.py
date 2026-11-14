@@ -10,7 +10,7 @@ import psycopg
 import pytest
 from asgiref.sync import sync_to_async
 from django.db import InternalError, OperationalError
-from temporalio import workflow
+from temporalio import activity, workflow
 from temporalio.client import WorkflowHistory
 from temporalio.common import RetryPolicy
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -310,7 +310,7 @@ async def test_control_outage_recovers_without_resume(
 
     def unavailable(*args, **kwargs):
         if not recovering.is_set():
-            attempts.append(1)
+            attempts.append(activity.info().attempt)
             failed.set()
             raise _db_error(kind)
         return original(*args, **kwargs)
@@ -358,9 +358,13 @@ async def test_control_outage_recovers_without_resume(
                     return len(state_reads) >= CONTROL_ATTEMPTS
 
                 await _until(state_also_exhausted)
-            assert len(attempts) >= (
-                RECONCILE_ATTEMPTS if helper == "_reconcile_sync" else CONTROL_ATTEMPTS
-            )
+            if helper == "_reconcile_sync":
+                # Reconcile exhausted exactly its own five attempts and then
+                # parked; the state reads failing since then never let the
+                # loop reach it again, so the count cannot have grown.
+                assert attempts == list(range(1, RECONCILE_ATTEMPTS + 1))
+            else:
+                assert len(attempts) >= CONTROL_ATTEMPTS
             assert await _task_status(task_id) in (
                 EvalTaskStatus.PENDING,
                 EvalTaskStatus.RUNNING,

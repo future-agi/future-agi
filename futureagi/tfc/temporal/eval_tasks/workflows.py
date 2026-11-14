@@ -76,8 +76,16 @@ from tfc.temporal.eval_tasks.types import (
 # * A claim whose reply was lost after its SQL was submitted is raised as
 #   non-retryable ``EvalTaskClaimOutcomeUnknown``, which Temporal never retries
 #   whatever ``maximum_attempts`` says, so a longer window cannot claim (and
-#   bill) a second batch. The continuous workflow parks and leaves those IDs
-#   to the stale-claim reaper.
+#   bill) a second batch. Neither workflow type fails on it, and neither
+#   dispatches an evaluation for the lost batch, whose IDs it never learned:
+#   - the continuous workflow parks (``waiting_for_database``) for one poll,
+#     reaps before its next claim and goes on from its unchanged cursor;
+#   - the historical workflow treats it as an empty claim: it asks finalize,
+#     waits ``_FINALIZE_WAIT``, reaps and claims again (see
+#     ``_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH``).
+#   In both, a batch that did commit stays RUNNING until the stale-claim
+#   reaper requeues it, and only then is it claimed again and evaluated once;
+#   a batch that rolled back is still pending and the next claim takes it.
 CONTROL_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=60),
@@ -170,6 +178,26 @@ _HISTORICAL_FINALIZE_WAIT_PATCH = "historical-eval-finalize-wait-v1"
 _CONTINUOUS_IDLE_REAP_PATCH = "continuous-eval-idle-reap-v1"
 _CONTINUOUS_DATABASE_BACKOFF_PATCH = "continuous-eval-database-backoff-v1"
 _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
+# A historical claim whose reply was lost after its SQL was submitted
+# (``EvalTaskClaimOutcomeUnknown``) used to fail the task, and FAILED is
+# outside the sweep's default scope, so the task sat there until someone
+# pressed Resume. The drain now treats that claim as an empty one: finalize
+# (which only succeeds if nothing is pending or running), else wait
+# ``_FINALIZE_WAIT``, reap, and claim again. The claim is never retried in
+# place, so one lost reply cannot claim or bill a second batch: if the lost
+# claim committed, its entries stay RUNNING with no activity dispatched for
+# them until the reaper requeues them, and they are then claimed and evaluated
+# once; if it rolled back, the next claim takes them as ordinary pending work.
+#
+# These waits are counted apart from ``idle_waits``, so a lost reply never
+# eats into the budget that lets a blind-floor reap reclaim stranded rows
+# before the drain gives up. They have their own cap: after
+# ``_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS`` lost replies in a row (no claim reply
+# seen in between, two hours of waits) the drain fails as it did before.
+# Histories recorded before this marker keep failing on replay. A literal for
+# the same reason as ``_MAX_IDLE_FINALIZE_WAITS``.
+_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH = "historical-eval-claim-outcome-unknown-v1"
+_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -186,8 +214,17 @@ def _is_database_deferred_error(exc: Exception) -> bool:
     ) or (
         # This attempt must NOT be retried: its transaction may have committed.
         # Park the workflow, leaving unknown IDs to the stale-claim reaper.
-        cause.type == "EvalTaskClaimOutcomeUnknown" and cause.non_retryable
+        _is_claim_outcome_unknown(exc)
     )
+
+
+def _is_claim_outcome_unknown(exc: BaseException) -> bool:
+    """The claim's SQL was submitted and its reply lost (it may have committed)."""
+    if not isinstance(exc, ActivityError) or not isinstance(
+        exc.cause, ApplicationError
+    ):
+        return False
+    return exc.cause.type == "EvalTaskClaimOutcomeUnknown" and exc.cause.non_retryable
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -555,6 +592,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         processed = input.processed
         batches = 0
         idle_waits = 0
+        unknown_claims = 0
         reap_before_claim = False
         while True:
             state = await _task_state(input.task_id)
@@ -580,16 +618,36 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 if reaped.get("requeued") or reaped.get("failed"):
                     idle_waits = 0
 
-            batch = await _claim(input.task_id, input.batch_size)
-            entry_ids = batch["entry_ids"]
+            claim_lost = False
+            try:
+                batch = await _claim(input.task_id, input.batch_size)
+            except ActivityError as exc:
+                # A lost claim reply: handle it as an empty claim, never as a
+                # retry (see _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH). The
+                # marker is only consulted on this failure, so histories that
+                # never lost a reply replay unchanged, and ones recorded
+                # before the marker existed keep failing here.
+                if (
+                    not _is_claim_outcome_unknown(exc)
+                    or unknown_claims >= _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS
+                    or not workflow.patched(_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH)
+                ):
+                    raise
+                unknown_claims += 1
+                claim_lost = True
+                entry_ids = []
+            else:
+                unknown_claims = 0
+                entry_ids = batch["entry_ids"]
             if not entry_ids:
                 if await _finalize(input.task_id):
                     break
                 # The drain loop only ends on an empty *pending* claim, so a
                 # task that still won't finalize has entries RUNNING. Histories
                 # recorded before the wait existed failed here, and replay must
-                # keep doing so.
-                if (
+                # keep doing so. A lost claim reply has its own cap above and
+                # does not count as an idle wait.
+                if not claim_lost and (
                     not workflow.patched(_HISTORICAL_FINALIZE_WAIT_PATCH)
                     or idle_waits >= _MAX_IDLE_FINALIZE_WAITS
                 ):
@@ -602,7 +660,8 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 # Wait for the claims to become reclaimable rather than fail:
                 # FAILED is outside the sweep's scope by default, so failing
                 # here strands the rows for good.
-                idle_waits += 1
+                if not claim_lost:
+                    idle_waits += 1
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(_FINALIZE_WAIT.total_seconds())
                 self._phase = PHASE_DRAINING
