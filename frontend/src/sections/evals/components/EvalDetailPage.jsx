@@ -142,6 +142,12 @@ const resolve_context_options = (data_injection) => {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
+// A typed tag is trimmed, and skipped when blank or already selected.
+const addCustomTag = (tags, input) => {
+  const tag = input.trim();
+  return !tag || tags.includes(tag) ? tags : [...tags, tag];
+};
+
 const EvalDetailPage = () => {
   const { evalId } = useParams();
   const navigate = useNavigate();
@@ -200,6 +206,7 @@ const EvalDetailPage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState(
@@ -902,6 +909,8 @@ const EvalDetailPage = () => {
           ? { type: "custom", custom: "" }
           : { type: summaryType };
       const tools = build_tools_payload(connectorIds);
+      // Include a tag still in the field, not yet confirmed with Enter.
+      const nextTags = addCustomTag(tags, customTagInput);
       // Update the template first
       const payload = {
         ...jevPayload,
@@ -916,7 +925,7 @@ const EvalDetailPage = () => {
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
         multi_choice: multiChoice,
         description: description || null,
-        tags,
+        tags: nextTags,
         check_internet: checkInternet,
         mode: evalType === "agent" ? agentMode : undefined,
         tools: evalType === "agent" ? tools : undefined,
@@ -931,6 +940,8 @@ const EvalDetailPage = () => {
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       await updateEval.mutateAsync(payload);
+      setTags(nextTags);
+      setCustomTagInput("");
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
@@ -1013,6 +1024,7 @@ const EvalDetailPage = () => {
     multiChoice,
     description,
     tags,
+    customTagInput,
     checkInternet,
     agentMode,
     summaryType,
@@ -1953,6 +1965,29 @@ const EvalDetailPage = () => {
                         );
                       })()}
                     </Box>
+                    {!isSystemEval && (
+                      <TextField
+                        fullWidth
+                        size="small"
+                        placeholder="Type your own tag and press Enter"
+                        value={customTagInput}
+                        onChange={(e) => {
+                          setCustomTagInput(e.target.value);
+                          markDirty();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" || e.nativeEvent.isComposing) {
+                            return;
+                          }
+                          e.preventDefault();
+                          setTags((prev) => addCustomTag(prev, customTagInput));
+                          setCustomTagInput("");
+                          markDirty();
+                        }}
+                        inputProps={{ "aria-label": "Custom tag" }}
+                        sx={{ mt: 1 }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
