@@ -14,7 +14,11 @@ import { flowAnnotation } from '../../lib/flow-meta';
 //   gateway serves the decision through the OpenAI-format OpenRouter route
 //   (GetOrCreateOpenRouterDecision, the base_url's origin) with the org's key
 //   (OrgProviderCache.baseConfig). Mock-llm cannot be reached through an org's
-//   own base_url: private provider URLs stay refused on this stack.
+//   own base_url: private provider URLs stay refused on this stack
+//   (AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS is false), so the flow cannot seed an
+//   explicit base_url. It pins the format instead: the saved
+//   agentcc_provider_credential row must say api_format "openai" with no
+//   base_url of its own, and gateway.e2e.yaml's entry is OpenAI format too.
 // - e2e/stack/mock-llm/server.mjs accepts `Bearer e2e-decision-openrouter-key`
 //   only on /api/alpha/decisions (on /v1/systemone it answers 401), requires
 //   the gateway's OpenRouter routing policy, answers `e2e-decision:pass` with
@@ -66,14 +70,15 @@ test(
         'sign in as a freshly provisioned organization of its own',
         'save the OpenRouter provider key and Jev models for the organization, as the dashboard preset does (OpenAI format)',
         'mint a gateway API key',
-        'send a System One decision to openrouter/~typesafe/jev-latest with that key',
+        'send a decision (a System One body to /v1/systemone) to openrouter-chat/~typesafe/jev-latest with that key',
         'open Gateway Request Logs and find the decision',
         'limit each key to one request per minute',
         'send the same decision again',
       ],
       backendChecks: [
         'the decision answer is the vendor answer, byte for byte, from OpenRouter\'s /api/alpha/decisions on the org key (the mock takes that key nowhere else)',
-        'exactly one PG agentcc_request_log row for the key records the decision: endpoint_type decision, provider openrouter, the vendor token counts and a cost above zero',
+        'the saved PG agentcc_provider_credential row for openrouter-chat has api_format openai and no base_url of its own',
+        'exactly one PG agentcc_request_log row for the key records the decision: endpoint_type decision, provider openrouter-chat, the vendor token counts and a cost above zero',
         'the Request Logs list endpoint the UI calls returns that row',
         'the second decision is refused with 429 before the vendor is called: no tokens and no cost are recorded for it',
       ],
@@ -116,6 +121,12 @@ test(
         models: ['typesafe/jev-1.13', '~typesafe/jev-latest'],
       },
     });
+    // The format the flow claims is the one saved, not one inherited by accident.
+    const saved = await probe.pg<{ api_format: string; base_url: string }>(
+      'SELECT api_format, base_url FROM agentcc_provider_credential WHERE organization_id = $1 AND provider_name = $2 AND NOT deleted',
+      [actor.organizationId, PROVIDER],
+    );
+    expect(saved).toEqual([{ api_format: 'openai', base_url: '' }]);
     const created = await actor.api.post<CreatedKey>('/agentcc/api-keys/', { name: `e2e-gw005-${suffix}` });
     const gatewayKeyId = created.result.gateway_key_id;
     await testInfo.attach('seeded', {
