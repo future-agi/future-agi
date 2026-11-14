@@ -1,4 +1,5 @@
 import json
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -225,15 +226,27 @@ def _sanitize_headers(headers):
 
 def _compute_cost(entry):
     gateway_cost = entry.get("cost", 0)
+    metadata = entry.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    # The gateway recorded what the provider itself said the request cost.
+    # That is the cost even when it is 0 (free tiers exist), so it is never
+    # re-priced from the catalogue below.
+    if (
+        metadata.get("cost_source") == "provider_reported"
+        and isinstance(gateway_cost, (int, float))
+        and not isinstance(gateway_cost, bool)
+        and math.isfinite(gateway_cost)
+        and gateway_cost >= 0
+    ):
+        return gateway_cost
+
     try:
         if gateway_cost and Decimal(str(gateway_cost)) > 0:
             return gateway_cost
     except (InvalidOperation, TypeError):
         pass
-
-    metadata = entry.get("metadata") or {}
-    if not isinstance(metadata, dict):
-        metadata = {}
 
     try:
         prompt_tokens = int(

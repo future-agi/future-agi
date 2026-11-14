@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"strconv"
 	"sync"
 	"time"
@@ -245,6 +246,8 @@ func (t *Tracker) recordLevel(lb *levelBudget, level, key, model string, cost fl
 
 	// The local counter always records this replica's spend, so checks have a
 	// meaningful fallback whenever the shared ledger cannot be read.
+	// Recorded as the shared ledger records it, so the replicas agree.
+	cost = models.SpendUSD(cost)
 	lb.counter.mu.Lock()
 	lb.counter.maybeReset(lb.period, now)
 	lb.counter.totalSpend += cost

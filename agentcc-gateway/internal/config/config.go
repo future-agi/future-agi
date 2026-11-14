@@ -377,6 +377,12 @@ type ProviderConfig struct {
 	SkipTLS      bool   `yaml:"skip_tls" json:"skip_tls"`           // skip TLS verification
 	AutoDiscover *bool  `yaml:"auto_discover" json:"auto_discover"` // auto-discover models from /v1/models
 
+	// IgnoreProviderCost makes the gateway price this provider's requests from
+	// the model catalogue even when the provider is one whose response states
+	// what the request cost (OpenRouter, Perplexity and xAI at their official
+	// hosts). An org instance built from this entry inherits it.
+	IgnoreProviderCost bool `yaml:"ignore_provider_cost" json:"ignore_provider_cost"`
+
 	// AWS Bedrock credentials (per-provider, overrides env vars).
 	AWSAccessKeyID     string `yaml:"aws_access_key_id" json:"-"`
 	AWSSecretAccessKey string `yaml:"aws_secret_access_key" json:"-"`

@@ -86,6 +86,32 @@ func (s *Server) PriceTableName(orgID, providerID string) string {
 	return providers.PriceTableName(p)
 }
 
+// ReportedCostVendor is the vendor whose own statement of what rc cost the
+// cost plugin may record, judged on the provider instance that served rc, or
+// "" when rc is priced from the catalogue. See providers.ReportedCostVendor
+// for the rule.
+//
+// The instance is the one the chat handlers recorded as answering
+// (rc.ServedBy): an org's instance and the operator's share a provider ID,
+// and a model fallback can move a request from one to the other while the
+// routing markers still describe the first. Routes that record none have no
+// fallback, and are judged the way the handlers resolve them: the org's
+// instance when it served (an internal key never uses it), else the
+// config.yaml provider.
+func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
+	if p, ok := rc.ServedBy.(providers.Provider); ok && p != nil {
+		return providers.ReportedCostVendor(p, rc.Provider)
+	}
+	if s.handlers == nil {
+		return ""
+	}
+	p, ok := s.handlers.servingProvider(rc)
+	if !ok {
+		return ""
+	}
+	return providers.ReportedCostVendor(p, rc.Provider)
+}
+
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
 // key revocation. Call after New() and before Start().
 func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
@@ -298,6 +324,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -392,6 +419,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				if err != nil {
 					return err
 				}
+				recordServedBy(callRC, provider)
 				callRC.Response = resp
 				callRC.ResolvedModel = resp.Model
 				return nil
@@ -588,6 +616,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil

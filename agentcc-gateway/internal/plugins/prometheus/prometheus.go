@@ -84,7 +84,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	if costStr, ok := rc.Metadata["cost"]; ok {
 		if cost, err := strconv.ParseFloat(costStr, 64); err == nil && cost > 0 {
 			// Store as microdollars for integer precision.
-			microdollars := int64(cost * 1_000_000)
+			microdollars := models.SpendMicros(cost)
 			p.registry.CounterAdd("agentcc_cost_microdollars_total", "Total cost in microdollars", modelProviderLabels, microdollars)
 		}
 	}

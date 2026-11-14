@@ -229,6 +229,55 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # OpenRouter, Perplexity and xAI state in each response what the request
+  # cost. For these three the gateway records that stated cost as the
+  # request's cost (budgets, credits, x-agentcc-cost, Request Logs, OTel)
+  # instead of the catalogue estimate:
+  #   openrouter  usage.cost (credits = USD). On a BYOK call (is_byok: true)
+  #               usage.cost is only OpenRouter's fee, so
+  #               usage.cost_details.upstream_inference_cost is used, or the
+  #               catalogue when that is missing. Known limit: OpenRouter's
+  #               own BYOK fee (charged from credits once past the free
+  #               allowance) is not added to that.
+  #   perplexity  usage.cost.total_cost in USD (includes search, tool and
+  #               request fees).
+  #   xai         usage.cost_in_usd_ticks / 1e10.
+  # The stated cost is trusted only when BOTH hold for the provider that
+  # served the request:
+  #   1. its type is the vendor (an entry with no type, or a dashboard
+  #      provider, counts by its provider ID/name: "openrouter",
+  #      "perplexity" or "xai"), and it speaks the OpenAI format. Dashboard
+  #      providers have no type, so one is trusted only when named exactly
+  #      "openrouter", "perplexity" or "xai"; "OpenRouter-prod" uses the
+  #      catalogue;
+  #   2. its base_url hostname is the vendor's official host: openrouter.ai,
+  #      api.perplexity.ai or api.x.ai (scheme and port are not compared).
+  # Anything else (type "openai" at openrouter.ai, a vendor type behind a
+  # proxy, a custom-named provider) is priced from the catalogue. Org custom
+  # pricing (cost_tracking.custom_pricing on the org) always wins. A stated
+  # cost that is missing, null, non-numeric or negative falls back to the
+  # catalogue; a stated 0 is recorded as 0. A non-zero stated cost that six
+  # decimal places would print as 0.000000 (up to $0.0000005) is recorded
+  # unrounded (e.g. 0.0000004). The Request Logs cost column keeps six places.
+  # Credits, budgets and the Prometheus counter count whole micro-dollars per
+  # request: a non-zero cost moves them by at least 1 micro-dollar, a stated 0
+  # by nothing. A stated cost above $1,000 for one request is ignored (the
+  # catalogue prices it) and logged once per provider and model.
+  #
+  # A cache hit never takes a stated cost: no vendor served it, even though
+  # the cached response still carries the original call's usage. An exact
+  # hit is not priced; a semantic hit is priced from the catalogue on the
+  # cached usage, as before.
+  #
+  # ignore_provider_cost: true prices a provider from the catalogue (and
+  # model_database.overrides) even when it would be trusted. Org instances of
+  # this provider ID inherit it.
+  #
+  # openrouter:
+  #   api_key: "${OPENROUTER_API_KEY}"
+  #   type: "openrouter"             # base_url https://openrouter.ai/api
+  #   # ignore_provider_cost: true
+
   # api_path_prefix overrides the version segment placed between base_url and
   # each endpoint. Unset means "/v1", which is what almost every
   # OpenAI-compatible provider uses.
@@ -394,6 +443,16 @@ providers:
 #     my-custom-model:
 #       input_per_mtok: 1.00
 #       output_per_mtok: 5.00
+#
+# Every priced request records where its cost came from in its metadata,
+# cost_source: org_custom (the org's own pricing), provider_reported (the
+# cost OpenRouter, Perplexity or xAI stated; see ignore_provider_cost under
+# providers), catalogue (the model database), or unpriced (no price known).
+# A provider_reported row also carries cost_reported_unit
+# (openrouter_credits | usd | usd_ticks), cost_catalogue (what the catalogue
+# would have charged), cost_is_byok ("true" on an OpenRouter BYOK call) and
+# cost_reported_zero ("true" when the vendor stated 0 for tokens the
+# catalogue prices above 0). Callers cannot set any of these keys.
 
 logging:
   level: info
@@ -470,6 +529,11 @@ logging:
 #         alice@example.com: {}
 
 # Spend caps per org / team / user / key / tag. Requires cost_tracking enabled.
+# Spend is counted in whole micro-dollars ($0.000001); a non-zero cost below
+# half a micro-dollar counts as one. At startup the counters are seeded from
+# Request Logs, whose cost column keeps 6 decimals, so such sub-micro costs are
+# seeded as 0: after a restart the seeded spend can be lower than what was
+# counted, by up to one micro-dollar per such request.
 # budgets:
 #   enabled: true
 #   default_period: "monthly"       # daily | weekly | monthly | total

@@ -129,7 +129,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
-	micros := auth.USDToMicros(costUSD)
+	// credits_used reports what is deducted, not the raw cost: a cost below
+	// half a micro-dollar is deducted as one micro-dollar.
+	micros := models.SpendMicros(costUSD)
 
 	// Write-through: unconditionally deduct from Redis (shared), then sync local.
 	// ForceDeductMicros is used because the request already completed — spend
@@ -138,7 +140,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if redisBal, ok := p.redisCredit.ForceDeductMicros(keyID, micros); ok {
 			// Sync local balance to match Redis (authoritative source).
 			key.SetBalanceMicros(redisBal)
-			rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
+			rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(micros))
 			rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(redisBal))
 			return pipeline.ResultContinue()
 		}
@@ -146,7 +148,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Fallback: local-only deduction.
 	newBalance := key.DeductMicros(micros)
-	rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
+	rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(micros))
 	rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", newBalance)
 
 	return pipeline.ResultContinue()
