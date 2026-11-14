@@ -302,3 +302,38 @@ def test_root_lookup_is_whole_hours_and_needs_a_window_or_candidates():
     )
     with pytest.raises(UnsupportedFilterShapeError):
         traces_only.translate([_leaf()])
+
+
+def test_annotation_span_graph_matching_reads_only_its_candidates_roots():
+    """Round 3: the annotation span graph's per-batch membership check binds
+    finite candidate_span_ids, so its trace_name root lookup is restricted to
+    those candidates' traces instead of every root of the request window."""
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse import exact_graph_reads
+
+    captured = {}
+
+    class Analytics:
+        def execute_ch_query(self, query, params, **_):
+            captured.update(query=query, params=params)
+            return SimpleNamespace(data=[])
+
+    predicate = f"name = 'x' AND {TRACE_NAME_ROOT_TRACES_MARKER}"
+    exact_graph_reads._matching_span_ids(
+        analytics=Analytics(),
+        project_id=PROJECT,
+        span_ids=("a" * 32,),
+        start_date=START,
+        end_date=END,
+        predicate=predicate,
+        predicate_params={},
+        timeout_ms=1000,
+        settings={},
+    )
+    assert TRACE_NAME_ROOT_TRACES_MARKER not in captured["query"]
+    assert (
+        "trace_id IN (SELECT trace_id FROM spans WHERE project_id = "
+        "%(project_id)s AND id IN %(candidate_span_ids)s)"
+    ) in captured["query"]
+    _assert_bound(captured["query"], captured["params"])

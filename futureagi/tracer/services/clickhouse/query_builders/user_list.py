@@ -1204,9 +1204,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         A trace_name leaf resolves a span through its trace's live root. The
         walk's statements are bounded by their slice or probe range, never by
-        the request window, so the root lookup covers only the traces with a
-        span in that range (the trace_id bloom index finds their roots),
-        instead of every root of the request window in every statement.
+        the request window, so the root lookup returns only the roots of the
+        traces with a span in that range. That narrows what it returns
+        (memory), not what it reads: under FINAL with
+        use_skip_indexes_if_final=0 the trace_id bloom index prunes nothing,
+        so each statement still reads the request window's root hours.
         """
 
         return scope_trace_name_roots(

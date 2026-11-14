@@ -22,9 +22,9 @@ TRACE_NAME_SQL = "if(trace_name != '', trace_name, if(empty(parent_span_id), nam
 TRACE_ROOT_LOOKBACK = "INTERVAL 1 DAY"
 
 # Marker inside a span-mode trace-name root lookup. A statement with a finite
-# set of candidate traces replaces it (``scope_trace_name_roots``) so the root
-# read covers only those traces; left alone, it is a no-op and the lookup is
-# bounded by its time window alone.
+# set of candidate traces replaces it (``scope_trace_name_roots``) so the
+# lookup returns only those traces' roots; left alone, it is a no-op. Either
+# way the lookup's read is bounded by its time terms alone.
 TRACE_NAME_ROOT_TRACES_MARKER = "1 = 1 /* trace-name root candidates */"
 
 
@@ -33,9 +33,12 @@ def scope_trace_name_roots(sql: str, candidates_sql: str) -> str:
 
     ``candidates_sql`` is a code-owned predicate over the root scan's
     ``spans`` columns, such as ``trace_id IN (SELECT trace_id FROM <candidate
-    CTE>)``. Keep it on ``trace_id`` alone: the ``idx_trace_id`` bloom index
-    prunes granules for a single-column IN, not for a tuple. The lookup's own
-    project predicate and the outer ``(project_id, trace_id)`` match keep
+    CTE>)``. It narrows the roots the lookup returns (memory), not what it
+    reads: the lookup reads ``spans FINAL``, and with
+    use_skip_indexes_if_final=0 (every shipped statement) the
+    ``idx_trace_id`` bloom index prunes no granules. The read is bounded by
+    the lookup's time terms (``_trace_name_root_scope_sql``). The lookup's
+    own project predicate and the outer ``(project_id, trace_id)`` match keep
     tenant correlation.
     """
 

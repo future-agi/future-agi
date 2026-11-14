@@ -1099,9 +1099,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         ORDER BY time_bucket
         """
         # A trace_name leaf looks up live roots. One graph runs one statement
-        # per partition, so bound each lookup to the traces with a span in
-        # this partition's storage hours (the trace_id bloom index finds their
-        # roots); the request window still bounds how early a root may start.
+        # per partition, so restrict each lookup to the traces with a span in
+        # this partition's storage hours. That narrows the roots the lookup
+        # returns (memory), not what it reads: under FINAL with
+        # use_skip_indexes_if_final=0 the trace_id bloom index prunes nothing,
+        # so the read is bounded by the request window's hours.
         query = scope_trace_name_roots(
             query,
             "trace_id IN (SELECT trace_id FROM spans "
