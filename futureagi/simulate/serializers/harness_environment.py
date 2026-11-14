@@ -1546,6 +1546,10 @@ class HarnessComparePairSerializer(serializers.Serializer):
     changed_sub_goals = serializers.ListField(child=serializers.CharField())
     reason = serializers.CharField(allow_null=True)
     removed_in = RunVersionLabelSerializer(allow_null=True)
+    changed_test = serializers.BooleanField(
+        required=False,
+        help_text="The case changed between the two runs (its content, or a source it cites).",
+    )
 
 
 class HarnessCompareSummarySerializer(serializers.Serializer):
