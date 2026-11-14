@@ -288,7 +288,14 @@ type responsesFunctionTool struct {
 // other unknown fields. A tool, tool choice, tool call or content part the
 // Responses API cannot be sent in chat shape is refused with a 400 rather than
 // forwarded or dropped.
-func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (*responsesRequest, *models.APIError) {
+func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
+	// Word the remedy for the route the caller used: only a caller's own chat
+	// request can set reasoning_effort.
+	defer func() {
+		if apiErr != nil && apiErr.Code == unsupportedCode {
+			apiErr.Message += overResponsesRemedy(req)
+		}
+	}()
 	out := &responsesRequest{
 		Model:       resolveModelName(req.Model),
 		Temperature: req.Temperature,
@@ -319,9 +326,15 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (*respon
 			out.Store = store
 		}
 	}
-	// A response has one output; more choices cannot be asked for.
+	// A response has one output; more choices cannot be asked for. A caller's
+	// own chat request asked for them and is told so. A translated request
+	// (GenAI candidateCount) gets one, as before this route existed.
 	if req.N != nil && *req.N > 1 {
-		return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
+		if req.TranslatedFrom == "" {
+			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
+		}
+		slog.Info("responses route answers one choice; extra candidates dropped",
+			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
 	}
 
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
@@ -358,8 +371,19 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (*respon
 // Responses API but carries something only chat completions can take. With
 // reasoning_effort "none" the request stays on chat completions as sent.
 func unsupportedOverResponses(what string) *models.APIError {
-	return models.ErrBadRequest("unsupported_over_responses", fmt.Sprintf(
-		"This request has function tools for a model that takes them only over the Responses API, which cannot carry %s. Remove it, or set reasoning_effort to \"none\" to keep the request on chat completions.", what))
+	return models.ErrBadRequest(unsupportedCode, fmt.Sprintf(
+		"This request has function tools for a model that takes them only over the Responses API, which cannot carry %s.", what))
+}
+
+const unsupportedCode = "unsupported_over_responses"
+
+// overResponsesRemedy is the advice for a request the Responses route cannot
+// carry, for the route the caller used.
+func overResponsesRemedy(req *models.ChatCompletionRequest) string {
+	if req.TranslatedFrom != "" {
+		return " Remove it from the request, or send it without function tools."
+	}
+	return ` Remove it, or set reasoning_effort to "none" to keep the request on chat completions.`
 }
 
 // toolType names a tool's type for an error message.
@@ -496,13 +520,33 @@ func contentParts(raw json.RawMessage) (parts []chatContentPart, ok bool) {
 	return parts, true
 }
 
+// badContent is the 400 for content that is neither a string nor an array of
+// well-formed parts, naming the first part that does not decode, as chat
+// completions refuses it. Its raw JSON is never sent on as text.
+func badContent(raw json.RawMessage) *models.APIError {
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) == nil {
+		for i, item := range items {
+			var part chatContentPart
+			if json.Unmarshal(item, &part) != nil {
+				var typed struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(item, &typed)
+				return models.ErrBadRequest("invalid_content", fmt.Sprintf("content part %d (type %q) has the wrong shape", i, typed.Type))
+			}
+		}
+	}
+	return models.ErrBadRequest("invalid_content", "message content must be a string or an array of content parts")
+}
+
 // inputContent translates the content of a user, system or developer message
 // into Responses input content: text, images and files. Any other part (audio,
 // say) is refused rather than dropped.
 func inputContent(raw json.RawMessage) ([]responsesContent, *models.APIError) {
 	parts, ok := contentParts(raw)
 	if !ok {
-		return []responsesContent{{Type: "input_text", Text: string(raw)}}, nil
+		return nil, badContent(raw)
 	}
 	out := make([]responsesContent, 0, len(parts))
 	for _, part := range parts {
@@ -536,7 +580,7 @@ func inputContent(raw json.RawMessage) ([]responsesContent, *models.APIError) {
 func assistantContent(raw json.RawMessage) ([]responsesContent, *models.APIError) {
 	parts, ok := contentParts(raw)
 	if !ok {
-		return []responsesContent{{Type: "output_text", Text: string(raw)}}, nil
+		return nil, badContent(raw)
 	}
 	var out []responsesContent
 	for _, part := range parts {
@@ -561,7 +605,7 @@ func assistantContent(raw json.RawMessage) ([]responsesContent, *models.APIError
 func toolOutputText(raw json.RawMessage) (string, *models.APIError) {
 	parts, ok := contentParts(raw)
 	if !ok {
-		return string(raw), nil
+		return "", badContent(raw)
 	}
 	var sb strings.Builder
 	for _, part := range parts {
@@ -894,9 +938,25 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		}
 		// The final response lists every output item, including any the
 		// stream never announced with output_item.added.
+		var out []models.StreamChunk
 		for _, item := range resp.Output {
 			if err := checkOutputItem(item.Type); err != nil {
 				return nil, err
+			}
+			// A function call the stream never announced is carried here,
+			// as the non-streaming answer carries it.
+			if _, seen := c.toolIndex[item.ID]; item.Type == "function_call" && !seen {
+				if c.toolIndex == nil {
+					c.toolIndex = map[string]int{}
+				}
+				index := len(c.toolIndex)
+				c.toolIndex[item.ID] = index
+				out = append(out, c.chunk(models.Delta{ToolCalls: []models.ToolCallDelta{{
+					Index:    index,
+					ID:       item.CallID,
+					Type:     "function",
+					Function: &models.FunctionCallDelta{Name: item.Name, Arguments: item.Arguments},
+				}}}, nil))
 			}
 		}
 		finish := resp.finishReason(len(c.toolIndex) > 0)
@@ -909,7 +969,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 			Choices: []models.StreamChoice{},
 			Usage:   resp.Usage.toChat(),
 		}
-		return []models.StreamChunk{final, usage}, nil
+		return append(out, final, usage), nil
 
 	case "response.failed":
 		c.done = true

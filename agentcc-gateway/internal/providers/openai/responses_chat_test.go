@@ -810,3 +810,75 @@ func TestToResponsesRequestCarriesStoreAndOneChoice(t *testing.T) {
 		t.Error("store = false, want the caller's true")
 	}
 }
+
+// A refusal's remedy fits the route: a translated request (GenAI, Messages)
+// cannot set reasoning_effort, so it is not told to.
+func TestOverResponsesRemedyFitsTheRoute(t *testing.T) {
+	custom := models.Tool{}
+	if err := json.Unmarshal([]byte(`{"type":"custom","custom":{"name":"run_sql"}}`), &custom); err != nil {
+		t.Fatal(err)
+	}
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Tools = append(req.Tools, custom)
+	_, err := toResponsesRequest(req, false)
+	if err == nil || !strings.Contains(err.Message, `reasoning_effort to "none"`) {
+		t.Errorf("direct: %v", err)
+	}
+	req.TranslatedFrom = "google"
+	_, err = toResponsesRequest(req, false)
+	if err == nil || strings.Contains(err.Message, "reasoning_effort") || !strings.Contains(err.Message, "without function tools") {
+		t.Errorf("translated: %v", err)
+	}
+	// A translated n > 1 is carried as one choice, not refused.
+	two := 2
+	ok := toolTurnRequest("gpt-5.6-terra")
+	ok.N, ok.TranslatedFrom = &two, "google"
+	if _, err := toResponsesRequest(ok, false); err != nil {
+		t.Errorf("translated n=2: %v", err)
+	}
+}
+
+// A content part with the wrong JSON shape is a 400 naming it, never sent on
+// as text.
+func TestToResponsesRequestRefusesMalformedParts(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Messages[1].Content = json.RawMessage(`[{"type":"text","text":"look"},{"type":"image_url","image_url":"data:image/png;base64,AAAA"}]`)
+	out, err := toResponsesRequest(req, false)
+	if err == nil || err.Status != http.StatusBadRequest || !strings.Contains(err.Message, `content part 1 (type "image_url")`) {
+		t.Fatalf("got %+v, %v; want a 400 naming part 1", out, err)
+	}
+}
+
+// A function call that appears only in the final response of a stream is
+// carried as a tool call, as the non-streaming answer carries it.
+func TestStreamViaResponsesCarriesAFunctionCallOnlyInTheFinalResponse(t *testing.T) {
+	final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"gpt-5.6-terra","output":[{"id":"fc_9","type":"function_call","status":"completed","call_id":"call_9","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	ts := fakeOpenAI(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w,
+			`{"type":"response.created","response":{"id":"resp_1","status":"in_progress","model":"gpt-5.6-terra","output":[]}}`,
+			`{"type":"response.completed","response":`+final+`}`)
+	})
+	defer ts.Close()
+	p := newTestProvider(t, ts.URL)
+	chunks, err := collect(p.StreamChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var name, args, finish string
+	for _, c := range chunks {
+		for _, ch := range c.Choices {
+			for _, tc := range ch.Delta.ToolCalls {
+				if tc.Function != nil {
+					name += tc.Function.Name
+					args += tc.Function.Arguments
+				}
+			}
+			if ch.FinishReason != nil {
+				finish = *ch.FinishReason
+			}
+		}
+	}
+	if name != "get_weather" || args != `{"city":"Paris"}` || finish != "tool_calls" {
+		t.Errorf("tool call %q %q, finish %q", name, args, finish)
+	}
+}

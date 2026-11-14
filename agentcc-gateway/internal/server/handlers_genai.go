@@ -212,6 +212,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
+	canonicalReq.TranslatedFrom = "google"
 
 	switch action {
 	case "generateContent":

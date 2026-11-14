@@ -192,6 +192,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
+	canonicalReq.TranslatedFrom = "anthropic"
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
 
