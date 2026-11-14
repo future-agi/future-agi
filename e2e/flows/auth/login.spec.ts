@@ -20,7 +20,8 @@ base('AUTH-E2E-001: user signs in with email and password', {
 }, async ({ page }) => {
   const req = await pwRequest.newContext({ baseURL: E2E.apiUrl });
   const actor = await provisionActor(req, 'login');
-  const probe = new StateProbe({ api: actor.api, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase, pgUrl: E2E.pgUrl });
+  const probe = new StateProbe({ api: actor.api, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase,
+    chPassword: E2E.chPassword, pgUrl: E2E.pgUrl });
   const activeTokens = () => probe.pg<{ id: string }>(
     `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON t.user_id = u.id
      WHERE u.email = $1 AND t.is_active`, [actor.email]);

@@ -1,5 +1,6 @@
 import { Box, IconButton, Tooltip } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import PropTypes from "prop-types";
@@ -32,7 +33,6 @@ const RESULT_DATA_THEME_PARAMS = {
   checkboxBorderWidth: 1.5,
   rowBorder: true,
   headerFontSize: "13px",
-  borderColor: "#E6E6E6",
   headerColumnBorder: { width: "1px" },
   headerRowBorder: { width: "1px" },
   wrapperBorderRadius: 1,
@@ -197,7 +197,7 @@ const ResultData = ({ data, responseFormat, columnName = "output" }) => {
                 onClick={handleCopyClick}
               >
                 <Iconify
-                  icon="basil:copy-outline"
+                  icon="solar:copy-linear"
                   sx={{ color: "text.disabled" }}
                 />
               </IconButton>

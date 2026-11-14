@@ -28,7 +28,7 @@ const ExperimentHeader = (props) => {
       case "experimentDatasetName":
         return (
           <Iconify
-            icon="mdi:text"
+            icon="solar:notes-linear"
             sx={{ width: "20px", height: "20px", color: "text.primary" }}
           />
         );
@@ -36,7 +36,7 @@ const ExperimentHeader = (props) => {
       case "averageResponseTime":
         return (
           <Iconify
-            icon="ic:baseline-schedule"
+            icon="solar:clock-circle-linear"
             sx={{ width: "20px", height: "20px", color: "text.primary" }}
           />
         );
@@ -52,15 +52,15 @@ const ExperimentHeader = (props) => {
       case "rank":
         // return (
         //   <Iconify
-        //     icon="eva:star-outline"
-        //     sx={{ width: "20px", height: "20px", color: "black.1000" }}
+        //     icon="solar:star-linear"
+        //     sx={{ width: "20px", height: "20px", color: "text.primary" }}
         //   />
         // );
         return null;
       default:
         return (
           <Iconify
-            icon="material-symbols:check-circle-outline"
+            icon="solar:check-circle-linear"
             sx={{ width: "20px", height: "20px", color: "info.success" }}
           />
         );
@@ -71,7 +71,7 @@ const ExperimentHeader = (props) => {
     if (sortState === "asc") {
       return (
         <Iconify
-          icon="mdi:arrow-up"
+          icon="solar:arrow-up-linear"
           width={20}
           sx={{ color: "text.secondary" }}
         />
@@ -80,7 +80,7 @@ const ExperimentHeader = (props) => {
     if (sortState === "desc") {
       return (
         <Iconify
-          icon="mdi:arrow-down"
+          icon="solar:arrow-down-linear"
           width={20}
           sx={{ color: "text.secondary" }}
         />

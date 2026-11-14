@@ -72,6 +72,33 @@ def test_distinct_end_users_prunes_by_project():
     assert client.params.get("pids") == ("p1",)
 
 
+def test_distinct_end_users_batches_large_issue_without_losing_users():
+    class BoundedClient:
+        def __init__(self):
+            self.batches = []
+
+        def query(self, sql, parameters=None, settings=None):
+            tids = parameters["tids"]
+            assert len(tids) <= 1000
+            assert parameters["pids"] == ("p1",)
+            assert settings["use_skip_indexes_if_final"] == 1
+            self.batches.append(tids)
+
+            class Result:
+                result_rows = [(tid, "user-1") for tid in tids]
+
+            return Result()
+
+    client = BoundedClient()
+    trace_ids = [f"trace-{i}" for i in range(2501)]
+
+    result = _reader_with(client).distinct_end_users_by_trace_ids(trace_ids, ["p1"])
+
+    assert [len(batch) for batch in client.batches] == [1000, 1000, 501]
+    assert set().union(*map(set, client.batches)) == set(trace_ids)
+    assert result == {tid: {"user-1"} for tid in trace_ids}
+
+
 def test_trace_session_ids_is_final_oom_safe():
     client = _RecordingClient()
     _reader_with(client).trace_session_ids_by_trace_ids(["t1"])
@@ -84,6 +111,31 @@ def test_trace_session_ids_prunes_by_project():
     _reader_with(client).trace_session_ids_by_trace_ids(["t1"], ["p1"])
     _assert_final_oom_safe(client, "trace_id IN %(trace_ids)s")
     assert "project_id IN %(project_ids)s" in client.sql
+
+
+def test_trace_session_ids_batches_large_issue_and_keeps_first_root():
+    class BoundedClient:
+        def __init__(self):
+            self.batches = []
+
+        def query(self, sql, parameters=None, settings=None):
+            tids = parameters["trace_ids"]
+            assert len(tids) <= 1000
+            assert parameters["project_ids"] == ("p1",)
+            self.batches.append(tids)
+
+            class Result:
+                result_rows = [(tid, "session-1") for tid in tids]
+
+            return Result()
+
+    client = BoundedClient()
+    trace_ids = [f"trace-{i}" for i in range(2501)]
+
+    result = _reader_with(client).trace_session_ids_by_trace_ids(trace_ids, ["p1"])
+
+    assert [len(batch) for batch in client.batches] == [1000, 1000, 501]
+    assert result == dict.fromkeys(trace_ids, "session-1")
 
 
 def test_per_trace_root_span_start_times_is_final_oom_safe():

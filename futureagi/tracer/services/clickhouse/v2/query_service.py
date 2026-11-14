@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+from django.conf import settings
+
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -32,6 +34,9 @@ def get_v2_query_client() -> ClickHouseClient:
                     password=config["password"],
                     database=config["database"],
                     server_enforced_readonly=config["server_enforced_readonly"],
+                    read_timeout_ceiling_ms=(
+                        settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+                    ),
                 )
     return _client
 
@@ -49,8 +54,15 @@ def reset_v2_query_client() -> None:
 class V2AnalyticsQueryService(AnalyticsQueryService):
     """Run generic read SQL against the configured direct-write CH25 cluster."""
 
-    def __init__(self) -> None:
-        self._ch_client = get_v2_query_client()
+    def __init__(self, *, read_timeout_ceiling_ms: int | None = None) -> None:
+        # Individual calls and ordinary service instances retain the normal
+        # 30-second application ceiling. A higher explicit value only lets a
+        # reviewed graph/dashboard fail-safe request up to 180 seconds instead
+        # of being silently clamped back to 30 seconds.
+        super().__init__(
+            ch_client=get_v2_query_client(),
+            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        )
 
     @staticmethod
     def _configured_eval_logger_table() -> str:

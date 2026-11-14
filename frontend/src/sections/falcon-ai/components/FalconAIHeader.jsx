@@ -13,7 +13,7 @@ import Popover from "@mui/material/Popover";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
 import ListItemButton from "@mui/material/ListItemButton";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 import { useFalconContext } from "../hooks/useFalconContext";
@@ -21,12 +21,12 @@ import { fetchConversations, getConversation } from "../hooks/useFalconAPI";
 import SkillEditorDialog from "./SkillEditorDialog";
 
 const CONTEXT_ICONS = {
-  datasets: "mdi:database-outline",
-  evaluations: "mdi:clipboard-check-outline",
-  tracing: "mdi:chart-timeline-variant",
-  experiments: "mdi:flask-outline",
-  prompts: "mdi:code-braces",
-  settings: "mdi:cog-outline",
+  datasets: "solar:database-linear",
+  evaluations: "solar:checklist-minimalistic-linear",
+  tracing: "solar:chart-2-linear",
+  experiments: "solar:test-tube-linear",
+  prompts: "solar:code-linear",
+  settings: "solar:settings-linear",
   general: null,
 };
 
@@ -42,7 +42,6 @@ const CONTEXT_LABELS = {
 
 export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const context = useFalconContext();
 
   const resetChat = useFalconStore((s) => s.resetChat);
@@ -58,7 +57,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const headerTitle =
     currentConv?.title && currentConv.title !== "New conversation"
       ? currentConv.title
-      : "Falcon AI";
+      : "Chat";
   const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
   const skillsMenuTrigger = useFalconStore((s) => s.skillsMenuTrigger);
 
@@ -182,7 +181,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             variant="subtitle1"
             sx={{
               fontWeight: 600,
-              fontSize: 15,
+              fontSize: 12,
               color: "text.primary",
               letterSpacing: "-0.01em",
             }}
@@ -202,12 +201,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 label={CONTEXT_LABELS[context.page]}
                 variant="outlined"
                 sx={{
-                  height: 22,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  borderColor: isDark
-                    ? alpha(theme.palette.common.white, 0.16)
-                    : alpha(theme.palette.common.black, 0.12),
+                  borderColor: "border.default",
                   color: "text.secondary",
                   "& .MuiChip-icon": {
                     color: "text.secondary",
@@ -229,7 +223,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:puzzle-outline" width={18} />
+            <Iconify icon="solar:widget-linear" width={20} />
           </IconButton>
           <IconButton
             size="small"
@@ -240,7 +234,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:history" width={18} />
+            <Iconify icon="solar:history-linear" width={20} />
           </IconButton>
           <IconButton
             size="small"
@@ -251,7 +245,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:pencil-box-outline" width={18} />
+            <Iconify icon="solar:pen-new-square-linear" width={20} />
           </IconButton>
           {onClose && (
             <IconButton
@@ -263,7 +257,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 "&:hover": { color: "text.primary" },
               }}
             >
-              <Iconify icon="mdi:close" width={18} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -284,11 +278,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               maxHeight: 400,
               mt: 0.5,
               borderRadius: "12px",
-              border: 1,
-              borderColor: "divider",
-              boxShadow: isDark
-                ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
             },
           },
         }}
@@ -299,9 +288,9 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             sx={{
               color: "text.disabled",
               fontWeight: 600,
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              fontSize: 12,
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Skills
@@ -310,7 +299,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
 
         {(!skills || skills.length === 0) && (
           <Box sx={{ px: 2, py: 1.5 }}>
-            <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               No skills configured yet
             </Typography>
           </Box>
@@ -324,16 +313,16 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
           >
             <ListItemIcon sx={{ minWidth: 28 }}>
               <Iconify
-                icon={skill.icon || "mdi:star-outline"}
-                width={18}
+                icon={skill.icon || "solar:star-linear"}
+                width={16}
                 sx={{ color: "text.secondary" }}
               />
             </ListItemIcon>
             <ListItemText
               primary={skill.name}
               secondary={skill.description || null}
-              primaryTypographyProps={{ fontSize: 13 }}
-              secondaryTypographyProps={{ fontSize: 11, noWrap: true }}
+              primaryTypographyProps={{ fontSize: 12 }}
+              secondaryTypographyProps={{ fontSize: 12, noWrap: true }}
             />
           </MenuItem>
         ))}
@@ -352,15 +341,15 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         >
           <ListItemIcon sx={{ minWidth: 28 }}>
             <Iconify
-              icon="mdi:plus"
-              width={18}
+              icon="solar:add-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
           </ListItemIcon>
           <ListItemText
             primary="Create Skill"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               color: "text.secondary",
             }}
           />
@@ -381,11 +370,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               maxHeight: 420,
               mt: 0.5,
               borderRadius: "12px",
-              border: 1,
-              borderColor: "divider",
-              boxShadow: isDark
-                ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
               display: "flex",
               flexDirection: "column",
             },
@@ -405,7 +389,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="mdi:magnify"
+                    icon="solar:magnifier-linear"
                     width={16}
                     sx={{ color: "text.disabled" }}
                   />
@@ -414,7 +398,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             }}
             sx={{
               "& .MuiInputBase-root": {
-                fontSize: 13,
+                fontSize: 12,
                 height: 34,
                 borderRadius: "8px",
               },
@@ -446,10 +430,11 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               selected={conv.id === currentConversationId}
               onClick={() => handleHistorySelect(conv)}
               sx={{
-                borderRadius: "8px",
+                borderRadius: "6px",
                 mb: "1px",
                 px: 1.5,
-                py: "6px",
+                py: 0,
+                height: 28,
                 minHeight: 0,
                 "&.Mui-selected": { bgcolor: theme.palette.action.selected },
                 "&:hover": { bgcolor: theme.palette.action.hover },
@@ -460,7 +445,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 primaryTypographyProps={{
                   noWrap: true,
                   fontSize: 12,
-                  fontWeight: conv.id === currentConversationId ? 600 : 400,
+                  fontWeight: conv.id === currentConversationId ? 500 : 400,
                 }}
               />
             </ListItemButton>
@@ -471,7 +456,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 textAlign: "center",
                 py: 1,
                 color: "text.disabled",
-                fontSize: 11,
+                fontSize: 12,
               }}
             >
               Loading...

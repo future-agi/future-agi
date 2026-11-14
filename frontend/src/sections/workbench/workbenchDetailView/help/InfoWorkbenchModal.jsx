@@ -20,9 +20,9 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
       open={open}
       onClose={onClose}
       fullWidth
-      maxWidth="sm"
+      maxWidth={false}
       PaperProps={{
-        width: "660px",
+        width: "720px",
         maxWidth: "none",
       }}
     >
@@ -38,7 +38,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
               Steps to use Workbench
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -150,8 +150,6 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 color="primary"
                 sx={{
                   width: "max-content",
-                  px: "24px",
-                  py: "8px",
                   minWidth: "90px",
                 }}
                 onClick={onClose}

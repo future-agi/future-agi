@@ -45,12 +45,12 @@ export const ConfirmationDialog = ({
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
+          maxWidth: 400,
           borderRadius: 1,
-          boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
           p: 2,
         },
       }}

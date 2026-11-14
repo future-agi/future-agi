@@ -1,6 +1,6 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   Box,
-  Chip,
   CircularProgress,
   Table,
   TableBody,
@@ -74,7 +74,7 @@ const PromptTemplateExploreTable = ({
               value={getScorePercentage(score)}
             />
           ) : (
-            <Chip label="Processing" color="warning" size="small" />
+            <StatusBadge status="Processing" role="warning" />
           )}
         </Box>
       </CustomTableCell>

@@ -142,6 +142,7 @@ def test_injects_all_history_when_no_time_filter(monkeypatch):
     injected = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
     assert len(injected) == 1
     assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
+    assert capture["kwargs"]["eval_count_mode"] is True
     assert capture["kwargs"]["bounded_identity_only"] is True
     assert capture["kwargs"]["bounded_internal_scan"] is True
     assert capture["bounded_read"]["page_number"] == 0
