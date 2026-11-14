@@ -434,6 +434,11 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     amendments = HarnessEnvironmentAmendmentSerializer(many=True)
     sub_goals = HarnessEnvironmentCatalogueSubGoalSerializer(many=True)
     call_actors = HarnessEnvironmentCallActorSerializer(many=True)
+    door_reach = serializers.DictField(
+        child=serializers.BooleanField(),
+        required=False,
+        help_text="Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+    )
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     chosen_evals = serializers.ListField(

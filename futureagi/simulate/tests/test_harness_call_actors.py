@@ -922,3 +922,34 @@ def test_a_trial_s_actor_limits_keep_only_the_known_limits_and_their_shapes():
             "anything": "x" * 10_000,
         }
     ) == {"max_messages": 4, "live_turns_per_trial": None}
+
+
+@pytest.mark.django_db
+def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="fault-index",
+        workspace=workspace,
+    )
+    fault = {"action": "orders.refund", "mode": "unavailable", "on_call": 1}
+    index_scenarios(job, [dict(_docs()[0], faults=[fault]), _docs()[1]])
+    rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+
+    assert scenario_row(rows.get(scenario_key="alone"))["faults"] == [fault]
+    assert scenario_row(rows.get(scenario_key="with-friend"))["faults"] == []
+
+
+def test_an_amend_refuses_a_test_condition_the_world_cannot_apply_with_why():
+    from simulate.services.harness_actors import faults_problem
+
+    assert faults_problem([{"action": "orders.refund", "mode": "explode"}]).startswith(
+        "mode must be"
+    )
+    assert (
+        faults_problem(
+            [{"action": "orders.refund", "mode": "timeout_after_commit", "on_call": 1}]
+        )
+        is None
+    )
+    assert faults_problem("not a list") == "faults must be a list"

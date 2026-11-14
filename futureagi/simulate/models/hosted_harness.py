@@ -299,6 +299,8 @@ class HostedHarnessScenario(BaseModel):
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
     actors = models.JSONField(null=True, blank=True)
+    # The scenario's test conditions: the faults the world gives the agent's calls in it.
+    faults = models.JSONField(null=True, blank=True)
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)

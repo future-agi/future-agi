@@ -129,8 +129,8 @@ class ActorView(TypedDict):
     unused_reason: str | None
 
 
-FAULT_MODES = ("timeout_before_commit", "timeout_after_commit")
-FAULT_KEYS = {"action", "mode", "on_call", "delay_seconds"}
+FAULT_MODES = ("timeout_before_commit", "timeout_after_commit", "unavailable", "error")
+FAULT_KEYS = {"action", "mode", "on_call", "delay_seconds", "status", "message"}
 
 
 def _fault_problem(fault: Any) -> str | None:
@@ -144,7 +144,7 @@ def _fault_problem(fault: Any) -> str | None:
     if not isinstance(action, str) or not action.strip():
         return "action must name a world action"
     if fault.get("mode") not in FAULT_MODES:
-        return "mode must be timeout_before_commit or timeout_after_commit"
+        return "mode must be timeout_before_commit, timeout_after_commit, unavailable or error"
     on_call = fault.get("on_call", 1)
     if isinstance(on_call, bool) or not isinstance(on_call, int) or on_call < 1:
         return "on_call must be a whole number from 1"
@@ -155,6 +155,64 @@ def _fault_problem(fault: Any) -> str | None:
         or not 0 <= delay <= 30
     ):
         return "delay_seconds must be between 0 and 30"
+    status = fault.get("status", 500)
+    if (
+        isinstance(status, bool)
+        or not isinstance(status, int)
+        or not 400 <= status <= 599
+    ):
+        return "status must be a whole number from 400 to 599"
+    message = fault.get("message", "")
+    if not isinstance(message, str) or len(message) > 500:
+        return "message must be text of at most 500 characters"
+    return None
+
+
+def door_reach(contract: Any) -> dict[str, bool]:
+    """Whether the world's door can stand in front of each contract tool, by tool name: a tool served by a tools
+    service is behind the tool proxy; a Python agent's module-level callable or method (`import`, `construct`) is
+    behind the door in its own process. Anything else (a closure, a tool of an agent in another language, an
+    unreachable entrypoint) runs where no door stands, so actors cannot take it and faults cannot be set on it."""
+    contract = contract if isinstance(contract, dict) else {}
+    runtime = (
+        contract.get("runtime") if isinstance(contract.get("runtime"), dict) else {}
+    )
+    python = str(runtime.get("language") or "python").strip().lower() in (
+        "",
+        "python",
+        "py",
+    )
+    reach: dict[str, bool] = {}
+    for entry in contract.get("tool_entrypoints") or []:
+        if not isinstance(entry, dict) or not entry.get("tool"):
+            continue
+        mode = str(entry.get("mode") or "")
+        reach[str(entry["tool"])] = bool(
+            (mode == "service" and str(entry.get("endpoint") or "").strip("/"))
+            or (
+                python
+                and mode in ("import", "construct")
+                and entry.get("module")
+                and entry.get("callable")
+            )
+        )
+    return reach
+
+
+NO_WORLD_DOOR = (
+    "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
+    "tools service to test this."
+)
+
+
+def faults_problem(faults: Any) -> str | None:
+    """Why a scenario's list of faults would not load in the harness, or None."""
+    if not isinstance(faults, list):
+        return "faults must be a list"
+    for fault in faults:
+        problem = _fault_problem(fault)
+        if problem:
+            return problem
     return None
 
 
@@ -164,13 +222,8 @@ def require_valid_faults(scenarios: Any) -> None:
     for scenario in scenarios if isinstance(scenarios, list) else []:
         if not isinstance(scenario, dict) or "faults" not in scenario:
             continue
-        faults = scenario.get("faults")
         name = scenario.get("scenario_key") or scenario.get("name") or "a scenario"
-        problem = "faults must be a list" if not isinstance(faults, list) else None
-        for fault in faults if isinstance(faults, list) else []:
-            problem = _fault_problem(fault)
-            if problem:
-                break
+        problem = faults_problem(scenario.get("faults"))
         if problem:
             raise HostedHarnessError(
                 "scenario_faults_invalid",

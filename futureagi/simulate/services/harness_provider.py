@@ -2035,7 +2035,10 @@ class HostedHarnessProvider:
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
     _DESCRIPTIVE_FIELDS = frozenset({"tests"})
-    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    # `faults` are the scenario's test conditions: what the world does to the agent's calls, so a re-proof.
+    _BEHAVIOURAL_FIELDS = frozenset(
+        {"max_turns", "background_noise", "keywords", "faults"}
+    )
     _PERSONA_FIELDS = frozenset(
         {
             "personality",
@@ -2383,6 +2386,19 @@ class HostedHarnessProvider:
                             }
                         )
                         continue
+                    if field == "faults":
+                        from simulate.services.harness_actors import faults_problem
+
+                        problem = faults_problem(change.get("value"))
+                        if problem:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"the test world cannot apply this test condition: {problem}",
+                                }
+                            )
+                            continue
                     target[field] = change.get("value")
                     touched = True
                     changed.add(name)

@@ -634,6 +634,9 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
         "coverage": doc.get("coverage") or None,
         "sub_goals": doc.get("sub_goals") or None,
         "actors": call_actor_entries(doc.get("actors")),
+        "faults": doc.get("faults")
+        if isinstance(doc.get("faults"), list) and doc.get("faults")
+        else None,
         # Older suites carry keywords on the persona.
         "keywords": (
             doc.get("keywords")
@@ -1273,6 +1276,7 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
         "actors": row.actors or [],
+        "faults": row.faults or [],
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

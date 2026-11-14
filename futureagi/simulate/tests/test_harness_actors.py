@@ -2145,6 +2145,8 @@ def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
             "unknown field when",
         ),
         ("orders.get", "a fault must be an object"),
+        ({"action": "orders.get", "mode": "error", "status": 200}, "status must be"),
+        ({"action": "orders.get", "mode": "error", "message": 5}, "message must be"),
     ],
 )
 def test_a_scenario_fault_the_world_cannot_apply_is_refused_by_name(fault, problem):
@@ -2179,6 +2181,52 @@ def test_scenario_faults_the_world_can_apply_pass():
             },
             {"name": "c"},
         ]
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        {"action": "inventory.reserve", "mode": "unavailable"},
+        {
+            "action": "inventory.reserve",
+            "mode": "error",
+            "status": 429,
+            "message": "slow down",
+        },
+    ],
+)
+def test_unavailable_is_a_valid_fault_mode(fault):
+    from simulate.services.harness_actors import require_valid_faults
+
+    require_valid_faults([{"name": "stock-out", "faults": [fault]}])
+
+
+def test_door_reach_reads_service_tools_only():
+    from simulate.services.harness_actors import door_reach
+
+    contract = {
+        "runtime": {"language": "python"},
+        "tool_entrypoints": [
+            {"tool": "issue_refund", "mode": "service", "endpoint": "orders/refund"},
+            {
+                "tool": "lookup",
+                "mode": "import",
+                "module": "agent.tools",
+                "callable": "lookup",
+            },
+            {"tool": "closure_tool", "mode": "unreachable"},
+        ],
+    }
+    assert door_reach(contract) == {
+        "issue_refund": True,
+        "lookup": True,
+        "closure_tool": False,
+    }
+    contract["runtime"]["language"] = "typescript"
+    assert (
+        door_reach(contract)["lookup"] is False
+        and door_reach(contract)["issue_refund"] is True
     )
 
 
