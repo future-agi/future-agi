@@ -1507,6 +1507,7 @@ def _ingest_hosted_transcript(
                     "approvals",
                     "usage",
                     "shared_records",
+                    "stopped_workers",
                 )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }

@@ -56,7 +56,7 @@ export const CALL_WORKERS_COPY = {
     "Multi-agent testing covers a coordinator handing work to its workers one at a time, one level deep.",
   // Added where a call went past it.
   beyondBoundary:
-    "This call also had nested or parallel hand-offs: they are shown as recorded, outside that support.",
+    "This call also had nested, parallel or background hand-offs: they are shown as recorded, outside that support.",
   noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
   returnCutOff: (name) =>
@@ -113,12 +113,17 @@ export const CALL_WORKERS_COPY = {
     infrastructure: "infrastructure fault",
   },
   workersCutShort: (list) => `Cut short: ${list}`,
-  // Past its action deadline: the world refused its later calls; its execution was not stopped.
+  // A cut-short worker seen only through its tool calls: its hand-off span had not ended.
+  cutShortToolCallsOnly:
+    "seen only through its tool calls; its hand-off was still open",
+  // Past its action deadline: the world refused its later calls. Its execution is stopped only when the app serves it
+  // as its own process (cleanup says "Stopped when its deadline passed").
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
-  // What happened to a cut-short worker when the call ended. Never "stopped" for one worker: the harness cannot stop
-  // a worker inside the app's one process, only the run's whole sandbox.
+  // What happened to a cut-short worker when the call ended. "stopped" for one worker only when the app serves it as
+  // its own process; one inside the app's process stops with the run's whole sandbox.
   cleanup: {
+    stopped: (time) => `Stopped when its deadline passed, ${time}`,
     stopped_with_sandbox: (time) =>
       `Stopped when the run's sandbox was removed, ${time}`,
     still_running: "Still running when the call ended",

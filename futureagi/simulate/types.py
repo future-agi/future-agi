@@ -130,7 +130,8 @@ class TurnSummary(TypedDict):
 
 
 class WorkerCleanup(TypedDict):
-    status: Literal["stopped_with_sandbox", "still_running", "unknown"]
+    # `stopped`: the harness ended the worker's own process (a worker the app serves alone) when its deadline passed.
+    status: Literal["stopped", "stopped_with_sandbox", "still_running", "unknown"]
     at: str | None
 
 
@@ -156,6 +157,10 @@ class HarnessWorker(TypedDict):
             "not_observed",
         ]
     ]
+    # `tool_calls_only`: seen only through its tool calls (its hand-off was still open when the trial was cut short).
+    seen: NotRequired[Literal["tool_calls_only"]]
+    # When the harness ended this worker's own process past its deadline; absent for a worker it did not stop.
+    stopped_at: NotRequired[float]
     # A cut-short worker's cleanup, added when served and never stored.
     cleanup: NotRequired[WorkerCleanup | None]
 
@@ -178,6 +183,8 @@ class WorkerEvent(TypedDict, total=False):
     output_omitted: bool
     relationship: Literal["observed", "unknown"]
     parent_delegation_id: str
+    # A hand-off to a background job, placed under the tool call that launched it.
+    launch: Literal["async"]
     refusal_code: str
     runtime_event_id: str
     runtime_parent_event_id: str
@@ -221,6 +228,7 @@ class WorkerSteps(TypedDict):
     turns: list[WorkerTurn]
     depth: int
     parallel: int
+    asynchronous: int
     overlap_unknown: bool
     worker_depths: dict[str, int]
 

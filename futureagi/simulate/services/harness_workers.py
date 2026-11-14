@@ -314,6 +314,65 @@ def _in_order(events: list[WorkerEvent]) -> None:
         event["seq"] = seq
 
 
+# Where a background job's top span carries the run it belongs to, and where the tool call that launched it says which
+# run it started, as the LangGraph and traceAI instrumentors record them.
+_ASYNC_RUN_KEYS = ("gen_ai.conversation.id", "session.id", "thread_id", "run_id")
+_ASYNC_LAUNCH_OUTPUT_KEYS = ("output.value", "gen_ai.tool.call.result")
+
+
+def _names_id(text: str, value: str) -> bool:
+    """Whether `value` appears in `text` as a whole id, not inside a longer one."""
+    start = text.find(value)
+    while start != -1:
+        before = text[start - 1] if start else " "
+        end = start + len(value)
+        after = text[end] if end < len(text) else " "
+        if not any(c.isalnum() or c in "-_" for c in (before, after)):
+            return True
+        start = text.find(value, start + 1)
+    return False
+
+
+def _async_launches(spans: list[Mapping[str, Any]]) -> dict[str, str]:
+    """Each top agent span of a background job, by span id, with the tool call that launched it: the one tool call
+    whose output names the job's run key, in another trace. A run key no launch names, or more than one names, has
+    no launch."""
+    ids = {str(span["span_id"]) for span in spans}
+    tools = [span for span in spans if _kind(span) == TOOL_KIND]
+    found: dict[str, str] = {}
+    for span in spans:
+        if _kind(span) != AGENT_KIND or str(span.get("parent_span_id") or "") in ids:
+            continue
+        attributes = span.get("attributes") or {}
+        run = next(
+            (str(attributes[key]) for key in _ASYNC_RUN_KEYS if attributes.get(key)), ""
+        )
+        if not run:
+            continue
+        launches = [
+            tool
+            for tool in tools
+            if tool.get("trace_id") != span.get("trace_id")
+            and _names_id(
+                " ".join(
+                    str(one)
+                    for one in (
+                        tool.get("output"),
+                        *(
+                            (tool.get("attributes") or {}).get(key)
+                            for key in _ASYNC_LAUNCH_OUTPUT_KEYS
+                        ),
+                    )
+                    if one
+                ),
+                run,
+            )
+        ]
+        if len(launches) == 1:
+            found[str(span["span_id"])] = str(launches[0]["span_id"])
+    return found
+
+
 def worker_timeline(
     spans: Iterable[WorkerSpan],
     declared: Iterable[DeclaredWorker],
@@ -323,8 +382,14 @@ def worker_timeline(
     turns: Iterable[CallTurn] = (),
     started_at: str | None = None,
 ) -> WorkerTimeline:
-    """Each worker (declared, observed or both) and the call's worker events in order; `traced_calls` are raw sealed rows."""
+    """Each worker (declared, observed or both) and the call's worker events in order; `traced_calls` are raw sealed rows.
+
+    A background job runs as its own trace, so its top agent span has no parent: one whose run key a tool call returned
+    in its output is placed under that tool call, as that launch's hand-off (`launch: "async"`)."""
     by_id = {str(span["span_id"]): span for span in spans}
+    launched = _async_launches(list(by_id.values()))
+    for root, launch in launched.items():
+        by_id[root] = {**by_id[root], "parent_span_id": launch}
     declared_by_key = {}
     for one in declared:
         for key in (one.get("id"), one.get("name")):
@@ -446,6 +511,7 @@ def worker_timeline(
                 "worker_id": worker_id,
                 "by": by,
                 "delegation_id": delegation_id,
+                **({"launch": "async"} if str(span["span_id"]) in launched else {}),
                 # The hand-off the maker was itself running in, read from the span tree.
                 **(
                     {"parent_delegation_id": delegation_of(maker)}
@@ -998,17 +1064,26 @@ _STILL_OUT = {
     "cancel_requested": "cancel_requested",
     "cancelled": "cancelled",
 }
+# Trials cut short, whose ending a worker seen only through its tool calls takes.
+_CUT_SHORT_TRIALS = frozenset({"cancel_requested", "cancelled", "infrastructure"})
 
 
 def worker_states(
-    timeline: WorkerTimeline, *, trial: str, past_deadline: Iterable[str] = ()
+    timeline: WorkerTimeline,
+    *,
+    trial: str,
+    past_deadline: Iterable[str] = (),
+    stopped: Mapping[str, float] | None = None,
 ) -> WorkerTimeline:
     """The timeline with each worker's end state. Each hand-off is matched to its own return by delegation id: a
     worker every hand-off of which came back is `completed`, or `failed` when a return was an error. One the world
     refused past its worker-action deadline (`past_deadline`, by worker id, or a refused call of its own) and that did
     not come back is `deadline_passed`: a refusal is the world seeing it, and says only that its later world calls
     were refused, never that its execution was stopped. A worker with no event at all is `not_observed`; one with a
-    hand-off still out takes the trial's own ending. Every partial event stays; no return is invented.
+    hand-off still out takes the trial's own ending. A worker seen only through its tool calls when the trial was cut
+    short takes the trial's ending; one in a trial that ended normally has no end state. A worker the harness stopped
+    (`stopped`, by worker id: its own process ended past its deadline) and that did not come back is
+    `deadline_passed` with `stopped_at`. Every partial event stays; no return is invented.
     """
     events = timeline["events"]
     handed: dict[str, list[str]] = {}
@@ -1028,11 +1103,16 @@ def worker_states(
         if event["type"] == "returned" and not event.get("delegation_id"):
             unkeyed.setdefault(event["worker_id"], []).append(event)
     # Refused past its deadline: by the trial's world changes, or by the refusal code on its own recorded calls.
-    late = set(past_deadline) | {
-        str(event["worker_id"]).rsplit("/", 1)[-1]
-        for event in events
-        if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
-    }
+    stopped = dict(stopped or {})
+    late = (
+        set(past_deadline)
+        | set(stopped)
+        | {
+            str(event["worker_id"]).rsplit("/", 1)[-1]
+            for event in events
+            if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
+        }
+    )
     workers = []
     for worker in timeline["workers"]:
         delegations = handed.get(worker["worker_id"], [])
@@ -1051,12 +1131,24 @@ def worker_states(
             )
         elif worker["id"] in late:
             # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
-            workers.append({**worker, "observed": True, "state": "deadline_passed"})
+            ended = (
+                {"stopped_at": stopped[worker["id"]]} if worker["id"] in stopped else {}
+            )
+            workers.append(
+                {**worker, "observed": True, "state": "deadline_passed", **ended}
+            )
             continue
         elif not worker["observed"]:
             state = "not_observed"
         elif out:
             state = _STILL_OUT.get(trial, "no_return")
+        elif trial in _CUT_SHORT_TRIALS:
+            # Seen only through its tool calls in a trial cut short: its hand-off was still open, so it takes the
+            # trial's ending.
+            workers.append(
+                {**worker, "state": _STILL_OUT[trial], "seen": "tool_calls_only"}
+            )
+            continue
         else:
             # Seen only through its tool calls: no recorded end, so no end state rather than an invented one.
             workers.append(dict(worker))
@@ -1079,6 +1171,22 @@ def deadline_refused(call: CallExecution) -> set[str]:
             isinstance(one, dict) and one.get("code") == "deadline_passed"
             for one in entry.get("refused_actions") or []
         )
+    }
+
+
+def stopped_workers(call: CallExecution) -> dict[str, float]:
+    """The workers the harness stopped in this call's trial (their own process ended past their deadline), by id, with
+    when, from its world changes."""
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    trial = (call.call_metadata or {}).get(TRIAL_STATE_KEY) or {}
+    return {
+        str(one["worker"]): float(one["at"])
+        for one in trial.get("stopped_workers") or []
+        if isinstance(one, dict)
+        and one.get("worker")
+        and isinstance(one.get("at"), (int, float))
+        and not isinstance(one.get("at"), bool)
     }
 
 
@@ -1138,11 +1246,20 @@ def worker_cleanup(
 ) -> dict | None:
     """What happened to a cut-short worker's process when the call ended, from the attempt that ran it.
 
-    Never "stopped" for a worker alone: the harness cannot stop one worker inside the app's process. Computed when
-    served, never stored: cleanup is recorded only after the sandbox is deleted."""
+    "stopped" for a worker alone only when the harness ended its own process (a worker the app serves alone); one
+    inside the app's process stops with the sandbox. Computed when served, never stored: cleanup is recorded only
+    after the sandbox is deleted."""
     from simulate.models import HostedHarnessExecution
 
-    if worker.get("state") not in CUT_SHORT_STATES or job is None:
+    if worker.get("state") not in CUT_SHORT_STATES:
+        return None
+    stopped_at = worker.get("stopped_at")
+    if isinstance(stopped_at, (int, float)) and not isinstance(stopped_at, bool):
+        return {
+            "status": "stopped",
+            "at": datetime.fromtimestamp(stopped_at, tz=UTC).isoformat(),
+        }
+    if job is None:
         return None
     execution = HostedHarnessExecution.objects.filter(call_execution=call).first()
     receipt = getattr(execution, "receipt", None) if execution is not None else None
@@ -1475,6 +1592,7 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
             ),
             trial=trial_ending(call, job),
             past_deadline=deadline_refused(call),
+            stopped=stopped_workers(call),
         ),
         "collected_at": timezone.now().isoformat(),
         # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
@@ -1488,7 +1606,9 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
             else (
                 "partial"
                 if partial
-                else "complete" if (spans or traced_calls) else "no_evidence"
+                else "complete"
+                if (spans or traced_calls)
+                else "no_evidence"
             )
         ),
     }

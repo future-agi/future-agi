@@ -810,7 +810,12 @@ export default function CallWorkersPanel({
   const pastDeadline = named((one) => one.state === "deadline_passed");
   const cutShort = data.workers
     .filter((one) => one.state !== "deadline_passed" && C.cutShort[one.state])
-    .map((one) => `${one.name} (${C.cutShort[one.state]})`)
+    .map(
+      (one) =>
+        `${one.name} (${C.cutShort[one.state]}${
+          one.seen === "tool_calls_only" ? `, ${C.cutShortToolCallsOnly}` : ""
+        })`,
+    )
     .join(", ");
   const notDeclared = named((one) => one.undeclared);
   const stoppedByUser = callStatus?.toLowerCase() === "cancelled";
@@ -882,7 +887,7 @@ export default function CallWorkersPanel({
           sx={{ typography: "s3", color: "text.subtitle" }}
         >
           {C.supportedBoundary}
-          {data.depth > 1 || data.parallel > 0 ? (
+          {data.depth > 1 || data.parallel > 0 || data.asynchronous > 0 ? (
             <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
           ) : null}
         </Typography>

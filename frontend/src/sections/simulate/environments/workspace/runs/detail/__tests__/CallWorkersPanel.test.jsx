@@ -158,6 +158,7 @@ describe("CallWorkersPanel", () => {
     [{ depth: 1, parallel: 0 }, false],
     [{ depth: 2, parallel: 0 }, true],
     [{ depth: 1, parallel: 1 }, true],
+    [{ depth: 1, parallel: 0, asynchronous: 1 }, true],
   ])(
     "says what multi-agent testing covers on every multi-agent call, and adds when a call went past it (%o)",
     (shape, shown) => {
@@ -1018,6 +1019,10 @@ describe("CallWorkersPanel", () => {
         { status: "unknown", at: null },
         "Order-lookup worker: Cleanup not confirmed",
       ],
+      [
+        { status: "stopped", at: "2026-10-31T12:01:00Z" },
+        "Order-lookup worker: Stopped when its deadline passed",
+      ],
     ])("shows each cleanup status (%o)", (cleanup, text) => {
       result = {
         data: timeline({ workers: [cut(cleanup)] }),
@@ -1026,6 +1031,20 @@ describe("CallWorkersPanel", () => {
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getByTestId("worker-cleanup").textContent).toContain(text);
+    });
+
+    it("names a tool-calls-only worker as cut short", () => {
+      result = {
+        data: timeline({
+          workers: [{ ...cut(null), seen: "tool_calls_only" }],
+        }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByText(/^Cut short:/).textContent).toContain(
+        "Order-lookup worker (cancelled, seen only through its tool calls; its hand-off was still open)",
+      );
     });
 
     it("shows no cleanup line on an old record", () => {

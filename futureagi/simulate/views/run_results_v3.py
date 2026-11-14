@@ -790,7 +790,7 @@ class SharedRecordActionSerializer(serializers.Serializer):
     who = serializers.CharField()
     tool = serializers.CharField(allow_blank=True)
     outcome = serializers.CharField()
-    # True when the contract tool records effects; null when it does not say (never false).
+    # False for a call the world logged as a read; true for a write; null when nothing says.
     write = serializers.BooleanField(allow_null=True)
 
 
@@ -803,6 +803,15 @@ class SharedRecordSerializer(serializers.Serializer):
     actions = SharedRecordActionSerializer(many=True)
     committed_writes = serializers.IntegerField()
     truncated = serializers.BooleanField()
+
+
+class StoppedWorkerSerializer(serializers.Serializer):
+    worker = serializers.CharField()
+    process = serializers.CharField()
+    at = serializers.FloatField(
+        help_text="When the harness ended it, seconds since the epoch."
+    )
+    reason = serializers.CharField()
 
 
 class TrialStateSerializer(serializers.Serializer):
@@ -824,11 +833,16 @@ class TrialStateSerializer(serializers.Serializer):
         required=False,
         help_text="Records two or more participants named in this trial, and what the world made of each call.",
     )
+    stopped_workers = StoppedWorkerSerializer(
+        many=True,
+        required=False,
+        help_text="Workers whose own process the harness ended when their deadline passed.",
+    )
 
 
 class CleanupSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
-        choices=("stopped_with_sandbox", "still_running", "unknown")
+        choices=("stopped", "stopped_with_sandbox", "still_running", "unknown")
     )
     at = serializers.CharField(allow_null=True)
 
@@ -858,6 +872,10 @@ class CallWorkerSerializer(serializers.Serializer):
         ],
         required=False,
     )
+    # Seen only through its tool calls in a trial cut short: its hand-off was still open.
+    seen = serializers.ChoiceField(choices=["tool_calls_only"], required=False)
+    # When the harness ended this worker's own process past its deadline.
+    stopped_at = serializers.FloatField(required=False)
     # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
     cleanup = CleanupSerializer(required=False)
 
@@ -889,6 +907,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     relationship = serializers.ChoiceField(
         choices=("observed", "unknown"), required=False
     )
+    # `async` for a hand-off to a background job, placed under the tool call that launched it.
+    launch = serializers.ChoiceField(choices=("async",), required=False)
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
 
@@ -966,6 +986,8 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
     depth = serializers.IntegerField()
     parallel = serializers.IntegerField()
+    # Hand-offs to background jobs, placed under the tool call that launched each.
+    asynchronous = serializers.IntegerField(required=False)
     overlap_unknown = serializers.BooleanField()
     # The level each worker was first handed work at.
     worker_depths = serializers.DictField(child=serializers.IntegerField())

@@ -3285,3 +3285,169 @@ def test_old_record_without_cleanup_serves_as_is(
             }
         else:
             assert "cleanup" not in worker
+
+
+_TOOL_CALLS_ONLY = [
+    {"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"},
+    {"name": "list_refunds", "ok": True, "at": 2.0, "worker_id": "refund"},
+]
+
+
+def test_worker_seen_only_through_tool_calls_takes_a_cancelled_trials_ending():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one
+        for one in worker_states(timeline, trial="cancel_requested")["workers"]
+    }
+    assert (workers["refund"]["state"], workers["refund"]["seen"]) == (
+        "cancel_requested",
+        "tool_calls_only",
+    )
+    # A declared worker that never acted is still not observed, never cut short.
+    assert workers["audit"]["state"] == "not_observed"
+    assert "seen" not in workers["audit"]
+
+
+def test_worker_seen_only_through_tool_calls_has_no_state_when_the_trial_ended():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    assert ("state" in workers["refund"], "seen" in workers["refund"]) == (False, False)
+
+
+@pytest.mark.django_db
+def test_served_workers_confirms_a_tool_calls_only_cancel(
+    user, workspace, storage, settings
+):
+    from django.utils import timezone
+
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.harness_workers import served_workers, worker_states
+
+    job, attempt, call = _cut_short_run(user, workspace, storage, settings, "tco")
+    call.status = CallExecution.CallStatus.CANCELLED
+    call.save(update_fields=["status"])
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state=HostedHarnessJob.State.CANCELED
+    )
+    attempt.cleanup_verified_at = timezone.now()
+    attempt.save(update_fields=["cleanup_verified_at"])
+    timeline = worker_states(
+        worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY),
+        trial="cancel_requested",
+    )
+    refund = next(
+        one
+        for one in served_workers(call, timeline)["workers"]
+        if one["id"] == "refund"
+    )
+    assert (refund["state"], refund["seen"], refund["cleanup"]["status"]) == (
+        "cancelled",
+        "tool_calls_only",
+        "stopped_with_sandbox",
+    )
+
+
+def test_a_worker_the_harness_stopped_ends_past_its_deadline_with_when_it_was_stopped():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one
+        for one in worker_states(timeline, trial="ended", stopped={"refund": 1700.5})[
+            "workers"
+        ]
+    }
+    assert (workers["refund"]["state"], workers["refund"]["stopped_at"]) == (
+        "deadline_passed",
+        1700.5,
+    )
+    assert "stopped_at" not in workers["order_lookup"]
+
+
+def test_a_stopped_worker_s_cleanup_is_stopped_alone_and_a_refused_one_is_not():
+    cleanup = harness_workers.worker_cleanup(
+        None, None, {"state": "deadline_passed", "stopped_at": 0.0}
+    )
+    assert cleanup == {"status": "stopped", "at": "1970-01-01T00:00:00+00:00"}
+    # Refused only, with no job to read: nothing to say about its process.
+    assert (
+        harness_workers.worker_cleanup(None, None, {"state": "deadline_passed"}) is None
+    )
+
+
+def test_stopped_workers_are_read_from_the_trial_s_world_changes():
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    call = SimpleNamespace(
+        call_metadata={
+            TRIAL_STATE_KEY: {
+                "stopped_workers": [
+                    {
+                        "worker": "refund",
+                        "process": "refund-worker",
+                        "at": 12.5,
+                        "reason": "deadline_passed",
+                    },
+                    {"worker": "", "at": 1.0},
+                    {"worker": "audit", "at": True},
+                ]
+            }
+        }
+    )
+    assert harness_workers.stopped_workers(call) == {"refund": 12.5}
+
+
+def _job_run(span_id, trace, run_key, start):
+    return _span(
+        span_id,
+        None,
+        "agent",
+        "researcher",
+        start,
+        None,
+        trace_id=trace,
+        attributes={"gen_ai.conversation.id": run_key, "graph.node.id": "researcher"},
+    )
+
+
+_ASYNC_SPANS = [
+    _span("c1", None, "agent", "supervisor", "t01", "t20", trace_id="tr-main"),
+    _span(
+        "c2",
+        "c1",
+        "tool",
+        "start_async_task",
+        "t02",
+        "t03",
+        trace_id="tr-main",
+        output="Launched async subagent. task_id: job-r",
+    ),
+]
+
+
+def test_a_background_job_run_is_placed_under_the_tool_call_that_launched_it():
+    spans = [*_ASYNC_SPANS, _job_run("j1", "tr-job", "job-r", "t04")]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    (hand_off,) = [one for one in events if one["type"] == "delegated"]
+    assert (hand_off["delegation_id"], hand_off.get("launch")) == ("c2", "async")
+    assert hand_off.get("relationship") != "unknown"
+
+
+def test_a_job_whose_run_key_matches_no_launch_stays_unknown():
+    spans = [*_ASYNC_SPANS, _job_run("j1", "tr-job", "job-other", "t04")]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    assert not any(one.get("launch") == "async" for one in events)
+    # A key that is only part of a longer id is no match either.
+    partial = [*_ASYNC_SPANS, _job_run("j2", "tr-job", "job", "t04")]
+    assert not any(
+        one.get("launch") == "async"
+        for one in worker_timeline(partial, [], run_key=RUN)["events"]
+    )
