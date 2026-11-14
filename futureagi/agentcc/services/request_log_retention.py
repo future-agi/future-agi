@@ -160,6 +160,10 @@ def budget_periods(budgets):
     if not isinstance(budgets, dict) or budgets.get("enabled") is False:
         return set()
     budgets = _gateway_budgets(budgets)
+    if budgets.get("enabled") is False:
+        # The contract reads "false" and 0 as False too: the gateway
+        # enforces none of these budgets.
+        return set()
     default = budgets.get("default_period") or DEFAULT_BUDGET_PERIOD
     org_period = budgets.get("org_period")
     periods = set()

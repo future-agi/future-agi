@@ -137,6 +137,16 @@ def test_budget_periods_are_the_ones_config_push_sends(budgets):
     assert retention.budget_periods(budgets) == retention.budget_periods(pushed)
 
 
+@pytest.mark.parametrize("enabled", [False, "false", 0, "0"])
+def test_budgets_the_contract_turns_off_set_no_floor(enabled):
+    """Round 3 review: the gateway contract reads "false" and 0 as False, so
+    the gateway enforces none of these budgets; retention keeps no floor."""
+    budgets = {"enabled": enabled, "org_limit": 10, "org_period": "monthly"}
+
+    assert retention.budget_periods(budgets) == set()
+    assert retention.budget_retention_floor(budgets) is None
+
+
 def test_budgets_the_contract_refuses_still_resolve_in_push_order():
     """A dict push would refuse (a hard_limit budget with no action) was
     never sent; its periods still resolve in push's order, not alias-first."""

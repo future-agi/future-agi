@@ -3,8 +3,9 @@
 Retention keeps the current calendar month and week (UTC) unless
 AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS is set, because the gateway seeds its YAML
 budgets from these logs. gateway.e2e.yaml defines none, and GW-E2E-008 purges
-rows 3 days old in whichever container runs Django: the Distributed backend
-and worker, and the Standalone app. Compose rendering only; no container is
+rows 3 days old in whichever container runs Django: the Distributed backend,
+worker and (with the `workers` profile) worker-default, and the Standalone
+app. Compose rendering only; no container is
 started.
 """
 
@@ -20,8 +21,11 @@ except ImportError:
     from test_e2e_telemetry_env import ROOT, STACKS, render
 
 FLAG = "AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS"
+# The daily retention activity runs on the `default` queue: the Distributed
+# worker (every queue) or, with the `workers` profile, worker-default; the
+# backend runs the operator purge command GW-E2E-008 calls.
 RETENTION_SERVICES = {
-    "distributed": ("backend", "worker"),
+    "distributed": ("backend", "worker", "worker-default"),
     "standalone": ("app",),
 }
 
@@ -33,7 +37,7 @@ class E2ERequestLogRetentionEnvironmentTests(unittest.TestCase):
 
     def test_every_stack_running_retention_sets_the_no_yaml_budgets_flag(self):
         for stack, (env_file, files) in STACKS.items():
-            services = render(env_file, files)["services"]
+            services = render(env_file, files, all_profiles=True)["services"]
             for name in RETENTION_SERVICES[stack]:
                 with self.subTest(stack=stack, service=name):
                     environment = services[name].get("environment") or {}
