@@ -134,6 +134,17 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         # Project policies are persisted but not evaluated by the gateway yet.
         return attrs
 
+    def _allowed_actions(self):
+        # The org config editor (views/org_config.py) stores org-wide checks in
+        # the reserved __ui_guardrails__ row and still offers "mask"; only
+        # policies created through this API are limited to block/warn/log.
+        instance = self.instance
+        if isinstance(instance, AgentccGuardrailPolicy) and instance.name.startswith(
+            "__"
+        ):
+            return ("block", "warn", "log", "mask")
+        return ("block", "warn", "log")
+
     def validate_checks(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("checks must be a JSON array")
@@ -146,7 +157,7 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must have a non-empty name"
                 )
-            if "action" in check and check["action"] not in ("block", "warn", "log"):
+            if "action" in check and check["action"] not in self._allowed_actions():
                 raise serializers.ValidationError(
                     f"Check at index {i} has invalid action"
                 )

@@ -40,6 +40,14 @@ const errorText = (value) => {
   return value || "";
 };
 
+// The check editor reads `confidence_threshold`; policy checks may store
+// either spelling.
+const thresholdForEditor = (check) =>
+  check && {
+    ...check,
+    confidence_threshold: check.threshold ?? check.confidence_threshold,
+  };
+
 export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
@@ -357,16 +365,20 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
           open
           onClose={() => setEditingCheck(null)}
           checkName={editingCheck.name}
-          initialData={form.checks.find(
-            (check) => check.name === editingCheck.name,
+          initialData={thresholdForEditor(
+            form.checks.find((check) => check.name === editingCheck.name),
           )}
           providerMeta={editingCheck}
-          onSave={(_, data) =>
+          onSave={(_, { confidence_threshold: threshold, ...data }) =>
             setCheck(editingCheck.name, {
               ...data,
               action: ["block", "warn", "log"].includes(data.action)
                 ? data.action
                 : "log",
+              // Policies store one spelling, `threshold`, which the gateway
+              // payload reads first.
+              threshold,
+              confidence_threshold: undefined,
             })
           }
         />

@@ -63,7 +63,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 				continue
 			}
 			// Unlike org checks, these still run when a static rule uses the same name.
-			g := p.getGuardrailScoped(orgID, name, name+"@"+pol.ID, check)
+			g := p.getKeyPolicyGuardrail(orgID, name, name+"@"+pol.ID, check)
 			if g != nil && g.Stage() == stage {
 				checks = append(checks, orgCheck{name: name, check: check, g: g})
 			}
@@ -142,6 +142,28 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 	return pipeline.ResultContinue()
 }
 
+const passThroughNote = " (client's body was forwarded unchanged on this pass-through route)"
+
+// getKeyPolicyGuardrail resolves a key-policy check from that policy's own
+// config, even an empty one, so it never runs the gateway's static instance,
+// which config.yaml may have configured for every request. It falls back to
+// the static registry only for checks the factory can't build.
+func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, check *tenant.GuardrailCheck) Guardrail {
+	if p.dynamicFactory != nil {
+		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
+			return g
+		}
+		cfg := check.Config
+		if cfg == nil {
+			cfg = map[string]interface{}{}
+		}
+		if g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, cfg); g != nil {
+			return g
+		}
+	}
+	return p.getGuardrailScoped(orgID, name, cacheKey, check)
+}
+
 func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action) (string, string) {
 	message := cr.Message
 	if action == ActionBlock {
@@ -151,7 +173,7 @@ func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action)
 		if rc.Request != nil {
 			return message, "redacted"
 		}
-		return message + " (client's body was forwarded unchanged on this pass-through route)", "logged"
+		return message + passThroughNote, "logged"
 	}
 	if action == ActionWarn {
 		return message, "warned"
@@ -178,6 +200,9 @@ func (p *GuardrailPlugin) recordKeyOutcome(result *PipelineResult, rc *models.Re
 			outcome = "logged"
 		case wouldAction == "block":
 			outcome = "would_block"
+		case mutatesInput(c.g) && cr.InputRewritten && rc.Request == nil:
+			// Even enforced, the gateway forwards the client's own body here.
+			outcome = "logged"
 		case mutatesInput(c.g) && cr.InputRewritten:
 			outcome = "would_redact"
 		case wouldAction == "warn":
@@ -187,6 +212,9 @@ func (p *GuardrailPlugin) recordKeyOutcome(result *PipelineResult, rc *models.Re
 		}
 		// A monitor check runs on a snapshot, so no client body was changed.
 		message = cr.Message
+		if outcome == "logged" && mutatesInput(c.g) && cr.InputRewritten && rc.Request == nil {
+			message += passThroughNote
+		}
 	}
 	result.Triggered = append(result.Triggered, TriggeredGuardrail{
 		Name: c.name, Score: cr.Score, Threshold: threshold, Action: action, Message: message,

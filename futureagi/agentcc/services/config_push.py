@@ -14,6 +14,9 @@ from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
 )
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import (
+    KeyGuardrailPolicy as GatewayKeyGuardrailPolicy,
+)
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
 from agentcc.guardrail_settings import normalize_saved_guardrail_settings
@@ -705,38 +708,65 @@ def _build_key_policies(org_id, policies):
                 gateway_ids.append(gateway_id)
         if not gateway_ids:
             continue
-        checks = copy.deepcopy(policy.checks)
-        for check in checks:
-            check["_policy"] = str(policy.id)
-        _inject_guardrail_credentials(checks, org_id, policies=[policy])
-        mapped = {}
-        for check in checks:
-            name = check.get("name", "")
-            registry_name = _RULE_TO_REGISTRY.get(name, name)
-            cfg = dict(check.get("config") or {})
-            if name in _RULE_PROVIDER_DEFAULTS:
-                cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
-            _normalize_eval_ids(cfg)
-            mapped[registry_name] = {
-                "enabled": check.get("enabled", True),
-                "action": check.get("action", "block"),
-                "confidence_threshold": check.get(
-                    "threshold", check.get("confidence_threshold", 0.8)
-                ),
-                "config": cfg,
-            }
-        _inject_fi_credentials(mapped, org_id)
-        result.append(
-            {
-                "id": str(policy.id),
-                "name": policy.name,
-                "mode": policy.mode,
-                "priority": policy.priority,
-                "key_ids": gateway_ids,
-                "checks": mapped,
-            }
-        )
+        # Rows saved before the serializer validated checks may hold anything.
+        # Skip such a policy rather than fail the whole org's payload, which
+        # would stop the org's config sync (push and bulk pull).
+        try:
+            entry = _build_key_policy(org_id, policy, gateway_ids)
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.warning(
+                "guardrail_key_policy_skipped",
+                org_id=str(org_id),
+                policy_id=str(policy.id),
+                error=str(e),
+            )
+            continue
+        result.append(entry)
     return result
+
+
+def _build_key_policy(org_id, policy, gateway_ids):
+    if not isinstance(policy.checks, list):
+        raise ValueError("checks must be a list")
+    checks = copy.deepcopy(policy.checks)
+    for check in checks:
+        if not isinstance(check, dict):
+            raise ValueError("each check must be an object")
+        check["_policy"] = str(policy.id)
+    _inject_guardrail_credentials(checks, org_id, policies=[policy])
+    mapped = {}
+    for check in checks:
+        name = check.get("name", "")
+        registry_name = _RULE_TO_REGISTRY.get(name, name)
+        raw_cfg = check.get("config") or {}
+        if not isinstance(raw_cfg, dict):
+            raise ValueError(f"config of {name!r} must be an object")
+        cfg = dict(raw_cfg)
+        if name in _RULE_PROVIDER_DEFAULTS:
+            cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
+        _normalize_eval_ids(cfg)
+        mapped[registry_name] = {
+            "enabled": check.get("enabled", True),
+            "action": check.get("action", "block"),
+            "confidence_threshold": check.get(
+                "threshold", check.get("confidence_threshold", 0.8)
+            ),
+            "config": cfg,
+        }
+    _inject_fi_credentials(mapped, org_id)
+    entry = {
+        "id": str(policy.id),
+        "name": policy.name,
+        "mode": policy.mode,
+        "priority": policy.priority,
+        "key_ids": gateway_ids,
+        "checks": mapped,
+    }
+    try:
+        GatewayKeyGuardrailPolicy.model_validate(entry)
+    except ValidationError as e:
+        raise ValueError(str(e)) from e
+    return entry
 
 
 def _build_payload(org_id, config):

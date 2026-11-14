@@ -59,7 +59,8 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             if "global" in (old_scope, new_scope):
                 # Never push from inside the transaction. The global sync only
                 # updates the active config; validation may still reject it.
-                config = sync_guardrail_policies(org, push=False)
+                sync_guardrail_policies(org, push=False)
+                config.refresh_from_db()
             validate_org_config(config)
         return policy, push_org_config(str(org.id), config)
 
