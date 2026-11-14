@@ -45,7 +45,7 @@ export default function PromptModalWrapper({
       }}
       PaperProps={{
         sx: {
-          width: "570px",
+          width: "560px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
@@ -73,7 +73,7 @@ export default function PromptModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (

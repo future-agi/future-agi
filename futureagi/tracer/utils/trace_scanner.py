@@ -11,6 +11,8 @@ from typing import List
 
 import structlog
 
+from agentic_eval.core.embeddings.serving_client import serving_available
+
 # Activity-aware stub: used inside Temporal trace-scanner activities.
 from tfc.ee_stub import _ee_activity_stub as _ee_stub
 
@@ -203,6 +205,16 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
     issues = get_unclustered_issues(project_id)
     if not issues:
         logger.info("no_unclustered_issues", project_id=project_id)
+        return ClusteringSummary()
+
+    # Checked before distillation so no LLM call is spent on issues that
+    # cannot be embedded; they stay unclustered for a later pass.
+    if not serving_available():
+        logger.info(
+            "cluster_issues_skipped_serving_unavailable",
+            project_id=project_id,
+            unclustered=len(issues),
+        )
         return ClusteringSummary()
 
     # Distill each brief to a canonical failure phrase before embedding — briefs

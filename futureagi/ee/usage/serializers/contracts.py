@@ -753,6 +753,8 @@ class UsagePlansAndAddonsResultSerializer(serializers.Serializer):
     pricing = serializers.DictField(child=UsagePricingDimensionSerializer())
     isCustomPricing = serializers.BooleanField()
     customDetails = UsageCustomPlanDetailsSerializer(required=False, allow_null=True)
+    plan_change_locked = serializers.BooleanField(required=False)
+    plan_change_locked_reason = serializers.CharField(required=False, allow_blank=True)
     pending_cancel = serializers.BooleanField()
     cancel_at = serializers.CharField(required=False, allow_null=True)
 

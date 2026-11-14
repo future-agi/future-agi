@@ -1,25 +1,28 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
+import { normalizeMessageRole } from "src/utils/message-role";
+import { messageBlockText, serializeMessageValue } from "src/utils/message-text";
 
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
 const ROLE_STYLES = {
-  system: { accent: "neutral", icon: "mdi:cog-outline" },
-  user: { accent: "info", icon: "mdi:account-outline" },
-  assistant: { accent: "agent", icon: "mdi:robot-outline" },
-  model: { accent: "agent", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
-  tool: { accent: "tool", icon: "mdi:wrench-outline" },
-  developer: { accent: "pass", icon: "mdi:code-braces" },
-  function: { accent: "tool", icon: "mdi:function-variant" },
+  system: { accent: "neutral", icon: "solar:settings-linear" },
+  user: { accent: "info", icon: "solar:user-linear" },
+  assistant: { accent: "agent", icon: "solar:bot-linear" },
+  model: { accent: "agent", icon: "solar:bot-linear" }, // Gemini uses "model" for assistant
+  tool: { accent: "tool", icon: "solar:toolbox-linear" },
+  developer: { accent: "pass", icon: "solar:code-linear" },
+  function: { accent: "tool", icon: "solar:programming-linear" },
 };
 
 const getRoleStyle = (role) => {
-  const base = ROLE_STYLES[(role || "").toLowerCase()] || ROLE_STYLES.user;
+  const key = normalizeMessageRole(role).toLowerCase();
+  const base = Object.hasOwn(ROLE_STYLES, key) ? ROLE_STYLES[key] : ROLE_STYLES.user;
   return {
     ...base,
     color: `accent.${base.accent}`,
@@ -43,12 +46,14 @@ export function isOpenAIMessages(input) {
   if (
     Array.isArray(data) &&
     data.length > 0 &&
+    data[0] != null &&
     typeof data[0] === "object" &&
     "role" in data[0]
   )
     return true;
   // Gemini/Vertex format: {contents: [{role, parts}], model: "..."}
   if (
+    data != null &&
     typeof data === "object" &&
     !Array.isArray(data) &&
     data.contents &&
@@ -75,6 +80,7 @@ function parseMessages(input) {
   }
   // Gemini format: {contents: [{role, parts}], model: "..."}
   if (
+    data != null &&
     typeof data === "object" &&
     data.contents &&
     Array.isArray(data.contents)
@@ -87,8 +93,8 @@ function parseMessages(input) {
 /** Normalize a message to {role, content} format (handles Gemini parts) */
 function normalizeMessage(msg) {
   if (!msg || typeof msg !== "object")
-    return { role: "unknown", content: [String(msg)] };
-  const role = msg.role || "unknown";
+    return { role: "unknown", content: [messageBlockText(msg)] };
+  const role = normalizeMessageRole(msg.role);
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
     if (typeof msg.content === "string")
@@ -96,32 +102,29 @@ function normalizeMessage(msg) {
     if (Array.isArray(msg.content)) {
       return {
         role,
-        content: msg.content.map((c) =>
-          typeof c === "string" ? c : c?.text || JSON.stringify(c),
-        ),
+        content: msg.content.map(messageBlockText),
       };
     }
-    return { role, content: [JSON.stringify(msg.content)] };
+    return { role, content: [serializeMessageValue(msg.content)] };
   }
   // Gemini format: {role, parts: [{text: "..."}]}
   if (msg.parts && Array.isArray(msg.parts)) {
     const texts = msg.parts.map((p) => {
       if (typeof p === "string") return p;
-      if (p?.text) return p.text;
-      if (p?.functionCall)
-        return `**Tool call:** \`${p.functionCall.name}\`\n\`\`\`json\n${JSON.stringify(p.functionCall.args, null, 2)}\n\`\`\``;
-      if (p?.function_call)
-        return `**Tool call:** \`${p.function_call.name}\`\n\`\`\`json\n${JSON.stringify(p.function_call.args, null, 2)}\n\`\`\``;
-      return JSON.stringify(p);
+      if (p && Object.hasOwn(p, "text")) return messageBlockText(p);
+      const call = p?.functionCall || p?.function_call;
+      if (call)
+        return `**Tool call:** \`${messageBlockText(call.name)}\`\n\`\`\`json\n${serializeMessageValue(call.args, 2)}\n\`\`\``;
+      return messageBlockText(p);
     });
     return { role, content: texts };
   }
-  return { role, content: [JSON.stringify(msg)] };
+  return { role, content: [serializeMessageValue(msg)] };
 }
 
 // ── Single Message Card ──
 const MessageCard = ({ message }) => {
-  const role = message.role || "user";
+  const role = normalizeMessageRole(message.role, "user");
   const style = getRoleStyle(role);
   const content = message.content;
   const toolCalls = message.tool_calls || message.toolCalls;
@@ -133,16 +136,9 @@ const MessageCard = ({ message }) => {
     if (content == null) return "";
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-      return content
-        .map((p) => {
-          if (typeof p === "string") return p;
-          if (p?.type === "text") return p.text;
-          if (p?.text) return p.text;
-          return JSON.stringify(p);
-        })
-        .join("\n\n");
+      return content.map(messageBlockText).join("\n\n");
     }
-    return JSON.stringify(content, null, 2);
+    return serializeMessageValue(content, 2);
   }, [content]);
 
   return (
@@ -178,14 +174,14 @@ const MessageCard = ({ message }) => {
           {role}
         </Typography>
         {name && (
-          <Typography sx={{ fontSize: 11, color: style.color, opacity: 0.7 }}>
+          <Typography sx={{ fontSize: 12, color: style.color, opacity: 0.7 }}>
             : {name}
           </Typography>
         )}
         {toolCallId && (
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "text.disabled",
               ml: "auto",
               fontFamily: "monospace",
@@ -201,11 +197,17 @@ const MessageCard = ({ message }) => {
         sx={{
           px: 1.5,
           py: 1,
-          fontSize: 13,
-          lineHeight: 1.5,
+          // Message text at the UI default (12/18), like the rest of the
+          // drawer; markdown blocks inherit it rather than the 13px body.
+          fontSize: 12,
+          lineHeight: "18px",
           color: "text.primary",
+          "& p, & li, & td, & th": {
+            fontSize: "inherit",
+            lineHeight: "inherit",
+          },
           "& p": { m: 0 },
-          "& pre": { whiteSpace: "pre-wrap", fontSize: 11 },
+          "& pre": { whiteSpace: "pre-wrap", fontSize: 12 },
         }}
       >
         {textContent ? (
@@ -260,48 +262,53 @@ const ChatMessageView = ({
   }, [input, attrInputMessages]);
 
   // Parse output — prefer attribute-extracted, fall back to raw output
-  const outputMessage = useMemo(() => {
+  const outputMessages = useMemo(() => {
     if (attrOutputMessages?.length > 0) {
-      return normalizeMessage(attrOutputMessages[0]);
+      return attrOutputMessages.map(normalizeMessage);
     }
-    if (!output) return null;
+    if (output == null || output === "") return [];
     let data = output;
     if (typeof data === "string") {
       try {
         data = JSON.parse(data);
       } catch {
-        return { role: "assistant", content: [output] };
+        return [{ role: "assistant", content: [output] }];
       }
+    }
+    if (data == null || (Array.isArray(data) && data.length === 0)) return [];
+    // Role-bearing arrays are separate messages; other arrays are reply blocks.
+    if (
+      Array.isArray(data) &&
+      data.every((message) => typeof message?.role === "string" && message.role)
+    ) {
+      return data.map(normalizeMessage);
+    }
+    // Raw OpenAI completion: {choices: [{message: {role, content}}]}.
+    if (typeof data.choices?.[0]?.message?.role === "string") {
+      return [normalizeMessage(data.choices[0].message)];
     }
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
     if (typeof data === "object" && data.content && data.content.role) {
-      return normalizeMessage(data.content);
+      return [normalizeMessage(data.content)];
     }
     // OpenAI: {role, content}
-    if (typeof data === "object" && data.role) return normalizeMessage(data);
+    if (typeof data === "object" && data.role) return [normalizeMessage(data)];
     if (
       typeof data === "object" &&
       data.content &&
       typeof data.content === "string"
     ) {
-      return { role: "assistant", content: [data.content] };
+      return [{ role: "assistant", content: [data.content] }];
     }
-    return null;
+    // Raw output may be content blocks or a JSON scalar, not a message envelope.
+    // Keep unknown blocks as JSON rather than silently hiding the model's reply.
+    return [normalizeMessage({ role: "assistant", content: data })];
   }, [output, attrOutputMessages]);
 
-  const allMessages = useMemo(() => {
-    const msgs = [...messages];
-    // Add output as last assistant message if not already present
-    if (
-      outputMessage &&
-      !msgs.some(
-        (m) => m.role === "assistant" && m.content === outputMessage.content,
-      )
-    ) {
-      msgs.push(outputMessage);
-    }
-    return msgs;
-  }, [messages, outputMessage]);
+  const allMessages = useMemo(
+    () => [...messages, ...outputMessages],
+    [messages, outputMessages],
+  );
 
   const COLLAPSE_THRESHOLD = 4;
   const shouldCollapse = allMessages.length > COLLAPSE_THRESHOLD && !showAll;
@@ -337,7 +344,7 @@ const ChatMessageView = ({
               }}
             >
               <Iconify
-                icon="mdi:brain"
+                icon="solar:brain-linear"
                 width={14}
                 sx={{ color: "text.secondary" }}
               />
@@ -347,7 +354,7 @@ const ChatMessageView = ({
                 {model}
               </Typography>
               {provider && (
-                <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                   ({provider})
                 </Typography>
               )}
@@ -359,37 +366,37 @@ const ChatMessageView = ({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 0.25,
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
               }}
             >
               {promptTokens ? (
                 <>
-                  <Typography component="span" sx={{ fontSize: 11 }}>
+                  <Typography component="span" sx={{ fontSize: 12 }}>
                     {promptTokens.toLocaleString()}
                   </Typography>
                   <Iconify
-                    icon="mdi:arrow-down"
-                    width={11}
+                    icon="solar:arrow-down-linear"
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
                   <Box component="span" sx={{ mx: 0.25 }}>
                     {" "}
                   </Box>
-                  <Typography component="span" sx={{ fontSize: 11 }}>
+                  <Typography component="span" sx={{ fontSize: 12 }}>
                     {(completionTokens || 0).toLocaleString()}
                   </Typography>
                   <Iconify
-                    icon="mdi:arrow-up"
-                    width={11}
+                    icon="solar:arrow-up-linear"
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography component="span" sx={{ fontSize: 11, ml: 0.5 }}>
+                  <Typography component="span" sx={{ fontSize: 12, ml: 0.5 }}>
                     (Σ {(totalTokens || 0).toLocaleString()})
                   </Typography>
                 </>
               ) : (
-                <Typography component="span" sx={{ fontSize: 11 }}>
+                <Typography component="span" sx={{ fontSize: 12 }}>
                   {(totalTokens || 0).toLocaleString()} tokens
                 </Typography>
               )}
@@ -402,20 +409,14 @@ const ChatMessageView = ({
       {shouldCollapse && (
         <>
           <MessageCard message={visibleMessages[0]} />
-          <Box
+          <Button
+            size="small"
+            variant="text"
+            fullWidth
             onClick={() => setShowAll(true)}
-            sx={{
-              textAlign: "center",
-              py: 0.5,
-              cursor: "pointer",
-              color: "primary.main",
-              fontSize: 12,
-              fontWeight: 500,
-              "&:hover": { textDecoration: "underline" },
-            }}
           >
             Show {hiddenCount} more message{hiddenCount > 1 ? "s" : ""}...
-          </Box>
+          </Button>
           {visibleMessages.slice(1).map((msg, i) => (
             <MessageCard key={i + 1} message={msg} />
           ))}
@@ -425,19 +426,14 @@ const ChatMessageView = ({
         allMessages.map((msg, i) => <MessageCard key={i} message={msg} />)}
 
       {showAll && allMessages.length > COLLAPSE_THRESHOLD && (
-        <Box
+        <Button
+          size="small"
+          variant="text"
+          fullWidth
           onClick={() => setShowAll(false)}
-          sx={{
-            textAlign: "center",
-            py: 0.5,
-            cursor: "pointer",
-            color: "text.secondary",
-            fontSize: 11,
-            "&:hover": { color: "primary.main" },
-          }}
         >
           Collapse messages
-        </Box>
+        </Button>
       )}
     </Stack>
   );

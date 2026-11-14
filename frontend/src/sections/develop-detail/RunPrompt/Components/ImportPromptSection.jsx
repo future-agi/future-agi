@@ -96,7 +96,7 @@ export default function ImportPromptSection({
                 <InputAdornment position="end">
                   <Iconify
                     icon="ci:chevron-down"
-                    sx={{ color: "black.1000" }}
+                    sx={{ color: "text.primary" }}
                   />
                 </InputAdornment>
               ),

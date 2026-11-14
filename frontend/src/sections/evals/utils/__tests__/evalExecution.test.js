@@ -32,6 +32,15 @@ vi.mock("src/utils/axios", () => {
 import axios from "src/utils/axios";
 
 const POST = axios.post;
+const VERIFIED_SPAN = {
+  span_id: "s1",
+  trace_id: "t1",
+  project_id: "project-a",
+  observation_type: "SPAN",
+  service_name: "service-a",
+  start_time: "2026-09-01T12:00:01.123456Z",
+  _version: "18446744073709551614",
+};
 
 beforeEach(() => {
   POST.mockReset();
@@ -57,11 +66,16 @@ describe("normalizeRowType", () => {
 });
 
 describe("buildAutoCtx", () => {
-  const spanRow = { span_id: "s1", trace_id: "t1", session_id: null };
-  it("sends span_id + trace_id for Span", () => {
-    expect(buildAutoCtx({ rowType: "Span", currentRow: spanRow })).toEqual({
-      span_id: "s1",
-      trace_id: "t1",
+  const spanRow = { ...VERIFIED_SPAN, session_id: null };
+  it("sends the verified Span context with no bare-ID refetch", () => {
+    expect(
+      buildAutoCtx({
+        rowType: "Span",
+        currentRow: spanRow,
+        spanDetail: VERIFIED_SPAN,
+      }),
+    ).toEqual({
+      span_context: VERIFIED_SPAN,
     });
   });
   it("sends only trace_id for Trace", () => {
@@ -89,8 +103,8 @@ describe("buildAutoCtx", () => {
 
 describe("buildCompositeCtx", () => {
   it("sends span_context = spanDetail for Span", () => {
-    const spanDetail = { foo: "bar" };
-    const currentRow = { span_id: "s1" };
+    const spanDetail = { ...VERIFIED_SPAN, foo: "bar" };
+    const currentRow = { ...VERIFIED_SPAN, span_id: "s1" };
     expect(
       buildCompositeCtx({ rowType: "Span", currentRow, spanDetail }),
     ).toEqual({ span_context: spanDetail });
@@ -166,6 +180,21 @@ describe("resolveMappingFromRow", () => {
 });
 
 describe("executeEvalForRow — single eval", () => {
+  it.each(["eval", "composite"])(
+    "does not send a %s request for a mismatched physical winner",
+    async (templateType) => {
+      const result = await executeEvalForRow({
+        evalItem: { template_id: "tpl-1", template_type: templateType },
+        rowType: "Span",
+        currentRow: VERIFIED_SPAN,
+        spanDetail: { ...VERIFIED_SPAN, _version: "18446744073709551615" },
+        mapping: {},
+      });
+      expect(result.ok).toBe(false);
+      expect(POST).not.toHaveBeenCalled();
+    },
+  );
+
   it("posts to /eval-playground/ with autoCtx + resolved mapping for Span", async () => {
     POST.mockResolvedValueOnce({
       data: { status: true, result: { score: 1, log_id: "log-1" } },
@@ -173,8 +202,8 @@ describe("executeEvalForRow — single eval", () => {
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1", model: "turing_large" },
       rowType: "Span",
-      currentRow: { span_id: "s1", trace_id: "t1" },
-      spanDetail: { input: { value: "hi" } },
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1", trace_id: "t1" },
+      spanDetail: { ...VERIFIED_SPAN, input: { value: "hi" } },
       mapping: { question: "input.value" },
     });
     expect(POST).toHaveBeenCalledWith("/model-hub/eval-playground/", {
@@ -182,8 +211,7 @@ describe("executeEvalForRow — single eval", () => {
       model: "turing_large",
       error_localizer: false,
       config: { mapping: { question: "hi" } },
-      span_id: "s1",
-      trace_id: "t1",
+      span_context: { ...VERIFIED_SPAN, input: { value: "hi" } },
     });
     expect(result).toMatchObject({
       ok: true,
@@ -227,8 +255,8 @@ describe("executeEvalForRow — single eval", () => {
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
       rowType: "Span",
-      currentRow: { span_id: "s1" },
-      spanDetail: {},
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
       mapping: {},
     });
     expect(result).toMatchObject({
@@ -243,8 +271,8 @@ describe("executeEvalForRow — single eval", () => {
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
       rowType: "Span",
-      currentRow: { span_id: "s1" },
-      spanDetail: {},
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
       mapping: {},
     });
     expect(result).toMatchObject({
@@ -263,8 +291,8 @@ describe("executeEvalForRow — single eval", () => {
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
       rowType: "Span",
-      currentRow: { span_id: "s1" },
-      spanDetail: {},
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
       mapping: {},
     });
     expect(result).toMatchObject({
@@ -286,7 +314,7 @@ describe("executeEvalForRow — composite", () => {
         },
       },
     });
-    const spanDetail = { foo: "bar" };
+    const spanDetail = { ...VERIFIED_SPAN, foo: "bar" };
     const result = await executeEvalForRow({
       evalItem: {
         template_id: "tpl-c",
@@ -294,7 +322,7 @@ describe("executeEvalForRow — composite", () => {
         model: "turing_large",
       },
       rowType: "Span",
-      currentRow: { span_id: "s1" },
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
       spanDetail,
       mapping: {},
     });
@@ -338,7 +366,7 @@ describe("executeEvalForRow — composite", () => {
       evalItem: { model: "turing_large" }, // no template_type — adhoc forces composite
       rowType: "Trace",
       currentRow: { trace_id: "t1" },
-      spanDetail: {},
+      spanDetail: { ...VERIFIED_SPAN },
       mapping: {},
       compositeAdhocConfig,
     });
@@ -368,8 +396,8 @@ describe("executeEvalForRow — composite", () => {
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-c", template_type: "composite" },
       rowType: "Span",
-      currentRow: { span_id: "s1" },
-      spanDetail: {},
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
       mapping: {},
     });
     expect(result.output).toBeNull();

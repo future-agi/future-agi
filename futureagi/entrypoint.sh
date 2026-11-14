@@ -14,6 +14,9 @@ FAST_STARTUP=${FAST_STARTUP:-false}
 # data bootstrap must run as a dedicated one-shot operator job using both
 # SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator. Development and
 # self-hosted compose retain the existing default startup behavior.
+# Temporal schedules are not database state: SERVICE_TYPE=temporal-schedules is
+# the one-shot job a deploy runs to create or update this release's schedules,
+# with database mutations still disabled.
 CLOUD_STARTUP=false
 case "$ENV_TYPE" in
     "prod"|"production"|"staging"|"PROD"|"PRODUCTION"|"STAGING") CLOUD_STARTUP=true ;;
@@ -185,9 +188,6 @@ export ENV_PROJECT_ROOT
 # Change to the backend directory
 cd /app/backend
 
-# Install any missing dependencies (2FA/WebAuthn added after Docker image build)
-pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" 2>/dev/null || true
-
 # Create logs directory if it doesn't exist
 mkdir -p logs media static
 
@@ -338,6 +338,12 @@ if [ "$FAST_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "true" ] && [ 
 fi
 
 should_register_temporal_schedules() {
+    # The registrar exists only to register, so no switch may turn it into a
+    # job that succeeds without schedules.
+    if [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+        return 0
+    fi
+
     if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
         echo "NO_STARTUP_DB_MUTATIONS=true: skipping Temporal schedule registration"
         return 1
@@ -363,7 +369,13 @@ should_register_temporal_schedules() {
 }
 
 if should_register_temporal_schedules; then
-    python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    if ! python manage.py register_temporal_schedules; then
+        if [ "$SERVICE_TYPE" = "bootstrap" ] || [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+            echo "ERROR: Temporal schedule registration failed; $SERVICE_TYPE is incomplete"
+            exit 1
+        fi
+        echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    fi
 else
     echo "Temporal schedule registration disabled for service type: $SERVICE_TYPE"
 fi
@@ -375,17 +387,31 @@ case "$SERVICE_TYPE" in
         exit 0
         ;;
 
+    "temporal-schedules")
+        echo "One-shot Temporal schedule registration completed successfully"
+        exit 0
+        ;;
+
     "backend")
         echo "Starting backend server..."
 
-        # Enhanced signal handling to cleanup gRPC process
+        # The runtime signals only this script (PID 1), and bash defers a trap
+        # while a foreground child runs, so Granian runs in the background.
+        # On TERM Granian finishes in-flight requests but closes idle
+        # keep-alive connections and leaves new ones unanswered, so the pod
+        # needs a preStop delay to leave the load balancer first. The gRPC
+        # server has no TERM handler and exits at once.
         cleanup() {
             echo "Shutting down services..."
+            if [ ! -z "$HTTP_PID" ]; then
+                echo "Stopping HTTP server (PID: $HTTP_PID)..."
+                kill -TERM $HTTP_PID 2>/dev/null || true
+            fi
             if [ ! -z "$GRPC_PID" ]; then
                 echo "Stopping gRPC server (PID: $GRPC_PID)..."
                 kill -TERM $GRPC_PID 2>/dev/null || true
-                wait $GRPC_PID 2>/dev/null || true
             fi
+            wait $HTTP_PID $GRPC_PID 2>/dev/null || true
             exit 0
         }
         trap cleanup TERM INT
@@ -419,7 +445,7 @@ case "$SERVICE_TYPE" in
                     --port 80 \
                     --log-level warning \
                     --access-log \
-                    --respawn-failed-workers
+                    --respawn-failed-workers &
             else
                 echo "Starting development backend server with Granian..."
                 # Use Granian's native --reload with ignore patterns for logs/media/static
@@ -439,8 +465,10 @@ case "$SERVICE_TYPE" in
                     --reload-ignore-patterns '^\..*' \
                     --reload-ignore-patterns '.*\.log$' \
                     --reload-ignore-patterns '.*\.pyc$' \
-                    --reload-ignore-patterns '.*\.core$'
+                    --reload-ignore-patterns '.*\.core$' &
             fi
+            HTTP_PID=$!
+            wait $HTTP_PID
         else
             echo "HTTP server disabled (ENABLE_HTTP=false)"
             # If gRPC is running, wait for it; otherwise nothing to do
@@ -630,7 +658,7 @@ case "$SERVICE_TYPE" in
 
     *)
         echo "ERROR: Unknown SERVICE_TYPE: $SERVICE_TYPE"
-        echo "Available options: bootstrap, backend, worker, beat, flower, grpc, temporal-worker"
+        echo "Available options: bootstrap, temporal-schedules, backend, worker, beat, flower, grpc, temporal-worker"
         echo "Current environment:"
         echo "  SERVICE_TYPE=$SERVICE_TYPE"
         echo "  ENV_TYPE=$ENV_TYPE"

@@ -1,9 +1,15 @@
-import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { useState } from "react";
 import {
+  Alert,
   Box,
-  IconButton,
-  Slider,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Radio,
+  RadioGroup,
   TextField,
   Typography,
   useTheme,
@@ -13,507 +19,315 @@ import { useController, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import { formatTimeWindow } from "src/sections/projects/timeWindowPresets";
+import {
+  isSimpleSamplingPolicy,
+  pickNames,
+  resetHistoricalSamplingCounts,
+  rowNames,
+  samplingWindowInvalid,
+} from "./simpleSamplingPolicy";
 
-// ───────────────────────────────────────────────────────────────
-// Run mode option cards (historical / continuous)
-// ───────────────────────────────────────────────────────────────
-const RUN_MODES = [
-  {
-    value: "historical",
-    icon: "solar:history-linear",
-    title: "Historical data",
-    description: "Evaluate existing traces from a past time window",
-  },
-  {
-    value: "continuous",
-    icon: "solar:play-circle-linear",
-    title: "New incoming data",
-    description: "Evaluate every new trace as it arrives",
-  },
-];
-
-const RunModeCard = ({ mode, isActive, onClick }) => {
+// Retain the Task editor's existing scheduling cards and date picker. The row
+// percentage and processing limit now live only in Data to evaluate.
+export default function TaskSchedulingSection({ control, isEdit = false }) {
   const theme = useTheme();
-  return (
-    <Box
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
-      }}
-      sx={{
-        flex: 1,
-        p: 1.5,
-        borderRadius: "8px",
-        border: "1px solid",
-        borderColor: isActive ? "primary.main" : "divider",
-        bgcolor: isActive
-          ? alpha(theme.palette.primary.main, 0.08)
-          : theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
-        cursor: "pointer",
-        transition: "all 0.15s",
-        display: "flex",
-        flexDirection: "column",
-        gap: 0.5,
-        minWidth: 0,
-        "&:hover": {
-          borderColor: isActive ? "primary.main" : "text.disabled",
-          bgcolor: isActive
-            ? alpha(theme.palette.primary.main, 0.1)
-            : "action.hover",
-        },
-      }}
-    >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-        <Iconify
-          icon={mode.icon}
-          width={16}
-          sx={{ color: isActive ? "primary.main" : "text.secondary" }}
-        />
-        <Typography
-          variant="body2"
-          sx={{
-            fontSize: "13px",
-            fontWeight: 600,
-            color: isActive ? "primary.main" : "text.primary",
-          }}
-        >
-          {mode.title}
-        </Typography>
-        {isActive && (
-          <Iconify
-            icon="solar:check-circle-bold"
-            width={14}
-            sx={{ color: "primary.main", ml: "auto" }}
-          />
-        )}
-      </Box>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: "11px", lineHeight: 1.4 }}
-      >
-        {mode.description}
-      </Typography>
-    </Box>
-  );
-};
-
-RunModeCard.propTypes = {
-  mode: PropTypes.object.isRequired,
-  isActive: PropTypes.bool.isRequired,
-  onClick: PropTypes.func.isRequired,
-};
-
-// ───────────────────────────────────────────────────────────────
-// Preset chip row (shared by row-limit + sampling)
-// ───────────────────────────────────────────────────────────────
-const PresetChip = ({ label, isActive, onClick }) => (
-  <Box
-    onClick={onClick}
-    role="button"
-    tabIndex={0}
-    onKeyDown={(e) => {
-      if (e.key === "Enter" || e.key === " ") onClick();
-    }}
-    sx={(theme) => ({
-      px: 1.25,
-      py: 0.5,
-      borderRadius: "6px",
-      border: "1px solid",
-      borderColor: isActive ? "primary.main" : "divider",
-      bgcolor: isActive
-        ? alpha(theme.palette.primary.main, 0.08)
-        : "transparent",
-      color: isActive ? "primary.main" : "text.secondary",
-      fontSize: "12px",
-      fontWeight: isActive ? 600 : 500,
-      cursor: "pointer",
-      userSelect: "none",
-      transition: "all 0.15s",
-      "&:hover": {
-        borderColor: isActive ? "primary.main" : "text.disabled",
-        bgcolor: isActive
-          ? alpha(theme.palette.primary.main, 0.1)
-          : "action.hover",
-      },
-    })}
-  >
-    {label}
-  </Box>
-);
-
-PresetChip.propTypes = {
-  label: PropTypes.string.isRequired,
-  isActive: PropTypes.bool.isRequired,
-  onClick: PropTypes.func.isRequired,
-};
-
-// ───────────────────────────────────────────────────────────────
-// Row-limit field (preset chips + optional custom)
-// ───────────────────────────────────────────────────────────────
-const SPANS_PRESETS = [
-  { label: "100", value: 100 },
-  { label: "1K", value: 1000 },
-  { label: "10K", value: 10000 },
-  { label: "100K", value: 100000 },
-];
-
-const RowLimitField = ({ control }) => {
-  const {
-    field: { value, onChange },
-    fieldState: { error },
-  } = useController({ control, name: "spansLimit" });
-  const numValue = Number(value) || 0;
-  const matchesPreset = SPANS_PRESETS.find((p) => p.value === numValue);
-  const [showCustom, setShowCustom] = useState(!matchesPreset && numValue > 0);
-
-  const handleSelectPreset = (presetValue) => {
-    onChange(presetValue);
-    setShowCustom(false);
-  };
-
-  const handleSelectCustom = () => {
-    setShowCustom(true);
-  };
-
-  return (
-    <Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.75 }}>
-        <Typography
-          variant="caption"
-          sx={{ fontSize: "12px", fontWeight: 600 }}
-        >
-          Row limit
-        </Typography>
-        <Typography
-          component="span"
-          sx={{ color: "error.main", fontSize: "12px" }}
-        >
-          *
-        </Typography>
-      </Box>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mb: 1 }}
-      >
-        Stop after processing this many matching rows
-      </Typography>
-
-      <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}>
-        {SPANS_PRESETS.map((preset) => (
-          <PresetChip
-            key={preset.value}
-            label={preset.label}
-            isActive={!showCustom && numValue === preset.value}
-            onClick={() => handleSelectPreset(preset.value)}
-          />
-        ))}
-        <PresetChip
-          label="Custom"
-          isActive={showCustom}
-          onClick={handleSelectCustom}
-        />
-      </Box>
-
-      {showCustom && (
-        <Box sx={{ mt: 1, position: "relative", maxWidth: 200 }}>
-          <TextField
-            type="number"
-            size="small"
-            placeholder="e.g. 5000"
-            value={value ?? ""}
-            onChange={(e) => onChange(e.target.value)}
-            fullWidth
-            inputProps={{ min: 1, max: 1000000, step: 1 }}
-            error={!!error}
-            helperText={error?.message}
-            sx={{
-              "& .MuiInputBase-root": { paddingRight: "36px", height: 36 },
-              "& input": { fontSize: "12px" },
-            }}
-          />
-          <Box
-            sx={{
-              position: "absolute",
-              right: 4,
-              top: error ? "30%" : "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <IconButton
-              size="small"
-              onClick={() => onChange((Number(value) || 0) + 100)}
-              sx={{ p: 0, width: 16, height: 12 }}
-            >
-              <Iconify icon="heroicons:chevron-up-20-solid" width={14} />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={() => onChange(Math.max(1, (Number(value) || 0) - 100))}
-              sx={{ p: 0, width: 16, height: 12 }}
-            >
-              <Iconify icon="heroicons:chevron-down-20-solid" width={14} />
-            </IconButton>
-          </Box>
-        </Box>
-      )}
-
-      {error && !showCustom && (
-        <Typography
-          variant="caption"
-          color="error.main"
-          sx={{ fontSize: "11px", display: "block", mt: 0.5 }}
-        >
-          {error.message}
-        </Typography>
-      )}
-    </Box>
-  );
-};
-
-RowLimitField.propTypes = {
-  control: PropTypes.object.isRequired,
-};
-
-// ───────────────────────────────────────────────────────────────
-// Sampling rate field (preset chips + slider)
-// ───────────────────────────────────────────────────────────────
-const SAMPLING_PRESETS = [
-  { label: "10%", value: 10 },
-  { label: "25%", value: 25 },
-  { label: "50%", value: 50 },
-  { label: "100%", value: 100 },
-];
-
-const samplingHelperText = (v) => {
-  if (v >= 100) return "Evaluate every matching row";
-  if (v >= 50) return `Evaluate about every other matching row (${v}%)`;
-  if (v > 0) {
-    const nth = Math.round(100 / v);
-    return `Evaluate roughly 1 in every ${nth} matching rows`;
-  }
-  return "";
-};
-
-const SamplingRateField = ({ control }) => {
-  const {
-    field: { value, onChange },
-    fieldState: { error },
-  } = useController({ control, name: "samplingRate" });
-  const numValue = Number(value) || 0;
-
-  return (
-    <Box>
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          mb: 0.5,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography
-            variant="caption"
-            sx={{ fontSize: "12px", fontWeight: 600 }}
-          >
-            Sampling rate
-          </Typography>
-          <Typography
-            component="span"
-            sx={{ color: "error.main", fontSize: "12px" }}
-          >
-            *
-          </Typography>
-        </Box>
-        <Typography
-          variant="caption"
-          sx={{ fontSize: "12px", fontWeight: 700, color: "primary.main" }}
-        >
-          {numValue}%
-        </Typography>
-      </Box>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mb: 1 }}
-      >
-        What percentage of matching rows to actually evaluate — lower values run
-        faster and use less budget
-      </Typography>
-
-      <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap", mb: 1.5 }}>
-        {SAMPLING_PRESETS.map((preset) => (
-          <PresetChip
-            key={preset.value}
-            label={preset.label}
-            isActive={numValue === preset.value}
-            onClick={() => onChange(preset.value)}
-          />
-        ))}
-      </Box>
-
-      <Box sx={{ px: 0.5 }}>
-        <Slider
-          value={numValue}
-          onChange={(_, v) => onChange(v)}
-          min={1}
-          max={100}
-          step={1}
-          valueLabelDisplay="auto"
-          size="small"
-          sx={{
-            "& .MuiSlider-thumb": { width: 14, height: 14 },
-            "& .MuiSlider-rail": { opacity: 0.3 },
-          }}
-        />
-      </Box>
-
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mt: 0.25 }}
-      >
-        {samplingHelperText(numValue)}
-      </Typography>
-
-      {error && (
-        <Typography
-          variant="caption"
-          color="error.main"
-          sx={{ fontSize: "11px", display: "block", mt: 0.5 }}
-        >
-          {error.message}
-        </Typography>
-      )}
-    </Box>
-  );
-};
-
-SamplingRateField.propTypes = {
-  control: PropTypes.object.isRequired,
-};
-
-// ───────────────────────────────────────────────────────────────
-// Main section
-// ───────────────────────────────────────────────────────────────
-const TaskSchedulingSection = ({ control, isEdit = false }) => {
-  const { field: runTypeField } = useController({
+  const { field: runType } = useController({ control, name: "runType" });
+  const { field: policyField } = useController({
     control,
-    name: "runType",
+    name: "samplingPolicy",
   });
-  const { field: startDateField } = useController({
-    control,
-    name: "startDate",
-  });
-  const { field: endDateField } = useController({
-    control,
-    name: "endDate",
-  });
-
-  const runType = useWatch({ control, name: "runType" });
-  const { field: datePresetField } = useController({
-    control,
-    name: "datePreset",
-  });
-
-  const dateFilter = [startDateField.value, endDateField.value];
-  const handleDateFilterChange = (next) => {
-    if (next && next.length === 2) {
-      startDateField.onChange(next[0]);
-      endDateField.onChange(next[1]);
+  const [pendingLive, setPendingLive] = useState(false);
+  const [pendingHistorical, setPendingHistorical] = useState(null);
+  const changeSchedule = (next) => {
+    if (next === "historical" && policyField.value?.mode === "live") {
+      if (isSimpleSamplingPolicy(policyField.value))
+        setPendingHistorical(
+          resetHistoricalSamplingCounts(policyField.value, {
+            rowType,
+            startDate: start.value,
+            endDate: end.value,
+          }),
+        );
+      return;
     }
+    if (
+      next === "continuous" &&
+      runType.value === "historical" &&
+      policyField.value?.mode === "closed" &&
+      isSimpleSamplingPolicy(policyField.value)
+    )
+      setPendingLive(true);
+    else runType.onChange(next);
   };
-
+  const { field: start } = useController({ control, name: "startDate" });
+  const { field: end } = useController({ control, name: "endDate" });
+  const { field: preset } = useController({ control, name: "datePreset" });
+  const [policy, rowType] = useWatch({
+    control,
+    name: ["samplingPolicy", "rowType"],
+  });
+  const rows = rowNames(rowType);
+  const modes = [
+    {
+      value: "historical",
+      icon: "solar:history-linear",
+      title: "Historical data",
+      description: `Evaluate existing matching ${rows} from a past time window`,
+    },
+    {
+      value: "continuous",
+      icon: "solar:play-circle-linear",
+      title: "New incoming data",
+      description:
+        policy?.mode === "closed"
+          ? "Continue evaluating late rows from the selected groups"
+          : `Evaluate matching ${rows} as they arrive`,
+    },
+  ];
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {/* ── Run mode cards ── */}
-      <Box>
-        <Typography
-          variant="caption"
-          sx={{ fontSize: "12px", fontWeight: 600, display: "block", mb: 0.75 }}
-        >
-          When to run
-        </Typography>
-        <Box sx={{ display: "flex", gap: 1 }}>
-          {RUN_MODES.map((mode) => (
-            <RunModeCard
-              key={mode.value}
-              mode={mode}
-              isActive={runType === mode.value}
-              onClick={() => runTypeField.onChange(mode.value)}
-            />
-          ))}
-        </Box>
-      </Box>
-
-      {/* ── Historical-only fields ── */}
-      {runType === "historical" && (
-        <>
-          <Box>
+      <RadioGroup
+        row
+        aria-label="Execution schedule"
+        value={runType.value}
+        onChange={(event) => changeSchedule(event.target.value)}
+        sx={{ gap: 1 }}
+      >
+        {modes.map((mode) => {
+          const active = runType.value === mode.value;
+          const disabled =
+            mode.value === "historical" &&
+            policy?.mode === "live" &&
+            !isSimpleSamplingPolicy(policy);
+          return (
             <Box
+              key={mode.value}
+              component="label"
               sx={{
+                flex: 1,
+                p: 1.5,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: active ? "primary.main" : "divider",
+                bgcolor: active
+                  ? alpha(theme.palette.primary.main, 0.08)
+                  : theme.palette.mode === "dark"
+                    ? "rgba(255,255,255,0.02)"
+                    : "rgba(0,0,0,0.01)",
+                cursor: disabled ? "not-allowed" : "pointer",
                 display: "flex",
-                alignItems: "center",
+                flexDirection: "column",
                 gap: 0.5,
+                minWidth: 0,
+                "&:hover": {
+                  borderColor: active ? "primary.main" : "text.disabled",
+                  bgcolor: active
+                    ? alpha(theme.palette.primary.main, 0.1)
+                    : "action.hover",
+                },
+              }}
+            >
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                <Iconify
+                  icon={mode.icon}
+                  width={16}
+                  sx={{ color: active ? "primary.main" : "text.secondary" }}
+                />
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: active ? "primary.main" : "text.primary",
+                  }}
+                >
+                  {mode.title}
+                </Typography>
+                <Radio
+                  value={mode.value}
+                  size="small"
+                  disabled={disabled}
+                  inputProps={{ "aria-label": mode.title }}
+                  sx={{ ml: "auto", p: 0 }}
+                />
+              </Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontSize: "11px", lineHeight: 1.4 }}
+              >
+                {mode.description}
+              </Typography>
+            </Box>
+          );
+        })}
+      </RadioGroup>
+      {policy?.mode === "closed" && runType.value === "continuous" && (
+        <Typography variant="caption" color="text.secondary">
+          Continue evaluating late rows from picked{" "}
+          {pickNames(policy.sampling_unit)}. New groups are not admitted after
+          membership freezes at first execution.
+        </Typography>
+      )}
+      {policy?.mode === "live" && (
+        <Typography variant="caption" color="text.secondary">
+          New incoming data uses percentages, not fixed counts.
+        </Typography>
+      )}
+      {runType.value === "historical" &&
+        (policy ? (
+          <Typography variant="caption" color="text.secondary">
+            The fixed UTC window is set in Data to evaluate.
+          </Typography>
+        ) : (
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{
+                fontSize: "12px",
+                fontWeight: 600,
+                display: "block",
                 mb: 0.75,
               }}
             >
-              <Typography
-                variant="caption"
-                sx={{ fontSize: "12px", fontWeight: 600 }}
-              >
-                Time window
-                {startDateField.value && endDateField.value && (
-                  <Box
-                    component="span"
-                    sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
-                  >
-                    {`(${formatTimeWindow(
-                      startDateField.value,
-                      endDateField.value,
-                      { isCustom: datePresetField.value === "Custom" },
-                    )})`}
-                  </Box>
-                )}
-              </Typography>
-            </Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 1 }}
-            >
-              Which time range of existing traces to run on
+              Time window{" "}
+              {start.value && end.value && (
+                <Box
+                  component="span"
+                  sx={{ fontSize: "12px", fontWeight: 500, ml: 0.5 }}
+                >{`(${formatTimeWindow(start.value, end.value, { isCustom: preset.value === "Custom" })})`}</Box>
+              )}
             </Typography>
             <DateTimeRangePicker
-              setParentDateFilter={handleDateFilterChange}
-              dateOption={datePresetField.value}
-              setDateOption={datePresetField.onChange}
-              dateFilter={dateFilter}
+              setParentDateFilter={(dates) => {
+                if (dates?.length === 2) {
+                  start.onChange(dates[0]);
+                  end.onChange(dates[1]);
+                }
+              }}
+              dateOption={preset.value}
+              setDateOption={preset.onChange}
+              dateFilter={[start.value, end.value]}
               isEdit={isEdit}
             />
           </Box>
-
-          <RowLimitField control={control} />
-        </>
-      )}
-
-      {/* ── Sampling rate (both modes) ── */}
-      <SamplingRateField control={control} />
+        ))}
+      <Dialog
+        open={pendingLive}
+        onClose={() => setPendingLive(false)}
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="incoming-share-title"
+      >
+        <DialogTitle id="incoming-share-title">
+          Use percentages for new incoming data?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Fixed counts do not apply to new incoming data. Use 10% for each
+            group, then adjust the shares. Cancel keeps your counts and
+            Historical data schedule.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingLive(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const current = policyField.value;
+              if (isSimpleSamplingPolicy(current)) {
+                const convert = (rule) => {
+                  const next = { ...rule };
+                  delete next.target_n;
+                  return { ...next, rate: 10 };
+                };
+                policyField.onChange({
+                  ...current,
+                  mode: "live",
+                  window: { start: current.window.start, end: null },
+                  default: convert(current.default),
+                  strata: current.strata.map(convert),
+                });
+                runType.onChange("continuous");
+              }
+              setPendingLive(false);
+            }}
+          >
+            Use percentages
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={Boolean(pendingHistorical)}
+        onClose={() => setPendingHistorical(null)}
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="historical-count-title"
+      >
+        <DialogTitle id="historical-count-title">
+          Use counts for historical data?
+        </DialogTitle>
+        <DialogContent>
+          <Box
+            sx={{ display: "flex", flexDirection: "column", gap: 1.5, pt: 1 }}
+          >
+            <Typography variant="body2">
+              Reset each group and All other{" "}
+              {pickNames(pendingHistorical?.sampling_unit)} to 100, bounded by
+              what exists. Adjust the counts after switching. Choose a past
+              window of at most 31 days. Cancel keeps your shares and New
+              incoming data schedule.
+            </Typography>
+            {["start", "end"].map((bound) => (
+              <TextField
+                key={bound}
+                fullWidth
+                type="datetime-local"
+                size="small"
+                label={`New UTC window ${bound}`}
+                InputLabelProps={{ shrink: true }}
+                value={(pendingHistorical?.window[bound] || "").slice(0, 16)}
+                onChange={(event) => {
+                  const date = new Date(`${event.target.value}Z`);
+                  setPendingHistorical((current) => ({
+                    ...current,
+                    window: {
+                      ...current.window,
+                      [bound]: Number.isFinite(+date) ? date.toISOString() : "",
+                    },
+                  }));
+                }}
+              />
+            ))}
+            {pendingHistorical && samplingWindowInvalid(pendingHistorical) && (
+              <Alert severity="warning">
+                Choose a valid past window, longer than zero and no more than 31
+                days.
+              </Alert>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingHistorical(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={
+              !pendingHistorical || samplingWindowInvalid(pendingHistorical)
+            }
+            onClick={() => {
+              policyField.onChange(pendingHistorical);
+              runType.onChange("historical");
+              setPendingHistorical(null);
+            }}
+          >
+            Use historical counts
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
-};
-
+}
 TaskSchedulingSection.propTypes = {
   control: PropTypes.object.isRequired,
   isEdit: PropTypes.bool,
 };
-
-export default TaskSchedulingSection;

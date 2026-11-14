@@ -57,8 +57,7 @@ def applied_filter_leaves(filters: list[dict[str, Any]]) -> list[dict[str, Any]]
     for item in filters or []:
         if not isinstance(item, dict):
             raise ValueError("filter attestation requires object leaves")
-        column_id = item.get("column_id") or item.get("columnId")
-        if column_id in {"created_at", "start_time"} and not (
+        if BaseQueryBuilder.is_datetime_filter(item) and not (
             BaseQueryBuilder.is_datetime_complement_filter(item)
         ):
             continue
@@ -119,8 +118,7 @@ def graph_execution_filters(
     retained = [
         item
         for item in normalized_filters
-        if (item.get("column_id") or item.get("columnId"))
-        not in {"created_at", "start_time"}
+        if not BaseQueryBuilder.is_datetime_filter(item)
         or BaseQueryBuilder.is_datetime_complement_filter(item)
     ]
     return [

@@ -8,9 +8,9 @@ const DatasetCompareAnnotationSummary = () => {
       sx={{
         marginTop: "16px",
         borderRadius: "4px",
-        backgroundColor: "blue.o5",
+        backgroundColor: "status.info.bg",
         border: "1px solid",
-        borderColor: "blue.200",
+        borderColor: "status.info.border",
         padding: "12px",
         display: "flex",
         flexDirection: "column",
@@ -20,14 +20,14 @@ const DatasetCompareAnnotationSummary = () => {
       <Typography
         typography={"s1"}
         fontWeight={"fontWeightSemiBold"}
-        color="blue.500"
+        color="status.info.fg"
       >
         No Comparison Available
       </Typography>
       <Typography
         typography={"s3"}
         fontWeight={"fontWeightRegular"}
-        color="blue.500"
+        color="status.info.fg"
       >
         Select an individual dataset to view its annotation summary
       </Typography>

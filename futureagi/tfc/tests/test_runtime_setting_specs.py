@@ -1,15 +1,20 @@
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from tfc.settings import runtime_setting_specs
 from tfc.settings.runtime_setting_specs import (
     DATASET_READ_SETTING_SPECS,
     INTERACTIVE_READ_SETTING_SPECS,
+    LONGEST_RUNNING_ENTRY_SECONDS,
     PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
     RUNTIME_NUMERIC_SETTING_SPECS,
     bounded_bulk_worst_case_query_count,
     load_numeric_settings,
     validate_dataset_read_settings,
+    validate_eval_execution_settings,
     validate_interactive_read_settings,
     validate_property_catalog_settings,
     validate_runtime_numeric_settings,
@@ -45,6 +50,101 @@ def test_numeric_settings_accept_mapping_and_object_overrides():
     assert values["DASHBOARD_FILTER_VALUE_LEGACY_MAX"] == 500
 
 
+def test_population_worker_budget_is_separate_and_can_be_lowered():
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_MAX_THREADS"] == 1
+    assert defaults["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 2
+    reduced = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_POPULATION_MAX_THREADS": "1"},
+    )
+    validate_interactive_read_settings(reduced)
+    assert reduced["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 1
+
+
+def test_wide_seed_worker_budget_defaults_to_four_and_is_bounded():
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_WIDE_SEED_MAX_THREADS"] == 4
+    # Separate from the narrow-seed worker and the population proof's budget.
+    assert defaults["FILTER_SELECTOR_MAX_THREADS"] == 1
+    assert defaults["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 2
+    lowered = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_WIDE_SEED_MAX_THREADS": "1"},
+    )
+    validate_interactive_read_settings(lowered)
+    assert lowered["FILTER_SELECTOR_WIDE_SEED_MAX_THREADS"] == 1
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_WIDE_SEED_MAX_THREADS": "9"},
+        )
+
+
+def test_text_seed_row_budget_is_operator_tunable_within_a_measured_range():
+    """The short exact-string seed is sized by rows read, not by slice hours."""
+
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 2_000_000
+
+    lowered = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": "100000"},
+    )
+    validate_interactive_read_settings(lowered)
+    assert lowered["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 100_000
+
+
+@pytest.mark.parametrize("value", [0, -1, 99_999, 50_000_001, True, "unlimited"])
+def test_text_seed_row_budget_rejects_values_outside_the_measured_range(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": value},
+        )
+
+
+def test_the_text_seed_witness_slack_defaults_to_one_hour_with_zero_as_the_hatch():
+    """The bounded witness is the default contract; zero is the way back.
+
+    One hour is the owner-decided default: on the measured cohort it omitted
+    nothing (largest child-witness lag 468 s; the root carried the value itself
+    in 165 of 165 matching traces) while reading 28.7x fewer bytes. ZERO
+    remains a settable value and emits no envelope at all, so an install whose
+    spans really do arrive more than an hour after their root can be put back
+    on the unbounded contract without a deploy.
+    """
+
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == 1
+
+    for raw, expected in (("0", 0), (0, 0), ("1", 1), (24, 24), ("168", 168)):
+        enabled = load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS": raw},
+        )
+        validate_interactive_read_settings(enabled)
+        assert enabled["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == expected
+
+
+@pytest.mark.parametrize("value", [-1, 169, 1.5, True, "off"])
+def test_the_text_seed_witness_slack_rejects_values_outside_one_week(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS": value},
+        )
+
+
+@pytest.mark.parametrize("value", [0, -1, 5, True, "unlimited"])
+def test_population_worker_budget_rejects_unbounded_or_invalid_values(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_POPULATION_MAX_THREADS": value},
+        )
+
+
 def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
     values = load_numeric_settings(
         INTERACTIVE_READ_SETTING_SPECS,
@@ -59,6 +159,89 @@ def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
     validate_interactive_read_settings(values)
     assert values["DASHBOARD_FILTER_VALUE_WALL_MS"] == 30_000
     assert values["FILTER_VALUE_READ_TIMEOUT_MS"] == 30_000
+
+
+def test_sixty_second_read_profile_leaves_query_and_background_headroom():
+    walls = (
+        "INTERACTIVE_READ_DEFAULT_WALL_MS",
+        "INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS",
+        "SPAN_LIST_PAGE_WALL_MS",
+        "TRACE_LIST_PAGE_WALL_MS",
+        "SESSION_LIST_PAGE_WALL_MS",
+        "USER_LIST_PAGE_WALL_MS",
+        "DASHBOARD_FILTER_VALUE_WALL_MS",
+        "FILTER_VALUE_READ_TIMEOUT_MS",
+        "PROPERTY_CATALOG_QUERY_WALL_MS",
+    )
+    values = load_numeric_settings(
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        source={
+            **dict.fromkeys(walls, "60000"),
+            "PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS": "60",
+            "FILTER_SELECTOR_QUERY_TIMEOUT_MS": "10000",
+            "FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS": "20000",
+            "FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS": "30000",
+            "CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "OBSERVABILITY_LIST_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES": str(12 * 1024**3),
+        },
+    )
+
+    validate_runtime_numeric_settings(values)
+    assert all(values[name] == 60_000 for name in walls)
+    assert values["PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS"] == 60
+    assert (
+        values["FILTER_SELECTOR_QUERY_TIMEOUT_MS"]
+        < values["FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS"]
+        < values["FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS"]
+        < values["TRACE_LIST_PAGE_WALL_MS"]
+        < values["GRAPH_BACKGROUND_WALL_MS"]
+    )
+    for name in (
+        "CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES",
+        "DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES",
+        "OBSERVABILITY_LIST_MAX_MEMORY_BYTES",
+    ):
+        assert values[name] == 64 * 1024**3
+    assert values["PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES"] == 12 * 1024**3
+
+
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("PROPERTY_CATALOG_QUERY_WALL_MS", "60001"),
+        ("PROPERTY_CATALOG_QUERY_WALL_MS", "0"),
+        ("PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS", "60.001"),
+        ("PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS", "0"),
+    ],
+)
+def test_catalog_read_timeouts_remain_bounded(setting, value):
+    with pytest.raises(ValueError, match=setting):
+        load_numeric_settings(
+            PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={setting: value}
+        )
+
+
+@pytest.mark.parametrize("region", ["us2", "eu"])
+def test_gcp_frontend_workflows_allow_sixty_second_reads_and_background_poll(region):
+    root = Path(__file__).resolve().parents[3]
+    workflow = root / ".github/workflows" / f"frontend-deploy-{region}.yaml"
+    settings = dict(
+        line.strip().split("=", 1)
+        for line in workflow.read_text().splitlines()
+        if line.strip().startswith("VITE_") and "=" in line
+    )
+    for name in (
+        "VITE_INTERACTIVE_REQUEST_TIMEOUT_MS",
+        "VITE_ANALYTICS_REQUEST_TIMEOUT_MS",
+        "VITE_AGGREGATION_REQUEST_TIMEOUT_MS",
+        "VITE_FILTER_VALUE_REQUEST_TIMEOUT_MS",
+    ):
+        assert settings[name] == "60000"
+    assert (
+        int(settings["VITE_AGGREGATION_POLL_TIMEOUT_MS"]) == 60_000 + 180_000 + 10_000
+    )
 
 
 def test_large_tenant_reads_scan_widely_without_unbounding_memory_or_results():
@@ -100,64 +283,15 @@ def test_numeric_settings_reject_invalid_values(raw_value):
     with pytest.raises(ValueError):
         load_numeric_settings(
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
-            source={"PROPERTY_CATALOG_MAX_PROJECTS": raw_value},
+            source={"PROPERTY_CATALOG_MAX_PAGE_SIZE": raw_value},
         )
-
-
-def test_property_catalog_cross_field_limits_are_validated():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_SOURCE_MAX_PAGE_BYTES"] = (
-        values["PROPERTY_CATALOG_SOURCE_MAX_TOTAL_BYTES"] + 1
-    )
-
-    with pytest.raises(ValueError, match="source page bytes"):
-        validate_property_catalog_settings(values)
 
 
 @pytest.mark.parametrize(
     ("lower_name", "upper_name"),
     (
-        (
-            "PROPERTY_CATALOG_REVISION_LEASE_SECONDS",
-            "PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS",
-            "PROPERTY_CATALOG_DEV_INITIAL_BACKFILL_MAX_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_EXTENDED_WALL_MS",
-            "PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_MAX_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_SOURCE_ADAPTER_WALL_SECONDS",
-            "PROPERTY_CATALOG_SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-            "PROPERTY_CATALOG_INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_POSTGRES_PAGE_ROWS",
-            "PROPERTY_CATALOG_POSTGRES_MAX_TOTAL_ROWS",
-        ),
-        ("PROPERTY_CATALOG_PUBLISHER_WALL_MS", "PROPERTY_CATALOG_DEADLINE_MAX_WALL_MS"),
-        (
-            "PROPERTY_CATALOG_DRAIN_POLL_INTERVAL_MS",
-            "PROPERTY_CATALOG_DRAIN_POLL_CAP_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_STATE_STORE_TIMEOUT_MS",
-            "PROPERTY_CATALOG_PUBLISHER_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_READ_MAX_THREADS",
-            "PROPERTY_CATALOG_READ_POOL_SIZE",
-        ),
-        (
-            "PROPERTY_CATALOG_READ_MAX_RESULT_BYTES",
-            "PROPERTY_CATALOG_READ_MAX_BYTES",
-        ),
+        ("PROPERTY_CATALOG_READ_MAX_THREADS", "PROPERTY_CATALOG_READ_POOL_SIZE"),
+        ("PROPERTY_CATALOG_READ_MAX_RESULT_BYTES", "PROPERTY_CATALOG_READ_MAX_BYTES"),
         (
             "PROPERTY_CATALOG_READ_EXTERNAL_GROUP_BY_BYTES",
             "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES",
@@ -166,69 +300,13 @@ def test_property_catalog_cross_field_limits_are_validated():
             "PROPERTY_CATALOG_READ_EXTERNAL_SORT_BYTES",
             "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES",
         ),
-        (
-            "PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS",
-            "PROPERTY_CATALOG_LINEAGE_ANCHOR_MAX_AGE_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_CANONICAL_SPAN_QUERY_TIMEOUT_MS",
-            "PROPERTY_CATALOG_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_THREADS",
-            "PROPERTY_CATALOG_READ_MAX_THREADS",
-        ),
-        (
-            "PROPERTY_CATALOG_AUTHORITATIVE_VALUE_BATCH_MAX_ROWS",
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_GROUPS",
-        ),
-        (
-            "PROPERTY_CATALOG_AUTHORITATIVE_VALUE_BATCH_MAX_BYTES",
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_GROUP_BYTES",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_ENVELOPE_ROWS",
-            "PROPERTY_CATALOG_RECONCILE_MAX_ENVELOPE_ROWS",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES",
-            "PROPERTY_CATALOG_RECONCILE_MAX_ENVELOPE_BYTES",
-        ),
     ),
 )
-def test_property_catalog_ordered_limits_reject_inverted_values(lower_name, upper_name):
+def test_property_catalog_read_limits_reject_inverted_values(lower_name, upper_name):
     values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
     values[lower_name] = values[upper_name] + 1
 
     with pytest.raises(ValueError):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_statement_timeout_requires_source_wall_headroom():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_POSTGRES_STATEMENT_TIMEOUT_MS"] = int(
-        values["PROPERTY_CATALOG_SOURCE_ADAPTER_WALL_SECONDS"] * 1_000
-    )
-
-    with pytest.raises(ValueError, match="statement timeout"):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_initial_backfill_wall_requires_lease_headroom():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS"] -= 1
-
-    with pytest.raises(ValueError, match="initial-backfill wall plus headroom"):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_specialized_span_pages_fit_the_canonical_page():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_DEV_CANONICAL_SPAN_PAGE_ROWS"] = (
-        values["PROPERTY_CATALOG_CANONICAL_SPAN_PAGE_ROWS"] + 1
-    )
-
-    with pytest.raises(ValueError, match="specialized span page"):
         validate_property_catalog_settings(values)
 
 
@@ -337,6 +415,10 @@ def test_bulk_selection_query_budget_formula_is_shared_with_the_resolver():
             "EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS",
             "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
         ),
+        (
+            "EXACT_GRAPH_SESSION_READ_MAX_THREADS",
+            "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
+        ),
         ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", "EVAL_METRIC_MAX_WINDOW_DAYS"),
         ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", "INTERACTIVE_READ_DEFAULT_WALL_MS"),
         (
@@ -398,6 +480,22 @@ def test_bulk_selection_query_budget_formula_is_shared_with_the_resolver():
         (
             "REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS",
             "REDIS_CACHE_SOCKET_TIMEOUT_SECONDS",
+        ),
+        (
+            "USER_LIST_WALK_INITIAL_SLICE_SECONDS",
+            "USER_LIST_WALK_MAX_SLICE_SECONDS",
+        ),
+        (
+            "USER_LIST_WALK_MIN_SLICE_SECONDS",
+            "USER_LIST_WALK_INITIAL_SLICE_SECONDS",
+        ),
+        (
+            "USER_LIST_PAGE_WALL_MS",
+            "INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS",
+        ),
+        (
+            "USER_LIST_WALK_PROBE_WALL_MS",
+            "USER_LIST_PAGE_WALL_MS",
         ),
     ),
 )
@@ -472,3 +570,321 @@ def test_interactive_default_page_sizes_cannot_exceed_their_maximum(
 
     with pytest.raises(ValueError):
         validate_interactive_read_settings(values)
+
+
+def _declared_spec_names_by_collection():
+    """Read the spec SOURCE and return every declared name per collection.
+
+    The built dictionaries cannot answer this question. ``_specs`` is a dict
+    comprehension and a collection is a ``{**_specs(...), **_specs(...)}``
+    merge, so a name declared twice inside one collection is silently
+    last-wins: both copies collapse to a single key and, when the tuples
+    agree, to an identical spec. Only the source text still carries the
+    second declaration, so only the source can prove there is one.
+
+    A collection that merges other collections rather than declaring rows of
+    its own is not returned: it holds no ``_specs`` call, and cross-collection
+    collisions are already refused at import by ``runtime_setting_specs``
+    itself.
+    """
+
+    tree = ast.parse(Path(runtime_setting_specs.__file__).read_text())
+    collections = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+            continue
+        targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if not targets or not targets[0].endswith("_SETTING_SPECS"):
+            continue
+        names = []
+        for key, value in zip(node.value.keys, node.value.values, strict=True):
+            # ``key is None`` is a ``**`` spread; anything else is an explicit
+            # entry and carries no rows.
+            if key is not None or not isinstance(value, ast.Call):
+                continue
+            if not isinstance(value.func, ast.Name) or value.func.id != "_specs":
+                continue
+            prefix = next(
+                (
+                    keyword.value.value
+                    for keyword in value.keywords
+                    if keyword.arg == "prefix"
+                    and isinstance(keyword.value, ast.Constant)
+                ),
+                "",
+            )
+            for row in value.args[0].elts:
+                names.append(f"{prefix}{row.elts[0].value}")
+        if names:
+            collections[targets[0]] = names
+    return collections
+
+
+def test_the_source_reader_sees_the_rows_it_is_meant_to_guard():
+    """A scan that found nothing must not read as a clean scan."""
+
+    collections = _declared_spec_names_by_collection()
+
+    assert set(collections) == {
+        "PROPERTY_CATALOG_RUNTIME_SETTING_SPECS",
+        "DATASET_READ_SETTING_SPECS",
+        "EVAL_EXECUTION_SETTING_SPECS",
+        "INTERACTIVE_READ_SETTING_SPECS",
+    }
+    interactive = collections["INTERACTIVE_READ_SETTING_SPECS"]
+    assert "INTERACTIVE_READ_DEFAULT_WALL_MS" in interactive
+    assert "USER_LIST_PAGE_WALL_MS" in interactive
+    # The prefixed collections are reconstructed, not read verbatim.
+    assert (
+        "PROPERTY_CATALOG_QUERY_WALL_MS"
+        in collections["PROPERTY_CATALOG_RUNTIME_SETTING_SPECS"]
+    )
+    # Every declared name resolves to a real spec, so the reader is reading
+    # the same rows the runtime loads.
+    for collection, names in collections.items():
+        built = getattr(runtime_setting_specs, collection)
+        assert set(names) == set(built)
+
+
+def test_no_setting_name_is_declared_twice_inside_one_spec_collection():
+    """A second declaration of the same name is a silent last-wins edit.
+
+    Two PRs adding the same wall to the same collection produce no error,
+    no warning and no behaviour change while their tuples happen to agree;
+    the day one of them moves its bounds, the winner is whichever row is
+    written later in the file.
+    """
+
+    duplicates = {
+        collection: sorted({name for name in names if names.count(name) > 1})
+        for collection, names in _declared_spec_names_by_collection().items()
+        if len(set(names)) != len(names)
+    }
+
+    assert not duplicates, (
+        "these runtime setting names are declared more than once inside a "
+        "single spec collection, where the dict comprehension silently keeps "
+        f"the last row: {duplicates}"
+    )
+
+
+def test_env_example_declares_each_setting_once():
+    """The documented default must not disagree with itself either."""
+
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+    keys = [
+        line.split("=", 1)[0]
+        for line in env_example.read_text().splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    ]
+
+    assert keys, f"{env_example} parsed to no assignments at all"
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    assert not duplicates, (
+        f"{env_example.name} assigns these keys more than once: {duplicates}"
+    )
+
+
+# Runtime settings that have no line in ``.env.example`` today. This list is a
+# record of existing debt, not a licence: it is frozen so the gap cannot grow,
+# and the only correct way to change it is to DELETE a name after documenting
+# that setting. It was 130 names when this train started; two of them belonged
+# to the train itself and were documented rather than listed here.
+_UNDOCUMENTED_RUNTIME_SETTINGS = frozenset(
+    (
+        "DASHBOARD_FILTER_VALUE_COMPAT_LOOKBACK_DAYS",
+        "DASHBOARD_FILTER_VALUE_FINITE_MAX",
+        "DASHBOARD_FILTER_VALUE_LEGACY_MAX",
+        "DASHBOARD_FILTER_VALUE_SEARCH_PAGE_SIZE",
+        "DASHBOARD_METRICS_ATTRIBUTE_KEY_LIMIT",
+        "DASHBOARD_METRICS_ATTRIBUTE_WORKERS",
+        "DASHBOARD_ROLLUP_MAX_POINTS",
+        "DASHBOARD_ROLLUP_MAX_QUERIES",
+        "DASHBOARD_ROLLUP_MAX_RESULT_BYTES",
+        "DATASET_INTERACTIVE_MAX_OFFSET_ROWS",
+        "DATASET_INTERACTIVE_MAX_PAGE_SIZE",
+        "DATASET_TABLE_CURSOR_MAX_AGE_SECONDS",
+        "DATASET_TABLE_EXACT_MAX_CELLS",
+        "DATASET_TABLE_EXACT_MAX_CELL_VALUE_BYTES",
+        "DATASET_TABLE_EXACT_MAX_CELL_VARIABLE_BYTES",
+        "DATASET_TABLE_EXACT_MAX_SCHEMA_BYTES",
+        "DATASET_TABLE_EXACT_MAX_SERIALIZED_BYTES",
+        "DATASET_TABLE_SERVER_WALL_SECONDS",
+        "EVAL_LOG_COLUMN_DEADLINE_CHECK_INTERVAL",
+        "EVAL_LOG_MAX_COLUMNS",
+        "EVAL_LOG_MAX_OFFSET",
+        "EVAL_LOG_MAX_SEARCH_COLUMNS",
+        "EVAL_LOG_MAX_SEARCH_LENGTH",
+        "EVAL_LOG_MAX_SORT_COLUMNS",
+        "EVAL_LOG_ROW_DEADLINE_CHECK_INTERVAL",
+        "EVAL_TASK_ERROR_GROUPS_LIMIT",
+        "EVAL_TASK_ERROR_TEXT_MAX_CHARS",
+        "EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS",
+        "EVAL_TASK_LIST_COMPATIBILITY_RELATION_LIMIT",
+        "EVAL_TASK_LIST_COMPATIBILITY_SCAN_LIMIT",
+        "EVAL_TASK_LIST_MAX_OFFSET",
+        "EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS",
+        "EVAL_TASK_USAGE_AGGREGATION_JSON_MAX_CHARS",
+        "EVAL_TASK_USAGE_AGGREGATION_JSON_MAX_UNITS",
+        "EVAL_TASK_USAGE_AGGREGATION_ROW_LIMIT",
+        "EVAL_TASK_USAGE_DETAIL_TEXT_MAX_CHARS",
+        "EVAL_TASK_USAGE_JSON_PREVIEW_MAX_CHARS",
+        "EVAL_TASK_USAGE_MAPPING_ENTRY_LIMIT",
+        "EVAL_TASK_USAGE_MAPPING_JSON_MAX_CHARS",
+        "EVAL_TASK_USAGE_MAPPING_PATH_LIMIT",
+        "EVAL_TASK_USAGE_MAX_CHART_POINTS",
+        "EVAL_TASK_USAGE_OMITTED_FIELDS_LIMIT",
+        "EVAL_TASK_WARNING_GROUPS_LIMIT",
+        "EVAL_TASK_WARNING_KEY_LIMIT",
+        "EVAL_TASK_WARNING_KEY_MAX_CHARS",
+        "EVAL_TASK_WARNING_LOG_SCAN_LIMIT",
+        "EVAL_TASK_WARNING_MESSAGE_MAX_CHARS",
+        "FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS",
+        "FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS",
+        "FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS",
+        "FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS",
+        "FILTER_SELECTOR_POPULATION_MAX_THREADS",
+        "FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS",
+        "FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS",
+        "FILTER_VALUE_CURSOR_INITIAL_SEGMENT_SECONDS",
+        "FILTER_VALUE_CURSOR_MAX_SEGMENT_SECONDS",
+        "FILTER_VALUE_CURSOR_MIN_SEGMENT_SECONDS",
+        "FILTER_VALUE_CURSOR_SCAN_LIMIT",
+        "FILTER_VALUE_READ_MAX_THREADS",
+        "GRAPH_SPAN_METRIC_BATCH_SIZE",
+        "GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT",
+        "INTERACTIVE_READ_DEFAULT_MAX_RESPONSE_UNITS",
+        "OBSERVABILITY_LIST_MAX_BLOCK_SIZE",
+        "OBSERVABILITY_LIST_MAX_RESULT_ROWS",
+        "OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT",
+        "OBSERVABILITY_NAVIGATION_MAX_QUERIES",
+        "OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE",
+        "PROMPT_METRICS_MAX_CHOICE_UTF8_BYTES",
+        "PROMPT_METRICS_MAX_EVAL_COLUMNS",
+        "PROMPT_METRICS_MAX_OFFSET",
+        "PROMPT_METRICS_MAX_TOTAL_CHOICE_UTF8_BYTES",
+        "PROMPT_METRICS_SPAN_PAGE_DB_PAYLOAD_BYTES",
+        "PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS",
+        "PROPERTY_CATALOG_QUERY_WALL_MS",
+        "PROPERTY_CATALOG_READ_EXTERNAL_GROUP_BY_BYTES",
+        "PROPERTY_CATALOG_READ_EXTERNAL_SORT_BYTES",
+        "PROPERTY_CATALOG_READ_MAX_BYTES",
+        "PROPERTY_CATALOG_READ_MAX_CONCURRENT_QUERIES_PER_USER",
+        "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES",
+        "PROPERTY_CATALOG_READ_MAX_RESULT_BYTES",
+        "PROPERTY_CATALOG_READ_MAX_THREADS",
+        "PROPERTY_CATALOG_READ_POOL_SIZE",
+        "PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS",
+        "SESSION_LIST_FILTER_MAX_CANDIDATES",
+        "SESSION_LIST_FILTER_MAX_QUERIES",
+        "SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS",
+        "SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS",
+        "SESSION_LIST_MAX_RESULT_BYTES",
+        "SESSION_LIST_READ_MAX_THREADS",
+        "SIMULATION_PREVIEW_CURSOR_MAX_AGE_SECONDS",
+        "SMART_FILTER_GROUNDED_VALUE_LIMIT",
+        "SMART_FILTER_PROJECT_SCOPE_LIMIT",
+        "SMART_FILTER_REQUEST_WALL_MS",
+        "SMART_FILTER_SEARCH_MAX_BYTES",
+        "SMART_FILTER_VALUE_LIMIT",
+        "SMART_FILTER_VALUE_READ_WALL_MS",
+        "TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT",
+        "TRACE_LIST_ENRICHMENT_CHUNK_SIZE",
+        "TRACE_LIST_ENRICHMENT_MAX_WORKERS",
+        "VOICE_CONTENT_MAX_QUERY_ATTEMPTS",
+        "VOICE_FILTER_TEXT_SEED_WITNESS_SLACK_HOURS",
+    )
+)
+
+
+def _env_example_assignments():
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+    return {
+        line.split("=", 1)[0].strip()
+        for line in env_example.read_text().splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+
+
+def test_every_new_runtime_setting_is_documented_in_env_example():
+    """An operator cannot tune a bound they cannot see.
+
+    Every bound in this file is meant to be operator-tunable, which means it
+    needs a line in ``.env.example``. Most already have one; the rest are
+    named in ``_UNDOCUMENTED_RUNTIME_SETTINGS`` as existing debt. What this
+    guard exists for is the NEXT setting: one added without a line fails
+    here, because it is in the specs, absent from the example, and not on the
+    frozen list.
+    """
+
+    documented = _env_example_assignments()
+    undocumented = {
+        name for name in RUNTIME_NUMERIC_SETTING_SPECS if name not in documented
+    }
+    assert undocumented, "the reader found nothing at all; check the parser"
+
+    new_and_undocumented = sorted(undocumented - _UNDOCUMENTED_RUNTIME_SETTINGS)
+    assert not new_and_undocumented, (
+        "these runtime settings have no line in .env.example and are not on "
+        "the frozen debt list, so an operator has no way to see or tune "
+        f"them: {new_and_undocumented}"
+    )
+
+
+def test_the_undocumented_list_does_not_name_a_setting_that_is_documented():
+    """The debt list must shrink honestly, never drift.
+
+    A name that has since been documented has to leave the list, otherwise
+    the list stops being a record of what is missing and starts hiding the
+    fact that the gap closed.
+    """
+
+    documented = _env_example_assignments()
+    stale = sorted(_UNDOCUMENTED_RUNTIME_SETTINGS & documented)
+    assert not stale, (
+        f"these are documented in .env.example and must be removed from "
+        f"_UNDOCUMENTED_RUNTIME_SETTINGS: {stale}"
+    )
+
+    unknown = sorted(
+        _UNDOCUMENTED_RUNTIME_SETTINGS - set(RUNTIME_NUMERIC_SETTING_SPECS)
+    )
+    assert not unknown, (
+        f"these are on the debt list but are no longer settings at all: {unknown}"
+    )
+
+
+def test_eval_execution_settings_are_validated_as_a_group():
+    """Every other spec group declares a validator; the eval-execution group
+    was added without one, so nothing re-checked its relations against the
+    workflow ceilings they are derived from. The defaults must pass."""
+    values = load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})
+
+    validate_eval_execution_settings(values)
+
+
+def test_a_stale_threshold_that_can_race_a_live_worker_is_rejected():
+    """Known positive for the sweep's stale threshold: at or below one running
+    entry's longest legitimate life the sweep requeues entries a worker is
+    still evaluating. Called through the whole validator with the resolved
+    mapping, so it fires on a value the spec bounds alone would miss if
+    someone widened them."""
+    values = load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})
+    values["EVAL_TASK_SWEEP_STALE_RUNNING_SECONDS"] = LONGEST_RUNNING_ENTRY_SECONDS
+
+    with pytest.raises(ValueError, match="longest legitimate life"):
+        validate_runtime_numeric_settings(values)
+
+
+def test_the_declared_stale_threshold_range_cannot_race_a_live_worker():
+    """The bound an operator can actually reach. The old minimum was 600 s,
+    nine times below the floor, so a deployment configured anywhere in
+    600-5399 passed parsing and raced live workers while the invariant test
+    -- which read the running value -- still passed on the default."""
+    spec = RUNTIME_NUMERIC_SETTING_SPECS["EVAL_TASK_SWEEP_STALE_RUNNING_SECONDS"]
+
+    assert spec.minimum > LONGEST_RUNNING_ENTRY_SECONDS
+    with pytest.raises(ValueError, match="must be between"):
+        spec.parse(
+            "EVAL_TASK_SWEEP_STALE_RUNNING_SECONDS", LONGEST_RUNNING_ENTRY_SECONDS
+        )

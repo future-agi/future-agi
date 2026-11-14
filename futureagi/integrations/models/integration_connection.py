@@ -19,6 +19,7 @@ class IntegrationPlatform(models.TextChoices):
     CLOUD_STORAGE = "cloud_storage", "Cloud Storage"
     MESSAGE_QUEUE = "message_queue", "Message Queue"
     LINEAR = "linear", "Linear"
+    SLACK = "slack", "Slack"
 
 
 class IntegrationCategory(models.TextChoices):
@@ -47,6 +48,7 @@ PLATFORM_CATEGORY: dict[str, IntegrationCategory] = {
     IntegrationPlatform.CLOUD_STORAGE.value: IntegrationCategory.DATA_SYNC,
     IntegrationPlatform.MESSAGE_QUEUE.value: IntegrationCategory.DATA_SYNC,
     IntegrationPlatform.LINEAR.value: IntegrationCategory.ACTION_ONLY,
+    IntegrationPlatform.SLACK.value: IntegrationCategory.ACTION_ONLY,
 }
 
 ACTION_ONLY_PLATFORMS: frozenset[str] = frozenset(

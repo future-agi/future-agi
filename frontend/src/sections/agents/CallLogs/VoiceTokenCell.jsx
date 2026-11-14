@@ -6,20 +6,20 @@ import { fShortenNumber } from "src/utils/format-number";
 
 const BreakdownTooltip = ({ promptTokens, completionTokens, totalTokens }) => (
   <Box sx={{ p: 0.5, minWidth: 160 }}>
-    <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+    <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
       Usage breakdown
     </Typography>
     <BRow
       label="Input tokens"
       value={promptTokens}
-      icon="mdi:arrow-down"
+      icon="solar:arrow-down-linear"
       bold
     />
     <Box sx={{ my: 0.75 }} />
     <BRow
       label="Output tokens"
       value={completionTokens}
-      icon="mdi:arrow-up"
+      icon="solar:arrow-up-linear"
       bold
     />
     <Box sx={{ borderTop: "1px solid rgba(255,255,255,0.15)", my: 0.75 }} />
@@ -99,7 +99,7 @@ const VoiceTokenCell = (params) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.disabled",
           px: 1.5,
           width: "100%",
@@ -132,30 +132,30 @@ const VoiceTokenCell = (params) => {
             alignItems: "center",
             gap: 0.25,
             whiteSpace: "nowrap",
-            fontSize: 13,
+            fontSize: 12,
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          <Typography component="span" sx={{ fontSize: 13 }}>
+          <Typography component="span" sx={{ fontSize: 12 }}>
             {fShortenNumber(promptTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-down"
+            icon="solar:arrow-down-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
           <Box component="span" sx={{ mx: 0.25 }} />
-          <Typography component="span" sx={{ fontSize: 13 }}>
+          <Typography component="span" sx={{ fontSize: 12 }}>
             {fShortenNumber(completionTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-up"
+            icon="solar:arrow-up-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
           <Typography
             component="span"
-            sx={{ fontSize: 13, color: "text.secondary", ml: 0.5 }}
+            sx={{ fontSize: 12, color: "text.secondary", ml: 0.5 }}
           >
             (Σ {fShortenNumber(totalTokens)})
           </Typography>
@@ -164,7 +164,7 @@ const VoiceTokenCell = (params) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
           }}
@@ -174,6 +174,7 @@ const VoiceTokenCell = (params) => {
       )}
       {hasBreakdown && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <BreakdownTooltip
               promptTokens={promptTokens}
@@ -184,7 +185,7 @@ const VoiceTokenCell = (params) => {
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box
@@ -198,7 +199,7 @@ const VoiceTokenCell = (params) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={14}
               color="text.secondary"
             />
