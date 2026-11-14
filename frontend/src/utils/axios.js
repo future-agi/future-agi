@@ -2078,6 +2078,12 @@ export const endpoints = {
     updateApiKey: (id) => apiPath("/agentcc/api-keys/{id}/", { id: id }),
     revokeApiKey: (id) => apiPath("/agentcc/api-keys/{id}/revoke/", { id: id }),
     syncApiKeys: apiPath("/agentcc/api-keys/sync/"),
+    guardrailPolicies: apiPath("/agentcc/guardrail-policies/"),
+    guardrailPolicyDetail: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/", { id: id }),
+    applyGuardrailPolicy: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/apply/", { id: id }),
+    syncGuardrailPolicies: apiPath("/agentcc/guardrail-policies/sync/"),
     requestLogs: apiPath("/agentcc/request-logs/"),
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
