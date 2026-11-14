@@ -112,13 +112,16 @@ describe("PolicyDialog", () => {
   });
 
   it("shows field errors returned by the API and surfaces gateway warnings", async () => {
+    // The shape src/utils/axios.js rejects with: the 400 body spread flat,
+    // field errors under `details`, `result` a one-line string.
     create.mockRejectedValueOnce({
-      response: {
-        data: {
-          status: false,
-          result: { applied_keys: ["Unknown or unauthorized key IDs"] },
-        },
-      },
+      status: false,
+      type: "validation_error",
+      code: "invalid",
+      result: "applied_keys: Unknown or unauthorized key IDs",
+      attr: "applied_keys",
+      details: { applied_keys: ["Unknown or unauthorized key IDs"] },
+      statusCode: 400,
     });
     create.mockResolvedValueOnce({
       gateway_synced: false,
@@ -136,9 +139,10 @@ describe("PolicyDialog", () => {
     await userEvent.click(screen.getByRole("combobox", { name: "API keys" }));
     await userEvent.click(screen.getByText(/Staging \(sk-test…\)/));
     await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+    // Inline under the key picker, not as a form-level message.
     expect(
       await screen.findByText("Unknown or unauthorized key IDs"),
-    ).toBeInTheDocument();
+    ).toHaveClass("MuiFormHelperText-root");
     await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
     await waitFor(() =>
       expect(snackbar).toHaveBeenCalledWith("Sync pending", {

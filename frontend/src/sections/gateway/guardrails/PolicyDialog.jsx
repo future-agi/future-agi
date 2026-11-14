@@ -40,6 +40,23 @@ const errorText = (value) => {
   return value || "";
 };
 
+// src/utils/axios.js rejects with the 400 body spread flat: per-field errors
+// are under `details`, and `result` is a one-line summary string.
+const fieldErrors = (error) => {
+  const body = error?.response?.data ?? error ?? {};
+  const details =
+    body.details ??
+    (typeof body.result === "object" && body.result !== null
+      ? body.result
+      : null);
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return details;
+  }
+  return {
+    form: errorText(body.result ?? body.message) || "Could not save policy.",
+  };
+};
+
 // Key prefixes may already end in "..."; show one ellipsis.
 const keyPrefixLabel = (key) =>
   (key.keyPrefix || key.key_prefix || "").replace(/\.+$/, "");
@@ -141,12 +158,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
       }
       onClose();
     } catch (error) {
-      const details = error.response?.data?.result;
-      setErrors(
-        typeof details === "object" && details !== null
-          ? details
-          : { form: errorText(details) || "Could not save policy." },
-      );
+      setErrors(fieldErrors(error));
     }
   };
 
