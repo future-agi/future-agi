@@ -30,6 +30,10 @@ function readinessTagLabel(snapshot, selection) {
     return "Ready when started";
   }
   const count = limits.length;
+  if (count === 0 && held > 0) {
+    // Held back for a reason no measured row names, such as a dropped case.
+    return `Started with ${held} ${held === 1 ? "case" : "cases"} held back`;
+  }
   return `Started with ${count} ${count === 1 ? "limit" : "limits"}`;
 }
 

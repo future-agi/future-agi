@@ -71,6 +71,9 @@ describe("RunReadinessTag", () => {
   it("is not ready when cases were held back, even with every row Supported", () => {
     render(<RunReadinessTag snapshot={READY} selection={HELD} />);
 
-    expect(screen.getByText("Started with 0 limits")).toBeInTheDocument();
+    expect(
+      screen.getByText("Started with 2 cases held back"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/0 limits/)).not.toBeInTheDocument();
   });
 });
