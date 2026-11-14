@@ -2,6 +2,125 @@
 // so scripts/typesafe-live.test.mjs can check them without a stack.
 
 export type Verdict = 'PASS' | 'FAIL' | 'NOTE';
+
+export interface CleanupProvider { id: string; provider_name: string }
+export interface CleanupKey { id: string; name: string; status: string; gateway_key_id: string }
+export interface TypeSafeResources {
+  baselineProviderIds: Set<string>; baselineKeyIds: Set<string>;
+  providerNames: Set<string>; keyNames: Set<string>;
+}
+export interface TeardownResult {
+  verdict: Verdict;
+  checks: Array<{ label: string; verdict: Verdict; detail: string }>;
+}
+export interface LifecycleResult { testVerdict: 'PASS' | 'FAIL'; teardown: TeardownResult }
+export interface TypeSafeCleanupIO {
+  listProviders(): Promise<CleanupProvider[]>;
+  listKeys(): Promise<CleanupKey[]>;
+  deleteProvider(id: string): Promise<void>;
+  revokeKey(id: string): Promise<void>;
+  gatewayProvidersAbsent(names: string[]): Promise<boolean>;
+  gatewayKeyRevoked(key: CleanupKey): Promise<boolean>;
+  waitUntil(check: () => Promise<boolean>): Promise<void>;
+}
+
+// Snapshot before the first write. Exact intended names recover a create whose
+// response was lost; baseline IDs prevent cleanup from touching older resources.
+export function createTypeSafeResources(providers: CleanupProvider[], keys: CleanupKey[]): TypeSafeResources {
+  return { baselineProviderIds: new Set(providers.map(p => p.id)), baselineKeyIds: new Set(keys.map(k => k.id)),
+    providerNames: new Set(), keyNames: new Set() };
+}
+
+// Require a valid admin listing, not an HTTP error/empty parse. An absent org in
+// a valid listing has no providers. Presence with a different mask still fails:
+// removing the whole provider proves more than merely changing its key.
+export function gatewayProvidersAbsent(configs: unknown, orgId: string, names: string[]): boolean {
+  const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!object(configs) || !object(configs.data)) return false;
+  if (!(orgId in configs.data)) return true;
+  const org = configs.data[orgId];
+  // tenant/config.go uses json:"providers,omitempty": deleting the last
+  // provider legitimately removes the field, rather than returning {}.
+  if (!object(org)) return false;
+  if (!('providers' in org)) return true;
+  return object(org.providers) && names.every(name => !(name in (org.providers as Record<string, unknown>)));
+}
+
+// All operations are independent and best-effort. No exception text, response
+// body, credential or masked key is retained in these shareable results.
+export async function teardownTypeSafe(resources: TypeSafeResources | undefined, io: TypeSafeCleanupIO): Promise<TeardownResult> {
+  if (!resources) return { verdict: 'NOTE', checks: [{ label: 'resource snapshot', verdict: 'NOTE', detail: 'No mutations started.' }] };
+  const checks: TeardownResult['checks'] = [];
+  const attempt = async (label: string, action: () => Promise<void>) => {
+    try {
+      await action();
+      checks.push({ label, verdict: 'PASS', detail: 'completed' });
+    } catch {
+      checks.push({ label, verdict: 'FAIL', detail: 'Operation or verification failed; response details withheld.' });
+    }
+  };
+  let providers: CleanupProvider[] = [], keys: CleanupKey[] = [];
+  await attempt('provider inventory', async () => {
+    providers = (await io.listProviders()).filter(p => resources.providerNames.has(p.provider_name) && !resources.baselineProviderIds.has(p.id));
+  });
+  await attempt('gateway key inventory', async () => {
+    keys = (await io.listKeys()).filter(k => resources.keyNames.has(k.name) && !resources.baselineKeyIds.has(k.id));
+  });
+  for (const [i, provider] of providers.entries()) {
+    await attempt(`delete run provider ${i + 1}`, () => io.deleteProvider(provider.id));
+  }
+  for (const [i, key] of keys.entries()) {
+    await attempt(`revoke run gateway key ${i + 1}`, () => io.revokeKey(key.id));
+  }
+  await attempt('backend provider removal', () => io.waitUntil(async () => {
+    const remaining = await io.listProviders();
+    return !remaining.some(p => resources.providerNames.has(p.provider_name) && !resources.baselineProviderIds.has(p.id));
+  }));
+  await attempt('backend key revocation', () => io.waitUntil(async () => {
+    const remaining = await io.listKeys();
+    return keys.every(k => remaining.find(r => r.id === k.id)?.status === 'revoked');
+  }));
+  await attempt('gateway provider config removal', () => io.waitUntil(() => io.gatewayProvidersAbsent([...resources.providerNames])));
+  await attempt('gateway key revocation', () => io.waitUntil(async () => {
+    const revoked = await Promise.all(keys.map(key => io.gatewayKeyRevoked(key)));
+    return revoked.every(Boolean);
+  }));
+  return { verdict: checks.some(c => c.verdict === 'FAIL') ? 'FAIL' : 'PASS', checks };
+}
+
+// Used by the browser spec as well as the browserless failure-injection tests.
+// Record independent results before rethrowing the original exception. Cleanup
+// (or report I/O) must never replace a test failure; cleanup alone still fails CI.
+export async function withTypeSafeTeardown(opts: {
+  run(): Promise<void>; teardown(): Promise<TeardownResult>;
+  record(result: LifecycleResult): void | Promise<void>; failed?(): boolean;
+}): Promise<void> {
+  let original: unknown, threw = false, recordError: unknown;
+  let teardown: TeardownResult;
+  try {
+    await opts.run();
+  } catch (error) {
+    original = error;
+    threw = true;
+  } finally {
+    try { teardown = await opts.teardown(); } catch {
+      teardown = { verdict: 'FAIL', checks: [{ label: 'teardown', verdict: 'FAIL', detail: 'Unexpected cleanup failure; details withheld.' }] };
+    }
+    const testFailed = threw || !!opts.failed?.();
+    try { await opts.record({ testVerdict: testFailed ? 'FAIL' : 'PASS', teardown }); } catch (error) { recordError = error; }
+    if (threw) throw original;
+    // Playwright already holds a soft assertion's error. Do not append a
+    // cleanup error that could be mistaken for the body failure's cause.
+    if (!testFailed && teardown.verdict === 'FAIL') throw new Error('TypeSafe teardown failed; see the independent teardown result');
+    if (!testFailed && recordError) throw new Error('TypeSafe report could not be written');
+  }
+}
+
+export function presetGap(models: string[]): string | undefined {
+  return models.includes('jev-1.14.0') ? undefined
+    : 'Preset gap: the dashboard TypeSafe preset does not list jev-1.14.0. The full live/dry run ends red by design at Case 7a until the preset is fixed; this is not an upstream-key or teardown failure.';
+}
+
 export type LogRow = Record<string, unknown> | 'no row' | 'not checked';
 export interface CallRecord {
   label: string;

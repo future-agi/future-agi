@@ -1,5 +1,5 @@
-import type { Page } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import type { BrowserContext, Page } from '@playwright/test';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +11,9 @@ import { E2E } from '../lib/env';
 import {
   MOCK_REFUSAL_TEXT, TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
   semanticVerdict, unknownModelVerdict, rotateOutcome, gatewayHoldsKey,
+  createTypeSafeResources, teardownTypeSafe, withTypeSafeTeardown, gatewayProvidersAbsent, presetGap,
 } from '../lib/typesafe-live';
-import type { CallRecord, Verdict } from '../lib/typesafe-live';
+import type { CallRecord, Verdict, CleanupProvider, CleanupKey, TypeSafeResources, TypeSafeCleanupIO, LifecycleResult } from '../lib/typesafe-live';
 
 // Opt-in live run of TypeSafe's Jev decision models through the whole
 // product: a TypeSafe provider added in the dashboard, a gateway key,
@@ -33,7 +34,7 @@ import type { CallRecord, Verdict } from '../lib/typesafe-live';
 // The TypeSafe key never reaches Playwright, so it cannot reach its reports
 // either. (The synthetic gateway keys do: they come back in the bodies of
 // owner.api.post('/agentcc/api-keys/'), which runs through Playwright's request
-// context. They are local to this stack and deleted with it; with trace off
+// context. They are local to this stack and revoked in finally; with trace off
 // they are not recorded.) Playwright titles an input step with
 // the value typed (`Fill "<value>"`), snapshots a failing page's inputs
 // (password fields included) into error-context.md, and stores an API call's
@@ -47,9 +48,20 @@ import type { CallRecord, Verdict } from '../lib/typesafe-live';
 // Budget: about 40 upstream calls and 60k-85k input tokens per run (< $0.01);
 // the header's totals count every call TypeSafe answered.
 
-const LIVE = process.env.E2E_TYPESAFE_LIVE === '1';
+// Focused lifecycle dry run: reuse dashboard creation, rotate, gateway sync and
+// one mock decision, then stop before the known preset gap / full cost matrix.
+// pass => green; fail => throws the named error after resources exist, while
+// report.{json,md} must still show teardown PASS. No real upstream is permitted.
+const LIFECYCLE = process.env.E2E_TYPESAFE_LIFECYCLE ?? '';
+const LIVE = process.env.E2E_TYPESAFE_LIVE === '1' || LIFECYCLE !== '';
 const TYPESAFE_KEY = process.env.TYPESAFE_API_KEY ?? '';
 const BASE_URL = process.env.TYPESAFE_BASE_URL ?? '';
+// Construct the mock-only sentinel so Playwright's source attachments do not
+// themselves contain the full value searched by the artefact scanner.
+if (LIFECYCLE && (!['pass', 'fail'].includes(LIFECYCLE)
+  || BASE_URL !== 'http://mock-llm:8080' || TYPESAFE_KEY !== ['e2e', 'decision', 'typesafe', 'key'].join('-'))) {
+  throw new Error('Lifecycle mode requires pass|fail, TYPESAFE_BASE_URL=http://mock-llm:8080 and the synthetic mock TypeSafe key');
+}
 // A dry run is any override that is not TypeSafe's own host; an unparsable one
 // counts as a dry run rather than breaking test discovery while disabled.
 const DRY_RUN = BASE_URL !== '' && (() => {
@@ -83,6 +95,9 @@ const report = {
   cases: [] as CaseRecord[],
   bugDrafts: [] as BugDraft[],
   specQuestions: [] as string[],
+  lifecycleMode: LIFECYCLE || 'full matrix',
+  presetGap: undefined as string | undefined,
+  outcome: undefined as LifecycleResult | undefined,
 };
 
 const secrets: string[] = [];
@@ -123,22 +138,43 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
     'Opt-in: set E2E_TYPESAFE_LIVE=1 and TYPESAFE_API_KEY (a TypeSafe test key) to call TypeSafe live.');
 
   test('typesafe/jev-latest through dashboard provider, gateway key, /v1/systemone, Request Logs and cost',
-    async ({ browser, scopeActors }) => {
-      test.setTimeout(1_200_000);
-      secrets.push(TYPESAFE_KEY);
-      fs.mkdirSync(OUT_DIR, { recursive: true });
+    async ({ browser, scopeActors }, testInfo) => {
+      test.setTimeout(1_380_000); // full matrix plus a bounded, independent 120s cleanup budget
       const owner = scopeActors.ownerA;
-      const suffix = Date.now().toString(36);
-      const context = await scopeActors.openContext(browser, owner);
-      const page = await context.newPage();
-
+      secrets.push(TYPESAFE_KEY, owner.tokens.access, owner.tokens.refresh);
+      const suffix = randomUUID();
+      let context: BrowserContext | undefined;
+      let resources: TypeSafeResources | undefined;
       try {
-        await run(page, owner, suffix);
+        await withTypeSafeTeardown({
+          run: async () => {
+            fs.mkdirSync(OUT_DIR, { recursive: true });
+            const io = cleanupIO(owner);
+            const providers = await io.listProviders();
+            const keys = await io.listKeys();
+            // The dashboard save is an upsert: never rotate or delete somebody
+            // else's provider, even if this fixture is later reused differently.
+            if (providers.some(p => [PROVIDER, BAD_KEY_PROVIDER, 'typesafe-nokey'].includes(p.provider_name))) {
+              throw new Error('TypeSafe harness requires absent test provider names; no existing provider was changed');
+            }
+            resources = createTypeSafeResources(providers, keys);
+            context = await scopeActors.openContext(browser, owner);
+            const page = await context.newPage();
+            await run(page, owner, suffix, resources);
+          },
+          failed: () => testInfo.errors.length > 0,
+          teardown: async () => {
+            const result = await teardownTypeSafe(resources, cleanupIO(owner));
+            try { await context?.close(); } catch {
+              result.verdict = 'FAIL';
+              result.checks.push({ label: 'browser close', verdict: 'FAIL', detail: 'Browser close failed; details withheld.' });
+            }
+            return result;
+          },
+          record: result => { report.outcome = result; writeReport(); },
+        });
       } catch (e) {
         throw sanitized(e);
-      } finally {
-        writeReport();
-        await context.close();
       }
     });
 });
@@ -197,12 +233,67 @@ const admin = async (route: string) =>
   gateway('GET', route, { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
 const json = (res: HttpResponse) => { try { return JSON.parse(res.text); } catch { return {}; } };
 
+// Cleanup uses Node HTTP only, including inventories and admin verification.
+// Contracts: agentcc/views/{provider_credential,api_key}.py list => {result:[]},
+// DELETE credential => result.deleted; POST key/revoke => result.status.
+// Gateway admin_keys.go GET /-/keys/{id} => {status}, admin_orgs.go => {data}.
+function cleanupIO(owner: ScopeActor): TypeSafeCleanupIO {
+  const deadline = Date.now() + 120_000;
+  const request = (base: string, method: string, route: string, headers: Record<string, string>) =>
+    http(base, method, route, { headers, timeoutMs: Math.max(1, Math.min(10_000, deadline - Date.now())) });
+  const headers = { Authorization: `Bearer ${owner.tokens.access}`, 'X-Organization-Id': owner.organizationId,
+    'X-Workspace-Id': owner.workspaceId };
+  const list = async <T>(route: string, fields: string[]): Promise<T[]> => {
+    const response = await request(E2E.apiUrl, 'GET', route, headers);
+    const rows = json(response).result;
+    if (response.status !== 200 || !Array.isArray(rows)
+      || !rows.every(row => row && fields.every(field => typeof row[field] === 'string'))) {
+      throw new Error('Cleanup inventory unavailable or malformed');
+    }
+    return rows as T[];
+  };
+  return {
+    listProviders: () => list<CleanupProvider>('/agentcc/provider-credentials/', ['id', 'provider_name']),
+    listKeys: () => list<CleanupKey>('/agentcc/api-keys/', ['id', 'name', 'status', 'gateway_key_id']),
+    deleteProvider: async id => {
+      const response = await request(E2E.apiUrl, 'DELETE', `/agentcc/provider-credentials/${encodeURIComponent(id)}/`, headers);
+      if (response.status !== 200 || json(response).result?.deleted !== true) throw new Error('Provider deletion refused');
+    },
+    revokeKey: async id => {
+      const response = await request(E2E.apiUrl, 'POST', `/agentcc/api-keys/${encodeURIComponent(id)}/revoke/`, headers);
+      if (response.status !== 200 || json(response).result?.status !== 'revoked') throw new Error('Key revocation refused');
+    },
+    gatewayProvidersAbsent: async names => {
+      const response = await request(E2E.gatewayUrl, 'GET', '/-/orgs/configs', { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
+      return response.status === 200 && gatewayProvidersAbsent(json(response), owner.organizationId, names);
+    },
+    gatewayKeyRevoked: async key => {
+      const response = await request(E2E.gatewayUrl, 'GET', `/-/keys/${encodeURIComponent(key.gateway_key_id)}`,
+        { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
+      return (response.status === 200 && json(response).status === 'revoked')
+        || (response.status === 404 && json(response).error?.code === 'key_not_found');
+    },
+    waitUntil: async check => {
+      // Not expect.poll: cleanup must keep its own bounded budget after a test
+      // assertion fails, and must never attach admin responses to Playwright.
+      do {
+        if (await check()) return;
+        if (Date.now() >= deadline) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(500, deadline - Date.now())));
+      } while (Date.now() < deadline);
+      throw new Error('Cleanup verification timed out');
+    },
+  };
+}
+
 function addCase(c: CaseRecord) {
   report.cases.push(safe(c));
   expect.soft(c.verdict, `${c.id} ${c.title}: ${redact(c.actual)}`).not.toBe('FAIL');
 }
 
-async function run(page: Page, owner: ScopeActor, suffix: string) {
+async function run(page: Page, owner: ScopeActor, suffix: string, resources: TypeSafeResources) {
+  // Record intent before each write, so a lost response still gets cleaned up.
+  resources.providerNames.add(PROVIDER);
   const ownerHeaders = { Authorization: `Bearer ${owner.tokens.access}`, 'Content-Type': 'application/json',
     'X-Organization-Id': owner.organizationId, 'X-Workspace-Id': owner.workspaceId };
   // ---------------------------------------------------------------- Case 1
@@ -243,12 +334,23 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     return typesafe ? { ...typesafe, saveUrl: savedRes.url() } as Record<string, unknown> & { saveUrl: string } : undefined;
   });
   if (!providerCfg) throw new Error('TypeSafe provider was not saved; cannot continue');
+  report.presetGap = presetGap((providerCfg.models_list as string[]) ?? []);
+  if (report.presetGap) report.bugDrafts.push({
+    title: 'Dashboard TypeSafe preset omits jev-1.14.0, so typesafe/jev-1.14.0 is refused on a preset-created provider',
+    repro: 'Gateway → Providers → Add Provider → TypeSafe → submit /v1/systemone with model typesafe/jev-1.14.0.',
+    expected: 'The pinned model is available alongside jev-latest at $0.042/M input and $0 output.',
+    actual: report.presetGap,
+    suspect: 'frontend/src/sections/gateway/providers/AddProviderDialog.jsx TypeSafe preset model list',
+    severity: 'P2',
+  });
 
   // A second provider with a wrong key, for the upstream-refusal case.
+  resources.providerNames.add(BAD_KEY_PROVIDER);
   await owner.api.post('/agentcc/provider-credentials/', {
     provider_name: BAD_KEY_PROVIDER, credentials: { api_key: `invalid-typesafe-key-${suffix}` },
     base_url: BASE_URL || 'https://api.typesafe.ai', api_format: 'systemone', models_list: ['jev-latest'],
   });
+  resources.keyNames.add(`e2e-typesafe-${suffix}`);
   const key = await owner.api.post<{ result: { id: string; key: string; name: string } }>('/agentcc/api-keys/',
     { name: `e2e-typesafe-${suffix}` });
   secrets.push(key.result.key);
@@ -284,6 +386,15 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     countUpstream(report.header, record);
     return record;
   };
+  if (LIFECYCLE) {
+    const decision = await call('mock lifecycle decision', { model: 'typesafe/jev-latest', state: `${TICKET} e2e-decision:pass`, questions: Q.noul });
+    addCase({ id: 'lifecycle', title: 'Mock decision before finally teardown', ticket: 'Prove cleanup after pass and injected failure',
+      verdict: decision.status === 200 && answerShape([decision], { dryRun: true, provider: PROVIDER }).fails.length === 0 ? 'PASS' : 'FAIL',
+      actual: `mock decision status ${decision.status}; lifecycle=${LIFECYCLE}; full preset/pricing matrix not run`, calls: [decision] });
+    if (LIFECYCLE === 'fail') throw new Error('Injected TypeSafe lifecycle failure after provider/key creation');
+    return;
+  }
+
   const logRow = async (requestId: string | undefined, expectRow: boolean) => {
     if (!requestId) return 'no row' as const;
     const find = async () => {
@@ -364,6 +475,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       verdict: missing.status === 401 && invalid.status === 401 ? 'PASS' : 'FAIL',
       actual: `missing ${missing.status} ${errorOf(missing).code ?? ''}, invalid ${invalid.status} ${errorOf(invalid).code ?? ''}` });
 
+    resources.keyNames.add(`e2e-typesafe-noprov-${suffix}`);
     const narrow = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/',
       { name: `e2e-typesafe-noprov-${suffix}`, allowed_providers: ['openai'] });
     secrets.push(narrow.result.key);
@@ -394,6 +506,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     try {
       // (c) one request per minute per key.
       await pushConfig({ rate_limiting: { enabled: true, per_key_rpm: 1 } }, org => (org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm === 1);
+      resources.keyNames.add(`e2e-typesafe-rpm-${suffix}`);
       const rl = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-rpm-${suffix}` });
       secrets.push(rl.result.key);
       const rlAuth = { Authorization: `Bearer ${rl.result.key}` };
@@ -412,6 +525,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
           + `agentcc_tokens_input_total{provider="typesafe"} ${before === undefined ? 'n/a (/-/metrics disabled in this stack)' : `${before} → ${after}`}; log row ${JSON.stringify(second.logRow)}` });
 
       // (d) a key budget smaller than one call.
+      resources.keyNames.add(`e2e-typesafe-budget-${suffix}`);
       const bk = await owner.api.post<{ result: { key: string; name: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-budget-${suffix}` });
       secrets.push(bk.result.key);
       await pushConfig({ rate_limiting: {}, budgets: { enabled: true, default_period: 'total', keys: { [bk.result.name]: { limit: 0.000001, hard: true } } } },
@@ -449,6 +563,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     // the field is blank) and the provider-credentials API (an empty key), so a
     // refusal is the keyless-provider rule rather than a missing field.
     const nokeyBase = BASE_URL || 'https://api.typesafe.ai';
+    resources.providerNames.add('typesafe-nokey');
     const viaDialog = await tryApi(() => owner.api.post(new URL(providerCfg.saveUrl).pathname,
       { name: 'typesafe-nokey', config: { base_url: nokeyBase, api_format: 'systemone', models: ['jev-latest'] } }));
     const viaApi = await tryApi(() => owner.api.post('/agentcc/provider-credentials/', {
@@ -533,18 +648,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     const presetListsPinned = asShipped.status === 200;
     addCase({ id: '7a', title: 'typesafe/jev-1.14.0 on a preset-created provider', ticket: 'The pinned version and jev-latest give the same pricing',
       calls: [asShipped], verdict: presetListsPinned ? 'PASS' : 'FAIL',
-      actual: `${asShipped.status} ${errorOf(asShipped).code ?? ''}: ${errorOf(asShipped).message ?? ''}` });
-    if (!presetListsPinned) {
-      report.bugDrafts.push({
-        title: 'Dashboard TypeSafe preset omits jev-1.14.0, so typesafe/jev-1.14.0 is refused on a preset-created provider',
-        repro: 'Gateway → Providers → Add Provider → TypeSafe (key) → curl -s localhost:28090/v1/systemone -H "Authorization: Bearer $GATEWAY_KEY" '
-          + '-d \'{"model":"typesafe/jev-1.14.0","state":"…","questions":{"q":{"type":"noul"}}}\'',
-        expected: 'The pinned version is usable and priced like jev-latest ($0.042/M input, $0 output).',
-        actual: `${asShipped.status} ${errorOf(asShipped).code ?? ''}`,
-        suspect: 'frontend/src/sections/gateway/providers/AddProviderDialog.jsx TypeSafe preset models ["jev-1.13.0","jev-latest"]',
-        severity: 'P2',
-      });
-    }
+      actual: `${report.presetGap ? `${report.presetGap} ` : ''}${asShipped.status} ${errorOf(asShipped).code ?? ''}: ${errorOf(asShipped).message ?? ''}` });
 
     // Add jev-1.14.0 and an unknown version to the provider's model list.
     const models = Array.from(new Set([...((providerCfg.models_list as string[]) ?? []), 'jev-1.14.0', 'jev-0.0.0']));
@@ -605,6 +709,13 @@ function writeReport() {
     `- dev SHA: ${report.header.devSha}`, `- images: ${report.header.images}`, `- started: ${report.header.startedAt}`,
     `- TypeSafe endpoint: ${report.header.typesafeEndpoint}`,
     `- upstream calls: ${report.header.upstreamCalls}; upstream input tokens: ${report.header.upstreamInputTokens}`, '',
+    '## Independent results', '',
+    `- Test body: **${report.outcome?.testVerdict ?? 'NOT RECORDED'}** (mode: ${report.lifecycleMode})`,
+    `- Teardown: **${report.outcome?.teardown.verdict ?? 'NOT RUN'}**`,
+    '- A teardown failure never replaces the original test error. Provider deletion is soft deletion; this verifies removal from active backend listings and gateway configuration, not erasure of encrypted database history.', '',
+    ...(report.outcome?.teardown.checks ?? []).map(c => `- ${c.label}: ${c.verdict} — ${c.detail}`), '',
+    '## Preset coverage gap', '', report.presetGap ?? 'No preset gap observed (or provider creation did not complete).',
+    ...(LIFECYCLE ? ['Focused lifecycle mode does not execute Case 7a; its green pass scenario does not qualify the full live/preset matrix.'] : []), '',
     '| Case | Title | Verdict | Ticket wording | Actual |', '| --- | --- | --- | --- | --- |',
     ...report.cases.map(c => `| ${c.id} | ${c.title} | ${c.verdict} | ${c.ticket} | ${c.actual.replace(/\|/g, '\\|')} |`), '',
     '## Calls', '',

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { assertNoTypeSafeKey, ownerApiCalls } from './typesafe-live-spec-guard.mjs';
 
 // The live TypeSafe harness is skipped in CI (it needs a key), so nothing ran
 // its source there. These checks fail in CI if a change brings back what kept
@@ -23,9 +24,8 @@ test("no step title or Playwright request carries the TypeSafe key", () => {
   }
   // The rotate call carrying the key goes through Node's fetch (http()), never
   // through the owner's Playwright request context.
-  for (const m of code.matchAll(/owner\.api\.(post|put|patch|get)\(([\s\S]*?)\);/g)) {
-    assert.doesNotMatch(m[2], /TYPESAFE_KEY/, "a Playwright request carries the TypeSafe key");
-  }
+  assert.equal(ownerApiCalls(spec).length, 11, 'update the per-call-shape fixtures when adding request sites');
+  assertNoTypeSafeKey(spec);
   assert.match(code, /http\(E2E\.apiUrl, 'POST', `\/agentcc\/provider-credentials\/\$\{String\(typesafe\.id\)\}\/rotate\/`/);
 });
 
@@ -36,4 +36,22 @@ test("trace, screenshots and video stay off", () => {
 test("a run stops when the real key did not reach the gateway", () => {
   assert.match(code, /if \(typesafe && !rotate\.ok\) throw new Error\(/);
   assert.match(code, /gatewayHoldsKey\(configs, owner\.organizationId, PROVIDER, TYPESAFE_KEY\)/);
+});
+
+test('the browser spec wires cleanup, ownership tracking and independent reporting', () => {
+  assert.match(code, /await withTypeSafeTeardown\(/);
+  assert.match(code, /await teardownTypeSafe\(resources, cleanupIO\(owner\)\)/);
+  assert.match(code, /report\.outcome = result; writeReport\(\)/);
+  assert.match(code, /resources = createTypeSafeResources\(providers, keys\)/);
+  assert.equal([...code.matchAll(/resources\.providerNames\.add\(/g)].length, 3);
+  assert.equal([...code.matchAll(/resources\.keyNames\.add\(/g)].length, 4);
+  assert.match(code, /## Independent results/);
+  assert.match(code, /## Preset coverage gap/);
+});
+
+test('injected lifecycle failure is mock-only and occurs after a decision', () => {
+  assert.match(code, /BASE_URL !== 'http:\/\/mock-llm:8080'/);
+  assert.match(code, /TYPESAFE_KEY !== \['e2e', 'decision', 'typesafe', 'key'\]\.join\('-'\)/);
+  assert.match(code, /if \(LIFECYCLE === 'fail'\) throw new Error\('Injected TypeSafe lifecycle failure after provider\/key creation'\)/);
+  assert.ok(code.indexOf("await call('mock lifecycle decision'") < code.indexOf("if (LIFECYCLE === 'fail')"));
 });
