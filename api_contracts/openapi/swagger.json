@@ -142538,7 +142538,8 @@
                     "enum": [
                         "check_unreadable",
                         "no_checks",
-                        "evidence_not_supported"
+                        "evidence_not_supported",
+                        "judge_unavailable"
                     ]
                 }
             }

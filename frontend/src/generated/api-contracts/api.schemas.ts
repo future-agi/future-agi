@@ -19896,6 +19896,7 @@ export const HarnessCapabilityNotGradableApiReason = {
   check_unreadable: "check_unreadable",
   no_checks: "no_checks",
   evidence_not_supported: "evidence_not_supported",
+  judge_unavailable: "judge_unavailable",
 } as const;
 
 export interface HarnessCapabilityNotGradableApi {
