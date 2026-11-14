@@ -770,6 +770,8 @@ def version_diff(
         _scenarios(previous, other.id),
         _scenarios(current, version.id),
         removed_reason="not in this version",
+        dropped=current.get("dropped"),
+        was_dropped=previous.get("dropped"),
     )
     return {
         "summary": diffs.summarize_suite(diff),

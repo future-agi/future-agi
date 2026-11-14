@@ -159,9 +159,16 @@ def suite_diff(
     current: Iterable[Mapping[str, Any]],
     *,
     removed_reason: str = "removed by manual edit",
+    dropped: Mapping[str, Any] | None = None,
+    was_dropped: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Added, removed and changed scenarios. A removed one ``dropped`` records (a rebuild dropped
+    it for a removed capability) carries that reason and capability; an added one ``was_dropped``
+    recorded is listed as restored instead of added."""
     before = {scenario_key(one): one for one in previous if scenario_key(one)}
     after = {scenario_key(one): one for one in current if scenario_key(one)}
+    dropped = dropped if isinstance(dropped, Mapping) else {}
+    was_dropped = was_dropped if isinstance(was_dropped, Mapping) else {}
     changed: dict[str, list[str]] = {}
     for key in sorted(set(before) & set(after)):
         fields = sorted(
@@ -172,13 +179,27 @@ def suite_diff(
         )
         if fields:
             changed[key] = fields
+    new = set(after) - set(before)
+    restored = sorted(key for key in new if key in was_dropped)
     return {
-        "added": sorted(set(after) - set(before)),
+        "added": sorted(new - set(restored)),
         "removed": [
-            {"key": key, "reason": removed_reason}
+            _removed(key, dropped.get(key), removed_reason)
             for key in sorted(set(before) - set(after))
         ],
         "changed": changed,
+        **({"restored": restored} if restored else {}),
+    }
+
+
+def _removed(key: str, record: Any, reason: str) -> dict[str, Any]:
+    if not isinstance(record, Mapping) or not record.get("reason"):
+        return {"key": key, "reason": reason}
+    return {
+        "key": key,
+        "reason": str(record["reason"]),
+        "capabilities": record.get("missing") or {},
+        "agent_version": record.get("agent_version") or None,
     }
 
 
@@ -273,6 +294,7 @@ def summarize_suite(diff: Mapping[str, Any] | None) -> str:
         return "First version"
     parts = [
         _count("scenario", "scenarios", "added", diff.get("added")),
+        _count("scenario", "scenarios", "restored", diff.get("restored")),
         _count("scenario", "scenarios", "removed", diff.get("removed")),
         _count("scenario", "scenarios", "changed", diff.get("changed")),
     ]
