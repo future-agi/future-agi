@@ -29,6 +29,7 @@ import math
 import requests
 import time
 import structlog
+from tfc.utils.media_tools import MediaToolUnavailable, require_ffmpeg
 
 logger = structlog.get_logger(__name__)
 import json
@@ -268,6 +269,7 @@ def _load_and_convert_audio(run_prompt_instance):
 
     logger.info("Converting audio to linear16 PCM")
     try:
+        require_ffmpeg("Deepgram speech-to-text audio conversion", ffprobe=True)
         from pydub import AudioSegment
 
         audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
@@ -309,6 +311,8 @@ def _load_and_convert_audio(run_prompt_instance):
 
         return audio_bytes
 
+    except MediaToolUnavailable:
+        raise
     except Exception as e:
         logger.error(f"Audio conversion failed: {e}")
         raise Exception(f"Failed to convert audio for Deepgram Flux: {e}")
