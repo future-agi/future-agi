@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -175,18 +175,10 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 	if g.apiKey == "" || g.secretKey == "" {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
-			Err:     errors.New("evaluation credentials are missing"),
-		}
+		return guardrails.ExecutionFailure("futureagi guardrail: missing api_key or secret_key")
 	}
 	if len(g.evalIDs) == 0 {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing eval_id, skipping",
-			Err:     errors.New("evaluation ids are missing"),
-		}
+		return guardrails.ExecutionFailure("futureagi guardrail: missing eval_id")
 	}
 
 	// Determine text to evaluate.
@@ -200,56 +192,99 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	resp, err := g.callAPI(ctx, text)
-	if err != nil {
-		return &guardrails.CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("futureagi evaluation failed: %v", err),
-			Err:     err,
+	seen := make(map[string]bool, len(g.evalIDs))
+	for _, id := range g.evalIDs {
+		if seen[id] {
+			return guardrails.ExecutionFailure("duplicate requested evaluation identity")
 		}
+		seen[id] = true
 	}
 
-	result := parseResult(resp)
-	if err := g.validateRealtimeResults(resp); err != nil {
-		result.Err = err
+	// The evaluation API runs one template per request, so each selected
+	// template gets its own request and its own validated verdict.
+	verdicts := make([]templateVerdict, len(g.evalIDs))
+	var wg sync.WaitGroup
+	for i, id := range g.evalIDs {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			verdicts[i] = g.evaluate(ctx, text, id)
+		}(i, id)
+	}
+	wg.Wait()
+	result := combineVerdicts(verdicts)
+	for _, v := range verdicts {
+		if v.realtimeErr != nil {
+			result.RealtimeErr = v.realtimeErr
+			break
+		}
 	}
 	return result
 }
 
-// validateRealtimeResults keeps missing/indeterminate evaluations separate from
-// legacy HTTP score semantics. A single requested evaluation may omit its id.
-func (g *FutureAGIGuardrail) validateRealtimeResults(resp *evalResponse) error {
-	if resp == nil || len(resp.Result) != 1 {
-		return errors.New("evaluation result envelope is incomplete")
+// templateVerdict is the outcome of evaluating one template.
+type templateVerdict struct {
+	resp        *evalResponse
+	err         error
+	realtimeErr error
+}
+
+func (g *FutureAGIGuardrail) evaluate(ctx context.Context, text, id string) templateVerdict {
+	resp, err := g.callAPI(ctx, text, id)
+	if err != nil {
+		return templateVerdict{err: fmt.Errorf("futureagi evaluation failed: %w", err)}
 	}
-	remaining := make(map[string]bool)
-	for _, id := range g.evalIDs {
-		remaining[id] = true
+	unidentified := hasUnidentifiedEvaluation(resp)
+	if err := validateEvaluations(resp, []string{id}); err != nil {
+		return templateVerdict{err: err}
 	}
-	for _, evaluation := range resp.Result[0].Evaluations {
-		id := evaluation.EvalID
-		if id == "" && len(g.evalIDs) == 1 {
-			id = g.evalIDs[0]
-		}
-		if !remaining[id] {
-			return errors.New("evaluation identity is missing, duplicate or unexpected")
-		}
-		delete(remaining, id)
-		switch output := evaluation.Output.(type) {
-		case bool:
-		case string:
-			if !strings.EqualFold(output, "passed") && !strings.EqualFold(output, "failed") {
-				return errors.New("evaluation verdict is indeterminate")
+	verdict := templateVerdict{resp: resp}
+	// Realtime checks also require a single result group, and an evaluation
+	// id on each verdict whenever several templates are configured.
+	if len(resp.Result) != 1 {
+		verdict.realtimeErr = errors.New("evaluation result envelope is incomplete")
+	} else if unidentified && len(g.evalIDs) > 1 {
+		verdict.realtimeErr = errors.New("evaluation identity is missing")
+	}
+	return verdict
+}
+
+func hasUnidentifiedEvaluation(resp *evalResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for _, group := range resp.Result {
+		for _, ev := range group.Evaluations {
+			if ev.EvalID == "" {
+				return true
 			}
-		default:
-			return errors.New("evaluation verdict is unavailable")
 		}
 	}
-	if len(remaining) != 0 {
-		return errors.New("evaluation results are missing")
+	return false
+}
+
+// combineVerdicts fails the check when any template reports Failed, even if
+// another template could not be evaluated. Otherwise an evaluation error is
+// reported as an execution failure, so the organization's fail_open setting
+// decides, and the check passes only when every template passed.
+func combineVerdicts(verdicts []templateVerdict) *guardrails.CheckResult {
+	for _, v := range verdicts {
+		if v.err != nil {
+			continue
+		}
+		if result := parseResult(v.resp); result.Err == nil && !result.Pass {
+			return result
+		}
 	}
-	return nil
+	for _, v := range verdicts {
+		if v.err != nil {
+			return guardrails.ExecutionFailure(v.err.Error())
+		}
+	}
+	if len(verdicts) == 0 {
+		return guardrails.ExecutionFailure("no evaluation results")
+	}
+	return parseResult(verdicts[0].resp)
 }
 
 // extractInputText concatenates all message contents from the request.
@@ -310,17 +345,13 @@ func extractContentText(raw json.RawMessage) string {
 	return ""
 }
 
-// callAPI sends the evaluation request to Future AGI.
-func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalResponse, error) {
-	configMap := make(map[string]evalConfig, len(g.evalIDs))
-	for _, id := range g.evalIDs {
-		configMap[id] = evalConfig{CallType: g.callType}
-	}
+// callAPI sends one template's evaluation request to Future AGI.
+func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text, evalID string) (*evalResponse, error) {
 	payload := evalRequest{
 		Inputs: []evalInput{
 			{Input: text, CallType: g.callType, MaxTokens: g.maxTokens},
 		},
-		Config: configMap,
+		Config: map[string]evalConfig{evalID: {CallType: g.callType}},
 	}
 
 	body, err := json.Marshal(payload)
@@ -376,7 +407,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	respBody, err := guardrails.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -394,7 +425,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 // the failing eval's reason and details are surfaced.
 func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if resp == nil || len(resp.Result) == 0 {
-		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results", Err: errors.New("no evaluation results")}
+		return guardrails.ExecutionFailure("no evaluation results")
 	}
 
 	var firstEval *evaluation
@@ -418,7 +449,7 @@ func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if firstEval != nil {
 		return buildResult(firstEval, true, 0.0)
 	}
-	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results", Err: errors.New("no evaluation results")}
+	return guardrails.ExecutionFailure("no evaluation results")
 }
 
 func isFailedOutput(output interface{}) bool {

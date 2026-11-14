@@ -33,7 +33,7 @@ class LiteLlmAgi:
                 "prompt_tokens": response.usage.prompt_tokens,
                 "total_tokens": response.usage.total_tokens,
             },
-            "cost": calculate_total_cost(response.model, dict(response.usage))
+            "cost": calculate_total_cost(response.model, dict(response.usage)),
         }
 
         # Parse choices
@@ -46,12 +46,13 @@ class LiteLlmAgi:
                     "content": choice.message.content,
                     "role": choice.message.role,
                     "tool_calls": choice.message.tool_calls,
-                    "function_call": choice.message.function_call
-                }
+                    "function_call": choice.message.function_call,
+                },
             }
             parsed_data["choices"].append(choice_data)
 
-        log_to_fi(parsed_data,fi_meta)
+        log_to_fi(parsed_data, fi_meta)
+
 
 def log_to_fi(result: dict, fi_meta: FiMeta):
     try:
@@ -62,7 +63,7 @@ def log_to_fi(result: dict, fi_meta: FiMeta):
         response_time_ms = None
         session_id = None
         user_query = None
-        tool_calls= None
+        tool_calls = None
         environment = "production"
         external_reference_id = None
         custom_attributes = None
@@ -80,12 +81,12 @@ def log_to_fi(result: dict, fi_meta: FiMeta):
             external_reference_id = fi_meta.external_reference_id
             custom_attributes = fi_meta.custom_attributes
             custom_eval_metrics = fi_meta.custom_eval_metrics
-            tool_calls=fi_meta.tool_calls
+            tool_calls = fi_meta.tool_calls
         InferenceLogger.log_inference(
             prompt_slug=prompt_slug,
             prompt=fi_meta.prompt,
             language_model_id=result["model"],
-            response=result['choices'][0]['message']['content'],
+            response=result["choices"][0]["message"]["content"],
             context=context,
             tool_calls=tool_calls,
             response_time=response_time_ms,
@@ -93,9 +94,9 @@ def log_to_fi(result: dict, fi_meta: FiMeta):
             customer_user_id=customer_user_id,
             session_id=session_id,
             user_query=user_query,
-            prompt_tokens= result['usage']['prompt_tokens'],
-            completion_tokens= result['usage']['completion_tokens'],
-            total_tokens= result['usage']['total_tokens'],
+            prompt_tokens=result["usage"]["prompt_tokens"],
+            completion_tokens=result["usage"]["completion_tokens"],
+            total_tokens=result["usage"]["total_tokens"],
             environment=environment,
             external_reference_id=external_reference_id,
             custom_attributes=custom_attributes,

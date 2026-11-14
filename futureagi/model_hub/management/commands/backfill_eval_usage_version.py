@@ -168,9 +168,7 @@ def _backfill_pass_sql(
     version_id_arr = [mapping[s][0] for s in source_ids] if source_ids else [None]
     version_num_arr = [mapping[s][1] for s in source_ids] if source_ids else [None]
 
-    unwrap_source_filter = (
-        "AND source_id = ANY(%s)" if scoped else ""
-    )
+    unwrap_source_filter = "AND source_id = ANY(%s)" if scoped else ""
     sql = _BACKFILL_BATCH_SQL.format(unwrap_source_filter=unwrap_source_filter)
 
     total = 0
@@ -180,7 +178,9 @@ def _backfill_pass_sql(
             params = [last_id]
             if scoped:
                 params.append(source_ids)
-            params.extend([source_ids, batch, source_id_arr, version_id_arr, version_num_arr])
+            params.extend(
+                [source_ids, batch, source_id_arr, version_id_arr, version_num_arr]
+            )
             cursor.execute(sql, params)
             ids = [row[0] for row in cursor.fetchall()]
         if not ids:
@@ -296,7 +296,9 @@ class Command(BaseCommand):
                     "WHERE deleted = false AND jsonb_typeof(config) = 'string' "
                     "  AND LEFT(config #>> '{}', 1) IN ('{', '[')"
                 )
-            self.stdout.write(f"Double-encoded configs to unwrap: {cursor.fetchone()[0]}")
+            self.stdout.write(
+                f"Double-encoded configs to unwrap: {cursor.fetchone()[0]}"
+            )
             if source_ids:
                 cursor.execute(
                     "SELECT count(*) FROM usage_apicalllog "
@@ -305,6 +307,4 @@ class Command(BaseCommand):
                     "  AND COALESCE(config ->> 'version_id', '') = ''",
                     [source_ids],
                 )
-                self.stdout.write(
-                    f"Rows pending version stamp: {cursor.fetchone()[0]}"
-                )
+                self.stdout.write(f"Rows pending version stamp: {cursor.fetchone()[0]}")
