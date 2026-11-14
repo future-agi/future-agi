@@ -21,10 +21,10 @@
     {
       "image": "futureagi/future-agi",
       "tag_suffix": "-slim",
-      "budget_mb": 426,
+      "budget_mb": 446,
       "projected_mb": 421,
       "measured_mb": 420.7,
-      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone. TH-8685: 376 + 50 MB for PyArrow 22.0.0 and SQLGlot 28.10.1, kept in core so Parquet export and SQL compilation work in both variants. Run 39617644021: amd64 420.7 MB, arm64 410.6 MB. No Arrow shared libraries or runtime features are pruned to meet this budget."
+      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone. TH-8685: 376 + 50 MB for PyArrow 22.0.0 and SQLGlot 28.10.1, kept in core so Parquet export and SQL compilation work in both variants. Run 39617644021: amd64 420.7 MB, arm64 410.6 MB. No Arrow shared libraries or runtime features are pruned to meet this budget. Dependency refresh (litellm 1.84.10 -> 1.100.4: +33 MB unpacked, temporalio 1.21.1 -> 1.36.1: +12 MB): a local linux/amd64 build measured 434.6 MB compressed (421.4 MB before the refresh), so the budget moves 426 -> 446, keeping the earlier ~5 MB headroom plus 10 MB for the next litellm."
     },
     {
       "image": "futureagi/standalone",
