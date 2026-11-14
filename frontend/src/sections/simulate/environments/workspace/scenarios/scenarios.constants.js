@@ -94,6 +94,17 @@ export const SCENARIOS_COPY = {
           ? "Failed"
           : "Not run",
   sourceChanged: (version) => `Source changed in environment v${version}`,
+  compare: "Compare",
+  compareTitle: (from, to) =>
+    `What changed between environment v${from} and v${to}`,
+  compareRule: "Rule",
+  compareBefore: (version) => `Before (v${version})`,
+  compareAfter: (version) => `After (v${version})`,
+  compareMissing: "Not in this version.",
+  compareLoading: "Reading both versions…",
+  compareFailed: "Couldn't read the change. Try again.",
+  compareCitedBy: (keys) =>
+    `Cited by ${keys.length === 1 ? "1 case" : `${keys.length} cases`}: ${keys.join(", ")}`,
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
 };

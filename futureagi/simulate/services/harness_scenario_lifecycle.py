@@ -77,6 +77,8 @@ class LifecycleView(TypedDict):
     source_changed: list[str]
     # The environment version the cited sources changed in, when any did.
     source_changed_version: int | None
+    # Its id, for comparing the cited sources with the parent version's.
+    source_changed_version_id: str | None
 
 
 class _Safe(dict):
@@ -191,6 +193,7 @@ def _view(
         sources=[],
         source_changed=[],
         source_changed_version=None,
+        source_changed_version_id=None,
     )
 
 
@@ -416,6 +419,7 @@ def scenario_lifecycle(
         view["source_changed"] = changed.get(key, [])
         if view["source_changed"]:
             view["source_changed_version"] = environment_version.version_number
+            view["source_changed_version_id"] = str(environment_version.id)
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
         if bad is not None and view["state"] in ("validated", "active"):
             view.update(
