@@ -7,6 +7,12 @@ on:
     branches: [dev, main]
   merge_group:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Test selection (PR and push gates always run the full suite)
+        type: choice
+        default: full
+        options: [full, attachment-deletion]
 
 permissions:
   contents: read
@@ -193,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        group: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}
     defaults:
       run:
         working-directory: futureagi
@@ -320,7 +326,19 @@ jobs:
 
       - name: Run shard
         id: run-shard
+        env:
+          FOCUSED_ATTACHMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
         run: |
+          if [ "$FOCUSED_ATTACHMENTS" = true ]; then
+            # An opt-in diagnostic, never a substitute for the PR's full gate.
+            uv run pytest -q -ra \
+              tracer/tests/test_attachment_session_deletion.py \
+              tracer/tests/test_attachment_lifecycle.py \
+              tracer/tests/test_trace_session.py \
+              tracer/tests/test_analysis_retention.py \
+              --junitxml=junit-${{ matrix.group }}.xml
+            exit $?
+          fi
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log

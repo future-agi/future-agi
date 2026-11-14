@@ -180,7 +180,17 @@ def sweep(*, now=None):
     now = now or timezone.now()
     counts: defaultdict[str, int] = defaultdict(int)
     _isolated(counts, "reservations_expired", accounting.expire_reservations)
-    for scope_id, enabled in AttachmentScope.objects.values_list("pk", "enabled"):
+    from tracer.services.attachments.session_deletion import sweep_deleted_sessions
+
+    for scope_id, enabled, project_id in AttachmentScope.objects.values_list(
+        "pk", "enabled", "project_id"
+    ):
+        _isolated(
+            counts,
+            "session_occurrences_deleted",
+            sweep_deleted_sessions,
+            project_id=project_id,
+        )
         _isolated(
             counts,
             "occurrences_expired",
