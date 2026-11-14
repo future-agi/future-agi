@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import numpy as np
 from channels.db import database_sync_to_async
@@ -388,12 +389,9 @@ class GraphDataConsumer(DataConsumer):
             name_q = """SELECT tcec.name
                         FROM tracer_custom_eval_config tcec
                         WHERE tcec.id = %s;"""
-            name = await self.fetch_raw_data(name_q, [self.eval_id])
-            evaluations = {
-                self.eval_id: {"name": "", "data": [{"name": name[0], "value": []}]}
-            }
-        else:
-            evaluations = {}
+            selected_name = await self.fetch_raw_data(name_q, [self.eval_id])
+
+        evaluations = {}
 
         primary_traffic = None
         if hasattr(self, "graph") and self.graph in ["trace", "span"]:
@@ -406,11 +404,8 @@ class GraphDataConsumer(DataConsumer):
                 timestamp, config_id, metrics, name = row
             config_id_str = str(config_id)
 
-            if self.eval_id:
-                if config_id_str != self.eval_id:
-                    continue
-                else:
-                    evaluations[config_id_str] = {"name": name, "data": []}
+            if self.eval_id and config_id_str != self.eval_id:
+                continue
 
             if config_id_str not in evaluations:
                 evaluations[config_id_str] = {"name": name, "data": []}
@@ -430,16 +425,40 @@ class GraphDataConsumer(DataConsumer):
 
                 evaluations[config_id_str]["data"][0]["value"].append(value_entry)
             else:
-                data_entries = []
+                data_entries = cast(
+                    list[dict[str, Any]], evaluations[config_id_str]["data"]
+                )
                 for choice_name, value in metric_score.items():
                     value_entry = {
                         "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
                         "value": value.get("score"),
                     }
 
-                    data_entries.append({"name": choice_name, "value": [value_entry]})
+                    choice_entry = next(
+                        (
+                            entry
+                            for entry in data_entries
+                            if entry["name"] == choice_name
+                        ),
+                        None,
+                    )
+                    if choice_entry is None:
+                        data_entries.append(
+                            {"name": choice_name, "value": [value_entry]}
+                        )
+                    else:
+                        choice_entry["value"].append(value_entry)
 
-                evaluations[config_id_str]["data"] = data_entries
+        if self.eval_id and self.eval_id not in evaluations:
+            evaluations[self.eval_id] = {
+                "name": "",
+                "data": [
+                    {
+                        "name": selected_name[0][0] if selected_name else "",
+                        "value": [],
+                    }
+                ],
+            }
 
         if self.property:
             for _config_id, eval_data in evaluations.items():

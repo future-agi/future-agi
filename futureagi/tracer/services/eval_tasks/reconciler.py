@@ -225,7 +225,7 @@ def _requeue_and_drop(
             RowType.SPANS: "observation_span_id",
             RowType.TRACES: "trace_id",
             RowType.SESSIONS: "trace_session_id",
-        }[task.row_type]
+        }[RowType(task.row_type)]
         entries = entries.filter(**{f"{field}__in": candidates})
     for entry in entries.iterator():
         cfg_id = entry.custom_eval_config_id

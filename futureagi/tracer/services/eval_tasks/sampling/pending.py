@@ -6,7 +6,8 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
+from uuid import UUID
 
 from django.db import transaction
 
@@ -22,6 +23,11 @@ from tracer.services.eval_tasks.sampling.query import (
 if TYPE_CHECKING:
     from tracer.models.eval_sampling import EvalSamplingCohort
     from tracer.models.eval_task import EvalTask
+
+
+class _PageState(TypedDict):
+    last_id: UUID | None
+    dropped: int
 
 
 IDENTITY_FIELDS = {
@@ -73,7 +79,7 @@ def revalidate_pending(
 
     witnesses = TraceWitnessReader(task)
     identity_field = IDENTITY_FIELDS[task.row_type]
-    state = {"last_id": None, "dropped": 0}
+    state: _PageState = {"last_id": None, "dropped": 0}
     while True:
         with page_write():
             if not _revalidate_page(
@@ -121,7 +127,8 @@ def _revalidate_page(
     excluded = []
     changed = []
     for entry in entries:
-        member = members.get(current.get(str(getattr(entry, identity_field))))
+        unit = current.get(str(getattr(entry, identity_field)))
+        member = members.get(unit) if unit is not None else None
         if member is None:
             excluded.append(entry.pk)
             continue
