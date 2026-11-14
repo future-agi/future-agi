@@ -202,7 +202,8 @@ async def test_continuous_task_waits_out_pgbouncer_outage(
     monkeypatch.setitem(
         connections.settings["default"], "DISABLE_SERVER_SIDE_CURSORS", True
     )
-    # Five attempts, as in production, half a second apart.
+    # As many attempts as production, half a second apart.
+    attempts = wf.CONTROL_RETRY_POLICY.maximum_attempts
     monkeypatch.setattr(
         wf,
         "CONTROL_RETRY_POLICY",
@@ -210,7 +211,7 @@ async def test_continuous_task_waits_out_pgbouncer_outage(
             initial_interval=timedelta(milliseconds=500),
             maximum_interval=timedelta(milliseconds=500),
             backoff_coefficient=1.0,
-            maximum_attempts=5,
+            maximum_attempts=attempts,
         ),
     )
     _patch_noop_reconcile(monkeypatch)
@@ -240,7 +241,7 @@ async def test_continuous_task_waits_out_pgbouncer_outage(
             return read_state(*args)
         except Exception as exc:
             refusals.append(exc)
-            if len(refusals) == 5:
+            if len(refusals) == attempts:
                 outage.end()
             raise
 
@@ -278,7 +279,7 @@ async def test_continuous_task_waits_out_pgbouncer_outage(
                 for d, exc in zip(drivers, refusals, strict=True)
             ]
             print(f"pgbouncer_outage={kind} state_read_refusals={shapes}")
-            assert len(drivers) >= 5, shapes
+            assert len(drivers) >= attempts, shapes
             assert all(d is not None and d.sqlstate in ("08P01", None) for d in drivers)
             assert any(_SAID[kind] in str(d) for d in drivers), shapes
             assert completions == Counter({str(before.id): 1, str(during.id): 1})

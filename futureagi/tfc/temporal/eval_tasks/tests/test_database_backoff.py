@@ -245,18 +245,28 @@ async def _until(predicate, timeout=15):
             await asyncio.sleep(0.05)
 
 
+# The production attempt counts, read before any test shortens the timers.
+CONTROL_ATTEMPTS = wf.CONTROL_RETRY_POLICY.maximum_attempts
+RECONCILE_ATTEMPTS = wf.RECONCILE_RETRY_POLICY.maximum_attempts
+
+
 def _fast_control_retries(monkeypatch):
-    # Still exhaust all FIVE attempts through Temporal; shorten only their timers.
-    monkeypatch.setattr(
-        wf,
-        "CONTROL_RETRY_POLICY",
-        RetryPolicy(
-            initial_interval=timedelta(milliseconds=10),
-            maximum_interval=timedelta(milliseconds=10),
-            backoff_coefficient=1.0,
-            maximum_attempts=5,
-        ),
-    )
+    # Still exhaust every production attempt through Temporal, for the control
+    # steps and for reconcile's shorter policy; shorten only their timers.
+    for name, attempts in (
+        ("CONTROL_RETRY_POLICY", CONTROL_ATTEMPTS),
+        ("RECONCILE_RETRY_POLICY", RECONCILE_ATTEMPTS),
+    ):
+        monkeypatch.setattr(
+            wf,
+            name,
+            RetryPolicy(
+                initial_interval=timedelta(milliseconds=10),
+                maximum_interval=timedelta(milliseconds=10),
+                backoff_coefficient=1.0,
+                maximum_attempts=attempts,
+            ),
+        )
 
 
 @pytest.mark.e2e
@@ -345,10 +355,12 @@ async def test_control_outage_recovers_without_resume(
             if helper == "_reconcile_sync":
 
                 async def state_also_exhausted():
-                    return len(state_reads) >= 5
+                    return len(state_reads) >= CONTROL_ATTEMPTS
 
                 await _until(state_also_exhausted)
-            assert len(attempts) >= 5
+            assert len(attempts) >= (
+                RECONCILE_ATTEMPTS if helper == "_reconcile_sync" else CONTROL_ATTEMPTS
+            )
             assert await _task_status(task_id) in (
                 EvalTaskStatus.PENDING,
                 EvalTaskStatus.RUNNING,
@@ -389,6 +401,55 @@ async def test_control_outage_recovers_without_resume(
             ).replay_workflow(history)
         finally:
             await handle.cancel()
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_non_outage_database_error_fails_after_the_control_window(
+    workflow_environment, eval_task, monkeypatch
+):
+    """Bad credentials are not an outage: the control step spends its bounded
+    retries and the task fails; the workflow never waits for the database."""
+    from temporalio.client import WorkflowFailureError
+
+    _fast_control_retries(monkeypatch)
+    _patch_noop_reconcile(monkeypatch)
+    task_id = str(eval_task.id)
+    await sync_to_async(EvalTask.objects.filter(id=task_id).update)(
+        run_type=RunType.CONTINUOUS, continuous_cursor=eval_task.created_at
+    )
+    attempts = []
+
+    def bad_credentials(*args):
+        attempts.append(1)
+        exc = OperationalError("writer unavailable")
+        exc.__cause__ = psycopg.errors.InvalidPassword(
+            "password authentication failed for user"
+        )
+        raise exc
+
+    monkeypatch.setattr(activities, "_get_task_state_sync", bad_credentials)
+    queue = f"db-misconfigured-{uuid.uuid4().hex}"
+    async with Worker(
+        workflow_environment.client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await workflow_environment.client.start_workflow(
+            wf.ContinuousEvalTaskWorkflow.run,
+            ContinuousDrainState(task_id=task_id, poll_interval_seconds=1),
+            id=f"eval-task-{task_id}",
+            task_queue=queue,
+        )
+        with pytest.raises(WorkflowFailureError):
+            await asyncio.wait_for(handle.result(), timeout=15)
+    assert len(attempts) == CONTROL_ATTEMPTS
+    assert await _task_status(task_id) == EvalTaskStatus.FAILED
+    serialized = (await handle.fetch_history()).to_json()
+    assert "EvalTaskDatabaseUnavailable" not in serialized
+    assert "EvalTaskClaimOutcomeUnknown" not in serialized
 
 
 @pytest.mark.e2e
@@ -618,7 +679,7 @@ async def test_unknown_claim_commit_is_not_retried_or_dispatched(
                 return await handle.query("phase") == "waiting_for_database"
 
             await _until(deferred)
-            assert len(calls) == 1  # no second claim in Temporal's five-attempt budget
+            assert len(calls) == 1  # no second claim in Temporal's whole retry budget
             assert (await _status_counts(task_id))["completed"] == 0
 
             async def other_completed():
@@ -709,7 +770,7 @@ async def test_pause_requeue_outage_retains_unstarted_entries(
                 return await handle.query("phase") == "waiting_for_database"
 
             await _until(deferred)
-            assert len(requeue_calls) >= 5
+            assert len(requeue_calls) >= CONTROL_ATTEMPTS
             assert len(provider_calls) == 1
             assert await _task_status(task_id) == EvalTaskStatus.PAUSED
             database_restored.set()
@@ -777,7 +838,7 @@ async def test_database_outage_continues_as_new_before_any_batch_finishes(
                 ).status == WorkflowExecutionStatus.CONTINUED_AS_NEW
 
             await _until(rolled_over)
-            assert len(attempts) >= 5
+            assert len(attempts) >= CONTROL_ATTEMPTS
             assert await _task_status(task_id) == EvalTaskStatus.PENDING
             assert (await _status_counts(task_id))["completed"] == 0
             history = await first.fetch_history()
