@@ -114,6 +114,7 @@ def test_stale_and_revoked_keys_are_skipped(organization):
         organization=organization,
         name="mixed",
         scope="key",
+        runs_on_gateway=True,
         applied_keys=[str(live.id), str(revoked.id), str(deleted.id), "invalid"],
         checks=[{"name": "secrets-detector", "threshold": 0.4, "action": "block"}],
     )
@@ -140,6 +141,7 @@ def test_secrets_are_decrypted_per_policy(organization, settings):
                 organization=organization,
                 name=f"policy-{number}",
                 scope="key",
+                runs_on_gateway=True,
                 applied_keys=[str(api_key.id)],
                 checks=[
                     {"name": "lakera-guard", "config": {"api_key": "__encrypted__"}}
@@ -212,6 +214,7 @@ def test_bulk_contains_policy_with_two_queries(organization):
         organization=organization,
         name="bulk-key",
         scope="key",
+        runs_on_gateway=True,
         applied_keys=[str(api_key.id)],
         checks=[{"name": "pii-detection"}],
     )

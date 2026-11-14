@@ -13,12 +13,33 @@ logger = structlog.get_logger(__name__)
 BUDGET_ERROR_CODES = frozenset({"budget_exceeded", "org_budget_exceeded"})
 
 
+def _monitor_only(entry):
+    """True when every guardrail result is a Monitor-mode key-policy match.
+
+    The gateway flags a request guardrail_triggered when a Monitor (log only)
+    key policy matched, so the request log shows it. Nothing was blocked,
+    redacted or warned: such a request must not raise guardrail.triggered.
+    """
+    results = entry.get("guardrail_results")
+    if not isinstance(results, list) or not results:
+        return False
+    return all(
+        isinstance(result, dict) and result.get("mode") == "monitor"
+        for result in results
+    )
+
+
+def _guardrail_enforced(entry):
+    """A guardrail acted on the request (not only a Monitor-mode match)."""
+    return bool(entry.get("guardrail_triggered", False)) and not _monitor_only(entry)
+
+
 def _event_types(entry):
     """The events a log entry raises, for webhooks and email alerts alike."""
     events = ["request.completed"]
     if bool(entry.get("is_error", False)) or int(entry.get("status_code", 0)) >= 400:
         events.append("error.occurred")
-    if entry.get("guardrail_triggered"):
+    if _guardrail_enforced(entry):
         events.append("guardrail.triggered")
     if entry.get("error_code") in BUDGET_ERROR_CODES:
         events.append("budget.exceeded")
@@ -55,7 +76,7 @@ def _dispatch_webhook_events(org, logs):
             bool(entry.get("is_error", False))
             or int(entry.get("status_code", 0)) >= 400
         )
-        guardrail_triggered = bool(entry.get("guardrail_triggered", False))
+        guardrail_triggered = _guardrail_enforced(entry)
 
         base_payload = {
             "request_id": entry.get("request_id", ""),
@@ -75,6 +96,7 @@ def _dispatch_webhook_events(org, logs):
             "error_message": entry.get("error_message", ""),
             "cache_hit": bool(entry.get("cache_hit", False)),
             "guardrail_triggered": guardrail_triggered,
+            "guardrail_monitored": _monitor_only(entry),
             "cost": float(entry.get("cost", 0) or 0),
         }
 
@@ -381,7 +403,9 @@ def _ingest_org_logs(org, logs):
             )
 
     if objects:
-        AgentccRequestLog.no_workspace_objects.bulk_create(objects, ignore_conflicts=True)
+        AgentccRequestLog.no_workspace_objects.bulk_create(
+            objects, ignore_conflicts=True
+        )
         # The gateway resends a batch whose response it did not get in time, so a
         # batch can hold rows saved already. The unique request ID skips those;
         # only the rows saved now go on to webhooks and metering.

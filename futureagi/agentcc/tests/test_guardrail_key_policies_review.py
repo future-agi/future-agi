@@ -64,6 +64,7 @@ def test_malformed_legacy_key_policy_does_not_break_the_org_payload(
         organization=organization,
         name="legacy",
         scope="key",
+        runs_on_gateway=True,
         applied_keys=[str(api_key.id)],
         checks=bad_checks,
     )
@@ -71,6 +72,7 @@ def test_malformed_legacy_key_policy_does_not_break_the_org_payload(
         organization=organization,
         name="good",
         scope="key",
+        runs_on_gateway=True,
         applied_keys=[str(api_key.id)],
         checks=[{"name": "secret-detection", "action": "block"}],
     )

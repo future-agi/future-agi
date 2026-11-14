@@ -119,6 +119,10 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         return normalized
 
     def validate(self, attrs):
+        if self.instance is not None and not ({"scope", "applied_keys"} & attrs.keys()):
+            # A change that leaves scope and keys alone (Active, mode, checks)
+            # is not refused for a pairing an older version saved.
+            return attrs
         scope = attrs.get("scope", self.instance.scope if self.instance else "global")
         keys = attrs.get(
             "applied_keys", self.instance.applied_keys if self.instance else []
@@ -134,20 +138,23 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         # Project policies are persisted but not evaluated by the gateway yet.
         return attrs
 
-    def _allowed_actions(self):
+    def _is_org_config_row(self):
         # The org config editor (views/org_config.py) stores org-wide checks in
-        # the reserved __ui_guardrails__ row and still offers "mask"; only
-        # policies created through this API are limited to block/warn/log.
+        # the reserved __ui_guardrails__ row, and re-sends every org check on
+        # each settings save, including values the Overview tab and the
+        # update-guardrail API wrote (any action, a threshold such as 50).
+        # Those writers are not bounded like this API, so refusing such a
+        # value here would block every later settings save. The gateway
+        # contract still validates that row's checks before they go live.
         instance = self.instance
-        if isinstance(instance, AgentccGuardrailPolicy) and instance.name.startswith(
-            "__"
-        ):
-            return ("block", "warn", "log", "mask")
-        return ("block", "warn", "log")
+        return isinstance(
+            instance, AgentccGuardrailPolicy
+        ) and instance.name.startswith("__")
 
     def validate_checks(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("checks must be a JSON array")
+        strict = not self._is_org_config_row()
         for i, check in enumerate(value):
             if not isinstance(check, dict):
                 raise serializers.ValidationError(
@@ -157,7 +164,9 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must have a non-empty name"
                 )
-            if "action" in check and check["action"] not in self._allowed_actions():
+            if not strict:
+                continue
+            if "action" in check and check["action"] not in ("block", "warn", "log"):
                 raise serializers.ValidationError(
                     f"Check at index {i} has invalid action"
                 )

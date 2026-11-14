@@ -85,7 +85,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                 return self._gm.bad_request(serializer.errors)
             policy, synced = self._save_and_push(
                 org,
-                lambda: serializer.save(organization=org),
+                lambda: serializer.save(organization=org, runs_on_gateway=True),
                 new_scope=serializer.validated_data.get("scope", "global"),
             )
             return self._response(policy, synced)
@@ -109,7 +109,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                 return self._gm.bad_request(serializer.errors)
             policy, synced = self._save_and_push(
                 org,
-                serializer.save,
+                lambda: serializer.save(runs_on_gateway=True),
                 old_scope=instance.scope,
                 new_scope=serializer.validated_data.get("scope", instance.scope),
             )
@@ -171,7 +171,11 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                 )
                 if not serializer.is_valid():
                     return self._gm.bad_request(serializer.errors)
-                save = serializer.save
+
+                def save_keys():
+                    return serializer.save(runs_on_gateway=True)
+
+                save = save_keys
                 new_scope = "key"
             else:
                 if not isinstance(project_ids, list):

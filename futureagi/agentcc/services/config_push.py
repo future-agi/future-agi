@@ -288,6 +288,11 @@ def _transform_guardrails(guardrails_data, org_id=None, *, policies=None):
     if not isinstance(rules, list):
         if raw_checks == []:
             guardrails_data["checks"] = {}
+        if not raw_checks:
+            # The policy sync used to store {"enabled": false, "checks": []}
+            # when no org-wide policy was left. The gateway contract has no
+            # guardrails.enabled, and with no checks it means nothing.
+            guardrails_data.pop("enabled", None)
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
@@ -681,7 +686,7 @@ def _build_key_policies(org_id, policies):
     from agentcc.models import AgentccAPIKey
 
     policies = sorted(
-        (p for p in policies if p.is_active and p.scope == "key"),
+        (p for p in policies if p.is_active and p.scope == "key" and p.runs_on_gateway),
         key=lambda p: (p.priority, p.name),
     )
     if not policies:

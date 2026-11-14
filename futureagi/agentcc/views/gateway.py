@@ -109,7 +109,9 @@ def _prepare_vertex_provider_config(provider_config):
             )
             or key.get("token_uri") != "https://oauth2.googleapis.com/token"
         ):
-            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+            raise ValueError(
+                "The JSON must be a Google service-account key with a project ID."
+            )
         try:
             private_key = serialization.load_pem_private_key(
                 key["private_key"].encode(), password=None
@@ -137,6 +139,7 @@ def _prepare_vertex_provider_config(provider_config):
     config["api_format"] = "gemini"
     config.pop("api_key", None)
     return config
+
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -214,8 +217,29 @@ def _guardrail_check_key(checks, name):
     existing entry under either is reused instead of adding a duplicate.
     """
     aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
-    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    aliases += [
+        rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name
+    ]
     return next((alias for alias in aliases if alias in checks), name)
+
+
+def _invalid_threshold_field(guardrail_config):
+    """The threshold field of an update-guardrail payload outside 0..1, if any.
+
+    A guardrail's confidence threshold is a score from 0 to 1. A value such as
+    50 (meant as 50%) would never trigger, and the policy API refuses it.
+    """
+    for field in ("threshold", "confidence_threshold"):
+        if field not in guardrail_config or guardrail_config[field] is None:
+            continue
+        value = guardrail_config[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 <= value <= 1
+        ):
+            return field
+    return None
 
 
 def _guardrail_check_fields(guardrail_config):
@@ -233,9 +257,7 @@ def _guardrail_check_fields(guardrail_config):
 # User-facing health-check failure text. The raw GatewayClientError carries the
 # internal gateway URL and upstream response bodies; those go to the logs only.
 HEALTH_CHECK_UNREACHABLE = "The gateway could not be reached."
-HEALTH_CHECK_TIMED_OUT = (
-    "The gateway did not respond before the health-check timeout."
-)
+HEALTH_CHECK_TIMED_OUT = "The gateway did not respond before the health-check timeout."
 HEALTH_CHECK_UNEXPECTED = (
     "The health check could not be completed because of a server error."
 )
@@ -1001,6 +1023,9 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            invalid = _invalid_threshold_field(guardrail_config)
+            if invalid:
+                return self._gm.bad_request(f"{invalid} must be a number from 0 to 1")
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
