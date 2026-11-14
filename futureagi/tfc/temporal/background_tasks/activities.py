@@ -85,15 +85,9 @@ def delete_compare_folder_activity(compare_id: str):
     """
     Delete compare folder and associated files.
     """
-    import os
-    import shutil
+    from model_hub.utils.compare_cleanup import cleanup_compare_folder
 
-    from tfc.utils.storage import delete_compare_folder, get_compare_local_dir
-
-    compare_dir = get_compare_local_dir(compare_id)
-    if os.path.isdir(compare_dir):
-        shutil.rmtree(compare_dir)
-    delete_compare_folder(compare_id)
+    cleanup_compare_folder(compare_id)
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")

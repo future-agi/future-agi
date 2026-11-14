@@ -6,7 +6,6 @@ import json
 import math
 import os
 import re
-import shutil
 import time
 import traceback
 import uuid
@@ -262,6 +261,10 @@ from model_hub.utils.annotation_queue_helpers import (
     TEXT_FILTER_LOOKUPS,
     or_text_filter_q,
 )
+from model_hub.utils.compare_cleanup import (
+    start_compare_cleanup,
+    start_local_sweeper,
+)
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
@@ -315,7 +318,6 @@ from tfc.utils.functions import (
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
-    delete_compare_folder,
     download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
@@ -13605,12 +13607,6 @@ class GetCompareDatasetRow(APIView):
             logger.exception(f"Error in fetching compare dataset row: {str(e)}")
             return self._gm.internal_server_error_response(str(e))
 
-    def thread_delete(self, compare_id):
-        compare_dir = get_compare_local_dir(compare_id)
-        if os.path.isdir(compare_dir):
-            shutil.rmtree(compare_dir)
-        delete_compare_folder(compare_id)
-
     @swagger_auto_schema(
         responses={
             200: CompareDatasetDeleteResponseSerializer,
@@ -13625,24 +13621,9 @@ class GetCompareDatasetRow(APIView):
                 code="method_not_allowed",
             )
         try:
-            # Import the activity to register it
-            import tfc.temporal.background_tasks.activities  # noqa: F401
-            from tfc.temporal.drop_in import start_activity
-
-            try:
-                start_activity(
-                    "delete_compare_folder_activity",
-                    args=(str(compare_id),),
-                    queue="default",
-                )
-            except Exception:
-                logger.warning(
-                    "Temporal cleanup unavailable for compare dataset files; "
-                    "falling back to synchronous cleanup.",
-                    compare_id=str(compare_id),
-                    exc_info=True,
-                )
-                self.thread_delete(compare_id)
+            # The marker is in this process's compare root, which a worker
+            # cannot see in the distributed install, so clean up here.
+            start_compare_cleanup(compare_id)
             return self._gm.success_response(
                 {"message": "File(s) deleted successfully"}
             )
@@ -14355,6 +14336,8 @@ class CompareDatasetsView(APIView):
             compare_dir = get_compare_local_dir(compare_id)
             metadata_path = get_compare_metadata_path(compare_id)
             os.makedirs(compare_dir, exist_ok=True)
+            # Only this process can see the marker, so it also expires it.
+            start_local_sweeper()
 
             dynamic_sources = [
                 SourceChoices.RUN_PROMPT.value,
