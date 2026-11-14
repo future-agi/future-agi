@@ -52,43 +52,48 @@ func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
 // under "decision:" keys and never falls back to a chat model of the same
 // name.
 //
-// For each name it has exact candidates (the name as given, then its last path
-// segment, "jev-1.13.0" from "typesafe/jev-1.13.0") and, for Jev only,
-// normalized ones (that segment without its release date, then the version it
-// names, so OpenRouter's "typesafe/jev-1.13" and the dated
-// "typesafe/jev-1.13-20260917" it answers with are priced as jev-1.13.0; see
-// jevVersionCandidates). It tries, stopping at the first price:
-//  1. operator overrides under the exact candidates of every name, in order;
-//  2. operator overrides under the normalized candidates of every name;
-//  3. any price under the exact candidates of every name;
-//  4. any price under the normalized candidates of every name.
+// Its exact candidates are every name as given, in order, then every name's
+// last path segment ("jev-1.13.0" from "typesafe/jev-1.13.0"), in order. For Jev
+// only, its normalized candidates are each last segment without its release
+// date, then the version it names, so OpenRouter's "typesafe/jev-1.13" and the
+// dated "typesafe/jev-1.13-20260917" it answers with are priced as jev-1.13.0
+// (see jevVersionCandidates). It tries, stopping at the first price:
+//  1. operator overrides under the exact candidates;
+//  2. operator overrides under the normalized candidates;
+//  3. any price under the exact candidates;
+//  4. any price under the normalized candidates.
 //
 // So an operator's price for any name the call goes by, such as
 // "decision:typesafe/jev-1.13", "decision:openrouter/typesafe/jev-1.13",
 // "decision:jev-latest" or the resolved version's "decision:jev-1.14.0", always
 // wins over a bundled price, and an exact name wins over a normalized one.
+// Within a tier, every full name wins over every last segment, so a generic
+// "decision:jev-1.13.0" never outranks the provider-specific
+// "decision:openrouter/typesafe/jev-1.13" whatever form the answer's name has.
+//
+// GET /v1/decisions/models prices an entry from its upstream and listed names
+// only: it cannot know what an alias resolves to. A "~typesafe/jev-latest" call
+// answered as "typesafe/jev-1.14-20261015" is charged an override on
+// "decision:jev-1.14.0", while the listing shows jev-latest's price.
 func (db *ModelDB) DecisionPricingAny(names ...string) (*PricingInfo, bool) {
-	exact := make([][]string, len(names))
-	normalized := make([][]string, len(names))
-	for i, name := range names {
+	exact := slices.Clone(names)
+	var normalized []string
+	for _, name := range names {
 		last := lastPathSegment(name)
-		exact[i] = []string{name}
 		if last != name {
-			exact[i] = append(exact[i], last)
+			exact = append(exact, last)
 		}
-		normalized[i] = jevVersionCandidates(last)
+		normalized = append(normalized, jevVersionCandidates(last)...)
 	}
 	for _, overriddenOnly := range []bool{true, false} {
-		for _, candidates := range [][][]string{exact, normalized} {
-			for _, ids := range candidates {
-				for _, id := range ids {
-					key := DecisionKeyPrefix + id
-					if overriddenOnly && !db.priceOverridden[key] {
-						continue
-					}
-					if m, ok := db.models[key]; ok && m.Pricing.HasPricing() {
-						return &m.Pricing, true
-					}
+		for _, ids := range [][]string{exact, normalized} {
+			for _, id := range ids {
+				key := DecisionKeyPrefix + id
+				if overriddenOnly && !db.priceOverridden[key] {
+					continue
+				}
+				if m, ok := db.models[key]; ok && m.Pricing.HasPricing() {
+					return &m.Pricing, true
 				}
 			}
 		}

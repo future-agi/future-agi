@@ -243,3 +243,32 @@ func TestDecisionPricingAnyTriesExactNamesBeforeNormalizing(t *testing.T) {
 		t.Error("no names priced")
 	}
 }
+
+// Within a tier every full name is tried before any last segment, so a
+// generic override on the version's short name never outranks a provider-
+// specific override on a later full name, whatever form the answer's name has.
+func TestDecisionPricingAnyTriesFullNamesBeforeLastSegments(t *testing.T) {
+	a, b := 0.3/1_000_000, 0.5/1_000_000
+	db := New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-1.13.0":                   {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &a}},
+		DecisionKeyPrefix + "openrouter/typesafe/jev-1.13": {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &b}},
+	})
+	for _, names := range [][]string{
+		{"typesafe/jev-1.13.0", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"},
+		{"typesafe/jev-1.13-20260917", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"},
+		{"typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"}, // the listing
+	} {
+		pricing, ok := db.DecisionPricingAny(names...)
+		if !ok || math.Abs(pricing.InputPerMTok()-0.5) > 1e-9 {
+			t.Errorf("%v: %+v, want the qualified override 0.5", names, pricing)
+		}
+	}
+	// A last segment is still an exact candidate: with only the generic
+	// override, every form is charged it.
+	db = New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-1.13.0": {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &a}},
+	})
+	if pricing, ok := db.DecisionPricingAny("typesafe/jev-1.13.0", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"); !ok || math.Abs(pricing.InputPerMTok()-0.3) > 1e-9 {
+		t.Errorf("generic override only: %+v, want 0.3", pricing)
+	}
+}

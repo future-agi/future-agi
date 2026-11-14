@@ -139,3 +139,165 @@ func TestDecisionOpenRouterJevOverrideListingMatchesCharge(t *testing.T) {
 		})
 	}
 }
+
+// listedDecisionPrice returns GET /v1/decisions/models's input price for id,
+// or -1 when the entry is missing or unpriced.
+func listedDecisionPrice(t *testing.T, g *decisionGateway, key, id string) float64 {
+	t.Helper()
+	rr := g.do(t, http.MethodGet, "/v1/decisions/models", key, "")
+	var resp struct {
+		Data []decisionModel `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); rr.Code != http.StatusOK || err != nil {
+		t.Fatalf("listing status %d: %s", rr.Code, rr.Body.String())
+	}
+	for _, entry := range resp.Data {
+		if entry.ID == id && entry.Pricing != nil {
+			return entry.Pricing.InputPerMTok
+		}
+	}
+	return -1
+}
+
+// chargedDecisionCost calls model, answered as resolved, and returns
+// x-agentcc-cost for 1M input tokens.
+func chargedDecisionCost(t *testing.T, g *decisionGateway, key, model, resolved string, headers ...string) string {
+	t.Helper()
+	answer := fmt.Sprintf(`{"model":%q,"answers":{"q":{"type":"refusal"}},"usage":{"input_tokens":1000000,"output_tokens":5}}`, resolved)
+	g.upstream.setReply(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, answer)
+	})
+	body := fmt.Sprintf(`{"model":%q,"state":"synthetic-state","questions":{"q":{"type":"noul"}}}`, model)
+	rr := g.post(t, key, body, headers...)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("%s: call status %d: %s", model, rr.Code, rr.Body.String())
+	}
+	return rr.Header().Get("x-agentcc-cost")
+}
+
+func decisionPriceOverrides(perMTok map[string]float64) map[string]modeldb.ModelOverride {
+	out := map[string]modeldb.ModelOverride{}
+	for key, v := range perMTok {
+		price := v / 1_000_000
+		out[modeldb.DecisionKeyPrefix+key] = modeldb.ModelOverride{Mode: string(modeldb.ModeDecision), Pricing: &modeldb.PricingOverride{InputPerToken: &price}}
+	}
+	return out
+}
+
+// A Models entry written with the provider's own prefix is sent upstream
+// without it, so it is listed and charged at the upstream name's price, on
+// the org path and on the auth-off registry path.
+func TestDecisionPrefixedModelsEntryListingMatchesCharge(t *testing.T) {
+	const entry = "openrouter/typesafe/jev-1.13"
+	overrides := decisionPriceOverrides(map[string]float64{"typesafe/jev-1.13": 0.5})
+	registry := func(cfg *config.Config, upstreamURL string) {
+		cfg.Providers["openrouter"] = config.ProviderConfig{
+			APIFormat: "systemone", BaseURL: upstreamURL, APIKey: fagiHeldKey, Models: []string{entry},
+		}
+	}
+
+	t.Run("org", func(t *testing.T) {
+		org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+			"openrouter": {
+				APIKey: orgTypeSafeKey, APIFormat: "systemone", BaseURL: "https://203.0.113.7", Enabled: true,
+				Models: []string{entry},
+			},
+		}}
+		g := newDecisionGateway(t, decisionGatewayOptions{
+			orgs: map[string]*tenant.OrgConfig{"org-a": org}, modelOverrides: overrides, config: registry,
+		})
+		if got := listedDecisionPrice(t, g, keyByok, entry); got != 0.5 {
+			t.Fatalf("listing for %s = %v, want 0.5", entry, got)
+		}
+		if got := chargedDecisionCost(t, g, keyInternal, entry, "typesafe/jev-1.13-20260917", models.ProviderKeyHeader, callerOwnKey); got != "0.500000" {
+			t.Fatalf("charged %q, want the listed 0.500000", got)
+		}
+		if got := g.upstream.sentModel(t); got != "typesafe/jev-1.13" {
+			t.Errorf("upstream model = %q", got)
+		}
+	})
+
+	t.Run("org custom pricing", func(t *testing.T) {
+		org := &tenant.OrgConfig{
+			Providers: map[string]*tenant.ProviderConfig{
+				"openrouter": {
+					APIKey: orgTypeSafeKey, APIFormat: "systemone", BaseURL: "https://203.0.113.7", Enabled: true,
+					Models: []string{entry},
+				},
+			},
+			CostTracking: &tenant.CostTrackingConfig{Enabled: true, CustomPricing: map[string]*tenant.CustomPricing{
+				"typesafe/jev-1.13": {InputPerMTok: 0.7},
+			}},
+		}
+		g := newDecisionGateway(t, decisionGatewayOptions{orgs: map[string]*tenant.OrgConfig{"org-a": org}})
+		if got := listedDecisionPrice(t, g, keyByok, entry); got != 0.7 {
+			t.Fatalf("listing for %s = %v, want the org's 0.7", entry, got)
+		}
+	})
+
+	t.Run("registry", func(t *testing.T) {
+		g := newDecisionGateway(t, decisionGatewayOptions{authOff: true, modelOverrides: overrides, config: registry})
+		if got := listedDecisionPrice(t, g, "", entry); got != 0.5 {
+			t.Fatalf("listing for %s = %v, want 0.5", entry, got)
+		}
+		if got := chargedDecisionCost(t, g, "", entry, "typesafe/jev-1.13-20260917"); got != "0.500000" {
+			t.Fatalf("charged %q, want the listed 0.500000", got)
+		}
+	})
+}
+
+// A provider-specific override on the caller's qualified name beats a generic
+// one on the version's short name, whether OpenRouter answers with an undated
+// or a dated name, and the listing shows the same price.
+func TestDecisionQualifiedOverrideBeatsGenericLastSegment(t *testing.T) {
+	const id = "openrouter/typesafe/jev-1.13"
+	g := newDecisionGateway(t, decisionGatewayOptions{
+		modelOverrides: decisionPriceOverrides(map[string]float64{"jev-1.13.0": 0.3, id: 0.5}),
+		config: func(cfg *config.Config, upstreamURL string) {
+			cfg.Providers["openrouter"] = config.ProviderConfig{
+				APIFormat: "systemone", BaseURL: upstreamURL, APIKey: fagiHeldKey, Models: []string{"typesafe/jev-1.13"},
+			}
+		},
+		orgs: map[string]*tenant.OrgConfig{"org-a": {Providers: map[string]*tenant.ProviderConfig{
+			"openrouter": {
+				APIKey: orgTypeSafeKey, APIFormat: "systemone", BaseURL: "https://203.0.113.7", Enabled: true,
+				Models: []string{"typesafe/jev-1.13"},
+			},
+		}}},
+	})
+	if got := listedDecisionPrice(t, g, keyByok, id); got != 0.5 {
+		t.Fatalf("listing for %s = %v, want 0.5", id, got)
+	}
+	for _, resolved := range []string{"typesafe/jev-1.13.0", "typesafe/jev-1.13-20260917"} {
+		if got := chargedDecisionCost(t, g, keyInternal, id, resolved, models.ProviderKeyHeader, callerOwnKey); got != "0.500000" {
+			t.Errorf("answered as %s: charged %q, want the listed 0.500000", resolved, got)
+		}
+	}
+}
+
+// Documented difference: the listing cannot know what an alias resolves to. An
+// override on the resolved version is charged, while the alias's entry shows
+// the bundled jev-latest price.
+func TestDecisionAliasListingCannotKnowTheResolvedVersion(t *testing.T) {
+	const id = "openrouter/~typesafe/jev-latest"
+	g := newDecisionGateway(t, decisionGatewayOptions{
+		modelOverrides: decisionPriceOverrides(map[string]float64{"jev-1.14.0": 0.5}),
+		config: func(cfg *config.Config, upstreamURL string) {
+			cfg.Providers["openrouter"] = config.ProviderConfig{
+				APIFormat: "systemone", BaseURL: upstreamURL, APIKey: fagiHeldKey, Models: []string{"~typesafe/jev-latest"},
+			}
+		},
+		orgs: map[string]*tenant.OrgConfig{"org-a": {Providers: map[string]*tenant.ProviderConfig{
+			"openrouter": {
+				APIKey: orgTypeSafeKey, APIFormat: "systemone", BaseURL: "https://203.0.113.7", Enabled: true,
+				Models: []string{"~typesafe/jev-latest"},
+			},
+		}}},
+	})
+	if got := listedDecisionPrice(t, g, keyByok, id); got != 0.042 {
+		t.Fatalf("listing for %s = %v, want the bundled 0.042", id, got)
+	}
+	if got := chargedDecisionCost(t, g, keyInternal, id, "typesafe/jev-1.14-20261015", models.ProviderKeyHeader, callerOwnKey); got != "0.500000" {
+		t.Fatalf("charged %q, want the resolved version's override 0.500000", got)
+	}
+}
