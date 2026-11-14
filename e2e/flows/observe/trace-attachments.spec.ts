@@ -32,6 +32,11 @@ const SCOPE_OPT_IN = '/tracer/e2e/attachment-scope/';
 // TraceDetailDrawerV2 and CallLogsGrid read these (frontend/src/api/contracts).
 const TRACE_DETAIL = (trace: string) => `/tracer/trace/${trace}/`;
 const VOICE_DETAIL = '/tracer/trace/voice_call_detail/';
+// TraceSessionView.destroy supports collector-only sessions (unlike the PG-only
+// trace DELETE). The target below is read from CH, never inferred from a trace id.
+const SESSION = (session: string) => `/tracer/trace-session/${session}/`;
+// One-sided diagnostic: the deletion assertion remains unchanged when skipped.
+const SKIP_DELETE = process.env.E2E_ATTACHMENTS_SKIP_DELETE === '1';
 // A fresh scope starts at deletion generation 0 (tracer/models/attachment.py AttachmentScope).
 const DELETION_GENERATION = 0;
 // tracer/urls.py "v1/attachment-media/<occurrence_id>/<grant_id>" (the gateway every
@@ -217,7 +222,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-066', area: 'observe',
-    userGoal: 'A developer whose LiveKit and Pipecat agents uploaded call recordings, and whose model saw an image, audio and a PDF, opens each trace, plays the recordings and sees the image where the model saw it',
+    userGoal: 'A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat',
     steps: [
       'create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)',
       'with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)',
@@ -226,6 +231,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       'open the Pipecat trace and play the root\'s recording to the end',
       'open the model trace, select the model span, switch to Chat and see the PNG inside user message 2',
       'load the WAV, and download the PDF, which has no inline preview',
+      'open each call on the dedicated Voice full-page route and play its Attachment recording to the end',
+      'delete only the LiveKit CH session through the supported session API',
     ],
     backendChecks: [
       'PG: each seeded occurrence is bound to its exact trace/span, not deleted, with its placement, its attachment ready and its blob sha256 equal to the uploaded bytes',
@@ -233,11 +240,12 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       'API: voice detail projects each call\'s recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready',
       'API: with the viewer\'s media session the gateway serves the whole recording byte-identical (sha256), answers Range with 206 and HEAD with the full length, and a renewed grant continues the same bytes; without the session it is denied and resolve without credentials answers 401',
       'API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)',
+      'API and PG: deleting the CH-only LiveKit session returns 204, immediately denies resolve and the previously working Range and HEAD grant, and tombstones its occurrence; the Pipecat session stays playable. Physical erasure is checked separately by component/storage qualification',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // Approved plan budget (CONTRACT-STATUS "OBS-E2E-061 revised plan"): seeding, two
-  // ASYNC_JOB binds, SPAN_VISIBLE and the UI_READY steps fit with headroom.
+  // Seeding, bounded binding/CH polls, browser playback and a deletion poll.
+  // Keep the per-flow ceiling; each eventual store uses its named budget.
   test.setTimeout(600_000);
   const api = await request.newContext({ baseURL: E2E.apiUrl });
   const anonymous = await request.newContext({ baseURL: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
@@ -248,6 +256,9 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const voiceName = `e2e-att-voice-${suffix}`, traceName = `e2e-att-trace-${suffix}`;
     const jobId = `e2e-att-job-${suffix}`, userText = `e2e-att-user-${suffix}`;
+    // fi-collector clickhouse25exporter/converter.go maps session.id to a
+    // project-scoped deterministic trace_session_id. Calls must not share it.
+    const livekitSessionName = `e2e-att-lk-${suffix}`, pipecatSessionName = `e2e-att-pc-${suffix}`;
     const voiceProject = await createProject(actor, voiceName);
     const traceProject = await createProject(actor, traceName);
     const livekitTrace = hex(16), pipecatTrace = hex(16), trace = hex(16);
@@ -291,12 +302,13 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(voiceName), scopeSpans: [{
       scope: { name: 'livekit-agents' }, spans: [
         // No fi.span.kind: the LiveKit SDK marks no root; the collector maps it.
-        span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId)]),
-        span(livekitTrace, livekitSession, LIVEKIT_SESSION, [...carriers(livekit.session, [livekitRecording])], livekitRoot),
+        span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName)]),
+        span(livekitTrace, livekitSession, LIVEKIT_SESSION,
+          [str('session.id', livekitSessionName), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
       ] }, {
       scope: { name: 'pipecat' }, spans: [
         span(pipecatTrace, pipecatRoot, PIPECAT_ROOT, [str('fi.span.kind', PIPECAT_KIND), str('gen_ai.span.kind', PIPECAT_KIND),
-          ...carriers(pipecat.session, [pipecatRecording])]),
+          str('session.id', pipecatSessionName), ...carriers(pipecat.session, [pipecatRecording])]),
       ] }] }] });
     await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(traceName), scopeSpans: [{
       scope: { name: 'e2e-attachments' }, spans: [
@@ -309,7 +321,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     const voiceSeeded = [livekitRecording, pipecatRecording];
     await testInfo.attach('seeded', { contentType: 'application/json', body: JSON.stringify({
       voiceProject, traceProject, livekitTraceId, pipecatTraceId, traceId, livekitRoot, livekitSession, pipecatRoot,
-      traceRoot, llmSpan, jobId,
+      traceRoot, llmSpan, jobId, livekitSessionName, pipecatSessionName,
       occurrences: [...voiceSeeded, ...traced.seeded].map(({ bytes, ...rest }) => ({ ...rest, sha256: sha256(bytes), size: bytes.length })),
     }) });
 
@@ -486,14 +498,98 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await testInfo.attach('span-attachments', { body: await page.screenshot(), contentType: 'image/png' });
     });
 
+    // dashboard.jsx VoiceFullPage -> VoiceDetailDrawerV2 -> AudioPlayerCustom
+    // selects RecordingAttachmentPlayer from the authorized recording_attachment.
+    // SDK projects do not need a simulator-only Voice list to open this route.
+    for (const [callId, item, label] of [
+      [livekitTraceId, livekitRecording, 'livekit'], [pipecatTraceId, pipecatRecording, 'pipecat'],
+    ] as const) {
+      await test.step(`UI: ${label} Attachment recording plays on the dedicated Voice page`, async () => {
+        const detail = page.waitForResponse(r => new URL(r.url()).pathname === VOICE_DETAIL
+          && new URL(r.url()).searchParams.get('trace_id') === callId, { timeout: UI_READY });
+        const resolved = page.waitForResponse(isResolve(voiceProject), { timeout: UI_READY });
+        await page.goto(`${E2E.attachmentsAppUrl}/dashboard/observe/${voiceProject}/voice/${callId}`);
+        expect((await detail).status()).toBe(200);
+        const recording = page.getByLabel('Attachment recording', { exact: true });
+        await expect(recording).toBeVisible({ timeout: UI_READY });
+        const projection = await (await resolved).json() as { items: Grant[] };
+        expect(projection.items.map(g => [g.occurrence_id, g.status]))
+          .toStrictEqual([[item.occurrenceId, 'ready']]);
+        const player = recording.locator('audio');
+        await expect(player).toHaveCount(1, { timeout: UI_READY });
+        await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1),
+          { timeout: UI_READY }).toBe(true);
+        await recording.getByRole('button', { name: 'Play recording', exact: true }).click({ timeout: UI_READY });
+        await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
+          [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
+        { timeout: UI_READY }).toStrictEqual([true, true]);
+        await testInfo.attach(`${label}-voice-player`, { body: await page.screenshot(), contentType: 'image/png' });
+      });
+    }
+
+    await test.step('API: deleting the LiveKit session denies its media but preserves Pipecat', async () => {
+      const sessions = (traceKey: string) => probe.ch<{ session_id: string }>(
+        `SELECT DISTINCT toString(trace_session_id) AS session_id FROM spans FINAL
+          WHERE project_id={p:UUID} AND trace_id={t:String} AND is_deleted=0 ORDER BY session_id`,
+        { p: voiceProject, t: traceKey });
+      const livekitSessions = await sessions(livekitTraceId), pipecatSessions = await sessions(pipecatTraceId);
+      expect(livekitSessions).toHaveLength(1);
+      expect(pipecatSessions).toHaveLength(1);
+      const livekitSessionId = livekitSessions[0].session_id, pipecatSessionId = pipecatSessions[0].session_id;
+      expect(livekitSessionId).toMatch(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+      expect(pipecatSessionId).toMatch(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+      expect(livekitSessionId).not.toBe(pipecatSessionId);
+      expect(await probe.pg<{ id: string }>('SELECT id::text FROM tracer_trace WHERE id = $1', [livekitTraceId]))
+        .toStrictEqual([]);
+      await testInfo.attach('deleted-session', { contentType: 'application/json', body: JSON.stringify({
+        livekitSessionId, pipecatSessionId, skipDelete: SKIP_DELETE, pgTraceRows: 0,
+      }) });
+      // Voice playback may exchange a new media session. Renew under the CURRENT
+      // cookie, then keep this exact grant and cookie across the deletion.
+      const fresh = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
+      expect(fresh.status()).toBe(200);
+      const [current] = (await fresh.json() as { items: Grant[] }).items;
+      expect([current.occurrence_id, current.status]).toStrictEqual([livekitRecording.occurrenceId, 'ready']);
+      const path = current.gateway_path!;
+      expect(path.startsWith(`${GATEWAY_PREFIX}${livekitRecording.occurrenceId}/`)).toBe(true);
+      const beforeRange = await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } });
+      const beforeHead = await viewer.head(gateway(path));
+      expect([beforeRange.status(), beforeHead.status()]).toStrictEqual([206, 200]);
+      const grantExpiry = Date.parse(current.expires_at!);
+      // playback.py grants live for 60 s. Denial must precede their expiry;
+      // only the independent PG cleanup poll may use the full ASYNC_JOB budget.
+      expect(grantExpiry - Date.now()).toBeGreaterThan(5_000);
+      if (!SKIP_DELETE) {
+        const deleted = await viewer.delete(gateway(SESSION(livekitSessionId)), { headers: viewerHeaders });
+        expect(deleted.status(), await deleted.text()).toBe(204);
+      }
+      // Immediate read denial is separate from the bounded tombstone cleanup poll.
+      const denied = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
+      expect(denied.status()).toBe(200);
+      expect((await denied.json() as { items: Grant[] }).items.map(g => [g.occurrence_id, g.status]))
+        .toStrictEqual([[livekitRecording.occurrenceId, 'not_found']]);
+      expect((await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } })).status()).toBe(404);
+      expect((await viewer.head(gateway(path))).status()).toBe(404);
+      expect(Date.now()).toBeLessThan(grantExpiry);
+      await expect.poll(async () => (await readyOccurrences(probe, voiceProject, [livekitRecording]))
+        .map(row => [row.occurrence, row.deleted]), POLL.ASYNC_JOB)
+        .toStrictEqual([[livekitRecording.occurrenceId, true]]);
+      const survivor = await resolveAs(viewerHeaders, pipecatRecording, pipecatTraceId);
+      expect(survivor.status()).toBe(200);
+      const [remaining] = (await survivor.json() as { items: Grant[] }).items;
+      expect([remaining.occurrence_id, remaining.status]).toStrictEqual([pipecatRecording.occurrenceId, 'ready']);
+      const survivorBytes = await viewer.get(gateway(remaining.gateway_path!));
+      expect(survivorBytes.status()).toBe(200);
+      expect(sha256(Buffer.from(await survivorBytes.body()))).toBe(sha256(RECORDING_OGG));
+      expect((await readyOccurrences(probe, voiceProject, [pipecatRecording])).map(row => [row.occurrence, row.deleted]))
+        .toStrictEqual([[pipecatRecording.occurrenceId, false]]);
+    });
+
     await test.step('API: every media request the page made went through the gateway (zero legacy requests)', async () => {
       expect(media.every(path => path.startsWith(GATEWAY_PREFIX)), JSON.stringify(media)).toBe(true);
       expect([...new Set(media.map(path => path.slice(GATEWAY_PREFIX.length).split('/')[0]))].sort())
         .toStrictEqual([livekitRecording.occurrenceId, pipecatRecording.occurrenceId, audio.occurrenceId].sort());
     });
-    // NOT COVERED (CONTRACT-STATUS 2026-11-14 e2e-obs-061 fix): the approved plan's deletion
-    // check. Collector-ingested traces have no PG tracer_trace row, so DELETE /tracer/trace/{id}/
-    // answers 404 and nothing tombstones the call's media; the product fix is owed in #3945.
   } finally {
     await api.dispose();
     await anonymous.dispose();

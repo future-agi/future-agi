@@ -63,4 +63,20 @@ jobs:
         run: yarn typecheck
 
       - name: Flow catalog is current
+        id: catalog
         run: yarn catalog:check
+
+      # Preserve the generator's output for remote-only authors. The check above
+      # still fails on drift: downloading this file is not a passing catalog gate.
+      - name: Generate catalog repair artifact
+        if: failure() && steps.catalog.outcome == 'failure'
+        run: yarn catalog
+
+      - name: Upload generated catalog
+        if: failure() && steps.catalog.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-flow-catalog
+          path: e2e/FLOWS.md
+          retention-days: 3
+          if-no-files-found: error
