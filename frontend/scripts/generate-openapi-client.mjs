@@ -131,6 +131,8 @@ function normalizeHostStatusSpec(spec) {
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
           name.startsWith("HostUpdateStatusResponse") ||
+          // Export job results send explicit nulls for fields that do not apply to the job's state.
+          name === "QueueExportJobResult" ||
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.

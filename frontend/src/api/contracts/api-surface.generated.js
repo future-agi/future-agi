@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1141,
+  endpointCount: 1143,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -322,6 +322,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/annotation-queues/{id}/agreement/": ["get"],
       "/model-hub/annotation-queues/{id}/analytics/": ["get"],
       "/model-hub/annotation-queues/{id}/export-fields/": ["get"],
+      "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/": ["get"],
+      "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/download/": [
+        "get",
+      ],
       "/model-hub/annotation-queues/{id}/export-to-dataset/": ["post"],
       "/model-hub/annotation-queues/{id}/export/": ["get"],
       "/model-hub/annotation-queues/{id}/hard-delete/": ["post"],
@@ -1724,6 +1728,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/annotation-queues/{id}/agreement/": ["get"],
   "/model-hub/annotation-queues/{id}/analytics/": ["get"],
   "/model-hub/annotation-queues/{id}/export-fields/": ["get"],
+  "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/": ["get"],
+  "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/download/": ["get"],
   "/model-hub/annotation-queues/{id}/export-to-dataset/": ["post"],
   "/model-hub/annotation-queues/{id}/export/": ["get"],
   "/model-hub/annotation-queues/{id}/hard-delete/": ["post"],

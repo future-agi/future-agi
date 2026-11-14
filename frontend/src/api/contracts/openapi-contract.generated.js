@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1141,
+  endpointCount: 1143,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -11051,6 +11051,77 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/": {
+      get: {
+        operationId: "model-hub_annotation-queues_export_job",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/QueueExportJobResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/download/": {
+      get: {
+        operationId: "model-hub_annotation-queues_export-jobs_export_download",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
+          },
+          400: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/model-hub/annotation-queues/{id}/export-to-dataset/": {
       post: {
         operationId: "model-hub_annotation-queues_export_to_dataset",
@@ -11110,6 +11181,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/QueueExportAnnotationsResponse",
           },
+          202: {
+            $ref: "#/definitions/QueueExportScheduledResponse",
+          },
           400: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -11120,9 +11194,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiTextErrorResponse",
           },
           409: {
-            $ref: "#/definitions/ApiTextErrorResponse",
-          },
-          413: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
           500: {
@@ -80608,6 +80679,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    QueueExportJobResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/QueueExportJobResult",
+        },
+      },
+    },
+    QueueExportScheduledResponse: {
+      required: ["status", "job_id", "workflow_id", "export_format", "message"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        workflow_id: {
+          title: "Workflow id",
+          type: "string",
+          minLength: 1,
+        },
+        export_format: {
+          title: "Export format",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     QueueExportToDatasetRequest: {
       type: "object",
       properties: {
@@ -111068,6 +111184,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/QueueExportDefaultMapping",
           },
+        },
+      },
+    },
+    QueueExportJobResult: {
+      required: [
+        "job_id",
+        "queue_id",
+        "status",
+        "export_format",
+        "item_count",
+        "file_url",
+        "file_name",
+        "error",
+        "created_at",
+        "started_at",
+        "finished_at",
+      ],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        queue_id: {
+          title: "Queue id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        export_format: {
+          title: "Export format",
+          type: "string",
+          minLength: 1,
+        },
+        item_count: {
+          title: "Item count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        file_url: {
+          title: "File url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        file_name: {
+          title: "File name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },

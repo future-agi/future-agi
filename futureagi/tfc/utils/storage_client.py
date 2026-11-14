@@ -119,6 +119,22 @@ def storage_http_client() -> urllib3.PoolManager:
     )
 
 
+def s3_endpoint() -> tuple[str, bool]:
+    """Resolve the endpoint once for storage clients and server-side probes."""
+    raw_endpoint = os.getenv("S3_ENDPOINT") or os.getenv(
+        "S3_ENDPOINT_URL", "s3.amazonaws.com"
+    )
+    host, scheme_hint = _parse_endpoint(raw_endpoint)
+    secure_env = os.getenv("S3_SECURE")
+    if secure_env is not None:
+        secure = secure_env.lower() == "true"
+    elif scheme_hint is not None:
+        secure = scheme_hint
+    else:
+        secure = STORAGE_BACKEND == "s3"
+    return host, secure
+
+
 def get_storage_client() -> Minio:
     """Return a Minio client pointing at S3, MinIO, or GCS."""
     global _client
@@ -136,18 +152,7 @@ def get_storage_client() -> Minio:
         )
         return _client
 
-    raw_endpoint = os.getenv("S3_ENDPOINT") or os.getenv(
-        "S3_ENDPOINT_URL", "s3.amazonaws.com"
-    )
-    host, scheme_hint = _parse_endpoint(raw_endpoint)
-
-    secure_env = os.getenv("S3_SECURE")
-    if secure_env is not None:
-        secure = secure_env.lower() == "true"
-    elif scheme_hint is not None:
-        secure = scheme_hint
-    else:
-        secure = STORAGE_BACKEND == "s3"
+    host, secure = s3_endpoint()
 
     _client = Minio(
         host,

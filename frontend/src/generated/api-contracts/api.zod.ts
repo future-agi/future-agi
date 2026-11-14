@@ -15079,6 +15079,64 @@ export const ModelHubAnnotationQueuesExportFieldsResponse = zod.object({
 });
 
 /**
+ * Status of a background export, carrying the link once it is ready.
+ */
+export const ModelHubAnnotationQueuesExportJobParams = zod.object({
+  id: zod
+    .string()
+    .uuid()
+    .describe("A UUID string identifying this annotation queue."),
+  job_id: zod.string(),
+});
+
+export const modelHubAnnotationQueuesExportJobResponseStatusDefault = true;
+
+export const ModelHubAnnotationQueuesExportJobResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(modelHubAnnotationQueuesExportJobResponseStatusDefault),
+  result: zod.object({
+    job_id: zod.string().uuid(),
+    queue_id: zod.string().uuid(),
+    status: zod.string().min(1),
+    export_format: zod.string().min(1),
+    item_count: zod.union([zod.number(), zod.null()]),
+    file_url: zod.union([zod.string().min(1), zod.null()]),
+    file_name: zod.union([zod.string().min(1), zod.null()]),
+    error: zod.union([zod.string().min(1), zod.null()]),
+    created_at: zod.string().datetime({ offset: true }),
+    started_at: zod.union([
+      zod.string().datetime({ offset: true }),
+      zod.null(),
+    ]),
+    finished_at: zod.union([
+      zod.string().datetime({ offset: true }),
+      zod.null(),
+    ]),
+  }),
+});
+
+/**
+ * Stream a private export only while this user can still read its queue.
+ */
+export const ModelHubAnnotationQueuesExportJobsExportDownloadParams =
+  zod.object({
+    id: zod
+      .string()
+      .uuid()
+      .describe("A UUID string identifying this annotation queue."),
+    job_id: zod.string(),
+  });
+
+export const ModelHubAnnotationQueuesExportJobsExportDownloadQueryParams =
+  zod.object({
+    token: zod.string(),
+  });
+
+export const ModelHubAnnotationQueuesExportJobsExportDownloadResponse =
+  zod.instanceof(File);
+
+/**
  * Export queue items to a dataset using a user-editable column mapping.
  */
 export const ModelHubAnnotationQueuesExportToDatasetParams = zod.object({

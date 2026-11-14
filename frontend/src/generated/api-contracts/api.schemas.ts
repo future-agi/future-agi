@@ -7331,6 +7331,27 @@ export interface QueueExportFieldsResponseApi {
   result: QueueExportFieldsResultApi;
 }
 
+export interface QueueExportJobResultApi {
+  job_id: string;
+  queue_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  export_format: string;
+  item_count: number | null;
+  file_url: string | null;
+  file_name: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface QueueExportJobResponseApi {
+  status?: boolean;
+  result: QueueExportJobResultApi;
+}
+
 export interface QueueExportColumnMappingApi {
   field?: string;
   id?: string;
@@ -7365,6 +7386,18 @@ export type QueueExportAnnotationsResponseApiResultItem = {
 export interface QueueExportAnnotationsResponseApi {
   status?: boolean;
   result: QueueExportAnnotationsResponseApiResultItem[];
+}
+
+export interface QueueExportScheduledResponseApi {
+  /** @minLength 1 */
+  status: string;
+  job_id: string;
+  /** @minLength 1 */
+  workflow_id: string;
+  /** @minLength 1 */
+  export_format: string;
+  /** @minLength 1 */
+  message: string;
 }
 
 export interface QueueHardDeleteRequestApi {
@@ -38741,6 +38774,10 @@ export const ModelHubAnnotationQueuesForSourceSourceType = {
   trace: "trace",
   trace_session: "trace_session",
 } as const;
+
+export type ModelHubAnnotationQueuesExportJobsExportDownloadParams = {
+  token: string;
+};
 
 export type ModelHubAnnotationQueuesExportAnnotationsParams = {
   export_format?: ModelHubAnnotationQueuesExportAnnotationsExportFormat;

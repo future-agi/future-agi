@@ -11,6 +11,7 @@ from functools import wraps
 
 import structlog
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import DatabaseError, connection, transaction
 from django.db.models import (
     Count,
@@ -25,6 +26,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.db.utils import OperationalError
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -36,6 +38,7 @@ from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
     SOURCE_TYPE_FK_MAP,
     VALID_STATUS_TRANSITIONS,
+    AnnotationExportJob,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
@@ -50,6 +53,8 @@ from model_hub.models.annotation_queues import (
     user_has_annotation_queue_admin_access,
 )
 from model_hub.models.choices import (
+    AnnotationExportFormat,
+    AnnotationExportJobStatus,
     AnnotationQueueStatusChoices,
     AnnotationTypeChoices,
     AnnotatorRole,
@@ -90,7 +95,9 @@ from model_hub.serializers.annotation_queues import (
     QueueDiscussionResponseSerializer,
     QueueExportAnnotationsResponseSerializer,
     QueueExportFieldsResponseSerializer,
+    QueueExportJobResponseSerializer,
     QueueExportQuerySerializer,
+    QueueExportScheduledResponseSerializer,
     QueueExportToDatasetRequestSerializer,
     QueueExportToDatasetResponseSerializer,
     QueueForSourceQuerySerializer,
@@ -148,6 +155,7 @@ from model_hub.utils.annotation_queue_helpers import (
 from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
@@ -3043,6 +3051,172 @@ class AnnotationQueuePagination(ExtendedPageNumberPagination):
         return super().get_page_size(request)
 
 
+QUEUE_EXPORT_CSV_HEADER = [
+    "item_id",
+    "source_type",
+    "status",
+    "order",
+    "requires_review",
+    "review_status",
+    "reviewer_name",
+    "reviewer_email",
+    "reviewer_id",
+    "reviewed_at",
+    "review_notes",
+    "label_id",
+    "label_name",
+    "value",
+    "score_source",
+    "notes",
+    "annotator_name",
+    "created_at",
+    "source_id",
+    "source",
+]
+
+
+def queue_export_items_queryset(queue, status_filter=None):
+    """Queue items in export order, with the reads the export needs.
+
+    Tracer sources resolve CH-native via CollectorSourceCache, so no PG
+    select_related on trace / observation_span / trace_session (a join to the
+    dropped tracer tables would 500).
+    """
+    items_qs = (
+        QueueItem.objects.filter(queue=queue, deleted=False)
+        .select_related(
+            "queue",
+            "reviewed_by",
+            "project",
+            "dataset_row",
+            "prototype_run",
+            "call_execution",
+        )
+        .prefetch_related(*_queue_item_export_prefetches())
+    )
+
+    normalized_status = _normalize_query_filter_value(status_filter)
+    if normalized_status:
+        items_qs = items_qs.filter(status=normalized_status)
+
+    return items_qs.order_by("order", "created_at", "pk")
+
+
+def build_queue_export_rows(queue, items_list):
+    """Serialize a batch of queue items with annotations and source content.
+
+    Shared by the synchronous download and the background export activity so
+    both produce byte-identical rows. Every per-item read is batched over
+    ``items_list``, which is what makes chunking safe on the async path.
+    """
+    queue_label_ids = list(
+        queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
+    )
+    scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
+    item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
+    eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
+    ch_source_cache = CollectorSourceCache.for_items(items_list)
+    cell_cache = dataset_cells_by_row(items_list)
+
+    rows = []
+    for item in items_list:
+        content = resolve_source_content(
+            item, ch_cache=ch_source_cache, cell_cache=cell_cache
+        )
+        annotations = [
+            _serialize_score_for_export(score)
+            for score in scores_by_item.get(item.id, [])
+        ]
+        evals = _eval_metrics_export_value(eval_metrics_by_item.get(item.id, {}))
+        rows.append(
+            {
+                "item_id": str(item.id),
+                "source_type": item.source_type,
+                "source_id": _source_id_for_queue_item(item),
+                "status": item.status,
+                "order": item.order,
+                "review": _serialize_item_review(item),
+                "item_notes": item_notes_by_id.get(item.id, ""),
+                "annotations": annotations,
+                "annotation_metrics": _annotation_metrics_for_scores(
+                    scores_by_item.get(item.id, [])
+                ),
+                "evals": evals,
+                "source": content,
+            }
+        )
+    return rows
+
+
+def write_queue_export_csv_rows(writer, rows):
+    """Write export rows onto an open csv writer, one line per annotation.
+
+    An item with no annotations still gets a line, with the annotation columns
+    blank, so the file accounts for every item in the queue.
+    """
+    from rest_framework.utils.encoders import JSONEncoder
+
+    for item_data in rows:
+        review = item_data.get("review") or {}
+        source_columns = [
+            item_data["source_id"],
+            json.dumps(item_data["source"], cls=JSONEncoder),
+        ]
+        item_columns = [
+            item_data["item_id"],
+            item_data["source_type"],
+            item_data["status"],
+            item_data["order"],
+            review.get("requires_review"),
+            review.get("status") or "",
+            review.get("reviewed_by_name") or "",
+            review.get("reviewed_by_email") or "",
+            review.get("reviewed_by_id") or "",
+            review.get("reviewed_at") or "",
+            review.get("notes") or "",
+        ]
+        if not item_data["annotations"]:
+            writer.writerow(
+                [
+                    *item_columns,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    *source_columns,
+                ]
+            )
+        for ann in item_data["annotations"]:
+            writer.writerow(
+                [
+                    *item_columns,
+                    ann["label_id"],
+                    ann["label_name"],
+                    _to_cell_str(ann["value"]),
+                    ann["score_source"],
+                    ann["notes"] or "",
+                    ann["annotator_name"],
+                    ann["created_at"],
+                    *source_columns,
+                ]
+            )
+
+
+def render_queue_export_csv(rows):
+    """Full CSV document (header + rows) as a string."""
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(QUEUE_EXPORT_CSV_HEADER)
+    write_queue_export_csv_rows(writer, rows)
+    return output.getvalue()
+
+
 class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AnnotationQueueSerializer
     permission_classes = [IsAuthenticated]
@@ -3449,7 +3623,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         query_serializer=QueueExportQuerySerializer,
         responses={
             200: QueueExportAnnotationsResponseSerializer,
-            413: ApiTextErrorResponseSerializer,
+            202: QueueExportScheduledResponseSerializer,
             **ERROR_RESPONSES,
         },
     )
@@ -3458,26 +3632,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Export all items with their annotations."""
         query_params = request.validated_query_data
 
-        queue = self.get_object()
-        # Tracer sources resolve CH-native via CollectorSourceCache below, so no
-        # PG select_related on trace / observation_span / trace_session (a join to
-        # the dropped tracer tables would 500).
-        items_qs = (
-            QueueItem.objects.filter(queue=queue, deleted=False)
-            .select_related(
-                "queue",
-                "reviewed_by",
-                "project",
-                "dataset_row",
-                "prototype_run",
-                "call_execution",
-            )
-            .prefetch_related(*_queue_item_export_prefetches())
-        )
+        from model_hub.services.annotation_export_storage import can_download_export
 
-        status_filter = _normalize_query_filter_value(query_params.get("status"))
-        if status_filter:
-            items_qs = items_qs.filter(status=status_filter)
+        queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Queue not found.")
+        items_qs = queue_export_items_queryset(queue, query_params.get("status"))
 
         # Fetch one past the cap so an oversize queue is caught before any of the
         # expensive per-item batch reads below, and without materializing the whole
@@ -3485,129 +3645,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         export_max = getattr(
             settings, "ANNOTATION_EXPORT_SYNC_MAX", EXPORT_SYNC_MAX_ITEMS
         )
-        items_list = list(items_qs.order_by("order", "created_at")[: export_max + 1])
+        items_list = list(items_qs[: export_max + 1])
         if len(items_list) > export_max:
-            return self._gm.custom_error_response(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                result=(
-                    f"This queue has more than {export_max} items, which is too "
-                    "large to export in a single download. Filter to a smaller set "
-                    "of items and try again."
-                ),
-                code=ApiErrorCode.EXPORT_TOO_LARGE.value,
-            )
-        queue_label_ids = list(
-            queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
-        )
-        scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
-        item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
-        eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
-        ch_source_cache = CollectorSourceCache.for_items(items_list)
-        cell_cache = dataset_cells_by_row(items_list)
+            # Oversize: hand it to a worker and return 202. Nothing about item
+            # content has been resolved at this point — only cap+1 rows were
+            # fetched — so the expensive per-item reads all happen off-request.
+            return self._schedule_async_export(request, queue, query_params)
 
-        result = []
-        for item in items_list:
-            content = resolve_source_content(
-                item, ch_cache=ch_source_cache, cell_cache=cell_cache
-            )
-            annotations = [
-                _serialize_score_for_export(score)
-                for score in scores_by_item.get(item.id, [])
-            ]
-            evals = _eval_metrics_export_value(eval_metrics_by_item.get(item.id, {}))
-            result.append(
-                {
-                    "item_id": str(item.id),
-                    "source_type": item.source_type,
-                    "source_id": _source_id_for_queue_item(item),
-                    "status": item.status,
-                    "order": item.order,
-                    "review": _serialize_item_review(item),
-                    "item_notes": item_notes_by_id.get(item.id, ""),
-                    "annotations": annotations,
-                    "annotation_metrics": _annotation_metrics_for_scores(
-                        scores_by_item.get(item.id, [])
-                    ),
-                    "evals": evals,
-                    "source": content,
-                }
-            )
+        result = build_queue_export_rows(queue, items_list)
 
         fmt = query_params.get("export_format") or "json"
         if fmt == "csv":
-            import csv
-            import io
+            from urllib.parse import quote
 
             from django.http import HttpResponse
 
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(
-                [
-                    "item_id",
-                    "source_type",
-                    "status",
-                    "order",
-                    "requires_review",
-                    "review_status",
-                    "reviewer_name",
-                    "reviewer_email",
-                    "reviewer_id",
-                    "reviewed_at",
-                    "review_notes",
-                    "label_id",
-                    "label_name",
-                    "value",
-                    "score_source",
-                    "notes",
-                    "annotator_name",
-                    "created_at",
-                ]
+            response = HttpResponse(
+                render_queue_export_csv(result), content_type="text/csv"
             )
-            for item_data in result:
-                review = item_data.get("review") or {}
-                item_columns = [
-                    item_data["item_id"],
-                    item_data["source_type"],
-                    item_data["status"],
-                    item_data["order"],
-                    review.get("requires_review"),
-                    review.get("status") or "",
-                    review.get("reviewed_by_name") or "",
-                    review.get("reviewed_by_email") or "",
-                    review.get("reviewed_by_id") or "",
-                    review.get("reviewed_at") or "",
-                    review.get("notes") or "",
-                ]
-                if not item_data["annotations"]:
-                    writer.writerow(
-                        [
-                            *item_columns,
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                        ]
-                    )
-                for ann in item_data["annotations"]:
-                    writer.writerow(
-                        [
-                            *item_columns,
-                            ann["label_id"],
-                            ann["label_name"],
-                            _to_cell_str(ann["value"]),
-                            ann["score_source"],
-                            ann["notes"] or "",
-                            ann["annotator_name"],
-                            ann["created_at"],
-                        ]
-                    )
-            from urllib.parse import quote
-
-            response = HttpResponse(output.getvalue(), content_type="text/csv")
             safe_pk = quote(str(pk), safe="")
             response["Content-Disposition"] = (
                 f'attachment; filename="queue_{safe_pk}_annotations.csv"'
@@ -3615,6 +3670,195 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             return response
 
         return self._gm.success_response(result)
+
+    def _schedule_async_export(self, request, queue, query_params):
+        """Create an export job, hand it to Temporal and answer 202."""
+        from tfc.temporal.drop_in.runner import start_activity_sync
+
+        requested_format = (
+            query_params.get("export_format") or AnnotationExportFormat.JSON.value
+        )
+        job = AnnotationExportJob.objects.create(
+            queue=queue,
+            organization=queue.organization,
+            workspace=queue.workspace,
+            created_by=(
+                request.user if request.user and request.user.is_authenticated else None
+            ),
+            export_format=requested_format,
+            status_filter=_normalize_query_filter_value(query_params.get("status"))
+            or None,
+        )
+
+        try:
+            workflow_id = start_activity_sync(
+                activity_name="export_annotation_queue_async",
+                kwargs={"job_id": str(job.id)},
+                queue="tasks_l",
+                task_id=f"annotation-export-{job.pk}",
+            )
+        except Exception as exc:
+            # The row is the only place the user can see why nothing arrived,
+            # so a scheduling failure is recorded rather than left pending.
+            logger.exception(
+                "annotation_export_schedule_failed",
+                job_id=str(job.pk),
+                queue_id=str(queue.pk),
+                error=str(exc),
+            )
+            job.status = AnnotationExportJobStatus.FAILED.value
+            job.error = f"Failed to schedule export: {exc}"
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "error", "finished_at", "updated_at"])
+            return self._gm.internal_server_error_response(
+                f"Failed to schedule export: {exc}"
+            )
+
+        job.workflow_id = workflow_id
+        job.save(update_fields=["workflow_id", "updated_at"])
+
+        serializer = QueueExportScheduledResponseSerializer(
+            {
+                "status": "scheduled",
+                "job_id": str(job.id),
+                "workflow_id": workflow_id,
+                "export_format": job.export_format,
+                "message": (
+                    "This queue is too large to download in one request. "
+                    "We're preparing the file — poll this job for the link."
+                ),
+            }
+        )
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+    @swagger_auto_schema(
+        responses={200: QueueExportJobResponseSerializer, **ERROR_RESPONSES}
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"export-jobs/(?P<job_id>[^/.]+)",
+    )
+    @primary_required
+    def export_job(self, request, pk=None, job_id=None):
+        """Status of a background export, carrying the link once it is ready."""
+        from model_hub.services.annotation_export_storage import can_download_export
+
+        queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Export job not found.")
+        try:
+            job = AnnotationExportJob.objects.get(
+                pk=job_id,
+                queue=queue,
+                organization_id=queue.organization_id,
+                workspace_id=queue.workspace_id,
+                deleted=False,
+            )
+        except (AnnotationExportJob.DoesNotExist, ValidationError, ValueError):
+            return self._gm.not_found("Export job not found.")
+
+        from model_hub.selectors.annotation_exports import resolve_export_job_state
+        from model_hub.services.annotation_export_storage import (
+            download_url,
+            export_is_available,
+        )
+
+        job_status, job_error = resolve_export_job_state(job)
+        file_url = download_url(job) if export_is_available(job) else None
+        if job_status == AnnotationExportJobStatus.SUCCEEDED.value and file_url is None:
+            job_status = AnnotationExportJobStatus.FAILED.value
+            job_error = "This export has expired. Please export the queue again."
+        serializer = QueueExportJobResponseSerializer(
+            {
+                "result": {
+                    "job_id": job.id,
+                    "queue_id": job.queue_id,
+                    "status": job_status,
+                    "export_format": job.export_format,
+                    "item_count": job.item_count,
+                    "file_url": file_url,
+                    "file_name": job.file_name,
+                    "error": job_error,
+                    "created_at": job.created_at,
+                    "started_at": job.started_at,
+                    "finished_at": job.finished_at,
+                }
+            }
+        )
+        return Response(serializer.data)
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "token", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                "Export file", openapi.Schema(type=openapi.TYPE_FILE)
+            ),
+            **ERROR_RESPONSES,
+        },
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"export-jobs/(?P<job_id>[^/.]+)/download",
+    )
+    @primary_required
+    def export_download(self, request, pk=None, job_id=None):
+        """Stream a private export only while this user can still read its queue."""
+        from django.http import FileResponse
+        from minio.error import S3Error
+
+        from model_hub.services.annotation_export_storage import (
+            ExportFile,
+            can_download_export,
+            export_bucket_name,
+            export_is_available,
+            valid_download_token,
+        )
+        from tfc.utils.storage_client import get_storage_client
+
+        queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Export job not found.")
+        try:
+            job = AnnotationExportJob.objects.get(
+                pk=job_id,
+                queue=queue,
+                organization_id=queue.organization_id,
+                workspace_id=queue.workspace_id,
+                deleted=False,
+            )
+        except (AnnotationExportJob.DoesNotExist, ValidationError, ValueError):
+            return self._gm.not_found("Export job not found.")
+        if not export_is_available(job) or not valid_download_token(
+            job, request.query_params.get("token", "")
+        ):
+            return self._gm.not_found("Export download is unavailable or expired.")
+        try:
+            stored_file = get_storage_client().get_object(
+                export_bucket_name(), job.storage_key
+            )
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchBucket"}:
+                return self._gm.not_found("Export file not found.")
+            raise
+        extension = "csv" if job.export_format == "csv" else "json"
+        export_file = ExportFile(stored_file)
+        response = FileResponse(
+            export_file,
+            as_attachment=True,
+            filename=f"queue_{queue.pk}_annotations.{extension}",
+            content_type="text/csv" if extension == "csv" else "application/json",
+        )
+        if hasattr(request._request, "scope"):
+            response.streaming_content = export_file.chunks()
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @swagger_auto_schema(
         responses={200: QueueAnalyticsResponseSerializer, **ERROR_RESPONSES}
