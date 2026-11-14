@@ -109,9 +109,7 @@ def test_feature_denial_requires_the_actual_exception_type():
 
     assert before_send({}, _hint(FeatureUnavailable("synthetic"))) is not None
     event = {
-        "exception": {
-            "values": [{"type": "FeatureUnavailable", "value": "synthetic"}]
-        }
+        "exception": {"values": [{"type": "FeatureUnavailable", "value": "synthetic"}]}
     }
     # No live exception in the hint: serialized names are not a type check.
     for hint in ({}, {"exc_info": (None,)}, {"exc_info": "FeatureUnavailable"}):

@@ -330,9 +330,7 @@ async def test_capability_gate_activity_denial_is_not_an_issue(
         SimpleNamespace(execute_activity=denied_activity)
     )
     with pytest.raises(ApplicationError) as raised:
-        await interceptor.execute_activity(
-            SimpleNamespace(fn=denied_activity, args=[])
-        )
+        await interceptor.execute_activity(SimpleNamespace(fn=denied_activity, args=[]))
     assert raised.value.type == "CapabilityDenied"
     assert raised.value.non_retryable is True
     assert raised.value.details == (
