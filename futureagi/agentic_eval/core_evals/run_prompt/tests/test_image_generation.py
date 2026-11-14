@@ -32,16 +32,20 @@ import litellm
 # Pytest Configuration - Register Custom Markers
 # =============================================================================
 
+
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "unit: Unit tests (no external dependencies)")
-    config.addinivalue_line("markers", "live_image: Tests that call live image generation APIs")
+    config.addinivalue_line(
+        "markers", "live_image: Tests that call live image generation APIs"
+    )
     config.addinivalue_line("markers", "integration: Integration tests")
 
 
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def api_keys():
@@ -63,9 +67,7 @@ def mock_organization_id():
 @pytest.fixture
 def image_prompt_messages():
     """Simple prompt messages for image generation."""
-    return [
-        {"role": "user", "content": "A cute baby sea otter floating on water"}
-    ]
+    return [{"role": "user", "content": "A cute baby sea otter floating on water"}]
 
 
 @pytest.fixture
@@ -73,13 +75,17 @@ def detailed_image_prompt():
     """More detailed prompt for image generation."""
     return [
         {"role": "system", "content": "You are an image generation assistant."},
-        {"role": "user", "content": "Generate a photorealistic image of a sunset over mountains with a lake reflection, golden hour lighting, 4K quality"}
+        {
+            "role": "user",
+            "content": "Generate a photorealistic image of a sunset over mountains with a lake reflection, golden hour lighting, 4K quality",
+        },
     ]
 
 
 # =============================================================================
 # Unit Tests - Available Models Check
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestImageModelsAvailable:
@@ -92,16 +98,22 @@ class TestImageModelsAvailable:
         model_names = [m["model_name"] for m in AVAILABLE_MODELS]
 
         # Check DALL-E models
-        assert any("dall-e" in name for name in model_names), "DALL-E models should be present"
+        assert any("dall-e" in name for name in model_names), (
+            "DALL-E models should be present"
+        )
 
         # Check GPT-Image models
-        assert any("gpt-image" in name for name in model_names), "GPT-Image models should be present"
+        assert any("gpt-image" in name for name in model_names), (
+            "GPT-Image models should be present"
+        )
 
     def test_image_models_have_correct_mode(self):
         """Test that image models have image_generation mode."""
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
-        image_models = [m for m in AVAILABLE_MODELS if m.get("mode") == "image_generation"]
+        image_models = [
+            m for m in AVAILABLE_MODELS if m.get("mode") == "image_generation"
+        ]
         assert len(image_models) > 0, "Should have image_generation models"
 
         # Verify all image models are properly tagged
@@ -115,8 +127,7 @@ class TestImageModelsAvailable:
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
         dalle3_models = [
-            m for m in AVAILABLE_MODELS
-            if "dall-e-3" in m.get("model_name", "")
+            m for m in AVAILABLE_MODELS if "dall-e-3" in m.get("model_name", "")
         ]
         assert len(dalle3_models) > 0, "DALL-E 3 models should be present"
 
@@ -125,8 +136,7 @@ class TestImageModelsAvailable:
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
         gpt_image_models = [
-            m for m in AVAILABLE_MODELS
-            if "gpt-image" in m.get("model_name", "")
+            m for m in AVAILABLE_MODELS if "gpt-image" in m.get("model_name", "")
         ]
         assert len(gpt_image_models) > 0, "GPT-Image models should be present"
 
@@ -135,13 +145,16 @@ class TestImageModelsAvailable:
 # Unit Tests - Model Parameters
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestImageModelParameters:
     """Test image model parameters from the manager."""
 
     def test_get_openai_dalle3_parameters(self):
         """Test that DALL-E 3 parameters are returned correctly."""
-        from agentic_eval.core_evals.run_prompt.other_services.manager import get_model_parameters
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            get_model_parameters,
+        )
 
         params = get_model_parameters("openai", "dall-e-3", "image")
 
@@ -150,7 +163,9 @@ class TestImageModelParameters:
 
     def test_get_openai_gpt_image_parameters(self):
         """Test that GPT-Image parameters are returned correctly."""
-        from agentic_eval.core_evals.run_prompt.other_services.manager import get_model_parameters
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            get_model_parameters,
+        )
 
         params = get_model_parameters("openai", "gpt-image-1", "image")
 
@@ -158,7 +173,9 @@ class TestImageModelParameters:
 
     def test_get_azure_image_parameters(self):
         """Test that Azure image parameters are returned correctly."""
-        from agentic_eval.core_evals.run_prompt.other_services.manager import get_model_parameters
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            get_model_parameters,
+        )
 
         params = get_model_parameters("azure", "dall-e-3", "image")
 
@@ -169,6 +186,7 @@ class TestImageModelParameters:
 # Unit Tests - LiteLLM Model Manager
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestLiteLLMImageModelManager:
     """Test LiteLLM model manager with image models."""
@@ -176,20 +194,30 @@ class TestLiteLLMImageModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_image_models_not_filtered_out(self, mock_custom_model):
         """Test that image_generation models are not filtered out."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
         manager = LiteLLMModelManager(model_name="dall-e-3")
 
         # Check that image_generation models are present
-        image_models = [m for m in manager.models if m.get("mode") == "image_generation"]
-        assert len(image_models) > 0, "Image generation models should not be filtered out"
+        image_models = [
+            m for m in manager.models if m.get("mode") == "image_generation"
+        ]
+        assert len(image_models) > 0, (
+            "Image generation models should not be filtered out"
+        )
 
-    @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel.objects.get")
+    @patch(
+        "agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel.objects.get"
+    )
     def test_retired_dalle_model_is_unavailable(self, get_custom_model):
         """A retired image catalog entry needs a supported replacement."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
         from model_hub.models.custom_models import CustomAIModel
 
         get_custom_model.side_effect = CustomAIModel.DoesNotExist
@@ -201,7 +229,9 @@ class TestLiteLLMImageModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider_for_gpt_image(self, mock_custom_model):
         """Test getting provider for GPT-Image model."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -214,6 +244,7 @@ class TestLiteLLMImageModelManager:
 # =============================================================================
 # Integration Tests - Direct LiteLLM Image Generation
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_image
@@ -372,6 +403,7 @@ class TestLiteLLMImageGenerationDirect:
 # Integration Tests - Async Image Generation
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_image
 @pytest.mark.asyncio
@@ -403,6 +435,7 @@ class TestAsyncImageGeneration:
 # =============================================================================
 # Integration Tests - Error Handling
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_image
@@ -468,6 +501,7 @@ class TestImageGenerationErrors:
 # Cost Estimation Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestImageCostEstimation:
     """Test cost estimation for image generation."""
@@ -500,6 +534,7 @@ class TestImageCostEstimation:
 # Model Name Resolution Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestModelNameResolution:
     """Test that model names are correctly resolved."""
@@ -531,6 +566,7 @@ class TestModelNameResolution:
 # =============================================================================
 # Response Format Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_image

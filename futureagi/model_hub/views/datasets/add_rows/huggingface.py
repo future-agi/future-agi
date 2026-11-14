@@ -29,6 +29,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -226,7 +227,9 @@ class AddRowsFromHuggingFaceView(APIView):
 
             # columns = Column.objects.filter(dataset=dataset)
 
-            last_row = Row.all_objects.filter(dataset=dataset).order_by("-order").first()
+            last_row = (
+                Row.all_objects.filter(dataset=dataset).order_by("-order").first()
+            )
             if last_row:
                 max_order = last_row.order
             else:

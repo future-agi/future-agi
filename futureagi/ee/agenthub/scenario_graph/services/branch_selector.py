@@ -90,9 +90,7 @@ def _filter_branches_with_llm(
         if indices:
             return [branches_metadata[i] for i in indices]
         else:
-            return random.sample(
-                branches_metadata, min(needed, len(branches_metadata))
-            )
+            return random.sample(branches_metadata, min(needed, len(branches_metadata)))
     except Exception:
         logger.exception("LLM branch filtering failed, falling back to random sample")
         return random.sample(branches_metadata, min(needed, len(branches_metadata)))

@@ -117,8 +117,8 @@ def test_safe_fetch_caps_redirect_chain(monkeypatch):
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
     with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
-        pool_cls.return_value.request.side_effect = lambda *a, **kw: _fake_urllib3_response(
-            302, {"Location": "http://public.example.com/next"}
+        pool_cls.return_value.request.side_effect = lambda *a, **kw: (
+            _fake_urllib3_response(302, {"Location": "http://public.example.com/next"})
         )
         with pytest.raises(ValueError, match="Too many redirects"):
             safe_fetch("http://public.example.com/start")
@@ -186,7 +186,9 @@ def test_validate_file_url_rejects_explicit_mismatched_content_type(monkeypatch)
         validate_file_url("https://public.example.com/page", "image")
 
 
-def test_validate_file_url_accepts_generic_content_type_with_good_extension(monkeypatch):
+def test_validate_file_url_accepts_generic_content_type_with_good_extension(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "model_hub.views.utils.utils.safe_fetch", _stub_safe_fetch(200, {})
     )

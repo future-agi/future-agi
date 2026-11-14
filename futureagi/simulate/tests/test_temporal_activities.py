@@ -422,9 +422,7 @@ class TestTemporalClientAPIIntegration:
         mock_client.get_workflow_handle.return_value = mock_handle
         mock_get_client.return_value = mock_client
 
-        result = await _cancel_simulation_runner_workflow_async(
-            str(test_execution.id)
-        )
+        result = await _cancel_simulation_runner_workflow_async(str(test_execution.id))
 
         assert result is True
         mock_client.get_workflow_handle.assert_called_once_with(

@@ -127,26 +127,24 @@ def validate_eval_inputs(
         if is_custom_eval and mapped_keys is not None:
             keys_label = ", ".join(f"'{k}'" for k in sorted(declared_keys))
             raise MissingEvalInputError(
-                f"No input received for any of {keys_label}. "
-                "Please check your inputs."
+                f"No input received for any of {keys_label}. Please check your inputs."
             )
         return None, values
 
     if is_custom_eval:
         empty = sorted(
-            k for k in keys_to_check
-            if k not in values or is_empty_value(values.get(k))
+            k for k in keys_to_check if k not in values or is_empty_value(values.get(k))
         )
         nonempty = sorted(
-            k for k in keys_to_check
+            k
+            for k in keys_to_check
             if k in values and not is_empty_value(values.get(k))
         )
 
         if not nonempty:
             keys_label = ", ".join(f"'{k}'" for k in sorted(keys_to_check))
             raise MissingEvalInputError(
-                f"No input received for any of {keys_label}. "
-                "Please check your inputs."
+                f"No input received for any of {keys_label}. Please check your inputs."
             )
 
         normalized = dict(values)

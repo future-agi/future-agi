@@ -140,9 +140,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.

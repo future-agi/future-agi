@@ -11,7 +11,6 @@ from tracer.models.observability_provider import ProviderChoices
 
 
 class TestDetectProvider:
-
     def test_detects_livekit(self):
         data = {"livekit": {"room_name": "call_123"}}
         assert SpeakerRoleResolver.detect_provider(data) == ProviderChoices.LIVEKIT
