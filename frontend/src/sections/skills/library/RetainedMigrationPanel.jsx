@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
+import { createPortal } from 'react-dom';
 import { Alert, Box, Button, Link, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { paths } from 'src/routes/paths';
 import { useMigrationDecision, useMigrationPreview, useMigrationPublish, useMigrationPlanReload } from 'src/api/skills/migration';
 import { useSkillV11Scope } from 'src/api/skills/testing';
-import ActionReason from "../components/ActionReason";
+import ImportFooter from "./ImportFooter";
 import TechnicalDetails from "../components/TechnicalDetails";
 import ContentSkeleton from 'src/components/content-skeleton';
 import MigrationPlanPanel from './MigrationPlanPanel';
@@ -36,8 +37,11 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   const plan = plans.at(-1) || null;
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
+  // The review's own footer renders into this slot (kept mounted, hidden while sources are being changed).
+  const [batchSlot, setBatchSlot] = useState(null);
   const [receipts, setReceipts] = useState([]);
   const busy = locked || preview.isPending || reload.isPending;
+  const setupVisible = !plans.length || sourceSetupOpen;
   const reloaded = useRef(false);
   // Reload retained plans after draft preservation: same immutable plan and
   // fingerprint, with live destination and personal-draft state re-read.
@@ -88,10 +92,18 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   };
   const openDraft = (resourceId) => { onClose(); navigate(paths.dashboard.skills.edit(resourceId)); };
   const setOperationBusy = useCallback((value) => { setLocked(value); onBusyChange(value); }, [onBusyChange]);
-  return <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', pb: 2, flexShrink: 1 }}>
+  // One footer for every Import tab: the reason, Cancel, then Preview import (LIB2). While a reviewed
+  // set is open the review's own footer takes this slot instead; it stays mounted so nothing resets.
+  const footer = <>
+    <Box ref={setBatchSlot} hidden={setupVisible} />
+    {setupVisible && <ImportFooter enabled={!busy && files.length > 0} reason={files.length ? '' : 'Choose a file or folder first'} busy={busy} onPrimary={prepare} onCancel={onClose} />}
+  </>;
+  return <>
+  <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', pb: 2, flexShrink: 1 }}>
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
     {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
+    {plans.length > 0 && sourceSetupOpen && <Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(false)} sx={{ alignSelf: 'flex-start', ml: -1 }}>Back to review</Button>}
     {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Source" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
       <MenuItem value="langfuse">Langfuse exchange file (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
     </TextField>}
@@ -111,26 +123,25 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { setKind('folder'); selectFiles(event.target.files); event.target.value = ''; }} />
     <Typography variant="s3">{files.length} source files selected</Typography>
     {kind === 'folder' && <TechnicalDetails title="Source identity"><TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => setIdentities(event.target.value)} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." /></TechnicalDetails>}
-    <Button color="primary" variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview import</Button>
-    {!files.length && <ActionReason id="retained-action-reason-1" reason="Choose a file or folder first" />}
     </Stack></Box>
     {error && <Alert severity="error">{error}</Alert>}
     {reload.isPending && <ContentSkeleton variant="rows" rows={3} label="Reloading the retained migration review" />}
     {preview.isPending && <ContentSkeleton variant="rows" rows={3} label="Retaining source and loading exact comparisons" />}
-    {plans.length > 0 && <MigrationBatchReview onClose={onClose} footerTarget={footerTarget} onConsequenceChange={onConsequenceChange} plans={plans} contextProposal={proposal}
+    {plans.length > 0 && <Box hidden={sourceSetupOpen}><MigrationBatchReview onClose={onClose} footerTarget={batchSlot} onConsequenceChange={onConsequenceChange} plans={plans} contextProposal={proposal}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
       onPublish={(input) => publish.mutateAsync(input)}
       onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`, { state: { reopenMigration: { planIds: plans.map((entry) => entry.id) } } }); }}
       onBusyChange={setOperationBusy}
-      onCreateContext={(links) => { onClose(); navigate(paths.dashboard.skills.contexts, { state: { proposedLinks: links } }); }} />}
-    {plan && <TechnicalDetails title="Decide one item at a time" keepMounted><MigrationPlanPanel scopeKey={identity} plan={plan}
+      onCreateContext={(links) => { onClose(); navigate(paths.dashboard.skills.contexts, { state: { proposedLinks: links } }); }} /></Box>}
+    {plan && <Box hidden={sourceSetupOpen}><TechnicalDetails title="Decide one item at a time" keepMounted><MigrationPlanPanel scopeKey={identity} plan={plan}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
       onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`); }} onBusyChange={setOperationBusy}
-      onAccepted={(receipt) => setReceipts((previous) => [...previous, receipt])} /></TechnicalDetails>}
-    {!plans.length && <Button variant="outlined" disabled={busy} onClick={onClose} sx={{ alignSelf: "flex-end" }}>Cancel</Button>}
+      onAccepted={(receipt) => setReceipts((previous) => [...previous, receipt])} /></TechnicalDetails></Box>}
     {receipts.map((receipt) => <Alert severity="success" key={receipt.receiptId} action={<Button disabled={busy} onClick={() => openDraft(receipt.resourceId)}>Open destination</Button>}>Decision {receipt.decision} retained. {receipt.published ? 'Published' : 'Not published; review and publish deliberately in the editor.'}</Alert>)}
-  </Stack>;
+  </Stack>
+  {footerTarget ? createPortal(footer, footerTarget) : footer}
+  </>;
 }
 RetainedMigrationPanel.propTypes = { footerTarget: PropTypes.any, onConsequenceChange: PropTypes.func, onBusyChange: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired, initialPlanIds: PropTypes.arrayOf(PropTypes.string) };

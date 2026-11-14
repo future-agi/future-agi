@@ -86,3 +86,28 @@ it('explains exchange-file preparation beside the picker before any upload', () 
   expect(screen.getByRole('link', { name: 'How to prepare the file' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/migration#before-migration');
   expect(screen.getByRole('button', { name: 'Choose export file' })).toBeVisible();
 });
+
+it('offers one footer, reason then Cancel then Preview import, and no button inside the body', () => {
+  view();
+  const previews = screen.getAllByRole('button', { name: 'Preview import', exact: true });
+  expect(previews).toHaveLength(1);
+  expect(previews[0]).toBeDisabled();
+  expect(previews[0]).toHaveAccessibleDescription('Choose a file or folder first');
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  expect(cancel.compareDocumentPosition(previews[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Retained private folder'), { target: { files: [new File(['x'], 'SKILL.md')] } });
+  expect(screen.getByRole('button', { name: 'Preview import', exact: true })).toBeEnabled();
+  expect(screen.queryByText('Choose a file or folder first')).not.toBeInTheDocument();
+});
+
+it('keeps the reviewed set mounted while sources change, with a way back to it', async () => {
+  api.reload.mockResolvedValueOnce([plan]);
+  view({ initialPlanIds: ['plan-1'] });
+  await screen.findByRole('button', { name: 'Change sources' });
+  expect(screen.queryByRole('button', { name: 'Preview import', exact: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Change sources' }));
+  expect(screen.getByRole('button', { name: 'Preview import', exact: true })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to review' }));
+  expect(screen.queryByRole('button', { name: 'Preview import', exact: true })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Change sources' })).toBeVisible();
+});

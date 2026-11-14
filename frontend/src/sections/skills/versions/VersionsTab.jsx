@@ -3,7 +3,6 @@ import PropTypes from "prop-types";
 import { useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
-  Box,
   Button,
   Checkbox,
   IconButton,
@@ -29,12 +28,38 @@ import SelectionBar from "src/components/selection-bar";
 import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
-import { stackedTableSx } from "../components/responsiveTable";
-import IdentityChip from "../components/IdentityChip";
+import VersionLabel from "../components/VersionLabel";
 import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 import MoveLabelDialog from "./MoveLabelDialog";
 import RestoreVersionDialog from "./RestoreVersionDialog";
+
+// Below sm each version is a stacked card on the 16px gutter: a 32px checkbox column runs the
+// card's full height; line 1 is the version and its menu, line 2 the note, line 3
+// "author · time · files", line 4 the label badges. Desktop keeps the table untouched.
+const cell = (column, extra) => [`& tbody td[data-column="${column}"]`, extra];
+const versionsTableSx = (theme) => ({
+  "& tbody td": { overflowWrap: "normal", wordBreak: "normal" },
+  '& td[data-column="meta"]': { display: "none" },
+  [theme.breakpoints.down("sm")]: {
+    display: "block",
+    "& thead": { position: "absolute", width: "1px", height: "1px", p: 0, m: "-1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0 },
+    "& tbody": { display: "block" },
+    "& tbody tr": { display: "grid", gridTemplateColumns: "32px minmax(0, 1fr) auto", alignItems: "start", rowGap: 0.5, height: "auto", py: 1.5, borderBottom: `1px solid ${theme.palette.divider}`, "&:last-of-type": { borderBottom: 0 } },
+    "& tbody td": { display: "block", minWidth: 0, border: 0, p: 0, whiteSpace: "normal" },
+    ...Object.fromEntries([
+      cell("select", { gridColumn: "1", gridRow: "1 / span 4", "& .MuiCheckbox-root": { p: 0.5, ml: -0.5 } }),
+      cell("number", { gridColumn: "2", gridRow: "1", alignSelf: "center" }),
+      cell("actions", { gridColumn: "3", gridRow: "1", justifySelf: "end", alignSelf: "center", "& .MuiIconButton-root": { mr: -1 } }),
+      cell("note", { gridColumn: "2 / -1", gridRow: "2", "& .MuiTypography-root": { whiteSpace: "normal", overflowWrap: "anywhere" } }),
+      cell("meta", { display: "block", gridColumn: "2 / -1", gridRow: "3", ...theme.typography.s3, color: "text.secondary" }),
+      cell("labels", { gridColumn: "2 / -1", gridRow: "4", '&[data-empty="true"]': { display: "none" } }),
+      cell("createdBy", { display: "none" }),
+      cell("createdAt", { display: "none" }),
+      cell("fileCount", { display: "none" }),
+    ]),
+  },
+});
 
 export default function VersionsTab({ skill }) {
   const router = useRouter();
@@ -88,7 +113,7 @@ export default function VersionsTab({ skill }) {
       accessorKey: "number",
       header: "Version",
       size: 180,
-      cell: ({ row: { original } }) => <Stack><Typography variant="s1" fontWeight={500}>v{original.number}</Typography><Box onClick={(event) => event.stopPropagation()}><IdentityChip value={original.digest} inline /></Box></Stack>,
+      cell: ({ row: { original } }) => <VersionLabel number={original.number} digest={original.digest} label="version" />,
     },
     {
       accessorKey: "note",
@@ -104,6 +129,7 @@ export default function VersionsTab({ skill }) {
     {
       accessorKey: "createdBy",
       header: "Author",
+      desktopOnly: true,
       size: 140,
       cell: ({ getValue }) => (
         <Typography variant="s1" noWrap>
@@ -114,6 +140,7 @@ export default function VersionsTab({ skill }) {
     {
       accessorKey: "createdAt",
       header: "Published",
+      desktopOnly: true,
       size: 160,
       cell: ({ getValue }) => (
         <Typography
@@ -131,7 +158,9 @@ export default function VersionsTab({ skill }) {
       size: 170,
       cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={name} />) : '—' }</Stack>,
     },
-    { accessorKey: "fileCount", header: "Files", size: 70 },
+    { accessorKey: "fileCount", header: "Files", size: 70, desktopOnly: true },
+    // Below sm the author, time and file count read as one quiet line (author · time · files).
+    { id: "meta", header: "", mobileOnly: true, cell: ({ row: { original } }) => [original.createdBy?.name || "Unknown author", relativeTime(original.createdAt), `${original.fileCount} ${original.fileCount === 1 ? "file" : "files"}`].join(" · ") },
     {
       id: "actions",
       header: "Actions",
@@ -225,10 +254,10 @@ export default function VersionsTab({ skill }) {
         title="Versions"
         description="Select two versions on this page to compare their files."
       >
-        <TableContainer><Table size="small" aria-label="Skill versions" sx={[stackedTableSx, { "& tbody td": { overflowWrap: "normal", wordBreak: "normal" }, "& tbody td:not(.MuiTableCell-paddingCheckbox)": { display: { xs: "block", sm: "table-cell" } }, "& tbody td[data-label]:not(.MuiTableCell-paddingCheckbox)::before": { content: { xs: 'attr(data-label) ": "', sm: "none" }, typography: "s3", color: "text.secondary" } }]}>
-          <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
+        <TableContainer><Table size="small" aria-label="Skill versions" sx={versionsTableSx}>
+          <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey} data-column={column.id || column.accessorKey} sx={column.mobileOnly ? { display: { xs: "table-cell", sm: "none" } } : undefined}>{column.header}</TableCell>)}</TableRow></TableHead>
           <TableBody>{rows.map((row) => <TableRow hover key={row.id} sx={{ height: ROW_HEIGHT.twoLine }} onClick={() => router.push(`${detailPath}?tab=files&version=${row.number}`)}>
-            {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-label={column.header} data-cell={column.id === "actions" ? "actions" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
+            {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-column={column.id || column.accessorKey} data-empty={column.accessorKey === "labels" && !(row.labels || []).length ? "true" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
           </TableRow>)}</TableBody>
         </Table></TableContainer>
         <DataTablePagination

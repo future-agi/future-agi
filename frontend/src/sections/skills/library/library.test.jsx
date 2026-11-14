@@ -418,6 +418,12 @@ it('gives the GitHub panel its own draft action without the upload submit', () =
   expect(api.importSkills).not.toHaveBeenCalled();
 });
 
+vi.mock("src/api/skills/migration", () => ({
+  useMigrationPreview: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useMigrationDecision: () => ({ mutateAsync: vi.fn() }),
+  useMigrationPublish: () => ({ mutateAsync: vi.fn() }),
+  useMigrationPlanReload: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }), useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 
 it('sends reviewed aggregate release revisions for existing upload destinations', async () => {
@@ -513,4 +519,75 @@ it.each([{ statusCode: 500 }, { status: 422, detail: { label: ['Invalid label'] 
   renderLibrary('?page=9');
   expect(screen.queryByText('This page is no longer available')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Retry/i })).toBeVisible();
+});
+
+
+describe("library recipe (UX iteration 3, LIB3)", () => {
+  it("keeps the header primary contained and offers an outlined Go to first page that says filters are kept", () => {
+    api.list.mockReturnValue(listResult({ results: [], count: 25, totalPages: 1 }));
+    renderLibrary("?page=9&search=policy");
+    expect(screen.getByText("Your filters are kept.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Go to first page" })).toHaveClass("MuiButton-outlined");
+    expect(screen.getByRole("button", { name: "New skill" })).toHaveClass("MuiButton-contained");
+  });
+  it("reads pagination as from-to of total, like Agent contexts", () => {
+    api.list.mockReturnValue(listResult({ count: 82, totalPages: 4 }));
+    renderLibrary();
+    expect(screen.getByText("1–25 of 82")).toBeVisible();
+    expect(screen.queryByText(/^Page \d+ of/)).not.toBeInTheDocument();
+  });
+  it("renders stacked cards below sm with the filters full width", () => {
+    vi.stubGlobal("matchMedia", (query) => ({ matches: /max-width/.test(query), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+    try {
+      renderLibrary();
+      const list = screen.getByRole("list", { name: "Skills" });
+      const card = within(list).getByRole("listitem");
+      expect(within(card).getByRole("link", { name: "support-policy" })).toHaveAttribute("href", "/dashboard/skills/skill-1");
+      expect(card).toHaveTextContent(/Production v2 · Latest v3 · /);
+      expect(within(card).getByRole("button", { name: "Actions for support-policy" })).toBeVisible();
+      expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+      fireEvent.click(within(card).getByText("Use when answering customer refund questions."));
+      expect(window.location.pathname).toBe("/dashboard/skills/skill-1");
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+describe("one import footer (UX iteration 3, LIB2)", () => {
+  const footerButtons = () => screen.getAllByRole("button").filter((button) => ["Cancel", "Preview import", "Import", "Done"].includes(button.textContent));
+  it("keeps the reason on the left, then Cancel, then the frozen primary on the right, on the Upload tab", () => {
+    renderWithRouter(<ImportSkillsDialog open onClose={vi.fn()} />);
+    const reason = screen.getByText("Choose a file or folder first");
+    const [cancel, primary] = footerButtons();
+    expect(cancel).toHaveTextContent("Cancel");
+    expect(primary).toHaveTextContent("Preview import");
+    expect(primary).toBeDisabled();
+    expect(primary).toHaveAccessibleDescription("Choose a file or folder first");
+    expect(reason.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    chooseFolder();
+    expect(screen.queryByText("Choose a file or folder first")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview import" })).toBeEnabled();
+  });
+  it("shows why Import is unavailable after the preview, in the same footer", async () => {
+    api.preview.mockResolvedValueOnce({ bundles: [bundle("warning-skill", "changed", 1)], rejected: [], skipped: [] });
+    await renderImport();
+    expect(screen.getByRole("button", { name: "Import", exact: true })).toBeDisabled();
+    expect(screen.getByText("Review the warnings to continue")).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the warnings/ }));
+    expect(screen.queryByText("Review the warnings to continue")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import", exact: true })).toBeEnabled();
+  });
+  it("offers one Preview import on From another tool, in the footer, never in the body", () => {
+    renderWithRouter(<ImportSkillsDialog open onClose={vi.fn()} initialTab="migration" />);
+    const previews = screen.getAllByRole("button", { name: "Preview import", exact: true });
+    expect(previews).toHaveLength(1);
+    expect(previews[0]).toBeDisabled();
+    expect(screen.getByText("Choose a file or folder first")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(1);
+  });
+  it("keeps GitHub to Cancel only, since that panel owns its draft action", () => {
+    renderWithRouter(<ImportSkillsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "GitHub" }));
+    expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Preview import" })).not.toBeInTheDocument();
+  });
 });
