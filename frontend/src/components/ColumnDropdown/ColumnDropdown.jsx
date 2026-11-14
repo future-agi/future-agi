@@ -61,19 +61,7 @@ const DraggableDropdownItem = (props) => {
           <LightCheckbox
             checked={checked}
             onChange={onChange}
-            sx={{
-              padding: "0px",
-              "&.Mui-checked": { color: "primary.light" },
-            }}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" />}
-            icon={
-              <Iconify
-                icon="carbon:checkbox"
-                sx={{
-                  color: "divider",
-                }}
-              />
-            }
+            sx={{ p: 0 }}
             inputProps={{
               "aria-label": "controlled",
             }}
@@ -82,10 +70,7 @@ const DraggableDropdownItem = (props) => {
             {...attributes}
             {...listeners}
             sx={{
-              borderRadius: "8px",
               display: "inline-block",
-              px: "4px",
-              py: "2px",
               ":hover": {
                 cursor: "grab",
               },
@@ -200,7 +185,7 @@ const ColumnDropdown = ({
           maxHeight: "400px",
           overflowY: "auto",
           padding: 0,
-          minWidth: "250px",
+          minWidth: "320px",
         },
       }}
     >
@@ -290,7 +275,7 @@ const ColumnDropdown = ({
                         expandIcon={
                           column?.children ? (
                             <Iconify
-                              icon="gg:chevron-right"
+                              icon="solar:alt-arrow-right-linear"
                               sx={{ color: "text.disabled" }}
                               width={16}
                             />

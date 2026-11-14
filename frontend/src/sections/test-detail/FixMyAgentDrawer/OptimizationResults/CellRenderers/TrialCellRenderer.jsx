@@ -28,8 +28,8 @@ const TrialCellRenderer = ({ value }) => {
         <Box
           sx={{
             padding: 0.5,
-            backgroundColor: "yellow.o10",
-            borderRadius: 0.5,
+            backgroundColor: "status.warning.bg",
+            borderRadius: "4px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -38,7 +38,7 @@ const TrialCellRenderer = ({ value }) => {
           <SvgColor
             src="/icons/datasets/choose_winner.svg"
             sx={{ width: "18px", height: "18px" }}
-            color="yellow.500"
+            color="status.warning.fg"
           />
         </Box>
       </ShowComponent>

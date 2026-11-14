@@ -142,7 +142,7 @@ class DeterministicAgent:
             model_name = llm.model_name
         if model_name is None:
             # Use a safe default when the caller does not pass model/model_type.
-            model_name = ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
 
         self.model_type = model_type
 
@@ -175,7 +175,7 @@ class DeterministicAgent:
 
         if not self.is_turing_model and selected_config is None:
             # Ensure non-turing flows always have a usable config.
-            selected_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+            selected_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
 
         self.model_config = selected_config
 

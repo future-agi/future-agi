@@ -12,11 +12,8 @@ import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
-import { formatDate } from "src/utils/report-utils";
-import { endOfToday, sub } from "date-fns";
 import { useUrlState } from "src/routes/hooks/use-url-state";
-import axios, { endpoints } from "src/utils/axios";
-import { useQuery } from "@tanstack/react-query";
+import { endpoints } from "src/utils/axios";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
@@ -44,62 +41,25 @@ const PrimaryGraph = lazy(
   () => import("../LLMTracing/GraphSection/PrimaryGraph"),
 );
 
+// Instant eval / Insights
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { USER_FILTER_FIELDS } from "../observeFilterConfig";
+import { dateLabel, viewSeed } from "../observeScope";
+
 // User-specific
 import useUsersStore from "./Store/usersStore";
-import { getUsersColumnConfig } from "./common";
+import { buildUsersRequestFilters, getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
+import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
 import { filtersContentEqual } from "../saved-view-utils";
-
-// ---------------------------------------------------------------------------
-// User filter fields for TraceFilterPanel
-// ---------------------------------------------------------------------------
-const USER_FILTER_FIELDS = [
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  {
-    id: "num_traces",
-    name: "No. of Traces",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_sessions",
-    name: "No. of Sessions",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_cost",
-    name: "Total Cost ($)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_tokens",
-    name: "Total Tokens",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "avg_trace_latency",
-    name: "Avg Latency / Trace (ms)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_llm_calls",
-    name: "No. of LLM Calls",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "eval_score",
-    name: "Evals Pass Rate (%)",
-    category: "system",
-    type: "number",
-  },
-];
+import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import {
+  DEFAULT_OBSERVE_LIST_DATE_OPTION,
+  getDefaultObserveListDateRangeForMode,
+} from "../dateRangeDefaults";
 
 // Default filter and date range
 const defaultFilterBase = [
@@ -109,20 +69,11 @@ const defaultFilterBase = [
   },
 ];
 
-const getDefaultDateRange = () => ({
-  dateFilter: [
-    formatDate(sub(new Date(), { days: 90 })),
-    formatDate(endOfToday()),
-  ],
-  dateOption: "3M",
-});
+const getDefaultDateRange = () => getDefaultObserveListDateRangeForMode(false);
 
-const getDateLabel = (dateFilter) => {
-  if (!dateFilter) return "Past 3M";
-  return dateFilter.dateOption === "Custom"
-    ? "Custom range"
-    : dateFilter.dateOption || "Past 3M";
-};
+// "Past 7D", "Today", "Custom range": the toolbar's words for the date.
+export const getDateLabel = (dateFilter) =>
+  dateLabel(dateFilter?.dateOption || DEFAULT_OBSERVE_LIST_DATE_OPTION);
 
 const noopExtraProperties = () => ({});
 
@@ -134,6 +85,9 @@ const UsersView = ({
   activeViewConfig: activeViewConfigProp,
 }) => {
   const { observeId } = useParams();
+  // Cross-project page (no project in the route): rows carry a Project column.
+  const includeProject = !observeId;
+  const { currentWorkspaceId } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
   const isObservePath = location.pathname.includes("observe");
@@ -189,19 +143,25 @@ const UsersView = ({
     }
   }, [gridApi, autoSizeAllCols]);
 
-  // --- Eval attributes for custom column dialog (mirrors LLMTracingView) ---
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
+  // --- Cursor-backed attributes for custom columns ---
+  const [customAttributeSearch, setCustomAttributeSearch] = useState("");
+  const preservedCustomAttributeKeys = useMemo(
+    () =>
+      (columns || [])
+        .filter((column) => column?.groupBy === "Custom Columns")
+        .map((column) => column.id)
+        .filter(Boolean),
+    [columns],
+  );
+  const { attributes, inventoryControlProps } = useCursorAttributeInventory({
+    projectId: observeId,
+    workspaceScope: !observeId,
+    workspaceScopeKey: currentWorkspaceId,
+    discoveryMode: "eval_mapping",
+    search: customAttributeSearch,
+    preservedKeys: preservedCustomAttributeKeys,
+    enabled: openCustomColumnDialog && Boolean(observeId || currentWorkspaceId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   // --- Observe header refresh wiring (TH-4023) ---
   // Expose a refresh callback to the shared ObserveHeader so the refresh
@@ -264,6 +224,27 @@ const UsersView = ({
     return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the users the grid lists (UsersGrid sends
+  // buildUsersRequestFilters(finalFilters), date window included).
+  // Both open with the view's date preset and filters, editable there.
+  const userViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "users",
+        filters: buildUsersRequestFilters(finalFilters),
+        dateFilter,
+        search: searchQuery,
+      }),
+    [finalFilters, dateFilter, searchQuery],
+  );
+  // Evaluate → Ask a question: the Ask page, about the users in view.
+  const openAsk = useCallback(() => {
+    navigate(askLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
   // --- Row height ---
   const [cellHeight, setCellHeight] = useUrlState("userCellHeight", "Short");
 
@@ -298,7 +279,10 @@ const UsersView = ({
     }, {});
     // columnState lives inside `display` because the backend serializer
     // whitelists `display` for arbitrary sub-keys (no top-level columnState).
-    const columnState = gridApi?.getColumnState?.() ?? undefined;
+    const rawColumnState = gridApi?.getColumnState?.() ?? undefined;
+    const columnState = rawColumnState
+      ? sanitizeUserColumnState(rawColumnState)
+      : undefined;
     // customColumns separately: AG Grid won't recreate them from columnState
     // alone since the backend doesn't know about custom cols.
     const customColumns = (columns || []).filter(
@@ -435,13 +419,12 @@ const UsersView = ({
         if (currentCustomIds.length > 0) {
           removeCustomColumns(currentCustomIds);
         }
-        const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
-          (acc, col) => {
-            acc[col.field] = col.hide === undefined ? true : !col.hide;
-            return acc;
-          },
-          {},
-        );
+        const defaultsVisibility = (
+          getUsersColumnConfig({ includeProject }) || []
+        ).reduce((acc, col) => {
+          acc[col.field] = col.hide === undefined ? true : !col.hide;
+          return acc;
+        }, {});
         if (Object.keys(defaultsVisibility).length > 0) {
           updateColumnVisibility(defaultsVisibility);
         }
@@ -516,23 +499,22 @@ const UsersView = ({
         Array.isArray(display.columnState) &&
         display.columnState.length > 0
       ) {
+        const columnState = sanitizeUserColumnState(display.columnState);
         // Defer columnState when custom cols are being added — AG Grid's
         // columnDefs prop only flips next render, so applying this tick
         // would drop entries for the custom colIds. Drained by the
         // `columns` effect once the store update propagates.
         if (savedCustomCols.length > 0) {
-          pendingColumnStateRef.current = display.columnState;
+          pendingColumnStateRef.current = columnState;
         } else if (gridApi?.applyColumnState) {
           gridApi.applyColumnState({
-            state: display.columnState,
+            state: columnState,
             applyOrder: true,
           });
           // Bake order into the array too (applyColumnState is clobbered on rebuild).
-          setColumns(
-            reorderColumns(columns, columnStateToOrder(display.columnState)),
-          );
+          setColumns(reorderColumns(columns, columnStateToOrder(columnState)));
         } else {
-          pendingColumnStateRef.current = display.columnState;
+          pendingColumnStateRef.current = columnState;
         }
       }
       if (Array.isArray(config.extra_filters)) {
@@ -556,6 +538,7 @@ const UsersView = ({
       columns,
       gridApi,
       displayStorageKey,
+      includeProject,
     ],
   );
 
@@ -584,11 +567,13 @@ const UsersView = ({
   // was baked into the store); disarms at the fixpoint so manual drags persist.
   useEffect(() => {
     if (!pendingDefaultReorderRef.current) return;
-    const canonical = (getUsersColumnConfig() || []).map((c) => c.field);
+    const canonical = (getUsersColumnConfig({ includeProject }) || []).map(
+      (c) => c.field,
+    );
     const next = reorderColumns(columns, canonical);
     if (next !== columns) setColumns(next);
     else pendingDefaultReorderRef.current = false;
-  }, [columns, setColumns]);
+  }, [columns, setColumns, includeProject]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -774,11 +759,11 @@ const UsersView = ({
     searchState === "empty" &&
     !hasActiveFilter;
 
-  const shouldShowGrid =
-    hasData === true ||
-    (isLoading && searchState !== "empty") ||
-    searchState === "searching" ||
-    hasActiveFilter;
+  // Every state shows either the confirmed empty screen or the grid. A reload
+  // of a confirmed-empty page, or a first page paused at the continuation
+  // limit (its "Continue search" button lives in the grid), matched neither
+  // an enumerated grid state nor the empty screen and left the page blank.
+  const shouldShowGrid = !shouldShowEmptyLayout;
 
   return (
     <>
@@ -791,6 +776,8 @@ const UsersView = ({
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="users"
+        projectId={observeId}
+        allowWorkspaceScope={!observeId}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
@@ -862,6 +849,8 @@ const UsersView = ({
               }
             : undefined
         }
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
       {/* Filter chips. Inject `display_name` so chips render the column's
@@ -967,6 +956,8 @@ const UsersView = ({
         existingColumns={columns}
         onAddColumns={addCustomColumns}
         onRemoveColumns={removeCustomColumns}
+        onAttributeSearchChange={setCustomAttributeSearch}
+        inventoryControlProps={inventoryControlProps}
       />
     </>
   );

@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import PropTypes from "prop-types";
@@ -6,7 +7,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   Stack,
   Typography,
@@ -22,11 +22,21 @@ import {
 } from "src/sections/projects/LLMTracing/formatters";
 import Iconify from "src/components/iconify";
 import SharedVoiceView from "./SharedVoiceView";
-import { isVoiceCall } from "./sharedViewHelpers";
+import SharedSimulationCallView from "./SharedSimulationCallView";
+import SharedErrorIssueView from "./SharedErrorIssueView";
+import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
 }
+
+const SHARED_LINK_ERROR_COPY = {
+  401: "Sign in with an account that has access to view this.",
+  403: "Ask the person who shared this to add your email.",
+  404: "This link doesn't exist or the item was deleted.",
+  410: "This link was revoked or has expired.",
+};
 
 export default function SharedView() {
   const { token } = useParams();
@@ -53,6 +63,13 @@ export default function SharedView() {
     () => isTrace && isVoiceCall(resourceData),
     [isTrace, resourceData],
   );
+  const isCallExecution = resourceType === "call_execution";
+  const isErrorIssue = resourceType === "error_feed_issue";
+  // A shared call resolves to the same payload as the in-app call detail.
+  const sharedCall = isCallExecution ? resourceData || null : null;
+  const isChatCall =
+    isCallExecution && simulationCallKind(sharedCall) === "chat";
+  const isVoiceView = isVoice || (isCallExecution && !isChatCall);
 
   // For traces, the resolve endpoint returns full span tree in data
   const spans =
@@ -110,8 +127,9 @@ export default function SharedView() {
 
   // Error states
   if (isError) {
-    const status = error?.response?.status;
-    const msg = error?.response?.data?.error;
+    // The axios interceptor rejects with { ...body, statusCode }, not an
+    // axios error. Server text is never shown, only fixed copy per status.
+    const status = error?.statusCode ?? error?.response?.status;
     return (
       <>
         <Helmet>
@@ -130,10 +148,10 @@ export default function SharedView() {
             <Iconify
               icon={
                 status === 401
-                  ? "mdi:lock-outline"
+                  ? "solar:lock-linear"
                   : status === 403
-                    ? "mdi:shield-lock-outline"
-                    : "mdi:link-off"
+                    ? "solar:shield-keyhole-linear"
+                    : "solar:link-broken-linear"
               }
               width={48}
               sx={{ color: "text.disabled", mb: 2 }}
@@ -146,8 +164,7 @@ export default function SharedView() {
               {![401, 403, 404, 410].includes(status) && "Something went wrong"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {msg ||
-                "This shared link may have been revoked or is no longer available."}
+              {SHARED_LINK_ERROR_COPY[status] ?? "Try again in a moment."}
             </Typography>
             {status === 401 && (
               <Typography
@@ -157,7 +174,7 @@ export default function SharedView() {
                   display: "inline-block",
                   mt: 2,
                   color: "primary.main",
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: 500,
                 }}
               >
@@ -174,15 +191,19 @@ export default function SharedView() {
     <>
       <Helmet>
         <title>
-          {isVoice
+          {isVoiceView
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
-            : isTrace
-              ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : resourceType === "dashboard"
-                ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                : resourceType === "project"
-                  ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                  : "Shared Resource"}
+            : isChatCall
+              ? `Shared Chat — ${resourceId?.substring(0, 8) || "..."}`
+              : isErrorIssue
+                ? `Shared Issue — ${resourceData?.issue?.row?.error?.name || resourceId || "..."}`
+                : isTrace
+                  ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                  : resourceType === "dashboard"
+                    ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                    : resourceType === "project"
+                      ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                      : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -211,27 +232,35 @@ export default function SharedView() {
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Iconify
               icon={
-                isVoice
-                  ? "mdi:phone-outline"
-                  : resourceType === "dashboard"
-                    ? "mdi:view-dashboard-outline"
-                    : resourceType === "project"
-                      ? "mdi:folder-outline"
-                      : "mdi:share-variant-outline"
+                isVoiceView
+                  ? "solar:phone-linear"
+                  : isChatCall
+                    ? "solar:chat-round-line-linear"
+                    : isErrorIssue
+                      ? "solar:bug-linear"
+                      : resourceType === "dashboard"
+                        ? "solar:widget-4-linear"
+                        : resourceType === "project"
+                          ? "solar:folder-linear"
+                          : "solar:share-linear"
               }
               width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
-              {isVoice
+              {isVoiceView
                 ? "Shared voice call"
-                : resourceType === "dashboard"
-                  ? "Shared dashboard"
-                  : resourceType === "project"
-                    ? "Shared project"
-                    : `Shared ${resourceType || "resource"}`}
+                : isChatCall
+                  ? "Shared chat"
+                  : isErrorIssue
+                    ? "Shared issue"
+                    : resourceType === "dashboard"
+                      ? "Shared dashboard"
+                      : resourceType === "project"
+                        ? "Shared project"
+                        : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
               <Typography
@@ -241,7 +270,9 @@ export default function SharedView() {
                   color: "text.disabled",
                 }}
               >
-                {resourceId.substring(0, 12)}...
+                {resourceId.length > 12
+                  ? `${resourceId.substring(0, 12)}...`
+                  : resourceId}
               </Typography>
             )}
           </Box>
@@ -260,8 +291,12 @@ export default function SharedView() {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
+        ) : isErrorIssue ? (
+          <SharedErrorIssueView token={token} data={resourceData} />
+        ) : isCallExecution ? (
+          <SharedSimulationCallView call={sharedCall} />
         ) : isVoice ? (
           /* Voice call view — transcript + audio player, read-only */
           <SharedVoiceView resourceData={resourceData} />
@@ -353,11 +388,11 @@ export default function SharedView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:cursor-default-click-outline"
+                    icon="solar:cursor-linear"
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
-                  <Typography variant="body2" fontSize={13}>
+                  <Typography variant="body2" fontSize={12}>
                     Select a span to view details
                   </Typography>
                   {summary && (
@@ -444,7 +479,7 @@ function SharedProjectView({ project }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -468,7 +503,9 @@ function SharedProjectView({ project }) {
             <Button
               href={projectUrl}
               variant="contained"
-              startIcon={<Iconify icon="mdi:open-in-new" width={16} />}
+              startIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
               sx={{ flexShrink: 0 }}
             >
               Open project
@@ -487,7 +524,7 @@ function SharedProjectView({ project }) {
         >
           <Box sx={{ p: 2.5 }}>
             <Typography
-              sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
               Project details
             </Typography>
@@ -540,7 +577,7 @@ function SharedDashboardView({ dashboard }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -551,7 +588,7 @@ function SharedDashboardView({ dashboard }) {
               <Typography
                 sx={{
                   mt: 0.75,
-                  fontSize: 14,
+                  fontSize: 12,
                   color: "text.secondary",
                   maxWidth: 760,
                 }}
@@ -563,7 +600,7 @@ function SharedDashboardView({ dashboard }) {
           <Chip
             size="small"
             variant="outlined"
-            icon={<Iconify icon="mdi:view-grid-outline" width={16} />}
+            icon={<Iconify icon="solar:widget-4-linear" width={16} />}
             label={`${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`}
             sx={{ flexShrink: 0 }}
           />
@@ -585,26 +622,19 @@ function SharedDashboardView({ dashboard }) {
             ))}
           </Box>
         ) : (
-          <Box
+          <EmptyState
+            icon="solar:widget-4-linear"
+            title="No widgets yet"
+            description="This dashboard has no widgets."
             sx={{
-              py: 8,
-              px: 2,
-              textAlign: "center",
+              pt: 6,
+              pb: 6,
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
               borderRadius: 1,
             }}
-          >
-            <Iconify
-              icon="mdi:view-dashboard-outline"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography sx={{ fontSize: 14, color: "text.secondary" }}>
-              No widgets in this dashboard
-            </Typography>
-          </Box>
+          />
         )}
       </Box>
     </Box>
@@ -644,8 +674,8 @@ function DashboardWidgetPreview({ widget }) {
           <Box sx={{ minWidth: 0 }}>
             <Typography
               sx={{
-                fontSize: 15,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -689,9 +719,9 @@ function DashboardWidgetPreview({ widget }) {
           sx={{
             mb: 1,
             fontSize: 11,
-            fontWeight: 700,
+            fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
+            textTransform: "none",
           }}
         >
           Metrics
@@ -708,7 +738,7 @@ function DashboardWidgetPreview({ widget }) {
             ))}
           </Stack>
         ) : (
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             No metrics configured
           </Typography>
         )}
@@ -723,16 +753,16 @@ function WidgetStat({ label, value }) {
       <Typography
         sx={{
           fontSize: 11,
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.disabled",
-          textTransform: "uppercase",
+          textTransform: "none",
         }}
       >
         {label}
       </Typography>
       <Typography
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 600,
           color: "text.primary",
           wordBreak: "break-word",

@@ -73,7 +73,9 @@ const DevelopBarLeftSection = ({
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
+  const isSyntheticDataset = Boolean(
+    tableData?.data?.result?.synthetic_dataset,
+  );
   const theme = useTheme();
   const { search, setSearch } = useDevelopSearchStore();
   const setCellHeight = useDevelopCellHeight((s) => s.setCellHeight);
@@ -144,7 +146,7 @@ const DevelopBarLeftSection = ({
     queryClient.setQueryData(
       getDatasetQueryKey(dataset, 0, [], [], ""),
       (oldData) => {
-        const existingColumnOrder = oldData?.data?.result?.columnConfig;
+        const existingColumnOrder = oldData?.data?.result?.column_config;
 
         const newColumnOrder = existingColumnOrder.map((col) => {
           columnOrder.push(col.id);
@@ -155,10 +157,6 @@ const DevelopBarLeftSection = ({
             is_visible: nextVisible,
             is_frozen: col.pinned,
           };
-          // Update BOTH snake_case (canonical) and camelCase (alias) keys
-          // so downstream reads of either form stay in sync. Without this,
-          // `col.is_visible` would remain stale and downstream code using
-          // `col?.is_visible ?? col?.isVisible` would read the old value.
           return col.id === columnId
             ? { ...col, is_visible: nextVisible, isVisible: nextVisible }
             : col;
@@ -170,7 +168,7 @@ const DevelopBarLeftSection = ({
             ...oldData.data,
             result: {
               ...oldData.data.result,
-              columnConfig: newColumnOrder,
+              column_config: newColumnOrder,
             },
           },
         };
@@ -191,7 +189,7 @@ const DevelopBarLeftSection = ({
     queryClient.setQueryData(
       getDatasetQueryKey(dataset, 0, [], [], ""),
       (oldData) => {
-        const existingColumnOrder = oldData?.data?.result?.columnConfig;
+        const existingColumnOrder = oldData?.data?.result?.column_config;
         const colDefMap = existingColumnOrder.reduce((acc, col) => {
           acc[col.id] = col;
           return acc;
@@ -212,7 +210,7 @@ const DevelopBarLeftSection = ({
             ...oldData.data,
             result: {
               ...oldData.data.result,
-              columnConfig: newColumnOrder,
+              column_config: newColumnOrder,
             },
           },
         };
@@ -259,7 +257,7 @@ const DevelopBarLeftSection = ({
               endAdornment: search && (
                 <InputAdornment position="end">
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     onClick={() => setSearchExtended("")}
                     sx={{ color: "text.secondary", cursor: "pointer" }}
                   />

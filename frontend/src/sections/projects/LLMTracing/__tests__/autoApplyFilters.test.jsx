@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import PropTypes from "prop-types";
 import { act, fireEvent, render, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import TraceFilterPanel, {
+  hasIncompleteMapRow,
   hasIncompleteNumericRow,
+  parseMapFilterValue,
   serializeFilterSet,
 } from "../TraceFilterPanel";
 
@@ -10,13 +13,34 @@ vi.mock("src/hooks/use-ai-filter", () => ({
   useAIFilter: () => ({ parseQuery: vi.fn(), loading: false, error: null }),
 }));
 
-vi.mock("src/hooks/useDashboards", () => ({
-  useDashboardFilterValues: () => ({
-    data: [],
-    isLoading: false,
-    isError: false,
-  }),
-}));
+vi.mock("src/hooks/useDashboards", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useDashboardFilterValues: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+    }),
+    usePropertyCatalog: () => ({
+      metrics: [],
+      legacyFallbackRequired: false,
+      queryReadState: "complete",
+      isFetching: false,
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+      error: null,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+      isFetchingNextPage: false,
+      isFetchNextPageError: false,
+      cursorChainStopped: false,
+      data: { pages: [] },
+    }),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // hasIncompleteNumericRow — the gate that holds auto-apply while a numeric row
@@ -63,6 +87,39 @@ describe("hasIncompleteNumericRow", () => {
   });
 });
 
+describe("flat JSON map editing", () => {
+  it("parses and deterministically orders a valid flat object", () => {
+    expect(parseMapFilterValue('{"tier":"vip","attempt":2,"ok":true}')).toEqual(
+      { attempt: 2, ok: true, tier: "vip" },
+    );
+  });
+
+  it.each([
+    ["partial JSON", '{"tier":'],
+    ["empty object", "{}"],
+    ["nested object", '{"nested":{"tier":"vip"}}'],
+    ["nested array", '{"nested":["vip"]}'],
+    ["null member", '{"tier":null}'],
+  ])("holds auto-apply for %s", (_label, value) => {
+    expect(
+      hasIncompleteMapRow([{ fieldType: "map", operator: "contains", value }]),
+    ).toBe(true);
+  });
+
+  it("allows clearing a map filter and no-value map operators", () => {
+    expect(
+      hasIncompleteMapRow([
+        { fieldType: "map", operator: "contains", value: "" },
+      ]),
+    ).toBe(false);
+    expect(
+      hasIncompleteMapRow([
+        { fieldType: "map", operator: "is_null", value: "not JSON" },
+      ]),
+    ).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // serializeFilterSet — canonical dedup projection (non-blocking review note):
 // sets that produce the same API query serialize identically regardless of
@@ -75,10 +132,20 @@ describe("serializeFilterSet", () => {
 
   it("ignores key order and display-only fields", () => {
     const a = [
-      { field: "latency", operator: "greater_than", value: "5", fieldName: "Latency" },
+      {
+        field: "latency",
+        operator: "greater_than",
+        value: "5",
+        fieldName: "Latency",
+      },
     ];
     const b = [
-      { value: "5", operator: "greater_than", field: "latency", fieldCategory: "system" },
+      {
+        value: "5",
+        operator: "greater_than",
+        field: "latency",
+        fieldCategory: "system",
+      },
     ];
     expect(serializeFilterSet(a)).toBe(serializeFilterSet(b));
   });
@@ -101,7 +168,7 @@ describe("TraceFilterPanel auto-apply behavior", () => {
     type: "number",
   };
 
-  const renderPanel = (currentFilters, { open = true } = {}) => {
+  const renderPanel = (currentFilters, { open = true, ...panelProps } = {}) => {
     const onApply = vi.fn();
     const onClose = vi.fn();
     const anchorEl = document.createElement("button");
@@ -119,12 +186,19 @@ describe("TraceFilterPanel auto-apply behavior", () => {
           currentFilters={currentFilters}
           properties={[NUMERIC_PROP]}
           showQueryTab={false}
+          {...panelProps}
           {...props}
         />
       </QueryClientProvider>
     );
     const utils = render(ui());
-    return { onApply, onClose, anchorEl, rerender: () => utils.rerender(ui({ open: false })), utils };
+    return {
+      onApply,
+      onClose,
+      anchorEl,
+      rerender: () => utils.rerender(ui({ open: false })),
+      utils,
+    };
   };
 
   beforeEach(() => {
@@ -137,7 +211,12 @@ describe("TraceFilterPanel auto-apply behavior", () => {
 
   it("applies a changed value after the 350ms debounce", () => {
     const { onApply, utils } = renderPanel([
-      { field: "latency", fieldType: "number", operator: "greater_than", value: "5" },
+      {
+        field: "latency",
+        fieldType: "number",
+        operator: "greater_than",
+        value: "5",
+      },
     ]);
     // seeded on open — no apply yet
     expect(onApply).not.toHaveBeenCalled();
@@ -154,9 +233,113 @@ describe("TraceFilterPanel auto-apply behavior", () => {
     expect(serializeFilterSet(onApply.mock.calls[0][0])).toContain("7");
   });
 
+  it("applies a committed picker value immediately without a duplicate", () => {
+    const ExactValuePicker = ({ onChange }) => (
+      <button
+        type="button"
+        onClick={() => onChange(["exact text"], ["string"])}
+      >
+        Choose exact text
+      </button>
+    );
+    ExactValuePicker.propTypes = { onChange: PropTypes.func.isRequired };
+    const { onApply, utils } = renderPanel(
+      [
+        {
+          field: "conversation.transcript.0.message.content",
+          fieldType: "string",
+          fieldCategory: "attribute",
+          operator: "equals",
+          value: ["old text"],
+          valueTypes: ["string"],
+        },
+      ],
+      {
+        properties: [
+          {
+            id: "conversation.transcript.0.message.content",
+            name: "Transcript message",
+            category: "attribute",
+            type: "string",
+          },
+        ],
+        ValuePickerOverride: ExactValuePicker,
+      },
+    );
+
+    act(() => {
+      fireEvent.click(utils.getByRole("button", { name: "Choose exact text" }));
+    });
+
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0][0][0]).toMatchObject({
+      field: "conversation.transcript.0.message.content",
+      value: ["exact text"],
+      valueTypes: ["string"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the debounce alive when the parent recreates onApply", () => {
+    const applied = vi.fn();
+    const anchorEl = document.createElement("button");
+    document.body.appendChild(anchorEl);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (renderTick) => (
+      <QueryClientProvider client={queryClient}>
+        <TraceFilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={vi.fn()}
+          // ObserveToolbar creates this adapter inline. Query/graph progress
+          // can therefore give it a fresh identity while the picker is open.
+          onApply={(filters) => applied(renderTick, filters)}
+          currentFilters={[
+            {
+              field: "latency",
+              fieldType: "number",
+              operator: "greater_than",
+              value: "5",
+            },
+          ]}
+          properties={[NUMERIC_PROP]}
+          showQueryTab={false}
+        />
+      </QueryClientProvider>
+    );
+    const utils = render(panel(0));
+
+    fireEvent.change(utils.getByDisplayValue("5"), {
+      target: { value: "7" },
+    });
+    // Simulate progress renders arriving faster than the debounce. They must
+    // not postpone a committed filter change indefinitely.
+    for (let renderTick = 1; renderTick <= 4; renderTick += 1) {
+      act(() => {
+        vi.advanceTimersByTime(100);
+        utils.rerender(panel(renderTick));
+      });
+    }
+
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(serializeFilterSet(applied.mock.calls[0][1])).toContain("7");
+    document.body.removeChild(anchorEl);
+  });
+
   it("seeds last-applied on open so existing filters do not refire", () => {
     const { onApply } = renderPanel([
-      { field: "latency", fieldType: "number", operator: "greater_than", value: "5" },
+      {
+        field: "latency",
+        fieldType: "number",
+        operator: "greater_than",
+        value: "5",
+      },
     ]);
     // Opening with an already-applied filter must not fire a redundant apply,
     // even after the debounce window elapses (seed-on-open dedup).
@@ -168,7 +351,12 @@ describe("TraceFilterPanel auto-apply behavior", () => {
 
   it("holds auto-apply while a partial/invalid numeric is typed", () => {
     const { onApply, utils } = renderPanel([
-      { field: "latency", fieldType: "number", operator: "greater_than", value: "5" },
+      {
+        field: "latency",
+        fieldType: "number",
+        operator: "greater_than",
+        value: "5",
+      },
     ]);
     const input = utils.getByDisplayValue("5");
 
@@ -193,7 +381,12 @@ describe("TraceFilterPanel auto-apply behavior", () => {
 
   it("holds when one bound of an applied range is cleared (no drop/refire)", () => {
     const { onApply, utils } = renderPanel([
-      { field: "latency", fieldType: "number", operator: "between", value: ["5", "10"] },
+      {
+        field: "latency",
+        fieldType: "number",
+        operator: "between",
+        value: ["5", "10"],
+      },
     ]);
     const maxInput = utils.getByDisplayValue("10");
 
@@ -210,7 +403,12 @@ describe("TraceFilterPanel auto-apply behavior", () => {
 
   it("flushes a pending value immediately when the popover closes", () => {
     const { onApply, utils } = renderPanel([
-      { field: "latency", fieldType: "number", operator: "greater_than", value: "5" },
+      {
+        field: "latency",
+        fieldType: "number",
+        operator: "greater_than",
+        value: "5",
+      },
     ]);
     const input = utils.getByDisplayValue("5");
 
@@ -227,7 +425,12 @@ describe("TraceFilterPanel auto-apply behavior", () => {
             onClose={vi.fn()}
             onApply={onApply}
             currentFilters={[
-              { field: "latency", fieldType: "number", operator: "greater_than", value: "5" },
+              {
+                field: "latency",
+                fieldType: "number",
+                operator: "greater_than",
+                value: "5",
+              },
             ]}
             properties={[NUMERIC_PROP]}
             showQueryTab={false}

@@ -3,14 +3,11 @@ import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import ButtonBase from "@mui/material/ButtonBase";
 import Typography from "@mui/material/Typography";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 import SkillEditorDialog from "./SkillEditorDialog";
 
 export default function SkillPicker({ onSkillsChanged }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState(null);
 
@@ -53,24 +50,18 @@ export default function SkillPicker({ onSkillsChanged }) {
               gap: 0.75,
               px: 1.5,
               py: 0.75,
-              borderRadius: "10px",
+              borderRadius: "8px",
               border: "1px dashed",
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.12)
-                : alpha(theme.palette.common.black, 0.12),
+              borderColor: "border.default",
               transition: "all 0.15s ease",
               "&:hover": {
-                borderColor: isDark
-                  ? alpha(theme.palette.common.white, 0.25)
-                  : alpha(theme.palette.common.black, 0.25),
-                bgcolor: isDark
-                  ? alpha(theme.palette.common.white, 0.04)
-                  : alpha(theme.palette.common.black, 0.03),
+                borderColor: "border.default",
+                bgcolor: "action.hover",
               },
             }}
           >
             <Iconify
-              icon="mdi:plus"
+              icon="solar:add-linear"
               width={14}
               sx={{ color: "text.disabled" }}
             />
@@ -117,25 +108,19 @@ export default function SkillPicker({ onSkillsChanged }) {
               gap: 0.75,
               px: 1.5,
               py: 0.75,
-              borderRadius: "10px",
+              borderRadius: "8px",
               border: 1,
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.1)
-                : alpha(theme.palette.common.black, 0.1),
+              borderColor: "border.default",
               bgcolor: "transparent",
               transition: "all 0.15s ease",
               "&:hover": {
-                bgcolor: isDark
-                  ? alpha(theme.palette.common.white, 0.06)
-                  : alpha(theme.palette.common.black, 0.04),
-                borderColor: isDark
-                  ? alpha(theme.palette.common.white, 0.2)
-                  : alpha(theme.palette.common.black, 0.2),
+                bgcolor: "action.hover",
+                borderColor: "border.default",
               },
             }}
           >
             <Iconify
-              icon={skill.icon || "mdi:star-outline"}
+              icon={skill.icon || "solar:star-linear"}
               width={14}
               sx={{ color: "text.disabled" }}
             />
@@ -159,23 +144,21 @@ export default function SkillPicker({ onSkillsChanged }) {
             gap: 0.75,
             px: 1.5,
             py: 0.75,
-            borderRadius: "10px",
+            borderRadius: "8px",
             border: "1px dashed",
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.12)
-              : alpha(theme.palette.common.black, 0.12),
+            borderColor: "border.default",
             transition: "all 0.15s ease",
             "&:hover": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.25)
-                : alpha(theme.palette.common.black, 0.25),
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.04)
-                : alpha(theme.palette.common.black, 0.03),
+              borderColor: "border.default",
+              bgcolor: "action.hover",
             },
           }}
         >
-          <Iconify icon="mdi:plus" width={14} sx={{ color: "text.disabled" }} />
+          <Iconify
+            icon="solar:add-linear"
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
           <Typography
             sx={{ fontSize: 12, color: "text.disabled", whiteSpace: "nowrap" }}
           >

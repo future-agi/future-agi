@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import {
   IssueCell,
   LastTriggeredCell,

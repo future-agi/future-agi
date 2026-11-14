@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 import structlog
+
 from ee.licensing.validator import hash_key
 
 logger = structlog.get_logger(__name__)
@@ -80,13 +81,14 @@ def invalidate_token() -> None:
 
 def _activate() -> ServiceToken | None:
     try:
+        from tfc.deployment_telemetry.config import get_version
         from tfc.deployment_telemetry.state import get_or_create_telemetry_state
 
         state = get_or_create_telemetry_state()
 
         payload = {
             "instance_id": str(state.instance_id),
-            "version": os.getenv("FUTURE_AGI_VERSION", "unknown"),
+            "version": get_version(),
         }
 
         license_key = _get_configured_license_key()
@@ -154,6 +156,15 @@ def dispatch_managed_request(
     timeout: float,
     on_unauthorized: Callable[[], None],
 ) -> dict:
+    """POST to the managed gateway and map failures to typed errors.
+
+    Shared transport for both managed-AI auth models: the self-hosted
+    activation-token flow (``call_managed_service``) and the cloud
+    internal-key flow (``ee.licensing.managed_ai``). Only the 401 response
+    is handled differently between them, so callers pass ``on_unauthorized``
+    (which must raise); every other status maps identically here so the two
+    paths cannot drift.
+    """
     import httpx
 
     try:
@@ -195,7 +206,10 @@ async def dispatch_managed_stream(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
-                "POST", url, json=json_body, headers=headers
+                "POST",
+                url,
+                json=json_body,
+                headers=headers,
             ) as response:
                 _raise_for_managed_status(response.status_code, on_unauthorized)
                 response.raise_for_status()
@@ -224,6 +238,12 @@ def call_managed_service(
     json_body: dict,
     timeout: float = 30.0,
 ) -> dict:
+    """Make an authenticated request to the FutureAGI managed gateway.
+
+    Self-hosted EE auth: exchange the license for a short-lived service
+    token, then call the gateway with it. Raises ManagedServiceError on
+    auth/service failures with typed codes.
+    """
     token = get_service_token()
     if token is None:
         raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")
