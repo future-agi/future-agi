@@ -8,6 +8,11 @@ import { test, expect } from '../lib/scope-actors';
 import type { ScopeActor } from '../lib/scope-actors';
 import { ApiError } from '../lib/api-client';
 import { E2E } from '../lib/env';
+import {
+  TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
+  semanticVerdict, unknownModelVerdict,
+} from '../lib/typesafe-live';
+import type { CallRecord, Verdict } from '../lib/typesafe-live';
 
 // Opt-in live run of TypeSafe's Jev decision models through the whole
 // product: a TypeSafe provider added in the dashboard, a gateway key,
@@ -48,8 +53,6 @@ const DRY_RUN = BASE_URL !== '' && (() => {
 })();
 // docker-compose.distributed.yml AGENTCC_ADMIN_TOKEN default; see provider-path-prefix.spec.ts.
 const GATEWAY_ADMIN_TOKEN = 'local-dev-only-admin-token-replace-me';
-// internal/modeldb/decision_models.go: Jev input $0.042 per million tokens, output $0.
-const INPUT_PER_TOKEN = 0.042e-6;
 const OUT_DIR = fileURLToPath(new URL('../test-results/typesafe-live', import.meta.url));
 const UI_READY = 60_000;
 const LOG_VISIBLE = { timeout: 90_000, intervals: [2000, 5000] };
@@ -57,16 +60,6 @@ const CONFIG_VISIBLE = { timeout: 120_000, intervals: [2000, 5000] };
 const PROVIDER = 'typesafe';
 const BAD_KEY_PROVIDER = 'typesafe-badkey';
 
-type Verdict = 'PASS' | 'FAIL' | 'NOTE';
-interface CallRecord {
-  label: string;
-  request: { route: string; model?: string; body: unknown };
-  status: number;
-  headers: Record<string, string>;
-  body: unknown;
-  logRow: Record<string, unknown> | 'no row' | 'not checked';
-  expectedCost?: string;
-}
 interface CaseRecord {
   id: string; title: string; verdict: Verdict; ticket: string; actual: string;
   calls: CallRecord[];
@@ -105,17 +98,7 @@ function truncateState(body: unknown): unknown {
   }
   return copy;
 }
-const expectedCost = (inputTokens: number) => (inputTokens * INPUT_PER_TOKEN).toFixed(6);
-
-// Synthetic states only: made-up support tickets and lorem text.
-const TICKET = 'Synthetic support ticket #E2E-4471: the customer says the export button on the reports page '
-  + 'does nothing after the latest update; the agent asked for a screenshot and promised a follow-up within a day.';
-function largeState(minTokens: number): string {
-  const lorem = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore '
-    + 'et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip. ';
-  // ~4 characters per token; a margin keeps it above minTokens.
-  return `${TICKET}\n${lorem.repeat(Math.ceil((minTokens * 4.4) / lorem.length))}`;
-}
+// Synthetic states only: made-up support tickets (TICKET) and lorem text.
 const Q = {
   noul: { resolved: { type: 'noul', instructions: 'Was the customer promised a follow-up?' } },
   choice: { sentiment: { type: 'choice', instructions: 'What is the customer sentiment?',
@@ -280,15 +263,11 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
     const headers = Object.fromEntries(Object.entries(res.headers).filter(([k]) => k.startsWith('x-agentcc-')));
-    if (opts.upstream !== false && res.status === 200) {
-      report.header.upstreamCalls += 1;
-      report.header.upstreamInputTokens += Number((parsed as { usage?: { input_tokens?: number } })?.usage?.input_tokens ?? 0);
-    } else if (headers['x-agentcc-upstream-status']) {
-      report.header.upstreamCalls += 1;
-    }
     const model = (body as { model?: string })?.model;
-    return { label, request: { route: '/v1/systemone', model, body: truncateState(body ?? opts.raw) },
+    const record: CallRecord = { label, request: { route: '/v1/systemone', model, body: truncateState(body ?? opts.raw) },
       status: res.status, headers, body: parsed, logRow: 'not checked' };
+    countUpstream(report.header, record, opts.upstream !== false);
+    return record;
   };
   const logRow = async (requestId: string | undefined, expectRow: boolean) => {
     if (!requestId) return 'no row' as const;
@@ -336,38 +315,18 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       return c.status === 200 && isDeepStrictEqual(got, asked[i]);
     });
 
-    const shapeIssues: string[] = [];
-    for (const c of typed) {
-      const b = c.body as Record<string, unknown>;
-      const keys = Object.keys(b ?? {}).sort().join(',');
-      if (keys !== 'answers,model,usage') shapeIssues.push(`${c.label}: body keys ${keys}`);
-      if (c.headers['x-agentcc-provider'] !== PROVIDER) shapeIssues.push(`${c.label}: x-agentcc-provider ${c.headers['x-agentcc-provider']}`);
-      if (c.headers['x-agentcc-model-used'] !== b?.model) shapeIssues.push(`${c.label}: x-agentcc-model-used ${c.headers['x-agentcc-model-used']} vs body model ${String(b?.model)}`);
-    }
-    if (DRY_RUN) {
-      // e2e/stack/mock-llm/server.mjs: model echoed, 37 input tokens, pass → noul 0.9, last choice/level.
-      const want = { model: 'jev-latest', usage: { input_tokens: 37, output_tokens: 0 },
-        answers: { resolved: { type: 'noul', noul: 0.9 } } };
-      if (!isDeepStrictEqual(typed[0].body, want)) shapeIssues.push(`noul body differs from the mock's: ${JSON.stringify(typed[0].body)}`);
-    }
+    const shape = answerShape(typed, { dryRun: DRY_RUN, provider: PROVIDER });
     addCase({ id: '3', title: 'Answer unchanged; resolved model recorded', ticket: 'The answer comes back unchanged, and the resolved model version is recorded',
-      verdict: shapeIssues.length ? 'FAIL' : 'PASS',
-      actual: shapeIssues.join('; ') || `body keys answers,model,usage; TypeSafe model "${String((typed[0].body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`, calls: [typed[0]] });
+      verdict: shape.fails.length ? 'FAIL' : shape.notes.length ? 'NOTE' : 'PASS',
+      actual: [...shape.fails, ...shape.notes].join('; ')
+        || `body keys answers,model,usage; TypeSafe model "${String((typed[0].body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`, calls: [typed[0]] });
 
     const logIssues: string[] = [];
     for (const c of typed) {
       c.logRow = await logRow(c.headers['x-agentcc-request-id'], true);
       const usage = (c.body as { usage?: { input_tokens: number; output_tokens: number } }).usage;
       c.expectedCost = usage ? expectedCost(usage.input_tokens) : undefined;
-      if (c.logRow === 'no row') { logIssues.push(`${c.label}: no row`); continue; }
-      const r = c.logRow as Record<string, unknown>;
-      const checks: Array<[string, unknown, unknown]> = [
-        ['rows', r.count, 1], ['model', r.model, 'typesafe/jev-latest'], ['provider', r.provider, PROVIDER],
-        ['metadata.endpoint_type', r.endpoint_type, 'decision'], ['input_tokens', r.input_tokens, usage?.input_tokens],
-        ['output_tokens', r.output_tokens, usage?.output_tokens], ['resolved_model', r.resolved_model, (c.body as Record<string, unknown>).model],
-        ['cost', Number(r.cost).toFixed(6), c.expectedCost], ['x-agentcc-cost', Number(c.headers['x-agentcc-cost']).toFixed(6), c.expectedCost],
-      ];
-      for (const [name, got, want] of checks) if (got !== want) logIssues.push(`${c.label}: ${name} ${String(got)} ≠ ${String(want)}`);
+      logIssues.push(...rowIssues(c, { model: 'typesafe/jev-latest', provider: PROVIDER }));
     }
     await page.goto('/dashboard/gateway/logs', { waitUntil: 'domcontentloaded' });
     const uiRow = await page.getByText('typesafe/jev-latest').first().waitFor({ state: 'visible', timeout: UI_READY })
@@ -515,15 +474,14 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       c.logRow = await logRow(c.headers['x-agentcc-request-id'], c.status === 200 || !!c.headers['x-agentcc-upstream-status']);
       semantic.push(c);
     }
-    const semOk = semantic.every(c => (c.status === 400 || c.status === 422) && !!c.headers['x-agentcc-upstream-status']);
     addCase({ id: '6c', title: 'Semantically bad questions reach TypeSafe', ticket: 'Malformed questions: 400 with a clear message', calls: semantic,
-      verdict: semOk ? (semantic.some(c => errorOf(c).message === 'TypeSafe rejected the request.') ? 'NOTE' : 'PASS') : 'FAIL',
+      verdict: semanticVerdict(semantic, { dryRun: DRY_RUN }),
       actual: semantic.map(c => `${c.label}: gateway ${c.status} ${errorOf(c).code}, upstream ${c.headers['x-agentcc-upstream-status'] ?? 'none'}, message "${errorOf(c).message}"`).join('; ') });
 
     const refusal = await call('200 refusal answer', { model: 'typesafe/jev-latest', state: `${TICKET} e2e-decision:refuse`, questions: Q.noul });
     const refusalAnswer = (refusal.body as { answers?: Record<string, { type?: string }> })?.answers?.resolved?.type;
     addCase({ id: '6d', title: 'A 200 answer holding a refusal passes through', ticket: 'Upstream refusal: passed through, not a 502', calls: [refusal],
-      verdict: refusal.status === 200 ? (refusalAnswer === 'refusal' ? 'PASS' : 'NOTE') : 'FAIL',
+      verdict: refusalVerdict(refusal, { dryRun: DRY_RUN }),
       actual: refusalAnswer === 'refusal' ? '200 with answers.resolved = {"type":"refusal"}, unchanged'
         : `${refusal.status}; TypeSafe answered "${refusalAnswer}" (a live refusal cannot be forced with synthetic text; dry-run evidence covers it)` });
 
@@ -571,11 +529,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       c.logRow = await logRow(c.headers['x-agentcc-request-id'], c.status === 200);
       const usage = (c.body as { usage?: { input_tokens: number; output_tokens: number } }).usage;
       c.expectedCost = usage ? expectedCost(usage.input_tokens) : undefined;
-      const got = Number(c.headers['x-agentcc-cost']).toFixed(6);
-      if (c.status !== 200 || got !== c.expectedCost) issues.push(`${c.label}: ${c.status} cost ${got} want ${c.expectedCost} (${usage?.input_tokens} in, ${usage?.output_tokens} out)`);
-      if (!DRY_RUN && (usage?.input_tokens ?? 0) < 20_000) issues.push(`${c.label}: only ${usage?.input_tokens} input tokens`);
-      const row = c.logRow as Record<string, unknown>;
-      if (row !== null && typeof row === 'object' && Number(row.cost).toFixed(6) !== c.expectedCost) issues.push(`${c.label}: log cost ${String(row.cost)}`);
+      issues.push(...largeCallIssues(c, { dryRun: DRY_RUN, provider: PROVIDER, minTokens: 20_000 }));
     }
     const listing = await gateway('GET', '/v1/decisions/models', auth);
     const entries = (json(listing).data ?? []) as Array<{ id: string; pricing?: { input_per_mtok: number; output_per_mtok: number } }>;
@@ -602,8 +556,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     const unknown = await call('unknown version jev-0.0.0', body('typesafe/jev-0.0.0'));
     unknown.logRow = await logRow(unknown.headers['x-agentcc-request-id'], !!unknown.headers['x-agentcc-upstream-status']);
     addCase({ id: '6f', title: 'Unknown model upstream', ticket: 'Upstream refusal: passed through, not a 502', calls: [unknown],
-      verdict: DRY_RUN ? (unknown.status === 502 ? 'FAIL' : 'NOTE')
-        : (unknown.status === 404 && errorOf(unknown).code === 'model_not_found' && unknown.headers['x-agentcc-upstream-status'] === '404' ? 'PASS' : 'FAIL'),
+      verdict: unknownModelVerdict(unknown, { dryRun: DRY_RUN }),
       actual: `${unknown.status} ${errorOf(unknown).code}, upstream status ${unknown.headers['x-agentcc-upstream-status'] ?? 'none'}`
         + (DRY_RUN ? ' (the mock answers 400 for a model it does not know; live TypeSafe is expected to answer 404 → model_not_found)' : '') });
   });
