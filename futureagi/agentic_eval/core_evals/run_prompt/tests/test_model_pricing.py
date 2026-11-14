@@ -267,9 +267,9 @@ class TestPer1kCharacterPricing:
 
         result = calculate_total_cost("gemini-1.5-pro", token_usage)
 
-        # gemini-1.5-pro: $0.007 / 1k input chars and $0.007 / 1k output chars.
-        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
-        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+        # Vertex AI short-context online text: $0.0003125/$0.00125 per 1k chars.
+        expected_prompt_cost = round((50000 / 1_000) * 0.0003125, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.00125, 6)
 
         assert result["total_cost"] > 0.0  # the core regression assertion
         assert result["prompt_cost"] == expected_prompt_cost
@@ -291,8 +291,8 @@ class TestPer1kCharacterPricing:
 
         result = calculate_total_cost("gemini-1.5-pro", token_usage)
 
-        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
-        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+        expected_prompt_cost = round((50000 / 1_000) * 0.0003125, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.00125, 6)
 
         assert result["prompt_cost"] == expected_prompt_cost
         assert result["completion_cost"] == expected_completion_cost
@@ -318,6 +318,89 @@ class TestPer1kCharacterPricing:
         assert result["total_cost"] == 0.015
         assert result["prompt_cost"] == 0.015
         assert result["completion_cost"] == 0.0
+
+
+# =============================================================================
+# Unit Tests - Official Gemini 1.5 online text rates
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("model", "side", "rate"),
+    [
+        ("gemini-1.5-pro", "input", 0.0003125),
+        ("gemini-1.5-pro", "output", 0.00125),
+        ("gemini-1.5-pro-002", "input", 0.0003125),
+        ("gemini-1.5-pro-002", "output", 0.00125),
+        ("gemini-1.5-flash", "input", 0.00001875),
+        ("gemini-1.5-flash", "output", 0.000075),
+        ("gemini-1.5-flash-002", "input", 0.00001875),
+        ("gemini-1.5-flash-002", "output", 0.000075),
+    ],
+)
+def test_gemini_character_catalog_rate_and_unit(model, side, rate):
+    """Google's 2026-11-14 page: online text, <=128K input-token tier.
+
+    Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+    Assert each quoted side separately; no inferred tokens-to-characters ratio.
+    The existing flat catalog does not represent the long-context tier.
+    """
+    pricing = get_model_pricing(model)
+    assert set(pricing) == {
+        "input_per_1k_characters",
+        "output_per_1k_characters",
+    }
+    assert pricing[f"{side}_per_1k_characters"] == rate
+    usage = {"input_characters": 0, "output_characters": 0}
+    usage[f"{side}_characters"] = 1_000_000
+    cost = calculate_total_cost(model, usage)
+    assert cost["pricing_source"] == "available_models"
+    assert cost["total_cost"] == round(1000 * rate, 6)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("gemini-1.5-pro-001", "gemini-1.5-pro"),
+        ("gemini-1.5-pro-20240924", "gemini-1.5-pro"),
+        ("vertex_ai/gemini-1.5-pro", "gemini-1.5-pro"),
+        ("vertex_ai/gemini-1.5-pro-001", "gemini-1.5-pro"),
+        ("gemini/gemini-1.5-pro-latest", "gemini-1.5-pro"),
+        ("gemini-1.5-flash-001", "gemini-1.5-flash"),
+        ("gemini-1.5-flash-20240924", "gemini-1.5-flash"),
+        ("vertex_ai/gemini-1.5-flash", "gemini-1.5-flash"),
+        ("vertex_ai/gemini-1.5-flash-001", "gemini-1.5-flash"),
+        ("gemini/gemini-1.5-flash-latest", "gemini-1.5-flash"),
+    ],
+)
+def test_gemini_character_aliases_retain_catalog_resolution(alias, canonical):
+    """Existing family fallbacks inherit rates, not historical SKU guarantees."""
+    assert get_model_pricing(alias) == get_model_pricing(canonical)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("model", "pricing"),
+    [
+        (
+            "vertex_ai/gemini-1.5-pro-002",
+            {"input_per_1M_tokens": 3.5, "output_per_1M_tokens": 10.5},
+        ),
+        (
+            "vertex_ai/gemini-1.5-flash-002",
+            {"input_per_1M_tokens": 0.35, "output_per_1M_tokens": 1.05},
+        ),
+        (
+            "openrouter/google/gemini-pro-1.5",
+            {"input_per_1k_characters": 0.0025, "output_per_1k_characters": 0.0025},
+        ),
+    ],
+)
+def test_gemini_token_and_other_provider_catalog_entries_unchanged(model, pricing):
+    """A Vertex text-character quote does not establish other units/providers."""
+    assert get_model_pricing(model) == pricing
 
 
 # =============================================================================

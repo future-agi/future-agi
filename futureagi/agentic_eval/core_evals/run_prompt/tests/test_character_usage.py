@@ -86,7 +86,9 @@ def test_response_formatter_preserves_real_character_counts(characters):
     assert metadata["usage"]["output_characters"] == characters["output_characters"]
     assert metadata["cost"]["pricing_source"] == "available_models"
     assert metadata["cost"]["total_cost"] == round(
-        sum(characters.values()) / 1000 * 0.007, 6
+        characters["input_characters"] / 1000 * 0.0003125
+        + characters["output_characters"] / 1000 * 0.00125,
+        6,
     )
 
 

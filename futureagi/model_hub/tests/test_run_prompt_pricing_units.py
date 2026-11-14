@@ -165,7 +165,11 @@ def test_preview_api_preserves_character_usage_or_labels_estimate(
         assert result["token_usage"]["input_characters"] == 50000
         assert result["token_usage"]["output_characters"] == 10000
         assert result["cost"]["pricing_source"] == "available_models", result
-        assert result["cost"]["total_cost"] == 0.42, result
+        # Official Vertex AI short-context online text rates per 1k characters:
+        # 50 * $0.0003125 input + 10 * $0.00125 output = $0.028125.
+        assert result["cost"]["prompt_cost"] == 0.015625, result
+        assert result["cost"]["completion_cost"] == 0.0125, result
+        assert result["cost"]["total_cost"] == 0.028125, result
     else:
         assert "input_characters" not in observed_usage[0]
         assert "output_characters" not in observed_usage[0]
