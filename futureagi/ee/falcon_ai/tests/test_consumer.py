@@ -32,6 +32,10 @@ def _make_consumer(query_string="workspace_id=ws-123", user=None):
     consumer.accept = AsyncMock()
     consumer.close = AsyncMock()
     consumer.send_json = AsyncMock()
+    consumer.channel_layer = AsyncMock()
+    consumer.channel_name = "synthetic-channel"
+    # Membership revalidation has its own tests (test_consumer_membership.py).
+    consumer._membership.ensure_member = AsyncMock(return_value=True)
     return consumer
 
 
@@ -389,3 +393,67 @@ class TestFalconAIConsumer:
         assert event.properties["total_tokens"] == 165
         assert event.properties["gateway_cost_usd"] == "0.07"
         assert event.properties["pricing_source"] == "gateway"
+
+
+def _member_with_legacy_fk(*, membership_active):
+    """Synthetic user whose legacy FK points at a new organization.
+
+    ``membership_active`` is True or False for a single membership row in that
+    organization, or None for a truly legacy account with no membership rows.
+    """
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from tfc.constants.levels import Level
+    from tfc.middleware.workspace_context import (
+        clear_workspace_context,
+        set_workspace_context,
+    )
+
+    suffix = uuid.uuid4().hex
+    org = Organization.objects.create(name=f"Synthetic Falcon scope {suffix}")
+    set_workspace_context(organization=org)
+    try:
+        user = User.objects.create_user(
+            email=f"falcon-scope-{suffix}@example.invalid",
+            password="Synthetic-falcon-scope-password",
+            name="Synthetic Falcon User",
+            organization=org,
+            organization_role="Member",
+        )
+        if membership_active is not None:
+            OrganizationMembership.no_workspace_objects.create(
+                user=user,
+                organization=org,
+                role="Member",
+                level=Level.MEMBER,
+                is_active=membership_active,
+            )
+    finally:
+        clear_workspace_context()
+    return org, User.objects.get(pk=user.pk)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "membership_active, resolves", [(None, True), (True, True), (False, False)]
+)
+def test_legacy_fk_resolves_only_without_membership_rows(membership_active, resolves):
+    from asgiref.sync import async_to_sync
+
+    org, user = _member_with_legacy_fk(membership_active=membership_active)
+    consumer = _make_consumer(query_string="", user=user)
+    consumer.user = user
+    organization = async_to_sync(consumer._get_organization)()
+    assert (organization.id if organization else None) == (org.id if resolves else None)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_removed_member_connect_is_refused_before_former_org():
+    from asgiref.sync import async_to_sync
+
+    _, user = _member_with_legacy_fk(membership_active=False)
+    consumer = _make_consumer(query_string="", user=user)
+    async_to_sync(consumer.connect)()
+    consumer.close.assert_called_once_with(code=4002)
+    consumer.accept.assert_not_called()

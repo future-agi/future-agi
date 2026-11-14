@@ -32,6 +32,8 @@ def _make_consumer(query_string="test_id=run-123&token=fake", user=None):
     consumer.accept = AsyncMock()
     consumer.close = AsyncMock()
     consumer.send_json = AsyncMock()
+    consumer.channel_layer = AsyncMock()
+    consumer.channel_name = "synthetic-channel"
     return consumer
 
 
@@ -205,7 +207,10 @@ class TestSimulationUpdateConsumer:
         user = _make_user(is_authenticated=True, organization=_make_org())
         consumer = _make_consumer(user=user)
         consumer.test_id = "run-123"
+        consumer.user = user
         consumer.organization_id = "org-123"
+        # As connect does once the organization is resolved.
+        consumer._membership.mark_validated()
 
         await consumer._subscribe_redis()
 

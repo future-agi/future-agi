@@ -11,6 +11,7 @@ from ..base.evaluator import Evaluator
 from ..generators.litellm_generator import LiteLLMGenerator
 from ..types import IterationHistory, OptimizationResult
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
+from tfc.utils.evaluation_denials import EvaluationDenied
 from .stepper import MetaPromptStepper
 import logging
 
@@ -261,6 +262,10 @@ class MetaPromptOptimizer(BaseOptimizer):
                     for idx, res in enumerate(results)
                 },
             )
+        except EvaluationDenied:
+            # A policy refusal is not a failed score: skipping the round would
+            # re-run simulations and non-denied judges for every later round.
+            raise
         except Exception as e:
             logger.error(f"Failed to score prompt: {e}")
             return None

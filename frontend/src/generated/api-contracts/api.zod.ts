@@ -11544,11 +11544,29 @@ export const ApiTracesSpanAttributeValuesListResponse = zod.object({
 
 export const callWebsocketCreateBodySendToUuidDefault = false;
 
-export const CallWebsocketCreateBody = zod.object({
-  message: zod.string().min(1),
-  send_to_uuid: zod.boolean().default(callWebsocketCreateBodySendToUuidDefault),
-  uuid: zod.string().optional(),
-});
+export const callWebsocketCreateBodyUuidRegExp = new RegExp(
+  "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+);
+
+export const CallWebsocketCreateBody = zod
+  .object({
+    message: zod.record(zod.string(), jsonValueSchema),
+    send_to_uuid: zod
+      .boolean()
+      .default(callWebsocketCreateBodySendToUuidDefault),
+    uuid: zod
+      .string()
+      .min(1)
+      .regex(callWebsocketCreateBodyUuidRegExp)
+      .nullish()
+      .describe(
+        "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
+      ),
+  })
+  .refine((value) => !value.send_to_uuid || value.uuid != null, {
+    path: ["uuid"],
+    message: "A UUID is required for targeted delivery.",
+  });
 
 export const callWebsocketCreateResponseStatusDefault = true;
 
