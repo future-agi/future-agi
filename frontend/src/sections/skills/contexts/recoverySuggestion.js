@@ -25,3 +25,17 @@ export function suggestReviewer({ reviewers, lastReleaserId }) {
   const listed = reviewers ?? [];
   return listed.find((item) => item.id === lastReleaserId)?.id ?? (listed.length === 1 ? listed[0].id : "");
 }
+
+/** No earlier version exists to restore. A newer publication is a release-review task. */
+export function initialReleaseState(candidates, releaseRevision) {
+  const production = candidates.find((candidate) => candidate.isProduction);
+  if (!production || candidates.some((candidate) => candidate.number < production.number)) return null;
+  const next = candidates.filter((candidate) => candidate.number > production.number && candidate.eligible && candidate.selectable)
+    .sort((a, b) => b.number - a.number)[0];
+  // A reload after a rollback can also have v1 in production and newer versions.
+  // Only the first label revision establishes the initial-release case; otherwise
+  // keep consumer verification reachable instead of inferring release history.
+  // Keep restriction details visible when the only alternatives are excluded.
+  if (candidates.length > 1 && (releaseRevision !== 1 || !next)) return null;
+  return { production, next };
+}

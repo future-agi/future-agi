@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useCreateContextBinding } from "src/api/skills/context-consumers";
 import ActionReason, { reasonProps } from "../components/ActionReason";
@@ -18,7 +18,7 @@ const SUMMARY = [
   ["side_effect_policy", "Side-effect policy"],
 ];
 
-export default function ContextTargetRegistration({ contextId, canRegister }) {
+export default function ContextTargetRegistration({ contextId, canRegister, variant = "outlined" }) {
   const create = useCreateContextBinding(contextId);
   const reasonId = useId();
   const file = useRef(null);
@@ -81,7 +81,8 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
     <>
       <Stack direction="row" spacing={1} alignItems="center">
         <Button
-          variant="outlined"
+          color={variant === "contained" ? "primary" : "inherit"}
+          variant={variant}
           disabled={!canRegister}
           {...reasonProps(`${reasonId}-access`, !canRegister && actionReason)}
           onClick={() => {
@@ -105,7 +106,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
           if (!create.isPending) setOpen(false);
         }}
         title="Connect an app"
-        subTitle="Connect your app using the configuration from its build. This does not change production."
+        subTitle="Connect your app using the configuration from its build. Connecting doesn't change production."
         actionBtnTitle="Register target"
         actionBtnProps={reasonProps(`${reasonId}-submit`, actionReason)}
         isValid={valid}
@@ -179,6 +180,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
               onChange={(event) => readManifest(event.target.files?.[0])}
             />
           </Stack>
+          <Typography variant="s3" color="text.secondary">This is the runtime manifest from your app build. <Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
           {manifest &&
             SUMMARY.map(([key, title]) => (
               <IdentityValue
@@ -197,4 +199,5 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
 ContextTargetRegistration.propTypes = {
   contextId: PropTypes.string.isRequired,
   canRegister: PropTypes.bool,
+  variant: PropTypes.oneOf(["contained", "outlined"]),
 };
