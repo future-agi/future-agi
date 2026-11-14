@@ -14,6 +14,7 @@ const TagsCell = ({
   entityType,
   canEditTags = true,
   onTagsUpdated,
+  projectId,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const tags = Array.isArray(value) ? value : [];
@@ -115,6 +116,7 @@ const TagsCell = ({
           traceId={targetTraceId}
           spanId={targetSpanId}
           currentTags={value}
+          projectId={projectId}
         />
       )}
     </>
@@ -133,6 +135,8 @@ TagsCell.propTypes = {
   // Called when the popover closes after editing, so the server-side grid can
   // refresh and show the saved tags.
   onTagsUpdated: PropTypes.func,
+  // The row's project, so the tag input can suggest that project's tags.
+  projectId: PropTypes.string,
 };
 
 export default TagsCell;

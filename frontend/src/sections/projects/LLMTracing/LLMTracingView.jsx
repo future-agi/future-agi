@@ -4822,6 +4822,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   setTagsBulkItems([]);
                 }}
                 bulkItems={tagsBulkItems}
+                projectId={observeId}
               />
             </Suspense>
             <Suspense fallback={null}>
