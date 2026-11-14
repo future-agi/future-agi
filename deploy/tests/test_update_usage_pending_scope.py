@@ -1,4 +1,4 @@
-"""Complete 50/55-pending-migration A9 intersection regression, without Django.
+"""Complete 51/56-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -81,8 +81,10 @@ WEBHOOK_ADDITIONS = (
     ("agentcc", "0030_webhook_delivery_health"),
     ("agentcc", "0031_webhook_event_status_indexes"),
 )
+# Additive configuration only, not a request-log data migration or webhook change.
+RETENTION_ADDITIONS = (("agentcc", "0032_request_log_retention"),)
 APP_LABELS = {"agentcc": "prism"}
-LATEST += SQL_ADDITIONS + SAMPLING_ADDITIONS + WEBHOOK_ADDITIONS
+LATEST += SQL_ADDITIONS + SAMPLING_ADDITIONS + WEBHOOK_ADDITIONS + RETENTION_ADDITIONS
 FLOOR_ONLY = (
     ("simulate", "0099_harness_versioning"),
     ("simulate", "0100_agent_fix"),
@@ -91,8 +93,8 @@ FLOOR_ONLY = (
     ("tracer", "0120_alert_issue_state_occurrences_high_water"),
 )
 INVENTORIES = (
-    (REVISIONS[1], LATEST, 50),
-    (REVISIONS[0], LATEST + FLOOR_ONLY, 55),
+    (REVISIONS[1], LATEST, 51),
+    (REVISIONS[0], LATEST + FLOOR_ONLY, 56),
 )
 
 
@@ -353,12 +355,19 @@ def apply_model_renames(state, app, raw):
 
 def baseline_state(revision):
     state = State()
+    pending = set(
+        next(identities for source, identities, _ in INVENTORIES if source == revision)
+    )
     # Model table options/initial fields are read from real CreateModel ASTs.
+    # Exclude this source's pending additions: their models do not exist until
+    # state_forwards runs. In particular, 0032's retention config is not baseline.
     # Only usage's pre-AlterField inbound edges/uniqueness are relevant among
     # baseline fields in these plans; replace them with exact source model ASTs
     # below rather than deriving that key fact from the target's added choices.
     for path in sorted((ROOT / "futureagi").glob("**/migrations/*.py")):
         directory = path.parent.parent.name
+        if (directory, path.stem) in pending:
+            continue
         app = APP_LABELS.get(directory, directory)
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
@@ -588,7 +597,14 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # The sampling layer retains SQL's concurrent-index scope regression.
         state = baseline_state(REVISIONS[1])
         env = scope_environment(state)
-        migration = pending_plan([("tracer", "0122_sql_payload_expiry_index")], env)[0]
+        # SQLExecution is itself pending, so replay preceding SQL state rather
+        # than leaking its target CreateModel into the source baseline.
+        for migration in pending_plan(SQL_ADDITIONS, env):
+            if migration.name == "0122_sql_payload_expiry_index":
+                break
+            for op in migration.operations:
+                op.state_forwards(migration.app_label, state)
+        self.assertEqual(migration.name, "0122_sql_payload_expiry_index")
         self.assertEqual(
             [type(op).__name__ for op in migration.operations],
             ["AddIndexConcurrently", "AddIndexConcurrently", "RunPython"],
@@ -754,6 +770,92 @@ operations = _build_ops()
             with self.subTest(revision=revision):
                 self.assertEqual(actual, expected)
 
+    def test_request_log_retention_is_additive_config_with_exact_scope(self):
+        registry = p.load_high_volume_registry()
+        for revision in REVISIONS:
+            with self.subTest(revision=revision):
+                state = baseline_state(revision)
+                key = ("prism", "agentccrequestlogretention")
+                self.assertNotIn(key, state.models)
+                env = scope_environment(state)
+                plan = pending_plan(RETENTION_ADDITIONS, env)
+                self.assertEqual(len(plan), 1)
+                migration = plan[0]
+                self.assertEqual(
+                    (migration.app_label, migration.name),
+                    ("prism", "0032_request_log_retention"),
+                )
+                self.assertEqual(
+                    migration.dependencies,
+                    [
+                        ("accounts", "0032_merge_expiry_and_coding_agent"),
+                        ("prism", "0031_webhook_event_status_indexes"),
+                    ],
+                )
+                self.assertIsNone(migration.declaration)
+                self.assertEqual(
+                    [type(op).__name__ for op in migration.operations], ["CreateModel"]
+                )
+                op = migration.operations[0]
+                self.assertEqual(op.name, "AgentccRequestLogRetention")
+                tables = env["touched"](op, migration, state)
+                self.assertEqual(
+                    tables, {("postgres", "public.agentcc_request_log_retention")}
+                )
+                self.assertNotIn(key, state.models)  # Scope resolution clones state.
+                op.state_forwards(migration.app_label, state)
+                created = state.models[key]
+                self.assertEqual(
+                    created.options, {"db_table": "agentcc_request_log_retention"}
+                )
+                self.assertEqual(
+                    set(created.fields),
+                    {
+                        "id",
+                        "created_at",
+                        "updated_at",
+                        "deleted",
+                        "deleted_at",
+                        "retention_days",
+                        "last_run_started_at",
+                        "last_run_finished_at",
+                        "last_run_deleted_rows",
+                        "last_run_error",
+                        "organization",
+                        "updated_by",
+                    },
+                )
+                self.assertEqual(
+                    {
+                        name: field.remote_field.model
+                        for name, field in created.fields.items()
+                        if field.remote_field is not None
+                    },
+                    {
+                        "organization": "accounts.organization",
+                        "updated_by": "accounts.user",
+                    },
+                )
+                identity = {"app_label": migration.app_label, "name": migration.name}
+                # Creating this config table neither alters nor deletes request
+                # logs and does not select the webhook-event high-volume seed.
+                self.assertEqual(
+                    p.select_reference_registry(
+                        registry,
+                        [
+                            dict(
+                                identity,
+                                tables=[
+                                    {"engine": engine, "table": table}
+                                    for engine, table in sorted(tables)
+                                ],
+                            )
+                        ],
+                        plan=[identity],
+                    ),
+                    (),
+                )
+
     def test_concurrent_index_parser_rejects_custom_or_unimported_operations(self):
         raw = migration_path("agentcc", "0031_webhook_event_status_indexes").read_text()
         qualified = "django.contrib.postgres.operations.AddIndexConcurrently"
@@ -813,7 +915,7 @@ operations = _build_ops()
             ),
             self.assertRaises(AssertionError),
         ):
-            self.assert_complete_inventory(REVISIONS[1], LATEST, 50)
+            self.assert_complete_inventory(REVISIONS[1], LATEST, 51)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected = {
@@ -928,7 +1030,9 @@ operations = _build_ops()
                         expected_row = {"tracer_trace", "tracer_observation_span"}
                     elif row["app_label"] == "usage":
                         expected_row = {"usage_apicalllog"}
-                    elif row["app_label"] == "prism":
+                    elif row["app_label"] == "prism" and row["name"] in {
+                        name for _, name in WEBHOOK_ADDITIONS
+                    }:
                         expected_row = {"agentcc_webhook_event"}
                     elif row["name"] in (
                         "0118_instant_eval_answers",
