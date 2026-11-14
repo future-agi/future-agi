@@ -1,12 +1,11 @@
 package guardrails
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -75,29 +74,10 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		monitor := strings.EqualFold(pol.Mode, "monitor")
 		var outcomes []*CheckResult
 		blockIdx := -1
+		sequential := strings.EqualFold(strings.TrimSpace(cfg.PipelineMode), "sequential")
 		if monitor {
-			outcomes = make([]*CheckResult, len(checks))
-			for i, c := range checks {
-				owned, err := cloneCheckInput(input)
-				if err != nil {
-					outcomes[i] = &CheckResult{Err: err, FailureAdmitted: true, Message: "guardrail_unavailable: could not snapshot guardrail input"}
-					continue
-				}
-				// Never publish the snapshot, even if the guardrail mutates or returns late.
-				before, _ := json.Marshal(struct {
-					Request  *models.ChatCompletionRequest
-					Response *models.ChatCompletionResponse
-				}{owned.Request, owned.Response})
-				outcomes[i] = p.runGuardrailSafe(ctx, c.g, owned, timeout, true)
-				if outcomes[i] != nil && outcomes[i].Err == nil && mutatesInput(c.g) {
-					after, _ := json.Marshal(struct {
-						Request  *models.ChatCompletionRequest
-						Response *models.ChatCompletionResponse
-					}{owned.Request, owned.Response})
-					outcomes[i].InputRewritten = !bytes.Equal(before, after)
-				}
-			}
-		} else if strings.EqualFold(strings.TrimSpace(cfg.PipelineMode), "sequential") {
+			outcomes = p.simulateKeyPolicy(ctx, checks, input, timeout, sequential)
+		} else if sequential {
 			outcomes, blockIdx = p.runOrgChecksSequential(ctx, checks, input, timeout, cfg.FailOpen)
 		} else {
 			outcomes, blockIdx = p.runOrgChecksParallel(ctx, checks, input, timeout, cfg.FailOpen)
@@ -140,6 +120,48 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		}
 	}
 	return pipeline.ResultContinue()
+}
+
+// simulateKeyPolicy runs a monitor policy's checks in the order enforce would
+// (remediators first in parallel mode, name order in sequential mode) against
+// one private snapshot, so a remediation is visible to the checks after it,
+// exactly as when enforced. Nothing is written back to the request, nothing
+// stops early, and a failed check is admitted (recorded, never a 503).
+func (p *GuardrailPlugin) simulateKeyPolicy(ctx context.Context, checks []orgCheck, input *CheckInput, timeout time.Duration, sequential bool) []*CheckResult {
+	outcomes := make([]*CheckResult, len(checks))
+	owned, err := cloneCheckInput(input)
+	if err != nil {
+		for i := range checks {
+			outcomes[i] = &CheckResult{Err: err, FailureAdmitted: true, Message: "guardrail_unavailable: could not snapshot guardrail input"}
+		}
+		return outcomes
+	}
+	if sequential {
+		for i, c := range checks {
+			outcomes[i] = p.runOrgCheck(ctx, c.g, owned, timeout, true)
+		}
+		return outcomes
+	}
+	for i, c := range checks {
+		if mutatesInput(c.g) {
+			outcomes[i] = p.runOrgCheck(ctx, c.g, owned, timeout, true)
+		}
+	}
+	// Read-only checks run concurrently, each on its own copy of the
+	// remediated snapshot (runOrgCheck clones before running).
+	var wg sync.WaitGroup
+	for i, c := range checks {
+		if mutatesInput(c.g) {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, c orgCheck) {
+			defer wg.Done()
+			outcomes[i] = p.runOrgCheck(ctx, c.g, owned, timeout, true)
+		}(i, c)
+	}
+	wg.Wait()
+	return outcomes
 }
 
 const passThroughNote = " (client's body was forwarded unchanged on this pass-through route)"

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -60,5 +61,44 @@ func TestKeyPolicyMonitorRemediatorOnPassThroughIsLogged(t *testing.T) {
 	}
 	if rc.Flags.GuardrailTriggered {
 		t.Fatal("monitor match set GuardrailTriggered")
+	}
+}
+
+// Monitor records what enforce would have done. When a remediator in the
+// policy removes the content a blocking check looks for, enforce redacts and
+// does not block, so monitor must not report would_block either.
+func TestKeyPolicyMonitorMirrorsEnforceOrder(t *testing.T) {
+	for _, mode := range []string{"enforce", "monitor"} {
+		t.Run(mode, func(t *testing.T) {
+			redactor := &keyTestCheck{name: "pii", mutate: true}
+			blocker := &keyTestCheck{name: "secret"}
+			pol := &tenant.KeyGuardrailPolicy{ID: "p", Name: "p", Mode: mode, KeyIDs: []string{"key-a"}, Checks: map[string]*tenant.GuardrailCheck{
+				"pii":    {Enabled: true, Action: "log"},
+				"secret": {Enabled: true, Action: "block"},
+			}}
+			p := keyTestPlugin(&tenant.GuardrailConfig{KeyPolicies: []*tenant.KeyGuardrailPolicy{pol}}, map[string]Guardrail{"pii": redactor, "secret": blocker})
+			rc := keyTestContext("key-a")
+			defer rc.Release()
+
+			if res := p.ProcessRequest(context.Background(), rc); res.Action == pipeline.ShortCircuit {
+				t.Fatalf("blocked: %+v", res)
+			}
+			outcomes := map[string]string{}
+			for _, r := range rc.GuardrailResults {
+				outcomes[r.Name] = r.Outcome
+			}
+			want := map[string]string{"pii": "redacted"}
+			wantContent := `"rewritten"`
+			if mode == "monitor" {
+				want = map[string]string{"pii": "would_redact"}
+				wantContent = `"secret"`
+			}
+			if len(outcomes) != len(want) || outcomes["pii"] != want["pii"] {
+				t.Fatalf("outcomes %v; want %v", outcomes, want)
+			}
+			if got := string(rc.Request.Messages[0].Content); got != wantContent {
+				t.Fatalf("request content %s; want %s", got, wantContent)
+			}
+		})
 	}
 }
