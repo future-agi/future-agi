@@ -303,16 +303,12 @@ def calculate_total_cost(
         # `image_input_per_image` is an alias some vision models use for the same
         # per-image component.
         if "input_per_image" in pricing or "image_input_per_image" in pricing:
-            cost_per_image = (
-                pricing.get("input_per_image")
-                or pricing.get("image_input_per_image")
-                or 0
-            )
-            num_images = (
-                token_usage.get("num_images")
-                or token_usage.get("images_generated")
-                or 0
-            )
+            cost_per_image = pricing.get("input_per_image")
+            if cost_per_image is None:
+                cost_per_image = pricing.get("image_input_per_image") or 0
+            num_images = token_usage.get("num_images")
+            if num_images is None:
+                num_images = token_usage.get("images_generated") or 0
             image_cost = round(num_images * cost_per_image, 6)
             prompt_cost = round(prompt_cost + image_cost, 6)
 
