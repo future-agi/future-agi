@@ -19,7 +19,7 @@ import pytest
 from model_hub.models.choices import FeedbackSourceChoices
 from model_hub.models.evals_metric import Feedback
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
-from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -1839,6 +1839,80 @@ def test_put_back_without_a_delete_keeps_the_result_after_the_recheck(
         previous.pk
     ]
     assert _membership(member).deleted is False
+
+
+@pytest.mark.parametrize("status", [EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING])
+def test_task_result_on_a_span_with_a_project_version_is_still_a_task_result(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    project_version,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    status,
+):
+    """A task's entry is classed by its task link, not by the span's
+    project_version: the engine is still evaluating it, so Recalculate is
+    refused instead of retiring it as a result with no task."""
+    ObservationSpan.objects.using("default").filter(pk=observation_span.pk).update(
+        project_version=project_version
+    )
+    observation_span.refresh_from_db()
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    EvalLogger.objects.using("default").filter(pk=previous.pk).update(status=status)
+    before = _snapshot(observation_span, custom_eval_config)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "still being evaluated" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert not _recalculation_rows().exists()
+    assert stub_run_eval.requests == []
+
+
+def test_composite_task_result_whose_write_fails_keeps_the_previous_result(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    """A composite eval returns its result for the caller to write. When that
+    write fails, the replacement must not count as completed: it ends errored
+    and the previous scored result is put back, not retired."""
+    import tracer.utils.eval as eval_utils
+
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+
+    def composite_result(**_kwargs):
+        return {"trace": observation_span.trace, "output_float": 0.9}
+
+    def write_fails(_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(eval_utils, "_execute_evaluation", composite_result)
+    monkeypatch.setattr(eval_utils, "_persist_eval_logger", write_fails)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "previous result is kept" in str(response.data)
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _stored(previous.pk).eval_explanation == "the previous answer"
+    assert not _recalculation_rows().exists()
 
 
 # -- round 9: Recalculate on a result with no eval task -------------------------

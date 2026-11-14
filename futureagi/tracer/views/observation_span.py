@@ -1973,7 +1973,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             refuse_while_untasked_runs(observation_span.id, custom_eval_config.id)
             raise Exception("No eval associated with this span")  # noqa: B904
         task_id = eval_logger.eval_task_id
-        task_result = bool(task_id) and not observation_span.project_version
+        # Classed by its task link alone: a task's entry on a span that also
+        # has a project_version is still that task's entry, and must not be
+        # retired as a result with no task while the engine runs it.
+        task_result = bool(task_id)
         if task_result:
             # Only a finished result, and not another Recalculate's
             # replacement: refused whatever the task's status.
