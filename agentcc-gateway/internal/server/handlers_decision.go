@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -91,6 +92,12 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 
 	rc.Model = req.Model
 	rc.DecisionRequest = req
+	// Decision bodies are forwarded byte for byte. Give input guardrails a
+	// separate chat-shaped view, never the body that goes to the provider.
+	guardrailContent := decisionGuardrailContent(req)
+	rc.GuardrailRequest = &models.ChatCompletionRequest{Messages: []models.Message{{
+		Role: "user", Content: guardrailContent,
+	}}}
 	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
@@ -128,6 +135,13 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	req.SetUpstreamModel(target.upstreamModel)
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		// A masking/redacting guardrail may mutate its chat-shaped view, but
+		// cannot rewrite the decision body without changing its wire format.
+		if decisionGuardrailRewritten(rc, guardrailContent) {
+			rc.Flags.GuardrailTriggered = true
+			rc.Metadata["guardrail_action"] = "blocked"
+			return decisionRedactionError()
+		}
 		// The auth plugin has run by now. Check again what it learned.
 		if rc.Metadata["auth_type"] == "license" {
 			return errBYOKRequired("Decision models run only on your own provider key; a managed service token cannot call them.")
@@ -161,6 +175,11 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+		// A blocking redaction guardrail stops the pipeline before providerCall;
+		// still explain why the decision body cannot be sent unchanged.
+		if decisionGuardrailRewritten(rc, guardrailContent) {
+			err = decisionRedactionError()
+		}
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -173,6 +192,84 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(rc.DecisionResponse.Body)
+}
+
+func decisionGuardrailRewritten(rc *models.RequestContext, original json.RawMessage) bool {
+	return rc.GuardrailRequest == nil || len(rc.GuardrailRequest.Messages) != 1 ||
+		!bytes.Equal(rc.GuardrailRequest.Messages[0].Content, original)
+}
+
+func decisionRedactionError() *models.APIError {
+	return models.ErrGuardrailBlocked("content_blocked", "redaction is not applied to decisions; request blocked")
+}
+
+// decisionGuardrailContent extracts only user-supplied decision text for the
+// input guardrails. It is never used to build or rewrite the upstream body.
+func decisionGuardrailContent(req *models.DecisionRequest) json.RawMessage {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(req.Body, &fields) // ParseDecisionRequest already validated the JSON.
+	var parts []string
+	if req.Format == models.DecisionFormatSystemOne {
+		var state string
+		if json.Unmarshal(fields["state"], &state) == nil {
+			parts = append(parts, state)
+		} else {
+			var compact bytes.Buffer
+			if json.Compact(&compact, fields["state"]) == nil {
+				parts = append(parts, compact.String())
+			}
+		}
+	} else {
+		appendDecisionText(&parts, fields["input"])
+	}
+
+	if req.Format == models.DecisionFormatSystemOne {
+		var questions map[string]json.RawMessage
+		_ = json.Unmarshal(fields["questions"], &questions)
+		for _, q := range questions {
+			appendDecisionQuestionText(&parts, q)
+		}
+	} else {
+		var questions []json.RawMessage
+		_ = json.Unmarshal(fields["questions"], &questions)
+		for _, q := range questions {
+			appendDecisionQuestionText(&parts, q)
+		}
+	}
+	content, _ := json.Marshal(strings.Join(parts, "\n"))
+	return content
+}
+
+func appendDecisionQuestionText(parts *[]string, raw json.RawMessage) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return
+	}
+	for _, key := range []string{"question", "text", "instructions", "criteria"} {
+		appendDecisionText(parts, fields[key])
+	}
+}
+
+// Criteria can be a string or a nested collection of named criteria.
+func appendDecisionText(parts *[]string, raw json.RawMessage) {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		*parts = append(*parts, text)
+		return
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) == nil {
+		for _, value := range list {
+			appendDecisionText(parts, value)
+		}
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) == nil {
+		for _, value := range fields {
+			appendDecisionText(parts, value)
+		}
+	}
 }
 
 // checkDecisionProviderACL enforces a key's allowed providers. The auth plugin
