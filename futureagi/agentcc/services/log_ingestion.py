@@ -200,14 +200,40 @@ def _strip_nul(value):
     fields and the bodies from the caller unchecked: a NUL there would make
     the database refuse the request's row (and with it its metering and
     webhooks).
+
+    The walk is iterative: a caller controls how deep a body nests, and a
+    recursive walk would raise RecursionError on a few hundred levels.
     """
     if isinstance(value, str):
         return value.replace("\x00", "") if "\x00" in value else value
-    if isinstance(value, dict):
-        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_strip_nul(item) for item in value]
-    return value
+    if not isinstance(value, (dict, list)):
+        return value
+    try:
+        # json.dumps escapes NUL as \u0000; without one there is nothing to do.
+        if "\\u0000" not in json.dumps(value):
+            return value
+    except (RecursionError, TypeError, ValueError):
+        pass
+    root: dict | list = {} if isinstance(value, dict) else []
+    stack = [(value, root)]
+    while stack:
+        source, target = stack.pop()
+        items = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, item in items:
+            if isinstance(item, (dict, list)):
+                child = {} if isinstance(item, dict) else []
+                stack.append((item, child))
+            elif isinstance(item, str) and "\x00" in item:
+                child = item.replace("\x00", "")
+            else:
+                child = item
+            if isinstance(target, dict):
+                if isinstance(key, str) and "\x00" in key:
+                    key = key.replace("\x00", "")
+                target[key] = child
+            else:
+                target.append(child)
+    return root
 
 
 def _truncate_json(value, max_size=MAX_BODY_SIZE):
@@ -406,11 +432,12 @@ def _ingest_org_logs(org, logs):
     objects = []
     entries = []
     for entry in logs:
-        # Everything built from the entry (its row, webhook payloads, alerts,
-        # sessions) uses the cleaned copy: PostgreSQL text and jsonb refuse
-        # NUL, and a refused webhook insert would abort the rest.
-        entry = _strip_nul(entry)
         try:
+            # Everything built from the entry (its row, webhook payloads,
+            # alerts, sessions) uses the cleaned copy: PostgreSQL text and
+            # jsonb refuse NUL, and a refused webhook insert would abort the
+            # rest. Inside the try, so a bad entry costs only itself.
+            entry = _strip_nul(entry)
             obj = AgentccRequestLog(
                 organization=org,
                 request_id=_strip_nul(entry.get("request_id", "")),
