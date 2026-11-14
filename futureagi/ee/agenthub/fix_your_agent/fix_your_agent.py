@@ -2,6 +2,8 @@ import random
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_evaluation_denied
+
 # Type for the per-trial callback: (trial_data, trial_number, stepper_state, is_baseline) -> None
 OnTrialCallback = Callable[[dict, int, Dict[str, Any], bool], None]
 
@@ -353,6 +355,8 @@ class SimulationEvaluator(Evaluator):
                     )
                 )
 
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.error(f"Evaluation failed for input {i + 1}: {e}", exc_info=True)
                 results.append(
@@ -414,6 +418,7 @@ class SimulationEvaluator(Evaluator):
         # Convert to EvaluationResult objects
         results = []
         for tr in temporal_results:
+            raise_if_evaluation_denied(tr)
             results.append(
                 EvaluationResult(
                     score=tr.get("score", 0.0),
@@ -459,6 +464,8 @@ class SimulationEvaluator(Evaluator):
                     f"[BATCH] Eval {idx + 1} ({eval_config.name}): {score:.4f} - {reason[:100]}"
                 )
                 return idx, score, reason
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.error(f"[BATCH] Eval {idx + 1} failed: {e}")
                 return idx, 0.5, f"Eval failed: {str(e)}"
@@ -655,6 +662,8 @@ class SimulationEvaluator(Evaluator):
                         return 0.0, eval_result
 
                     return 0.0, "Unknown eval result format"
+                except EvaluationDenied:
+                    raise
                 except Exception as e:
                     logger.warning(
                         f"[RUN_EVAL] EvalRunner path failed, falling back to direct eval: {e}"
@@ -717,6 +726,8 @@ class SimulationEvaluator(Evaluator):
 
             return score, reason
 
+        except EvaluationDenied:
+            raise
         except Exception as e:
             logger.error(f"Evaluation with config failed: {e}", exc_info=True)
             return 0.0, f"Evaluation error: {str(e)}"
@@ -1192,6 +1203,12 @@ class FixYourAgent:
                     agent_optimiser_run_steps, 2, status="completed"
                 )
 
+            except EvaluationDenied as denial:
+                update_agent_optimiser_run_step(
+                    agent_optimiser_run_steps, 2, status="failed", error=str(denial)
+                )
+                logger.warning("baseline_evaluation_denied", code=denial.code)
+                raise
             except Exception as e:
                 logger.error(f"Baseline evaluation failed: {e}", exc_info=True)
                 # Step 2: Failed
@@ -1280,6 +1297,12 @@ class FixYourAgent:
                 agent_optimiser_run_steps, 3, status="completed"
             )
 
+        except EvaluationDenied as denial:
+            update_agent_optimiser_run_step(
+                agent_optimiser_run_steps, 3, status="failed", error=str(denial)
+            )
+            logger.warning("optimization_evaluation_denied", code=denial.code)
+            raise
         except Exception as exc:
             logger.error(
                 f"Optimization failed for {optimizer_type}: {exc}", exc_info=True

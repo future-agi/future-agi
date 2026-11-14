@@ -32220,6 +32220,18 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -46743,6 +46755,18 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -48182,6 +48206,18 @@
                             "$ref": "#/definitions/SDKErrorResponse"
                         }
                     },
+                    "402": {
+                        "description": "Billing or usage limit. For a partial batch, resume at failed_index; completed_results have already executed and may be charged.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Evaluation rate limit. No Retry-After is returned without a known reset time. For partial batches, retry only from failed_index.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -48446,6 +48482,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SDKErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "Billing or usage limit. For a partial batch, resume at failed_index; completed_results have already executed and may be charged.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Evaluation rate limit. No Retry-After is returned without a known reset time. For partial batches, retry only from failed_index.",
+                        "schema": {
+                            "$ref": "#/definitions/SDKEvaluationDenialResponse"
                         }
                     },
                     "500": {
@@ -121472,6 +121520,76 @@
                 },
                 "result": {
                     "$ref": "#/definitions/EvalExecutionResponseResult"
+                }
+            }
+        },
+        "SDKEvaluationDenialResponse": {
+            "required": [
+                "status",
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "errors": {
+                    "title": "Errors",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string"
+                },
+                "dimension": {
+                    "title": "Dimension",
+                    "type": "string"
+                },
+                "current_usage": {
+                    "title": "Current usage",
+                    "type": "number"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "number"
+                },
+                "upgrade_cta": {
+                    "title": "Upgrade cta",
+                    "type": "object"
+                },
+                "completed_results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "failed_index": {
+                    "title": "Failed index",
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },
