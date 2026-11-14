@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hooks = vi.hoisted(() => ({
@@ -95,14 +95,22 @@ describe("ContextPilotCredentials", () => {
   });
 });
 
-it('gives a non-admin a copyable request without claiming issuance', async () => {
-  const writeText = vi.fn().mockResolvedValue();
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+it('gives a non-admin plain access guidance without an inert action or claiming issuance', () => {
   render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue={false} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Ask a workspace admin' }));
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Request copied'));
-  expect(writeText).toHaveBeenCalledWith(expect.stringContaining('pilot v1'));
+  expect(screen.getByText('Ask a workspace admin for access.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Ask a workspace admin' })).not.toBeInTheDocument();
   expect(hooks.issue.mutate).not.toHaveBeenCalled();
+});
+it('shows relative expiry with the exact UTC instant available on the time element', () => {
+  const now = Date.UTC(2026, 10, 14);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  try {
+    hooks.list.data.results = [credential(CONTEXT, CONTEXT, { expiresAt: '2026-11-21T00:00:00.000Z' })];
+    render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+    const expiry = screen.getByText('Expires in 7 days');
+    expect(expiry).toHaveAttribute('datetime', '2026-11-21T00:00:00.000Z');
+    expect(expiry).toHaveAttribute('title', expect.stringContaining('UTC'));
+  } finally { clock.mockRestore(); }
 });
 it('lists only credentials granting the viewed version', () => {
   hooks.list.data.results = [credential(CONTEXT, CONTEXT), credential(OTHER, CONTEXT, { grants: [{ kind: 'agent_context', resourceId: CONTEXT, labels: [], versionIds: [OTHER] }] })];

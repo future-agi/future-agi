@@ -4,6 +4,7 @@ import { Alert, Box, Button, FormControlLabel, Link, Stack, Switch, Tab, TextFie
 import Section from 'src/components/section';
 import StatusBadge from 'src/components/status-badge';
 import CodeBlock from 'src/components/code-block';
+import Iconify from 'src/components/iconify';
 import { SegmentedTabs } from 'src/components/tabs/tabs';
 import { ReviewState } from '../review/ReleaseReviewBody';
 import IdentityChip from '../components/IdentityChip';
@@ -83,14 +84,14 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
         <Stack direction="row" spacing={1} alignItems="center"><Typography variant="m3" component="h3">3. Plan and inspect</Typography>{!hasKey && <StatusBadge status="unknown" label="Needs a key" />}</Stack>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
-          <CodeBlock label="Context install plan command" code={visibleCommand} action={<Button variant="outlined" size="small" disabled={copyBusy} onClick={() => copyCommand(command)}>Copy plan command</Button>} />
+          <CodeBlock label="Context install plan command" code={visibleCommand} copyLabel="Copy" ariaLabel="Copy plan command" action={<Button aria-label="Copy plan command" variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy} onClick={() => copyCommand(command)}>Copy</Button>} />
           <TechnicalDetails title="Environment variables"><Typography variant="s3" color="text.secondary">Included when you copy the plan command.</Typography><Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box></TechnicalDetails>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
           {copyError && <Alert severity="error">{copyError}</Alert>}
           <Stack spacing={1}>
             <Typography variant="m3" component="h3">4. Apply after you review the plan</Typography>
             <Typography variant="s3" color="text.secondary">Inspect every file change and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding client before applying. This page does not run commands.</Typography>
-            <CodeBlock label="Context apply command" code={applyCommand} action={<Button variant="outlined" size="small" disabled={copyBusy} onClick={() => copyCommand(applyCommand)}>Copy apply command</Button>} />
+            <CodeBlock label="Context apply command" code={applyCommand} copyLabel="Copy" ariaLabel="Copy apply command" action={<Button aria-label="Copy apply command" variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy} onClick={() => copyCommand(applyCommand)}>Copy</Button>} />
             {copied === applyCommand && <Typography variant="s3" role="status">Copied the apply command.</Typography>}
           </Stack>
         </>}

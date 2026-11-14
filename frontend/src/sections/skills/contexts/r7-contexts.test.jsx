@@ -20,6 +20,34 @@ function Navigation() {
   const navigate = useNavigate();
   return <><output aria-label="URL parameters">{params.toString()}</output><button type="button" onClick={() => navigate(-1)}>Back</button><button type="button" onClick={() => navigate(1)}>Forward</button></>;
 }
+it('makes the newer publication review primary without repeating tab-owned review actions', () => {
+  const latest = { id: 'v2', number: 2, digest: `sha256:${'b'.repeat(64)}` };
+  const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version], sections: { ...detail.sections, versions: <button type="button">Request release review</button> } };
+  render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
+  const release = screen.getByRole('link', { name: 'Request release review for v2' });
+  expect(release).toHaveClass('MuiButton-contained');
+  expect(new URL(release.href).searchParams.get('candidate')).toBe('v2');
+  expect(new URL(release.href).searchParams.get('digest')).toBe(latest.digest);
+  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toHaveClass('MuiButton-outlined');
+  fireEvent.click(screen.getByRole('tab', { name: 'Versions' }));
+  expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Request release review', exact: true })).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Tests' }));
+  expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
+  expect(screen.getByText('v2 published · Production is still v1.')).toBeVisible();
+});
+it('shows release unavailable rather than loading in the linked-skills error preview', () => {
+  render(<MemoryRouter initialEntries={['/?tab=links']}><ContextDetailView {...detail} state="error" /></MemoryRouter>);
+  expect(screen.getByRole('combobox', { name: 'Viewed release' })).toHaveTextContent('Release unavailable');
+  expect(screen.queryByText('Loading release…')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit viewed version' })).toBeDisabled();
+});
+it('uses the shared missing-object pattern with a separate subtitle and way back', () => {
+  render(<MemoryRouter><ContextDetailView {...detail} query={{ scopeKey, error: { status: 404 } }} /></MemoryRouter>);
+  expect(screen.getByText('Agent context not found')).toBeVisible();
+  expect(screen.getByText('It may have been archived or belong to another workspace.')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Back to Agent contexts' })).toHaveClass('MuiButton-outlined');
+});
 it('owns section state in the URL, preserves version and test parameters, and restores back/forward', () => {
   render(<MemoryRouter initialEntries={['/?version=1&draft=1&reproduce=case&tab=recovery']}><Navigation /><ContextDetailView {...detail} /></MemoryRouter>);
   expect(screen.getByRole('tabpanel')).toHaveTextContent('Recovery controls');
@@ -60,6 +88,18 @@ it('distinguishes first run, filtered empty, out-of-range and failed reads', () 
   view.rerender(<ContextLibraryView {...library} query={{ scopeKey, error: new Error('offline'), refetch: vi.fn() }} />);
   expect(screen.getByText("Couldn't load agent contexts.")).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Create agent context' })).not.toBeInTheDocument();
+});
+it('matches list action order, search and tag controls and resets paging when page size changes', () => {
+  const change = vi.fn();
+  const context = { id: 'context', name: 'support-agent', tags: ['support'], latestVersion: 1, labels: [{ name: 'production', version: 1 }], updatedAt: '2026-11-14T00:00:00Z', updatedBy: { name: 'Sam Rivera' } };
+  render(<ContextLibraryView {...library} query={{ scopeKey, data: { count: 1, page: 1, pageSize: 25, results: [context] } }} filters={{ page: 1, pageSize: 25 }} onFilterChange={change} />);
+  expect(screen.getByRole('button', { name: 'Import AGENTS.md' }).compareDocumentPosition(screen.getByRole('button', { name: 'New agent context' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Search agent contexts' })).toHaveAttribute('placeholder', 'Search agent contexts');
+  expect(screen.getByRole('combobox', { name: 'Tag' })).toHaveAttribute('placeholder', 'Any tag');
+  expect(screen.getByText('Sam Rivera')).toBeVisible();
+  expect(screen.getAllByText('v1')).toHaveLength(2);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Rows per page' }), { target: { value: '50' } });
+  expect(change).toHaveBeenLastCalledWith({ page: 1, pageSize: 50 });
 });
 it('shows each followed label against the locked version and never calls failed lookups current', () => {
   const retry = vi.fn();
