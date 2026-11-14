@@ -989,7 +989,8 @@ class TestWebhookDelivery:
         http = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
-        resp.text = "server error"
+        resp.encoding = "utf-8"
+        resp.raw.read.return_value = b"server error"
         http.post.return_value = resp
         mock_build_session.return_value = http
 
@@ -1001,3 +1002,4 @@ class TestWebhookDelivery:
         assert event.status == AgentccWebhookEvent.PENDING
         assert event.attempts == 1
         assert event.next_retry_at is not None
+        assert event.last_error == "HTTP 500: server error"

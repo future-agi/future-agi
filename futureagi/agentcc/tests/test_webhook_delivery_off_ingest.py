@@ -1,6 +1,7 @@
 """Gateway webhook delivery runs on a schedule, per webhook, never inside log ingest."""
 
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
@@ -24,13 +25,11 @@ URL_CHECK = "agentcc.services.webhook_delivery.ensure_public_http_url"
 
 def _response(status):
     """A streamed response: delivery reads its body through ``raw``."""
-    import io
-
     resp = MagicMock()
     resp.status_code = status
     resp.text = "server error" if status >= 400 else "ok"
     resp.encoding = "utf-8"
-    resp.raw = io.BytesIO(resp.text.encode())
+    resp.raw.read.return_value = resp.text.encode()
     return resp
 
 
@@ -1254,106 +1253,503 @@ def test_a_dispatch_between_run_end_and_workflow_close_starts_a_real_run(
     assert webhook.last_run_started_at == second
 
 
+def _serve(handler, host="127.0.0.1"):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    server = ThreadingHTTPServer((host, 0), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://{host}:{server.server_address[1]}"
+
+
+@contextmanager
+def _loopback_is_public():
+    """Real delivery sessions (the SSRF check on every hop included) against
+    local test receivers: 127.0.0.1 counts as a public address, every other
+    address (127.0.0.2 too) is classified as in production."""
+    from tfc.utils.ssrf_guard import IPClass, classify_ip
+
+    def classify(ip):
+        return IPClass.PUBLIC if ip == "127.0.0.1" else classify_ip(ip)
+
+    with patch("agentcc.services.url_safety.classify_ip", side_effect=classify):
+        yield
+
+
+@contextmanager
+def _short_deadline(seconds=1.5):
+    with (
+        patch.object(webhook_delivery, "DELIVERY_POST_DEADLINE_SECONDS", seconds),
+        # A per-read timeout well above each drip interval.
+        patch.object(webhook_delivery, "DELIVERY_TIMEOUT", (3, 2)),
+    ):
+        yield
+
+
+def _drip(wfile, data, interval=0.3):
+    try:
+        for byte in data:
+            wfile.write(bytes([byte]))
+            wfile.flush()
+            time.sleep(interval)
+    except OSError:
+        pass
+
+
+def _quiet(handler_cls):
+    handler_cls.log_message = lambda self, *args: None
+    return handler_cls
+
+
+def _deliver_one(organization, base, name, path="/hook"):
+    webhook = _webhook(organization, name, f"{base}{path}")
+    _events(webhook, 1)
+    started = time.monotonic()
+    result = deliver_webhook(webhook.pk)
+    elapsed = time.monotonic() - started
+    return result, elapsed, AgentccWebhookEvent.all_objects.get(webhook=webhook)
+
+
 @pytest.mark.integration
-def test_a_receiver_dripping_its_body_cannot_hold_a_post_past_its_deadline(
+def test_a_receiver_dripping_an_error_body_cannot_hold_a_post_past_its_deadline(
     organization,
 ):
     """Round 4 review: the read timeout is per read, so a receiver that sends
     its headers and then a byte every few seconds held a POST (and its worker
     thread) indefinitely. A POST now ends at DELIVERY_POST_DEADLINE_SECONDS
     in all, as a failed attempt, and the run goes on."""
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
 
-    import requests
-
+    @_quiet
     class Drip(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(500)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            _drip(self.wfile, b"x" * 100)
+
+    server, base = _serve(Drip)
+    try:
+        with _short_deadline(), _loopback_is_public():
+            result, elapsed, event = _deliver_one(organization, base, "drip")
+    finally:
+        server.shutdown()
+    # Each read returns within the per-read timeout, so without a total
+    # deadline the 100 bytes take 30 s.
+    assert elapsed < 4, elapsed
+    assert result["failed"] == 1
+    assert event.status == "pending" and event.attempts == 1
+    assert event.last_error == webhook_delivery.DELIVERY_DEADLINE_ERROR
+
+
+@pytest.mark.integration
+def test_a_success_is_delivered_without_reading_its_body(organization):
+    """Round 5 review: a 2xx's body is never read, so a receiver that
+    accepts the event and then drips its body does not turn the accepted
+    event into a timeout."""
+    from http.server import BaseHTTPRequestHandler
+
+    @_quiet
+    class SlowOk(BaseHTTPRequestHandler):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
             self.send_response(200)
             self.send_header("Content-Length", "100")
             self.end_headers()
-            try:
-                for _ in range(100):
-                    self.wfile.write(b"x")
-                    self.wfile.flush()
-                    time.sleep(0.4)
-            except OSError:
-                pass
+            _drip(self.wfile, b"x" * 100)
 
-        def log_message(self, *args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    url = f"http://127.0.0.1:{server.server_address[1]}/hook"
-    webhook = _webhook(organization, "drip", url)
-    _events(webhook, 1)
+    server, base = _serve(SlowOk)
     try:
-        with (
-            patch.object(webhook_delivery, "DELIVERY_POST_DEADLINE_SECONDS", 1.5),
-            patch.object(webhook_delivery, "DELIVERY_TIMEOUT", (3, 1)),
-            patch(URL_CHECK),
-            patch(SESSION, return_value=requests.Session()),
-        ):
-            started = time.monotonic()
-            result = deliver_webhook(webhook.pk)
-            elapsed = time.monotonic() - started
+        with _short_deadline(), _loopback_is_public():
+            result, elapsed, event = _deliver_one(organization, base, "slow-ok")
     finally:
         server.shutdown()
-    # Each read returns within the per-read timeout, so without a total
-    # deadline the 100 bytes take 40 s.
-    assert elapsed < 5, elapsed
-    assert result["failed"] == 1
-    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
-    assert event.status == "pending" and event.attempts == 1
-    assert "in time" in event.last_error
-
-
-def _serve(handler):
-    import threading
-    from http.server import ThreadingHTTPServer
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}"
+    assert result == {"delivered": 1, "failed": 0, "retired": 0}
+    assert event.status == "delivered" and event.last_response_code == 200
+    assert elapsed < 1.5, elapsed
 
 
 @pytest.mark.integration
-def test_a_redirecting_receiver_is_not_followed_outside_the_deadline(organization):
-    """Round 4 review: requests followed redirects inside ``http.post``, each
-    hop with its own timeouts, so a chain of slow redirects outlived the
-    POST's total deadline. A redirect is now an answer: one request, failed."""
+@pytest.mark.parametrize("charset", ["utf8mb4", "binary", "x-user-defined"])
+@pytest.mark.parametrize(
+    "status, expected_status, expected_error",
+    [
+        (200, "delivered", ""),
+        (503, "pending", "HTTP 503: busy"),
+    ],
+)
+def test_a_response_with_a_charset_python_does_not_know(
+    organization, charset, status, expected_status, expected_error
+):
+    """Round 5 review: the body was decoded with the header's charset
+    verbatim, so an unknown one raised LookupError out of the run after the
+    POST had been accepted: the event was never recorded and went out again
+    every two minutes. A 2xx's body is not decoded at all; an error body
+    falls back to UTF-8, as requests' ``Response.text`` does."""
     from http.server import BaseHTTPRequestHandler
 
-    import requests
+    @_quiet
+    class Charset(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = b"ok" if status < 300 else b"busy"
+            self.send_response(status)
+            self.send_header("Content-Type", f"text/plain; charset={charset}")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-    hits = []
+    server, base = _serve(Charset)
+    try:
+        with _loopback_is_public():
+            result, _, event = _deliver_one(organization, base, "charset")
+    finally:
+        server.shutdown()
+    assert event.status == expected_status
+    assert event.attempts == 1
+    assert event.last_response_code == status
+    assert event.last_error == expected_error
+    assert result["delivered" if status < 300 else "failed"] == 1
 
+
+# A gzip header (FCOMMENT set) and then a comment that never ends: bytes that
+# decode to nothing, so a decoding read never returns on its own.
+_GZIP_COMMENT_HEADER = b"\x1f\x8b\x08\x10\x00\x00\x00\x00\x00\x03"
+
+
+def _status_line_drip(handler):
+    handler.wfile.flush()
+    _drip(handler.wfile, b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n" + b"X: y\r\n" * 8)
+
+
+def _gzip_header_drip(handler):
+    handler.send_response(503)
+    handler.send_header("Content-Encoding", "gzip")
+    handler.send_header("Content-Length", "1000")
+    handler.end_headers()
+    _drip(handler.wfile, _GZIP_COMMENT_HEADER + b"c" * 60)
+
+
+def _chunk_size_drip(handler):
+    handler.send_response(500)
+    handler.send_header("Transfer-Encoding", "chunked")
+    handler.end_headers()
+    _drip(handler.wfile, b"0" * 60 + b"1\r\nx\r\n0\r\n\r\n")
+
+
+def _status_line_cut_at_the_deadline(handler):
+    # The watchdog's shutdown ends the line here: http.client reads
+    # "HTTP/1.1 200 " and then end of headers, a 200 the receiver never sent.
+    handler.wfile.write(b"HTTP/1.1 200 ")
+    handler.wfile.flush()
+    time.sleep(3)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "send",
+    [
+        _status_line_drip,
+        _status_line_cut_at_the_deadline,
+        _gzip_header_drip,
+        _chunk_size_drip,
+    ],
+    ids=["status-line", "status-line-cut", "gzip-header", "chunk-size-line"],
+)
+def test_a_dripping_receiver_cannot_hold_a_post_inside_one_library_call(
+    organization, send
+):
+    """Round 5 review: the deadline was checked only between reads, so one
+    library call that loops over many reads (http.client's status line and
+    header lines, a chunk-size line, a gzip decoder fed bytes that decode to
+    nothing) ran past it as long as each read came in within its timeout. A
+    watchdog now shuts the connection down at the deadline, whatever call
+    the POST is in."""
+    from http.server import BaseHTTPRequestHandler
+
+    @_quiet
+    class Drip(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            send(self)
+
+    server, base = _serve(Drip)
+    try:
+        with _short_deadline(), _loopback_is_public():
+            result, elapsed, event = _deliver_one(organization, base, "drip")
+    finally:
+        server.shutdown()
+    # Without the watchdog each drip runs its full 20 s.
+    assert elapsed < 4, elapsed
+    assert result["failed"] == 1
+    assert event.status == "pending" and event.attempts == 1
+    assert event.last_response_code is None
+    assert event.last_error == webhook_delivery.DELIVERY_DEADLINE_ERROR
+
+
+@pytest.mark.integration
+def test_a_connect_that_hangs_ends_at_the_deadline(organization):
+    """Round 5 review: connect is bounded too. A listener whose accept queue
+    is full drops further SYNs, so connect waits; with a connect timeout far
+    above the deadline the POST still ends at the deadline."""
+    import socket as socket_module
+
+    listener = socket_module.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(0)
+    port = listener.getsockname()[1]
+    # Fill the accept queue; the kernel then drops new SYNs.
+    fillers = []
+    for _ in range(4):
+        filler = socket_module.socket()
+        filler.setblocking(False)
+        try:
+            filler.connect(("127.0.0.1", port))
+        except BlockingIOError:
+            pass
+        fillers.append(filler)
+    time.sleep(0.2)
+    try:
+        with (
+            patch.object(webhook_delivery, "DELIVERY_POST_DEADLINE_SECONDS", 1.5),
+            patch.object(webhook_delivery, "DELIVERY_TIMEOUT", (20, 2)),
+            _loopback_is_public(),
+        ):
+            result, elapsed, event = _deliver_one(
+                organization, f"http://127.0.0.1:{port}", "hang"
+            )
+    finally:
+        for filler in fillers:
+            filler.close()
+        listener.close()
+    assert elapsed < 4, elapsed
+    assert result["failed"] == 1
+    assert event.last_response_code is None
+    assert event.last_error == webhook_delivery.DELIVERY_DEADLINE_ERROR
+
+
+@pytest.mark.integration
+def test_a_tls_handshake_that_drips_ends_at_the_deadline(organization):
+    """An https receiver that accepts the connection and drips its
+    ServerHello: the watchdog shuts the TLS socket down as well."""
+    import socket as socket_module
+    import threading
+
+    listener = socket_module.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = listener.accept()
+        try:
+            # A TLS handshake record header, then its body a byte at a time.
+            for byte in b"\x16\x03\x03\x10\x00" + b"\x02" * 60:
+                if stop.is_set():
+                    break
+                conn.sendall(bytes([byte]))
+                time.sleep(0.3)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with _short_deadline(), _loopback_is_public():
+            result, elapsed, event = _deliver_one(
+                organization, f"https://127.0.0.1:{port}", "tls-drip"
+            )
+    finally:
+        stop.set()
+        listener.close()
+    assert result["failed"] == 1
+    assert event.last_response_code is None
+    assert event.last_error == webhook_delivery.DELIVERY_DEADLINE_ERROR
+    assert elapsed < 4, elapsed
+
+
+@pytest.mark.integration
+def test_a_run_whose_lease_was_taken_over_delivers_nothing(organization):
+    """Round 5 review: a run that waited in the queue past its lease, while a
+    newer run of its webhook was dispatched, still delivered beside that run
+    (out of order, and outside the caps). It now exits at once."""
+    url = "https://hooks.example.com/ok"
+    webhook = _webhook(organization, "taken-over", url)
+    _events(webhook, 2)
+    stale = timezone.now() - timedelta(minutes=5)
+    newer = timezone.now()
+    newer_until = newer + timedelta(seconds=100)
+    AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+        last_run_started_at=newer, delivery_lease_until=newer_until
+    )
+    http = _session({url: 200})
+
+    with (
+        patch(SESSION, return_value=http),
+        patch(URL_CHECK),
+        patch.object(webhook_delivery.deliver_webhook_activity, "apply_async"),
+    ):
+        result = webhook_delivery.deliver_webhook_activity._original_func(
+            str(webhook.pk), stale.isoformat()
+        )
+
+    assert http.post.call_count == 0
+    assert result == {"delivered": 0, "failed": 0, "retired": 0}
+    assert not AgentccWebhookEvent.all_objects.filter(
+        webhook=webhook, attempts__gt=0
+    ).exists()
+    webhook.refresh_from_db()
+    assert webhook.delivery_lease_until == newer_until
+    assert webhook.last_run_started_at == newer
+
+
+@pytest.mark.integration
+def test_a_run_with_the_current_token_delivers(organization):
+    url = "https://hooks.example.com/ok"
+    webhook = _webhook(organization, "current", url)
+    _events(webhook, 2)
+    token = timezone.now() - timedelta(seconds=30)
+    AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+        last_run_started_at=token, delivery_lease_until=token
+    )
+    http = _session({url: 200})
+
+    with (
+        patch(SESSION, return_value=http),
+        patch(URL_CHECK),
+        patch.object(webhook_delivery.deliver_webhook_activity, "apply_async"),
+    ):
+        result = webhook_delivery.deliver_webhook_activity._original_func(
+            str(webhook.pk), token.isoformat()
+        )
+
+    assert http.post.call_count == 2
+    assert result["delivered"] == 2
+
+
+def _redirecting(status, location, hits):
+    from http.server import BaseHTTPRequestHandler
+
+    @_quiet
     class Redirect(BaseHTTPRequestHandler):
         def do_POST(self):
-            hits.append(self.path)
-            self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            self.send_response(307)
-            self.send_header("Location", "/next")
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            hits.append((self.path, body, self.headers.get("X-Agentcc-Signature")))
+            if self.path == "/next":
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(status)
+            self.send_header("Location", location())
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def log_message(self, *args):
-            pass
+    return Redirect
 
-    server, base = _serve(Redirect)
-    webhook = _webhook(organization, "redirect", f"{base}/hook")
+
+@pytest.mark.integration
+@pytest.mark.parametrize("status", [307, 308])
+def test_a_307_or_308_to_an_allowed_host_delivers_the_post(organization, status):
+    """Round 5 review: dev followed redirects (each hop's URL checked again),
+    and 307/308 keep the POST and its body. Round 4 stopped following them,
+    so a receiver behind a trailing-slash or https redirect failed every
+    attempt after the upgrade. They are followed again."""
+    hits = []
+    server, base = _serve(_redirecting(status, lambda: "/next", hits))
+    webhook = _webhook(organization, "redirect", f"{base}/hook", secret="s3cret")
     _events(webhook, 1)
     try:
-        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
+        with _loopback_is_public():
             result = deliver_webhook(webhook.pk)
     finally:
         server.shutdown()
-    assert hits == ["/hook"]
+    assert [path for path, _, _ in hits] == ["/hook", "/next"]
+    assert hits[0][1] == hits[1][1] and b'"n": 0' in hits[1][1]
+    assert hits[1][2] and hits[1][2] == hits[0][2]
+    assert result["delivered"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.status == "delivered" and event.last_response_code == 200
+
+
+@pytest.mark.integration
+def test_a_redirect_to_a_blocked_host_is_refused_before_it_connects(organization):
+    blocked_hits = []
+    blocked, blocked_base = _serve(
+        _redirecting(200, lambda: "/", blocked_hits), host="127.0.0.2"
+    )
+    hits = []
+    server, base = _serve(_redirecting(308, lambda: f"{blocked_base}/next", hits))
+    webhook = _webhook(organization, "to-blocked", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with _loopback_is_public():
+            result = deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+        blocked.shutdown()
+    assert [path for path, _, _ in hits] == ["/hook"]
+    assert blocked_hits == []
     assert result["failed"] == 1
     event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
-    assert event.last_response_code == 307
+    assert event.status == "pending"
+    assert event.last_response_code is None
+    assert event.last_error == webhook_delivery.WEBHOOK_PRIVATE_URL_ERROR
+
+
+@pytest.mark.integration
+def test_redirects_are_followed_at_most_the_hop_limit(organization):
+    hits = []
+    server, base = _serve(_redirecting(307, lambda: "/hook", hits))
+    webhook = _webhook(organization, "loop", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with _loopback_is_public():
+            result = deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+    assert len(hits) == webhook_delivery.DELIVERY_MAX_REDIRECTS + 1
+    assert result["failed"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.last_response_code is None
+    assert "redirects" in event.last_error
+
+
+@pytest.mark.integration
+def test_a_chain_of_slow_redirects_ends_at_the_post_deadline(organization):
+    """Round 4 review: each hop had its own timeouts, so a chain of slow
+    redirects outlived the POST's deadline. All hops share one deadline."""
+    from http.server import BaseHTTPRequestHandler
+
+    hits = []
+
+    @_quiet
+    class SlowRedirect(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            hits.append(self.path)
+            time.sleep(0.6)
+            self.send_response(307)
+            self.send_header("Location", f"/hop{len(hits)}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    server, base = _serve(SlowRedirect)
+    try:
+        with _short_deadline(), _loopback_is_public():
+            result, elapsed, event = _deliver_one(organization, base, "slow-chain")
+    finally:
+        server.shutdown()
+    assert elapsed < 3, elapsed
+    assert len(hits) <= 3
+    assert result["failed"] == 1
+    assert event.last_error == webhook_delivery.DELIVERY_DEADLINE_ERROR
 
 
 @pytest.mark.integration
@@ -1361,8 +1757,7 @@ def test_a_compressed_error_body_is_stored_as_text(organization):
     import gzip
     from http.server import BaseHTTPRequestHandler
 
-    import requests
-
+    @_quiet
     class Gzip503(BaseHTTPRequestHandler):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -1373,16 +1768,10 @@ def test_a_compressed_error_body_is_stored_as_text(organization):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, *args):
-            pass
-
     server, base = _serve(Gzip503)
-    webhook = _webhook(organization, "gzip", f"{base}/hook")
-    _events(webhook, 1)
     try:
-        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
-            deliver_webhook(webhook.pk)
+        with _loopback_is_public():
+            _, _, event = _deliver_one(organization, base, "gzip")
     finally:
         server.shutdown()
-    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
     assert event.last_error == "HTTP 503: upstream unavailable"

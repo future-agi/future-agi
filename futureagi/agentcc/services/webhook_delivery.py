@@ -4,9 +4,11 @@ Log ingest only records events as pending; it never delivers them. A Temporal
 schedule (``agentcc-webhook-delivery``, about every 10 s) runs
 ``dispatch_webhook_deliveries_activity``, which starts a
 ``deliver_webhook_activity`` for each active webhook with due events. A
-webhook's run is single-flight: its workflow id is fixed and an id already
-running is reused, so a slow webhook never gets two runs at once and never
-holds up another webhook's.
+webhook's run is single-flight through its lease: the dispatcher leases a
+webhook only while no run holds it, each run carries its lease's token
+(``last_run_started_at``), and a run whose token is no longer the webhook's
+(it waited in the queue past its lease and a newer run was dispatched) exits
+without delivering. A slow webhook never holds up another webhook's run.
 
 Runs share the worker's ``default`` queue with evals, experiments and alert
 emails, so at most AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES are in flight at
@@ -42,6 +44,8 @@ again once the lease ends.
 import hashlib
 import hmac
 import json
+import socket
+import threading
 import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
@@ -52,6 +56,14 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
+from urllib3 import HTTPConnectionPool, HTTPSConnectionPool, PoolManager, ProxyManager
+from urllib3.connection import HTTPConnection, HTTPSConnection
+from urllib3.exceptions import (
+    ConnectTimeoutError,
+    NameResolutionError,
+    NewConnectionError,
+)
+from urllib3.util.connection import allowed_gai_family
 
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services.url_safety import (
@@ -70,11 +82,18 @@ logger = structlog.get_logger(__name__)
 
 # (connect, read) seconds for one POST.
 DELIVERY_TIMEOUT = (3, 10)
-# Wall-clock seconds one POST may take from its start until its response body
-# is read. The read timeout is per read, so a receiver that drips its body a
-# byte at a time would otherwise hold the run (and its worker thread) for as
-# long as it likes. Only a receiver's first bytes are kept.
+# Wall-clock seconds one POST may take in all: connecting, every redirect hop,
+# the status line and headers, and an error response's body. The timeouts
+# above are per connect and per read, so a receiver that drips its bytes
+# would otherwise hold the run (and its worker thread) for as long as it
+# likes. A watchdog shuts the POST's connections down at this deadline.
 DELIVERY_POST_DEADLINE_SECONDS = 13
+DELIVERY_DEADLINE_ERROR = "receiver did not finish its response in time"
+# Redirects are followed as requests follows them (307 and 308 keep the POST
+# and its body), each hop's URL checked again, at most this many hops.
+DELIVERY_MAX_REDIRECTS = 5
+# Only the first bytes of an error response's body are kept. A success's body
+# is never read.
 DELIVERY_RESPONSE_MAX_BYTES = 4096
 # Events read per page of a run.
 DELIVERY_PAGE_SIZE = 100
@@ -82,9 +101,11 @@ DELIVERY_PAGE_SIZE = 100
 DELIVERY_LEASE_SECONDS = 120
 # Bounds the per-webhook activity; above the budget plus one POST.
 DELIVERY_ACTIVITY_TIME_LIMIT = 120
-# A dispatched run that has not started within this long (the default queue
-# is busy) is dropped by Temporal. It is shorter than the dispatcher's lease,
-# so a run can never start after its lease, and its slot, has run out.
+# A dispatched run's activity that has not started within this long (the
+# default queue is busy) is dropped by Temporal. The clock starts only once
+# the run's workflow task has scheduled the activity, so a run can still start
+# after its lease has run out; it then finds a newer run's token on the
+# webhook, or refreshes its own lease, before it delivers anything.
 DELIVERY_SCHEDULE_TO_START_TIMEOUT = 90
 DELIVERY_WORKFLOW_RUN_TIMEOUT = 300
 DISPATCH_ACTIVITY_TIME_LIMIT = 60
@@ -189,33 +210,226 @@ def _record_attempt(event, response_code, error):
     return error is None
 
 
+class _PostDeadline:
+    """The total deadline of one POST. Once it passes, a timer thread shuts
+    down every socket the POST has opened or reused, so a blocked connect,
+    TLS handshake or read returns at once, whichever library call it is in.
+
+    It holds its own duplicate of each socket's descriptor, so a socket that
+    was closed meanwhile is never confused with a newer one, and closes them
+    when the POST ends."""
+
+    _local = threading.local()
+
+    def __init__(self, seconds):
+        self.ends = time.monotonic() + seconds
+        self.expired = False
+        self._sockets: list[socket.socket] = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(seconds, self._expire)
+        self._timer.daemon = True
+
+    @classmethod
+    def current(cls):
+        return getattr(cls._local, "deadline", None)
+
+    def __enter__(self):
+        self._local.deadline = self
+        self._timer.start()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._local.deadline = None
+        self._timer.cancel()
+        with self._lock:
+            for sock in self._sockets:
+                sock.close()
+            self._sockets.clear()
+
+    def remaining(self):
+        return self.ends - time.monotonic()
+
+    def watch(self, sock):
+        try:
+            dup = socket.fromfd(sock.fileno(), sock.family, sock.type)
+        except (OSError, ValueError):
+            return
+        with self._lock:
+            self._sockets.append(dup)
+            if self.expired:
+                _shutdown(dup)
+
+    def _expire(self):
+        with self._lock:
+            self.expired = True
+            for sock in self._sockets:
+                _shutdown(sock)
+
+
+def _shutdown(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
+class _WatchedHTTPConnection(HTTPConnection):
+    """Opens its socket within the current POST's deadline and lets the
+    deadline's watchdog shut it down."""
+
+    def _new_conn(self):
+        deadline = _PostDeadline.current()
+        if deadline is None:
+            return super()._new_conn()
+        # urllib3's create_connection, but each address's connect waits at
+        # most until the deadline, and the watchdog can abort it.
+        try:
+            addresses = socket.getaddrinfo(
+                self._dns_host.strip("[]"),
+                self.port,
+                allowed_gai_family(),
+                socket.SOCK_STREAM,
+            )
+        except socket.gaierror as e:
+            raise NameResolutionError(self.host, self, e) from e
+        error: OSError = OSError("getaddrinfo returns an empty list")
+        for family, kind, proto, _, address in addresses:
+            remaining = deadline.remaining()
+            if remaining <= 0:
+                error = TimeoutError(DELIVERY_DEADLINE_ERROR)
+                break
+            if isinstance(self.timeout, int | float):
+                remaining = min(self.timeout, remaining)
+            sock = socket.socket(family, kind, proto)
+            try:
+                for option in self.socket_options or ():
+                    sock.setsockopt(*option)
+                sock.settimeout(remaining)
+                if self.source_address:
+                    sock.bind(self.source_address)
+                deadline.watch(sock)
+                sock.connect(address)
+                return sock
+            except OSError as e:
+                error = e
+                sock.close()
+        if isinstance(error, TimeoutError) or deadline.expired:
+            raise ConnectTimeoutError(self, str(error)) from error
+        raise NewConnectionError(
+            self, f"Failed to establish a new connection: {error}"
+        ) from error
+
+    def request(self, *args, **kwargs):
+        # A kept-alive connection an earlier POST opened.
+        deadline = _PostDeadline.current()
+        if deadline is not None and self.sock is not None:
+            deadline.watch(self.sock)
+        return super().request(*args, **kwargs)
+
+
+class _WatchedHTTPSConnection(_WatchedHTTPConnection, HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPConnectionPool(HTTPConnectionPool):
+    ConnectionCls = _WatchedHTTPConnection
+
+
+class _WatchedHTTPSConnectionPool(HTTPSConnectionPool):
+    ConnectionCls = _WatchedHTTPSConnection
+
+
+class _DeadlineAdapter(http_requests.adapters.HTTPAdapter):
+    """Transport for deliveries: its connections answer to the POST's
+    deadline, no redirect hop starts after it, and a redirect's body is
+    never read."""
+
+    @staticmethod
+    def _watch_pools(manager):
+        if type(manager) in (PoolManager, ProxyManager):
+            manager.pool_classes_by_scheme = {
+                "http": _WatchedHTTPConnectionPool,
+                "https": _WatchedHTTPSConnectionPool,
+            }
+        return manager
+
+    def init_poolmanager(self, *args, **kwargs):
+        super().init_poolmanager(*args, **kwargs)
+        self._watch_pools(self.poolmanager)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        return self._watch_pools(super().proxy_manager_for(*args, **kwargs))
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        deadline = _PostDeadline.current()
+        if deadline is not None and deadline.expired:
+            raise http_requests.Timeout(DELIVERY_DEADLINE_ERROR)
+        resp = super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+        if resp.is_redirect:
+            # requests reads a redirect's body before the next hop; closed,
+            # it reads nothing.
+            resp.raw.close()
+        return resp
+
+
+def _delivery_session():
+    http = build_ssrf_safe_session(
+        WEBHOOK_PRIVATE_URL_ERROR, adapter_base=_DeadlineAdapter
+    )
+    http.max_redirects = DELIVERY_MAX_REDIRECTS
+    return http
+
+
 def _post(http, webhook, event):
     """Send one event. Returns (http session, response code, error).
 
     The response code is None when the receiver gave no HTTP answer: it
-    refused or timed out, or its URL is not one deliveries may go to.
+    refused or timed out, or its URL (or a redirect's) is not one deliveries
+    may go to.
     """
     try:
         body, headers = _signed_request(webhook, event)
         ensure_public_http_url(webhook.url, WEBHOOK_PRIVATE_URL_ERROR)
         if http is None:
-            http = build_ssrf_safe_session(WEBHOOK_PRIVATE_URL_ERROR)
-        started = time.monotonic()
-        resp = http.post(
-            webhook.url,
-            data=body,
-            headers=headers,
-            timeout=DELIVERY_TIMEOUT,
-            stream=True,
-            # A redirect would start another request, each with its own
-            # timeouts, outside the POST's total deadline. A receiver must
-            # answer at its own URL.
-            allow_redirects=False,
-        )
-        try:
-            text = _read_response_text(resp, started)
-        finally:
-            resp.close()
+            http = _delivery_session()
+        with _PostDeadline(DELIVERY_POST_DEADLINE_SECONDS) as deadline:
+            try:
+                resp = http.post(
+                    webhook.url,
+                    data=body,
+                    headers=headers,
+                    timeout=DELIVERY_TIMEOUT,
+                    stream=True,
+                )
+                try:
+                    if deadline.expired:
+                        # The watchdog's shutdown ends a read as if the
+                        # receiver had: "HTTP/1.1 200 " cut there parses as a
+                        # 200 it never sent. Not delivered; it goes out again
+                        # with the same X-Agentcc-Event-Id.
+                        raise TimeoutError(DELIVERY_DEADLINE_ERROR)
+                    if 200 <= resp.status_code < 300:
+                        # Delivered. Its body is never read or decoded.
+                        return http, resp.status_code, None
+                    text = _error_text(resp)
+                finally:
+                    resp.close()
+                if deadline.expired:
+                    # Likewise mid-body: an error body may be cut short.
+                    raise TimeoutError(DELIVERY_DEADLINE_ERROR)
+            except Exception as e:
+                if deadline.expired:
+                    raise TimeoutError(DELIVERY_DEADLINE_ERROR) from e
+                raise
     except (
         http_requests.RequestException,
         ConnectionError,
@@ -224,44 +438,21 @@ def _post(http, webhook, event):
         TimeoutError,
     ) as e:
         return http, None, str(e) or type(e).__name__
-    if 200 <= resp.status_code < 300:
-        return http, resp.status_code, None
     return http, resp.status_code, f"HTTP {resp.status_code}: {text[:200]}"
 
 
-def _read_response_text(resp, started):
-    """Read at most DELIVERY_RESPONSE_MAX_BYTES of the body, and give up once
-    the POST has taken DELIVERY_POST_DEADLINE_SECONDS in all."""
-    sock = getattr(getattr(resp.raw, "connection", None), "sock", None)
-    data = b""
-    while len(data) < DELIVERY_RESPONSE_MAX_BYTES:
-        remaining = DELIVERY_POST_DEADLINE_SECONDS - (time.monotonic() - started)
-        if remaining <= 0:
-            raise TimeoutError("receiver did not finish its response in time")
-        if sock is not None:
-            # Each read waits at most until the deadline, not a full read
-            # timeout past it.
-            sock.settimeout(max(remaining, 0.05))
-        try:
-            # read1 returns what has arrived, so the deadline is checked
-            # between a dripping receiver's bytes; read(n) waits for all n.
-            read = getattr(resp.raw, "read1", None) or resp.raw.read
-            try:
-                chunk = read(
-                    DELIVERY_RESPONSE_MAX_BYTES - len(data), decode_content=True
-                )
-            except TypeError:
-                chunk = read(DELIVERY_RESPONSE_MAX_BYTES - len(data))
-        except Exception as e:
-            if time.monotonic() - started >= DELIVERY_POST_DEADLINE_SECONDS:
-                raise TimeoutError(
-                    "receiver did not finish its response in time"
-                ) from e
-            raise http_requests.RequestException(str(e)) from e
-        if not chunk:
-            break
-        data += chunk
-    return data.decode(resp.encoding or "utf-8", errors="replace")
+def _error_text(resp):
+    """The first DELIVERY_RESPONSE_MAX_BYTES of an error response's body, as
+    text. Its charset may be one Python does not know: it is then read as
+    UTF-8, as requests' ``Response.text`` does."""
+    try:
+        data = resp.raw.read(DELIVERY_RESPONSE_MAX_BYTES, decode_content=True)
+    except Exception as e:
+        raise http_requests.RequestException(str(e) or type(e).__name__) from e
+    try:
+        return str(data, resp.encoding or "utf-8", errors="replace")
+    except (LookupError, TypeError):
+        return str(data, "utf-8", errors="replace")
 
 
 def _usable_webhook(webhook_id):
@@ -576,10 +767,16 @@ def deliver_webhook_activity(webhook_id, run_started_at=None):
     rows = AgentccWebhook.all_objects.filter(pk=webhook_id)
     if token is not None:
         rows = rows.filter(last_run_started_at=token)
-    rows.update(
+    refreshed = rows.update(
         delivery_lease_until=timezone.now()
         + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT)
     )
+    if token is not None and not refreshed:
+        # Its lease ran out while it waited and a newer run owns the webhook
+        # (or its row is gone): delivering too would send its events out of
+        # order beside that run, outside the caps.
+        logger.info("webhook_delivery_stale_run_skipped", webhook_id=str(webhook_id))
+        return {"delivered": 0, "failed": 0, "retired": 0}
     try:
         return deliver_webhook(webhook_id, release_lease=True, run_token=token)
     finally:
