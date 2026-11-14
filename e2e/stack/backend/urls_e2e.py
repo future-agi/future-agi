@@ -12,3 +12,9 @@ if find_spec("tracer.services.feed_alerts") is not None:
     from tracer.views.e2e_feed_issue import E2EFeedIssueView
 
     urlpatterns.append(path("tracer/e2e/feed-issue/", E2EFeedIssueView.as_view()))
+if find_spec("tracer.views.e2e_attachment_scope") is not None:
+    from tracer.views.e2e_attachment_scope import E2EAttachmentScopeView
+
+    urlpatterns.append(
+        path("tracer/e2e/attachment-scope/", E2EAttachmentScopeView.as_view())
+    )

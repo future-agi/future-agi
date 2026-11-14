@@ -2508,6 +2508,31 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-066 — a recorded voice call and a traced image play and render on the trace for a signed-in user
+
+**Goal:** A developer whose SDK uploaded a call recording and a model's image, audio and PDF inputs opens the call and the trace, plays the audio and sees the image where the model saw it
+
+**Spec:** `flows/observe/trace-attachments.spec.ts:198`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a voice project and an observe project and opt both into attachments (operator step, test-image endpoint)
+2. with the org API key, bootstrap an F01 capture session per project and upload an Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
+3. send the parent spans through the collector carrying fi.attachment refs
+4. on the https app origin, open the voice call and play its recording to the end
+5. open the trace, select the model span, switch to Chat and see the PNG inside user message 2
+6. load the WAV, and download the PDF, which has no inline preview
+
+**Backend state verified:**
+
+- PG: each seeded occurrence is bound to its exact trace/span, not deleted, with its placement, its attachment ready and its blob sha256 equal to the uploaded bytes
+- CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs
+- API: the trace detail and voice detail project exactly the seeded attachments as ready, and the voice manifest is a 200 ms mixed Ogg/Opus recording
+- API: a gateway Range request with the viewer's media session answers 206 with the validated type and the first bytes of the upload
+- API: the same gateway URL without the media session is denied, and resolve without credentials answers 401
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle

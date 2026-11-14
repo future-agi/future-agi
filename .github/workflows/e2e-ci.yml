@@ -313,7 +313,7 @@ jobs:
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
               property-catalog-kafka property-catalog-topic-init
-              property-catalog-runtime-volume-init)
+              property-catalog-runtime-volume-init attachments-s3 attachments-origin)
           fi
           attempt_log=$(mktemp)
           trap 'rm -f "$attempt_log"' EXIT

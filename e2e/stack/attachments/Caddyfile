@@ -1,0 +1,23 @@
+# HTTPS app origin for attachment playback (FI_ATTACHMENTS_MEDIA_ORIGIN).
+# The media session cookie and gateway are same-origin with the app and https
+# only (tracer/views/attachment_media.py same_origin), and the SPA posts the
+# exchange and resolve to window.location.origin
+# (frontend/src/components/attachments/client.js). The product image's nginx
+# proxies nothing, so this fronts it the way a deployment's TLS edge does:
+# exactly the attachment paths go to the backend, the rest to the SPA.
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+https://localhost:23443 {
+	tls internal
+	@attachments path_regexp ^/tracer/v1/(attachment-media-sessions$|attachment-media/|projects/[^/]+/attachments/)
+	handle @attachments {
+		reverse_proxy backend:80
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+}

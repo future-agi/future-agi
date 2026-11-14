@@ -1,0 +1,6 @@
+# AWS_CONFIG_FILE of the E2E backend and worker only. The attachments S3
+# double (moto, service attachments-s3) is addressed path-style: Docker DNS
+# has no bucket-subdomain names. No credentials or other settings live here.
+[default]
+s3 =
+    addressing_style = path

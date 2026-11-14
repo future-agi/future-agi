@@ -252,6 +252,29 @@ from the four component images already built with that tag. The managed-mock ins
 (`lib/managed-mock.ts`) checks the Standalone stack against its own spec
 (`lib/managed-mock-standalone.ts`). The Distributed-only background attestation is skipped there.
 
+### Attachments on the Distributed stack (`OBS-E2E-066`)
+
+The Distributed overlay runs trace attachments end to end; the Standalone stack does not, and the
+flow skips there. `docker-compose.e2e.yml` sets `FI_ATTACHMENTS_ENABLED=true` (and the private
+storage settings) on `postgres-schema-bootstrap`, `backend` and `worker`, so the binding,
+outbox-drain and lifecycle schedules are registered and drained; `e2e.env` sets the same flag for
+`fi-collector`. It adds:
+
+- `attachments-s3` — moto, the native-S3 double for the quarantine and serving buckets.
+  `storage.from_settings` has no endpoint setting, so the backend reaches it through botocore's
+  standard `AWS_ENDPOINT_URL_S3` and a path-style `AWS_CONFIG_FILE`;
+  `attachments-storage-bootstrap` gives both buckets the posture `verify_readiness` checks.
+- `attachments-origin` — Caddy on `https://localhost:23443` (`E2E.attachmentsAppUrl`), the
+  `FI_ATTACHMENTS_MEDIA_ORIGIN`. Media sessions and the gateway are https and same-origin with the
+  app, so it sends the attachment paths to the backend and everything else to the SPA. Its
+  certificate comes from Caddy's internal CA; the flow sets `ignoreHTTPSErrors`.
+- The real bubblewrap validation sandbox in `worker`: the E2E backend image adds `bubblewrap` and
+  `python3`, and the worker gets `CAP_SYS_ADMIN`, unconfined seccomp/AppArmor and unmasked `/proc`
+  paths so `bwrap` can create its namespaces (GitHub's Ubuntu 24.04 runners restrict unprivileged
+  user namespaces).
+- `POST /tracer/e2e/attachment-scope/` (test image only) — the operator opt-in. The product has no
+  API, UI or command that enables a project's attachment scope.
+
 ### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
 
 `lib/catalog-lifecycle.ts` drives the real `fi-observed-catalog-backfill` binary against a running

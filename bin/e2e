@@ -24,7 +24,8 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
-  peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
+  peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio
+  attachments-s3 attachments-origin)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
 # same host ports. See e2e/stack/docker-compose.standalone-e2e.yml.

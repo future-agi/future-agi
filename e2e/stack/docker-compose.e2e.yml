@@ -1,4 +1,22 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
+# Attachments (OBS-E2E-066): backend and worker serve F01 uploads into a
+# native-S3 double and play them back through the https app origin below.
+x-e2e-attachments-env: &e2e-attachments-env
+  FI_ATTACHMENTS_ENABLED: "true"
+  FI_ATTACHMENTS_MEDIA_ORIGIN: https://localhost:23443
+  FI_ATTACHMENTS_STORAGE_BACKEND: s3
+  FI_ATTACHMENTS_STORAGE_REGION: us-east-1
+  FI_ATTACHMENTS_QUARANTINE_BUCKET: e2e-attachments-quarantine
+  FI_ATTACHMENTS_SERVING_BUCKET: e2e-attachments-serving
+  # Fixed test-only values for the moto double; they authorize nothing real.
+  FI_ATTACHMENTS_QUARANTINE_ACCESS_KEY: e2e-attachments-quarantine
+  FI_ATTACHMENTS_QUARANTINE_SECRET_KEY: e2e-attachments-quarantine-secret
+  FI_ATTACHMENTS_SERVING_ACCESS_KEY: e2e-attachments-serving
+  FI_ATTACHMENTS_SERVING_SECRET_KEY: e2e-attachments-serving-secret
+  # botocore's standard endpoint/config variables; storage.from_settings has
+  # no endpoint setting of its own, so the product code stays unmodified.
+  AWS_ENDPOINT_URL_S3: http://attachments-s3:5000
+  AWS_CONFIG_FILE: /etc/futureagi-e2e/aws-config
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -13,6 +31,16 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  postgres-schema-bootstrap:
+    # This one-shot job registers the Temporal schedules. The attachment
+    # binding, outbox-drain and lifecycle schedules exist only when it sees the
+    # flag (tfc/temporal/schedules/attachments.py, attachment_lifecycle.py),
+    # and with the flag on, tracer/apps.py verifies the private storage first.
+    environment:
+      <<: *e2e-attachments-env
+    depends_on:
+      attachments-storage-bootstrap:
+        condition: service_completed_successfully
   backend:
     restart: "no"
     # Replace the production outbox: the ONLY application mount permitted by
@@ -47,8 +75,11 @@ services:
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+      <<: *e2e-attachments-env
     depends_on:
       sql-workbench-bootstrap:
+        condition: service_completed_successfully
+      attachments-storage-bootstrap:
         condition: service_completed_successfully
   worker:
     restart: "no"
@@ -60,6 +91,19 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+      <<: *e2e-attachments-env
+    # The worker runs the attachment validate drain (tasks_s), whose bubblewrap
+    # sandbox creates namespaces and mounts a private /proc. Docker's default
+    # seccomp/AppArmor profiles and masked /proc paths forbid both, so this
+    # worker gets what DEPLOY.md asks of a tasks_s host; nothing else changes.
+    cap_add: [SYS_ADMIN]
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
+    depends_on:
+      attachments-storage-bootstrap:
+        condition: service_completed_successfully
   worker-exact-aggregation:
     restart: "no"
     volumes: !reset []
@@ -106,6 +150,35 @@ services:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
   fi-property-catalog-consumer:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
+  attachments-s3:
+    # Native-S3 double for the private attachment buckets (versioning, SSE,
+    # public-access block, ownership controls, lifecycle, conditional PUT).
+    image: motoserver/moto:5.1.4
+    restart: "no"
+  attachments-storage-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    entrypoint: ["python", "/app/backend/bootstrap_attachments_storage.py"]
+    restart: "no"
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      FUTURE_AGI_E2E_FIXTURE: attachments-storage
+      <<: *e2e-attachments-env
+    depends_on:
+      attachments-s3:
+        condition: service_started
+  attachments-origin:
+    # https://localhost:23443: the app origin attachment playback needs.
+    image: caddy:2.8.4-alpine
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./e2e/stack/attachments/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:23443:23443"
+    depends_on:
+      - frontend
+      - backend
+    restart: "no"
   peerdb-init:
     environment:
       # Root compose never passes the flag to peerdb-init, so the setup script
