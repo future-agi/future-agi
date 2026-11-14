@@ -413,4 +413,3 @@ def test_noise_sensitivity_detection():
     # Extra context tokens lower the normalized score (higher is better).
     r_noisy = ev(None, "Paris is France capital and bananas are yellow potassium fruits.", expected, ctx)
     assert r_noisy["score"] < r_clean["score"]
-
