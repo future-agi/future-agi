@@ -39,7 +39,7 @@ def _session(status_by_url, sleep_by_url=None):
     http = MagicMock()
     sleep_by_url = sleep_by_url or {}
 
-    def post(url, data=None, headers=None, timeout=None, stream=False):
+    def post(url, data=None, headers=None, timeout=None, stream=False, **_kwargs):
         if url in sleep_by_url:
             time.sleep(sleep_by_url[url])
         return _response(status_by_url[url])
@@ -588,7 +588,9 @@ def _flaky_session(url, fail_every):
     http = MagicMock()
     calls = {"n": 0}
 
-    def post(posted_url, data=None, headers=None, timeout=None, stream=False):
+    def post(
+        posted_url, data=None, headers=None, timeout=None, stream=False, **_kwargs
+    ):
         calls["n"] += 1
         return _response(502 if calls["n"] % fail_every == 0 else 200)
 
@@ -1306,3 +1308,81 @@ def test_a_receiver_dripping_its_body_cannot_hold_a_post_past_its_deadline(
     event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
     assert event.status == "pending" and event.attempts == 1
     assert "in time" in event.last_error
+
+
+def _serve(handler):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+@pytest.mark.integration
+def test_a_redirecting_receiver_is_not_followed_outside_the_deadline(organization):
+    """Round 4 review: requests followed redirects inside ``http.post``, each
+    hop with its own timeouts, so a chain of slow redirects outlived the
+    POST's total deadline. A redirect is now an answer: one request, failed."""
+    from http.server import BaseHTTPRequestHandler
+
+    import requests
+
+    hits = []
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(307)
+            self.send_header("Location", "/next")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server, base = _serve(Redirect)
+    webhook = _webhook(organization, "redirect", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
+            result = deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+    assert hits == ["/hook"]
+    assert result["failed"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.last_response_code == 307
+
+
+@pytest.mark.integration
+def test_a_compressed_error_body_is_stored_as_text(organization):
+    import gzip
+    from http.server import BaseHTTPRequestHandler
+
+    import requests
+
+    class Gzip503(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = gzip.compress(b"upstream unavailable")
+            self.send_response(503)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server, base = _serve(Gzip503)
+    webhook = _webhook(organization, "gzip", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
+            deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.last_error == "HTTP 503: upstream unavailable"

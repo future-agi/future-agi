@@ -207,6 +207,10 @@ def _post(http, webhook, event):
             headers=headers,
             timeout=DELIVERY_TIMEOUT,
             stream=True,
+            # A redirect would start another request, each with its own
+            # timeouts, outside the POST's total deadline. A receiver must
+            # answer at its own URL.
+            allow_redirects=False,
         )
         try:
             text = _read_response_text(resp, started)
@@ -242,7 +246,12 @@ def _read_response_text(resp, started):
             # read1 returns what has arrived, so the deadline is checked
             # between a dripping receiver's bytes; read(n) waits for all n.
             read = getattr(resp.raw, "read1", None) or resp.raw.read
-            chunk = read(DELIVERY_RESPONSE_MAX_BYTES - len(data))
+            try:
+                chunk = read(
+                    DELIVERY_RESPONSE_MAX_BYTES - len(data), decode_content=True
+                )
+            except TypeError:
+                chunk = read(DELIVERY_RESPONSE_MAX_BYTES - len(data))
         except Exception as e:
             if time.monotonic() - started >= DELIVERY_POST_DEADLINE_SECONDS:
                 raise TimeoutError(
