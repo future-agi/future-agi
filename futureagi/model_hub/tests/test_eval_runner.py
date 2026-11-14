@@ -570,9 +570,7 @@ def test_legacy_eval_template_create_sets_workspace_and_initial_version(
 
 
 @pytest.mark.django_db
-def test_legacy_eval_template_create_rejects_system_owner(
-    auth_client, organization
-):
+def test_legacy_eval_template_create_rejects_system_owner(auth_client, organization):
     response = auth_client.post(
         "/model-hub/eval-template/create/",
         {

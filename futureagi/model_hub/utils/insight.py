@@ -54,11 +54,13 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
 
         if filter_type == "property":
             if filter_data_type == "string":
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
                 indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
 
         else:
             filter_value[0] = str(float(filter_value[0]) / 10)
@@ -73,10 +75,12 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
         # prep_filters.append(f"has(EvalResults.Key, '{metric['key']}')")
         query = ""
         if metric["data_type"] == "string":
-            query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+            query = (
+                f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
             IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
             AS conv_id FROM events WHERE has(EvalResults.Key, '{metric['key']}') \
             AND NOT has(Features.Key, 'node_id') AND deleted = 0"
+            )
         else:
             query = ""
             # query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"

@@ -51,9 +51,12 @@ class EvalRecommender:
         ]
 
         # Get first row efficiently with only needed fields
-        first_row = Row.objects.filter(
-            dataset=self.dataset
-        ).only("id").order_by("order").first()
+        first_row = (
+            Row.objects.filter(dataset=self.dataset)
+            .only("id")
+            .order_by("order")
+            .first()
+        )
 
         # Get row data in correct order
         if first_row:
@@ -61,16 +64,17 @@ class EvalRecommender:
             cells_values = Cell.objects.filter(
                 row=first_row,
                 column_id__in=self.dataset.column_order,
-                column__deleted=False
+                column__deleted=False,
             ).values("column_id", "value")
 
             # Create a dict for O(1) lookups instead of complex Case/When
-            cells_dict = {str(cell["column_id"]): cell["value"] for cell in cells_values}
+            cells_dict = {
+                str(cell["column_id"]): cell["value"] for cell in cells_values
+            }
 
             # Preserve column_order
             self.row_data = [
-                cells_dict.get(col_id, None)
-                for col_id in self.dataset.column_order
+                cells_dict.get(col_id, None) for col_id in self.dataset.column_order
             ]
         else:
             self.row_data = []
