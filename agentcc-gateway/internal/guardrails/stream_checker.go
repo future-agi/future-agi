@@ -61,6 +61,29 @@ type StreamCheckResult struct {
 	Message string
 	// Disclaimer is set when failureAction is "disclaimer" and guardrail triggered at end.
 	Disclaimer string
+	// pipeline is the post-stage run that blocked, for StoreBlock.
+	pipeline *PipelineResult
+}
+
+// StoreBlock records a stream block on the request, as the non-streaming post
+// stage does, so its log entry lists the guardrail that stopped the stream.
+// Without it a stream stopped by an org check, on a request whose only stored
+// result is a Monitor key-policy match, would look monitor-only to log
+// ingestion and raise no guardrail.triggered event.
+func (r *StreamCheckResult) StoreBlock(rc *models.RequestContext) {
+	if r == nil || !r.Blocked || rc == nil {
+		return
+	}
+	rc.Flags.GuardrailTriggered = true
+	before := len(rc.GuardrailResults)
+	if r.pipeline != nil {
+		storeGuardrailResults(rc, r.pipeline)
+	}
+	if len(rc.GuardrailResults) == before {
+		rc.GuardrailResults = append(rc.GuardrailResults, models.GuardrailResult{
+			Name: "streaming", Action: "block", Message: r.Message, Outcome: "blocked",
+		})
+	}
 }
 
 // ProcessChunk accumulates text from a stream chunk and runs guardrails
@@ -150,7 +173,8 @@ func (sc *StreamGuardrailChecker) runCheck(ctx context.Context) *StreamCheckResu
 	}
 
 	return &StreamCheckResult{
-		Blocked: true,
-		Message: msg,
+		Blocked:  true,
+		Message:  msg,
+		pipeline: result,
 	}
 }

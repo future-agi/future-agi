@@ -376,3 +376,38 @@ func (g *inspectorGuardrail) Stage() Stage  { return g.stage }
 func (g *inspectorGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	return g.onCheck(input)
 }
+
+// A stream block is stored on the request like a non-streaming block, so a
+// Monitor key-policy match is never the only stored result of a request a
+// guardrail stopped.
+func TestStreamChecker_StoreBlockRecordsTheBlockingCheck(t *testing.T) {
+	registry := map[string]Guardrail{
+		"blocker": &mockGuardrail{name: "blocker", stage: StagePost,
+			result: &CheckResult{Pass: false, Score: 0.95, Message: "toxic content detected"}},
+	}
+	engine := NewEngine(config.GuardrailsConfig{
+		Enabled: true, FailOpen: true, DefaultTimeout: 5 * time.Second,
+		Rules: []config.GuardrailRuleConfig{{Name: "blocker", Stage: "post", Mode: "sync", Action: "block", Threshold: 0.5}},
+	}, registry)
+	sc := NewStreamChecker(engine, config.StreamingGuardrailConfig{Enabled: true, CheckInterval: 10, FailureAction: "stop"},
+		nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.GuardrailResults = []models.GuardrailResult{{Name: "secret-detection", Action: "block", Mode: "monitor", Outcome: "would_block"}}
+	res := sc.ProcessChunk(context.Background(), makeChunk("This is more than ten characters of content"))
+	if !res.Blocked {
+		t.Fatal("expected a block")
+	}
+	res.StoreBlock(rc)
+	if !rc.Flags.GuardrailTriggered {
+		t.Fatal("a stream block must flag the request")
+	}
+	if len(rc.GuardrailResults) != 2 {
+		t.Fatalf("results=%+v, want the monitor match plus the stream block", rc.GuardrailResults)
+	}
+	got := rc.GuardrailResults[1]
+	if got.Name != "blocker" || got.Action != "block" || got.Mode == "monitor" {
+		t.Fatalf("stream block result=%+v", got)
+	}
+}

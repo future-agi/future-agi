@@ -1820,7 +1820,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
@@ -1854,6 +1854,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
+						res.StoreBlock(rc)
 						sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					} else if res.Disclaimer != "" {
 						disclaimer := res.Disclaimer
@@ -1895,7 +1896,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// Run streaming guardrail check.
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
