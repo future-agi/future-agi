@@ -221,7 +221,7 @@ function DocumentEditor({
           <>
             <Stack spacing={0.5}>
               <Typography variant="s3" color="text.secondary">
-                Skill identity · read-only
+                Name (set at creation)
               </Typography>
               <Typography
                 variant="s1"

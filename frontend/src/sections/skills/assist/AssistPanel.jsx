@@ -11,6 +11,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import EmptyState from 'src/components/empty-state';
 import ErrorState from 'src/components/error-state';
 import StatusBadge from 'src/components/status-badge';
+import ActionReason from "../components/ActionReason";
 import AssistProposal from './AssistProposal';
 
 const titles = { draft: 'Draft with AI', description: 'Improve when this skill is used', summary: 'Summarize changes' };
@@ -150,7 +151,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
   if (previewState === 'error' || options.isError) return <ErrorState title="Could not load assistance options" onRetry={options.refetch} />;
   if (!draft) return <EmptyState variant="no-results" title="Save a draft first" description="Assistance belongs to your private saved draft. Create or open a draft to continue." />;
   if (previewState === 'forbidden' || skill.permissions?.canRunTests !== true) return <ErrorState title="Write access is required" detail="A current workspace member can request and apply a private proposal." />;
-  if (!options.data?.assistEnabled) return <EmptyState variant="no-results" title="Paid assistance is unavailable" description="Generation stays disabled until recovery and non-destructive apply are qualified. You can continue editing and running enabled comparisons." />;
+  if (!options.data?.assistEnabled) return <EmptyState variant="no-results" title="AI drafting is off for this workspace" description="Generation stays disabled until recovery and non-destructive apply are qualified. You can continue editing and running enabled comparisons." />;
   if (!options.data?.enabled || previewState === 'missing-key' || !options.data.models.some((model) => model.canRun)) return <EmptyState variant="no-results" title="Connect a supported workspace model" description="Assistance uses your workspace provider connection. No managed model or organization-global key is substituted." />;
 
   return (
@@ -177,6 +178,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
           <TextField fullWidth size="small" label="Estimated-cost stop (USD)" value={spend} disabled={locked} inputProps={{ inputMode: 'decimal' }} onChange={(event) => { setSpend(event.target.value); invalidatePreview(); }} />
         </Stack>
         <Typography variant="s3" color="text.secondary">One completion · up to 4096 output tokens · no scripts, external actions or automatic publication.</Typography>
+        <ActionReason id="assist-action-reason-1" reason={locked ? 'Finish the current request first' : !selectedModel?.canRun ? 'Choose an available workspace model' : !/^(?:\d+)(?:\.\d{1,8})?$/.test(spend) || Number(spend) <= 0 ? 'Enter an estimated-cost stop' : kind === 'draft' && !instruction.trim() ? 'Describe the task first' : kind === 'description' && !routingReady ? 'Choose reviewed use and non-use examples' : ''} />
         <Box><Button variant="outlined" disabled={locked || !selectedModel?.canRun || !/^(?:\d+)(?:\.\d{1,8})?$/.test(spend) || Number(spend) <= 0 || (kind === 'draft' && !instruction.trim()) || (kind === 'description' && !routingReady)} onClick={preview}>{preparing ? 'Saving and previewing…' : 'Preview data and spend'}</Button></Box>
         {error && <Alert severity="error">{error}</Alert>}
         {review && !proposalId && <Section title="Confirm outbound processing" description={`Estimated upper bound: USD ${review.plan.estimate.upperBoundUsd}`}>

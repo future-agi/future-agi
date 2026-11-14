@@ -2,11 +2,12 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import { Alert, Box, Button, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Checkbox, DialogActions, FormControlLabel, List, ListItemButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
 
 import { getSkillErrorCode, useSkill, usePublishSkillDraft, useSaveSkillDraft, useSkillCompare, useSkillDraft } from "src/api/skills";
 import { useSkillTestingOptions } from "src/api/skills/testing";
 import { skillFilesDigest, skillManifestDigest } from 'src/api/skills/digest';
+import ActionReason from "../components/ActionReason";
 import TestEvidence from '../tests/TestEvidence';
 import AssistPanel from '../assist/AssistPanel';
 import { paths } from "src/routes/paths";
@@ -114,9 +115,10 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const versionText = sameAsLatest ? `v${release.latestVersion}` : nextVersion ? `v${nextVersion}` : 'a new version';
   const publishEffect = sameAsLatest ? 'Reuses' : 'Creates';
   const productionVersion = release.labels?.find((item) => item.name === 'production')?.version;
-  const consequence = labels.includes('production')
-    ? `${publishEffect} ${versionText} and moves production from ${productionVersion ? `v${productionVersion}` : 'unassigned'} to ${versionText}.`
+  const consequence = labels.length
+    ? `${publishEffect} ${versionText} and moves ${labels.join(' and ')} to ${versionText}.`
     : `${publishEffect} ${versionText}. Production ${productionVersion ? `stays on v${productionVersion}` : 'stays unassigned'}.`;
+  const disabledReason = publish.isPending ? 'Publishing…' : !digest ? 'Identifying reviewed files…' : releaseConflict ? 'Reload and review release state' : !labels.every(canMove) ? 'An admin must move the selected protected label' : live.error ? 'Retry checks to publish' : !live.current || live.pending || !checks ? 'Wait for current checks' : !comparisonReady ? 'Review current file changes' : checks.summary.errors > 0 ? 'Fix the check errors' : checks.summary.warnings > 0 && !acknowledged ? 'Tick the warning acknowledgment' : note.length > 2000 ? 'Shorten the version note' : '';
   const publishTitle = labels.length > 1 ? 'Publish and move labels' : labels.length ? `Publish and move ${labels[0]}` : 'Publish';
 
   const submit = async () => {
@@ -182,7 +184,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       onClose={onClose}
       title="Publish skill"
       subTitle="Review what changes, then publish."
-      actionBtnProps={{ color: 'primary' }}
+      dialogActionSx={{ display: "none" }}
       actionBtnTitle={stale ? "Publish anyway" : publishTitle}
       onSubmit={submit}
       isValid={canPublish}
@@ -193,7 +195,6 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
       <Stack spacing={2} sx={{ overflowY: "auto", minWidth: 0, "& .MuiFormControlLabel-root": { mx: 0 } }}>
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
-        <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
         <ReviewSection title={noFileChanges ? `No file changes since v${draft.baseVersion}` : draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
           {draft.baseVersion !== null && !comparison.isError && (comparison.isPending || !comparisonVerified || liveComparison.isFetching) && <ContentSkeleton variant="panel" label="Verifying reviewed file changes" />}
           {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
@@ -217,17 +218,17 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
             </Stack>
           )}
         </ReviewSection>
-        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
-        {!noFileChanges && <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>}
-        {summaryOpen && !noFileChanges && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
         <ReviewSection title="Checks">
           {live.pending && <ContentSkeleton variant="rows" rows={2} label="Checking draft before publishing" />}
           {live.error && <ErrorState title="Couldn't run checks" onRetry={live.retry} />}
           {checks && <ChecksList checks={checks} />}
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
-          {checks?.summary.warnings > 0 && <FormControlLabel label="I reviewed the warnings and want to publish this version." control={<Checkbox checked={acknowledged} onChange={(_, value) => setAcknowledged(value)} />} />}
         </ReviewSection>
-        <ReviewSection title="Release labels (optional)" description="Agents using a selected label will fetch this version on their next request. Pinned versions do not change.">
+        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
+        <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !options.data?.assistEnabled ? "AI drafting is off for this workspace" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />
+        {!noFileChanges && <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>}
+        {summaryOpen && !noFileChanges && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
+        <ReviewSection title="Release labels (optional)" description="Apps that follow a selected label get this version the next time they fetch it. Pinned versions do not change.">
           <Stack>
             {["staging", "production"].map((label) => (
               <FormControlLabel key={label} label={label} control={(
@@ -238,8 +239,17 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
 
         </ReviewSection>
+        <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
       </Stack>
-      <Typography variant="s1" role="status" sx={{ flexShrink: 0 }}>{consequence}</Typography>
+      <DialogActions data-sticky-footer sx={{ flexDirection: "column", alignItems: "stretch", flexShrink: 0, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", p: 1.5, position: "sticky", bottom: 0 }}>
+        <Typography variant="s1" role="status">{consequence}</Typography>
+          {checks?.summary.warnings > 0 && <FormControlLabel label="I reviewed the warnings and want to publish this version." control={<Checkbox checked={acknowledged} onChange={(_, value) => setAcknowledged(value)} />} />}
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="flex-end" alignItems={{ sm: "center" }}>
+          <ActionReason id="publish-reason" reason={disabledReason} />
+          <Button variant="outlined" disabled={publish.isPending} onClick={onClose}>Cancel</Button>
+          <Button variant="contained" color="primary" aria-describedby={disabledReason ? "publish-reason" : undefined} disabled={!canPublish || publish.isPending} onClick={submit}>{stale ? "Publish anyway" : publishTitle}</Button>
+        </Stack>
+      </DialogActions>
     </ModalWrapper>
   );
 }

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Button, Stack, Typography } from '@mui/material';
+import { Alert, Button, MenuItem, Stack, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { getSkillErrorCode, useSkillDraft } from 'src/api/skills';
 import { useCheckSkillSource, useGitHubPreview, useSkillSource, useStageSkillSourceUpdate } from 'src/api/skills/github';
@@ -10,6 +10,13 @@ import Section from 'src/components/section';
 import { paths } from 'src/routes/paths';
 import { usePreviewState } from 'src/sections/skills/components/SkillsStatePreview';
 import { GitHubPreviewReview } from './GitHubImportPanel';
+
+export function GitHubSourceStatus({ skill, onOpen }) {
+  const source = useSkillSource(skill.id);
+  const missing = getSkillErrorCode(source.error) === 'source_not_found';
+  return <MenuItem disabled={source.isPending || missing} onClick={onOpen}>{source.isPending ? 'Checking GitHub source…' : missing ? 'Not linked to GitHub' : source.isError ? 'GitHub source could not load' : 'GitHub source'}</MenuItem>;
+}
+GitHubSourceStatus.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
 
 // Source evidence stays quiet; the actionable replacement diff receives the space.
 export default function GitHubSourcePanel({ skill }) {

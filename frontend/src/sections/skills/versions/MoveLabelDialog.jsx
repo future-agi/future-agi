@@ -10,6 +10,7 @@ import {
   useSkillVersion,
   useSkillCompare,
   useSkillLabels,
+  useSkillVersions,
 } from "src/api/skills";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -17,6 +18,7 @@ import ErrorState from "src/components/error-state";
 import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { LABEL_PATTERN, LIMITS } from "src/sections/skills/constants";
 import TestEvidence from '../tests/TestEvidence';
+import ActionReason from "../components/ActionReason";
 import CompareSummary from "../compare/CompareSummary";
 
 function MoveLabelForm({ onClose, skill, label, version }) {
@@ -29,6 +31,8 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   const [refreshing, setRefreshing] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const labels = useSkillLabels(skill.id);
+  const versions = useSkillVersions(skill.id, { page: 1, pageSize: 100 });
+  const [targetChosen, setTargetChosen] = useState(version != null);
   const detail = useSkill(skill.id);
   const targetVersion = useSkillVersion(skill.id, target);
   const [evidenceRunId, setEvidenceRunId] = useState(null);
@@ -54,6 +58,12 @@ function MoveLabelForm({ onClose, skill, label, version }) {
 
   const ready = snapshot?.name === name;
   const current = ready ? snapshot.version : null;
+  useEffect(() => {
+    if (!ready || targetChosen || !versions.data) return;
+    const alternative = versions.data.results.filter((item) => item.number !== current).sort((a, b) => b.number - a.number)[0];
+    setTarget(alternative?.number ?? current ?? skill.latestVersion ?? '');
+    setTargetChosen(true);
+  }, [ready, targetChosen, versions.data, current, skill.latestVersion]);
   const labelLimitReached =
     ready && current === null && labels.data?.length >= LIMITS.MAX_LABELS;
   const compare = useSkillCompare(
@@ -94,7 +104,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
       !canMove || detail.isError || targetVersion.isError || !targetVersion.data?.digest ||
       !ready ||
       !validName ||
-      !validTarget ||
+      !validTarget || current === target ||
       conflict ||
       labelLimitReached ||
       !summaryReady
@@ -150,7 +160,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           summaryReady &&
           current !== target,
       )}
-      actionBtnTitle={`Move ${name || "label"} from ${current === null ? "unassigned" : `v${current}`} to ${validTarget ? `v${target}` : "version"}`}
+      actionBtnTitle={ready && current === target ? `Move ${name || "label"}` : `Move ${name || "label"} from ${current === null ? "unassigned" : `v${current}`} to ${validTarget ? `v${target}` : "version"}`}
     >
       <Stack spacing={2} sx={{ minWidth: 0, overflowY: "auto" }}>
         {error && (
@@ -197,13 +207,10 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           }
         />
         <Stack spacing={0.5} role="group" aria-label="Target version">
-          <Typography variant="s3" color="text.secondary">
-            Target version
-          </Typography>
           <VersionSelect
             skillId={skill.id}
             value={target}
-            onChange={setTarget}
+            onChange={(value) => { setTargetChosen(true); setTarget(value); }}
             includeLabels={false}
           />
         </Stack>
@@ -224,7 +231,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
             <Typography variant="s1" color="text.secondary">
               {current === null
                 ? "This is a new label. It does not point to a version yet."
-                : `Currently points to v${current}.`}
+                : current === target ? `${name.charAt(0).toUpperCase()}${name.slice(1)} already points to v${current}.` : `Currently points to v${current}.`}
             </Typography>
             {current !== null && compare.isLoading && (
               <ContentSkeleton
@@ -244,6 +251,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
             )}
           </Stack>
         )}
+        {ready && current === target && <ActionReason id="move-action-reason-1" reason="Choose a different version" />}
         {!canMove && <Alert severity="info">A workspace admin or organization admin must move this protected label. Publishing an ordinary version remains available.</Alert>}
         {targetVersion.isError && <ErrorState title="Could not load the target version" onRetry={targetVersion.refetch} />}
         {validTarget && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />}

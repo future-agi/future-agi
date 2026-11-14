@@ -22,14 +22,14 @@ import { useSkillUsage } from "src/api/skills";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
-import MetricStrip from "src/components/metric-strip";
+import When from "../components/When";
+import TechnicalDetails from "../components/TechnicalDetails";
 import Section from "src/components/section";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { chartAxisColors, seriesColor } from "src/theme/data-colors";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildUsageChart } from "./usageChart";
-import { formatFetchedAt } from "./detail-state";
 
 export default function UsageTab({ skill }) {
   const theme = useTheme();
@@ -106,7 +106,6 @@ export default function UsageTab({ skill }) {
 
   return (
     <Stack spacing={3}>
-      <AdoptionPanel skill={skill} />
       <TextField
         select
         size="small"
@@ -137,38 +136,12 @@ export default function UsageTab({ skill }) {
       ) : (
         usage && (
           <>
-            <MetricStrip
-              sx={{
-                gridTemplateColumns: {
-                  xs: "minmax(0, 1fr)",
-                  sm: "repeat(3, minmax(0, 1fr))",
-                },
-                "& > :not(:first-of-type)": {
-                  borderLeftWidth: { xs: 0, sm: 1 },
-                  borderTopWidth: { xs: 1, sm: 0 },
-                  borderTopStyle: "solid",
-                  borderColor: "divider",
-                },
-              }}
-              items={[
-                {
-                  key: "fetches",
-                  label: "Fetches",
-                  value: usage.total.toLocaleString(),
-                },
-                {
-                  key: "last",
-                  label: "Last fetched",
-                  value: formatFetchedAt(usage.lastFetchedAt),
-                },
-                {
-                  key: "versions",
-                  label: "Versions in use",
-                  value: usage.byVersion.filter((item) => item.count > 0)
-                    .length,
-                },
-              ]}
-            />
+            <AdoptionPanel skill={skill} days={days} summary={<Stack direction={{ xs: "column", sm: "row" }} spacing={3}>
+              <Stack><Typography variant="m3">{usage.total.toLocaleString()}</Typography><Typography variant="s3" color="text.secondary">Fetches</Typography></Stack>
+              <Stack><Typography variant="m3"><When value={usage.lastFetchedAt} /></Typography><Typography variant="s3" color="text.secondary">Last fetch</Typography></Stack>
+              <Stack><Typography variant="m3">{usage.byVersion.filter((item) => item.count > 0).length}</Typography><Typography variant="s3" color="text.secondary">Versions in use</Typography></Stack>
+            </Stack>} />
+            <TechnicalDetails title="Fetch counts and details">
             <Section
               title="Fetches by version"
               description="Daily requests, grouped by UTC date."
@@ -264,20 +237,21 @@ export default function UsageTab({ skill }) {
                         <TableCell align="right">
                           {item.count.toLocaleString()}
                         </TableCell>
-                        <TableCell>{formatFetchedAt(item.lastAt)}</TableCell>
+                        <TableCell><When value={item.lastAt} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </TableContainer>
             </Section>
+            </TechnicalDetails>
           </>
         )
       )}
-      <Typography variant="s3" color="text.secondary">
+      <TechnicalDetails title="What fetches mean"><Typography variant="s3" color="text.secondary">
         Counts requests that fetched this skill. A fetch doesn&apos;t prove an
         agent used it.
-      </Typography>
+      </Typography></TechnicalDetails>
     </Stack>
   );
 }

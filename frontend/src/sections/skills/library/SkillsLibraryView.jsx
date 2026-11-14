@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { formatDistanceToNow } from "date-fns";
+import When from "../components/When";
+import { useSkillsAccess } from "../utils/access";
 import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
 import { paths } from "src/routes/paths";
@@ -23,6 +24,7 @@ import SkillRowMenu from "./SkillRowMenu";
 
 export default function SkillsLibraryView() {
   const navigate = useNavigate();
+  const { canWrite } = useSkillsAccess();
   const [params, setParams] = useSearchParams();
   const [newTemplate, setNewTemplate] = useState(null);
   const location = useLocation();
@@ -48,7 +50,8 @@ export default function SkillsLibraryView() {
   const statePreview = usePreviewState();
   const previewState = params.get("state") === "filtered-empty" ? "filtered-empty" : statePreview;
   const loading = previewState === "loading" || (!previewState && query.isPending);
-  const failed = previewState === "error" || (!previewState && query.isError);
+  const outOfRange = !previewState && page > 1 && (query.error?.response?.status === 404 || (query.data?.count > 0 && !query.data.results?.length));
+  const failed = !outOfRange && (previewState === "error" || (!previewState && query.isError));
   const rows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
   const count = ['empty', 'filtered-empty'].includes(previewState) ? 0 : query.data?.count || 0;
   const stats = previewState === "empty" ? { total: 0 } : query.data?.stats;
@@ -72,41 +75,41 @@ export default function SkillsLibraryView() {
   const columns = [
     { accessorKey: "name", header: "Name", minSize: 240, meta: { flex: 2 }, cell: ({ row: { original: skill } }) => (
       <Stack sx={{ minWidth: 0 }}>
-        <Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} underline="hover" color="text.primary"
-          onClick={(event) => event.stopPropagation()} sx={{ typography: "s1" }}>{skill.name}</Link>
+        <Stack direction="row" spacing={1} alignItems="center"><Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} underline="hover" color="text.primary"
+          onClick={(event) => event.stopPropagation()} sx={{ typography: "s1" }}>{skill.name}</Link>{skill.hasDraft && <StatusBadge status="draft" label="Draft" />}</Stack>
         <Typography variant="s3" color="text.secondary" noWrap>{skill.description}</Typography>
       </Stack>
     ) },
-    { id: "production", header: "Production", size: 108, cell: ({ row: { original: skill } }) => {
+    { id: "production", header: "Production", size: 150, cell: ({ row: { original: skill } }) => {
       const production = skill.labels.find((item) => item.name === "production");
-      return production ? <StatusBadge status="released" label={`v${production.version}`} /> : "—";
+      return production ? <StatusBadge status="released" label={`v${production.version}`} /> : <StatusBadge status="unset" label="Not in production" />;
     } },
     { accessorKey: "latestVersion", header: "Latest", size: 118, cell: ({ getValue }) => getValue() ? `v${getValue()}` : "Not published" },
     { accessorKey: "tags", header: "Tags", minSize: 150, meta: { flex: 1 }, cell: ({ getValue }) => <Typography variant="s3" noWrap>{getValue().join(", ") || "—"}</Typography> },
-    { accessorKey: "fetches7d", header: "Fetches 7d", size: 100 },
+    { accessorKey: "fetches7d", header: "Fetches (7 days)", size: 125 },
     { accessorKey: "updatedAt", header: "Updated", minSize: 170, cell: ({ row: { original: skill } }) => (
       <Stack direction="row" alignItems="center" spacing={1}>
-        {skill.updatedBy && <Avatar alt={skill.updatedBy.name} sx={{ width: 24, height: 24 }}>{skill.updatedBy.name?.slice(0, 1)}</Avatar>}
-        <Stack><Typography variant="s3">{formatDistanceToNow(new Date(skill.updatedAt), { addSuffix: true })}</Typography>
+        {skill.updatedBy && <Avatar alt={skill.updatedBy.name} sx={{ width: 20, height: 20, typography: "s3", fontFamily: "inherit" }}>{skill.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</Avatar>}
+        <Stack><Typography variant="s3"><When value={skill.updatedAt} /></Typography>
           <Typography variant="s3" color="text.secondary">{skill.updatedBy?.name || "API"}</Typography></Stack>
       </Stack>
     ) },
     { id: "actions", header: "", size: 48, cell: ({ row: { original: skill } }) => <SkillRowMenu skill={skill} /> },
-  ].map((column) => ({ ...column, enableSorting: false }));
+  ].filter((column) => column.accessorKey !== "tags" || rows.some((skill) => skill.tags?.length)).map((column) => ({ ...column, enableSorting: false }));
 
   return (
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
-        actions={!firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
+        actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
       {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
       {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
-        <FormSearchField label="Search" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
+        <FormSearchField sx={{ width: 280, maxWidth: "100%" }} label="Search skills" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
         <Autocomplete freeSolo autoSelect selectOnFocus forcePopupIcon size="small" options={tagSuggestions} value={tag || null}
           onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: 200, maxWidth: "100%", "& .MuiOutlinedInput-root": { height: dsSize.control.sm, py: 0 } }}
           renderInput={(inputParams) => <TextField {...inputParams} size="small" label="Tag" placeholder="Any tag" />} />
         <TextField select label="Label" size="small" SelectProps={{ displayEmpty: true }} value={label} onChange={(event) => changeParams({ label: event.target.value })} sx={{ minWidth: 140 }}>
-          <MenuItem value="">Any label</MenuItem>{SYSTEM_LABELS.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+          <MenuItem value="">All labels</MenuItem>{SYSTEM_LABELS.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
           {label && !SYSTEM_LABELS.includes(label) && <MenuItem value={label}>{label}</MenuItem>}
         </TextField>
         <TextField select label="Sort" size="small" value={`${sort}:${order}`} sx={{ minWidth: 180 }} onChange={(event) => {
@@ -118,18 +121,19 @@ export default function SkillsLibraryView() {
         </TextField>
       </ListToolbar>}
       {loading ? <ContentSkeleton variant="rows" rows={6} label="Loading skills" />
-        : failed ? <ErrorState title="Couldn't load skills" detail="Your library is still saved. Try loading it again." onRetry={() => { changeParams({ state: null }, false); query.refetch(); }} />
-        : firstRun ? <LibraryEmptyState onCreate={setNewTemplate} onImport={() => setImportOpen(true)} />
+        : outOfRange ? <EmptyState variant="no-results" title={`Page ${page} doesn't exist.`} action={<Button variant="outlined" onClick={() => changeParams({ page: 1 }, false)}>Go to page 1</Button>} />
+        : failed ? <ErrorState title="Couldn't load skills." detail="Your library is still saved. Try loading it again." onRetry={() => { changeParams({ state: null }, false); query.refetch(); }} />
+        : firstRun ? <LibraryEmptyState isViewer={!canWrite} onCreate={setNewTemplate} onImport={() => setImportOpen(true)} />
         : rows.length === 0 && count > 0 ? <EmptyState variant="no-results" title="No skills on this page" description="The library changed since you opened this page."
           action={<Button variant="outlined" onClick={() => changeParams({ page: 1 }, false)}>Go to first page</Button>} />
-        : rows.length === 0 ? <EmptyState variant="no-results" title="No skills found" description="Try a different search or clear the filters."
+        : rows.length === 0 ? <EmptyState variant="no-results" title="No skills match these filters." description="Try a different search or clear the filters."
           onClearFilters={() => changeParams({ search: null, tag: null, label: null, state: null })} />
         : <Box sx={{ minWidth: 0 }}><Box sx={{ height: rows.length * ROW_HEIGHT.twoLine + TABLE_HEADER_HEIGHT.default }}><DataTable columns={columns} data={rows} rowCount={count} rowHeight={ROW_HEIGHT.twoLine} onRowClick={openSkill} /></Box>
           <DataTablePagination page={page - 1} pageSize={pageSize} pageSizeOptions={[10, 25, 50, 100]} total={count} pageCount={query.data.totalPages}
             disabled={query.isFetching} onPageChange={(nextPage) => changeParams({ page: nextPage + 1 }, false)} onPageSizeChange={(size) => changeParams({ page_size: size })} />
         </Box>}
-      {newTemplate !== null && <NewSkillDialog open onClose={() => setNewTemplate(null)} initialTemplate={newTemplate} />}
-      {importOpen && <ImportSkillsDialog open onClose={() => setImportOpen(false)} {...(reopenPlanIds ? { initialTab: "migration", reopenPlanIds } : {})} />}
+      {canWrite && newTemplate !== null && <NewSkillDialog open onClose={() => setNewTemplate(null)} initialTemplate={newTemplate} />}
+      {canWrite && importOpen && <ImportSkillsDialog open onClose={() => setImportOpen(false)} {...(reopenPlanIds ? { initialTab: "migration", reopenPlanIds } : {})} />}
     </Stack>
   );
 }

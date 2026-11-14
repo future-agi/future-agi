@@ -44,7 +44,7 @@ function show(overrides = {}) {
 }
 async function selectLabel(label) {
   fireEvent.mouseDown(
-    screen.getByRole("combobox", { name: "Use label or version" }),
+    screen.getByRole("combobox", { name: "Version to install" }),
   );
   fireEvent.click(
     await screen.findByRole("option", { name: label, exact: true }),
@@ -58,7 +58,7 @@ describe("Use skill panel", () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const { container } = show({ name: "support-policy-" + "a".repeat(48), tags: ["very-long-tag-" + "b".repeat(48)] });
     const snippets = [...container.querySelectorAll("pre")];
-    const copyButtons = screen.getAllByRole("button", { name: "Copy code" });
+    const copyButtons = screen.getAllByRole("button", { name: "Copy" });
     expect(snippets).toHaveLength(2);
     snippets.forEach((snippet, index) => {
       expect(snippet).toHaveStyle({ whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" });
@@ -150,7 +150,7 @@ describe("Use skill panel", () => {
     ["cURL", "curl -fsSL"],
     ["Python", 'os.environ["FI_API_KEY"]'],
     ["TypeScript", "process.env.FI_API_KEY"],
-    ["MCP", "read_skill_file"],
+    ["MCP", "get_skill"],
   ])(
     "shows the %s integration with the selected immutable version",
     async (client, expected) => {
@@ -158,7 +158,7 @@ describe("Use skill panel", () => {
       await selectLabel("Pinned version");
       fireEvent.click(screen.getByRole('tab', { name: client === 'MCP' ? 'MCP' : 'Application', exact: true }));
       if (client !== 'MCP') {
-        fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Application transport' }));
+        fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Fetch with' }));
         fireEvent.click(screen.getByRole('option', { name: client, exact: true }));
       }
       const command = container.querySelector("pre").textContent;
@@ -178,7 +178,7 @@ describe("Use skill panel", () => {
     const { container } = show({ labels: [], latestVersion: 1 });
     expect(container.querySelector('pre')).toHaveTextContent('version=1');
     expect(container.querySelector('pre')).not.toHaveTextContent('label=');
-    expect(screen.getByText(/Legacy ZIP installation, not a safe updater/)).toBeVisible();
+    expect(screen.getByText(/This copies the files/)).toBeVisible();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Coding agent', 'Application', 'MCP', 'Project', 'Personal']);
   });
   it("shows publish guidance for an unpublished skill", () => {

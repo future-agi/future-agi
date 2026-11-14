@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { paths } from 'src/routes/paths';
 import { useMigrationDecision, useMigrationPreview, useMigrationPublish, useMigrationPlanReload } from 'src/api/skills/migration';
 import { useSkillV11Scope } from 'src/api/skills/testing';
+import ActionReason from "../components/ActionReason";
 import TechnicalDetails from "../components/TechnicalDetails";
 import ContentSkeleton from 'src/components/content-skeleton';
 import MigrationPlanPanel from './MigrationPlanPanel';
@@ -91,26 +92,26 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
     {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
-    {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Retained source format" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
-      <MenuItem value="langfuse">Versioned Langfuse exchange JSON</MenuItem><MenuItem value="folder">Private folder or ZIP</MenuItem>
+    {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Source" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
+      <MenuItem value="langfuse">Langfuse export (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
     </TextField>}
     </Stack>
     <Box hidden={plans.length > 0 && !sourceSetupOpen}><Stack spacing={1.5}>
-    <Typography variant="s1">Run the local compatibility inventory first. This review does not issue runtime credentials, change the source, move production labels or certify native delivery.</Typography>
-    <Alert severity="info">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Alert>
+    <Typography variant="s1">Bring skills from Langfuse or a local folder. Nothing is published until you review each one.</Typography>
+    <TechnicalDetails title="Supported formats and source identity"><Typography variant="s3">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Typography></TechnicalDetails>
     <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-      <Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose inventory packet</Button>
-      <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose source files</Button>
-      <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose private folder</Button>
+      <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose export file</Button>
+      <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose folder</Button>
     </Stack>
-    <Typography variant="s3">An inventory packet (skills-inventory --packet) holds every inventoried source, its identities and the proposed context. Choosing it previews them all.</Typography>
+    <TechnicalDetails title="CLI inventory"><Typography variant="s3">An inventory packet (skills-inventory --packet) holds every inventoried source, its identities and the proposed context. Choosing it previews them all.</Typography><Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose inventory packet</Button></TechnicalDetails>
     <input ref={packetInput} type="file" hidden accept="application/json,.json" aria-label="Inventory migration packet" disabled={busy} onChange={(event) => { const [file] = event.target.files; event.target.value = ''; if (file) previewPacket(file); }} />
     <input ref={upload} type="file" hidden multiple={kind === 'folder'} aria-label="Retained source files" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
     {/* Choosing a folder is itself the format choice; no separate selection is needed. */}
     <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { setKind('folder'); selectFiles(event.target.files); event.target.value = ''; }} />
     <Typography variant="s3">{files.length} source files selected</Typography>
-    {kind === 'folder' && <TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => setIdentities(event.target.value)} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." />}
-    <Button color="primary" variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview retained migration</Button>
+    {kind === 'folder' && <TechnicalDetails title="Source identity"><TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => setIdentities(event.target.value)} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." /></TechnicalDetails>}
+    <Button color="primary" variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview import</Button>
+    {!files.length && <ActionReason id="retained-action-reason-1" reason="Choose a file or folder first" />}
     </Stack></Box>
     {error && <Alert severity="error">{error}</Alert>}
     {reload.isPending && <ContentSkeleton variant="rows" rows={3} label="Reloading the retained migration review" />}

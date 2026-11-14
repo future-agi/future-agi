@@ -1,3 +1,5 @@
+import ActionReason from "../components/ActionReason";
+import { useSkillsAccess } from "../utils/access";
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +15,7 @@ import { buildInstallCommand } from "src/sections/skills/utils/install";
 
 export default function SkillRowMenu({ skill }) {
   const navigate = useNavigate();
+  const { isViewer, canWrite } = useSkillsAccess();
   const archive = useArchiveSkill();
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
@@ -51,10 +54,12 @@ export default function SkillRowMenu({ skill }) {
       </IconButton>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} onClick={(event) => event.stopPropagation()}>
         <MenuItem onClick={() => { setAnchor(null); navigate(paths.dashboard.skills.detail(skill.id)); }}><ListItemIcon><Iconify icon="solar:arrow-right-up-linear" width={16} /></ListItemIcon>Open</MenuItem>
-        <MenuItem onClick={() => { setAnchor(null); navigate(paths.dashboard.skills.edit(skill.id)); }}><ListItemIcon><Iconify icon="solar:pen-linear" width={16} /></ListItemIcon>Edit</MenuItem>
+        <MenuItem aria-describedby={isViewer ? `edit-${skill.id}-reason` : undefined} disabled={!canWrite} onClick={() => { setAnchor(null); navigate(paths.dashboard.skills.edit(skill.id)); }}><ListItemIcon><Iconify icon="solar:pen-linear" width={16} /></ListItemIcon>Edit</MenuItem>
         <MenuItem disabled={!hasProduction} onClick={copyCommand}><ListItemIcon><Iconify icon="solar:copy-linear" width={16} /></ListItemIcon>Copy install command</MenuItem>
         <MenuItem disabled={!skill.latestVersion || downloading} onClick={download}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Download</MenuItem>
-        <MenuItem disabled={!canArchive} onClick={() => { setReleaseRevision(detail.data.releaseRevision); setAnchor(null); setConfirm(true); }}><ListItemIcon><Iconify icon="solar:archive-linear" width={16} /></ListItemIcon>Archive</MenuItem>
+        <MenuItem aria-describedby={!canArchive ? `archive-${skill.id}-reason` : undefined} disabled={!canArchive} onClick={() => { setReleaseRevision(detail.data.releaseRevision); setAnchor(null); setConfirm(true); }}><ListItemIcon><Iconify icon="solar:archive-linear" width={16} /></ListItemIcon>Archive</MenuItem>
+        {isViewer && <ActionReason id={`edit-${skill.id}-reason`} reason="Viewers can't edit. Ask a workspace admin for edit access." />}
+        {!canArchive && <ActionReason id={`archive-${skill.id}-reason`} reason={detail.isPending ? "Checking archive permission…" : "You can't archive this skill. Ask a workspace admin."} />}
       </Menu>
       <ConfirmDialog open={confirm} onClose={() => { if (!archive.isPending) setConfirm(false); }} closeDisabled={archive.isPending}
         title={`Archive ${skill.name}?`} content="This hides the skill from your workspace. Agents will no longer be able to fetch it, including by a label."

@@ -23,7 +23,8 @@ import { DataTablePagination } from "src/components/data-table";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
-import StatusBadge from "src/components/status-badge";
+import When from "../components/When";
+import TechnicalDetails from "../components/TechnicalDetails";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
@@ -200,9 +201,10 @@ TraceDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-function AdoptionContent({ skill }) {
+function AdoptionContent({ skill, days: externalDays, summary }) {
   const preview = usePreviewState();
-  const [days, setDays] = useState(7);
+  const [localDays, setDays] = useState(7);
+  const days = externalDays ?? localDays;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [showTraces, setShowTraces] = useState(false);
@@ -237,7 +239,7 @@ function AdoptionContent({ skill }) {
           flexWrap="wrap"
           useFlexGap
         >
-          <TextField
+          {externalDays == null && <TextField
             select
             size="small"
             label="Observation window"
@@ -252,7 +254,7 @@ function AdoptionContent({ skill }) {
                 Last {value} days (UTC)
               </MenuItem>
             ))}
-          </TextField>
+          </TextField>}
           <Button
             variant="outlined"
             onClick={() => setShowTraces(true)}
@@ -264,6 +266,7 @@ function AdoptionContent({ skill }) {
       }
     >
       <Stack spacing={2} sx={{ minWidth: 0 }}>
+        {!target && summary}
         {preview === "loading" || query.isPending ? (
           <ContentSkeleton
             variant="rows"
@@ -283,6 +286,9 @@ function AdoptionContent({ skill }) {
           />
         ) : (
           <>
+            <Typography variant="s1">{target.promotedAt ? `After production moved to v${target.version}, ${data.summary.mixed} ${data.summary.mixed === 1 ? 'observed consumer has' : 'observed consumers have'} fetched both the current and other versions in this window. ${data.summary.otherOnly} fetched only other versions.` : 'Observed versions are shown without claiming adoption after this move.'}</Typography>
+            {summary}
+            <TechnicalDetails title="Observation window and limits">
             <Typography variant="s3" color="text.secondary">
               Moved {timestamp(target.promotedAt)}. Window:{" "}
               {timestamp(data.window.start)} – {timestamp(data.window.end)}. As
@@ -300,6 +306,7 @@ function AdoptionContent({ skill }) {
                 without claiming adoption after this move.
               </Alert>
             )}
+            </TechnicalDetails>
             {preview === "empty" || data.count === 0 ? (
               <EmptyState
                 title="No observed identities in this window"
@@ -307,7 +314,7 @@ function AdoptionContent({ skill }) {
               />
             ) : (
               <>
-                <Typography
+                <TechnicalDetails title="Observation counters"><Typography
                   variant="s3"
                   color="text.secondary"
                   sx={{ fontVariantNumeric: "tabular-nums" }}
@@ -316,7 +323,7 @@ function AdoptionContent({ skill }) {
                   {data.summary.otherOnly} other only · {data.summary.mixed}{" "}
                   both · {data.summary.notSeen} not seen after move ·{" "}
                   {data.summary.ambiguous} ordering uncertain
-                </Typography>
+                </Typography></TechnicalDetails>
                 <TableContainer sx={{ maxWidth: "100%" }}>
                   <Table
                     size="small"
@@ -324,9 +331,9 @@ function AdoptionContent({ skill }) {
                   >
                     <TableHead>
                       <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                        <TableCell>Consumer / channel</TableCell>
-                        <TableCell>Observation</TableCell>
-                        <TableCell>Versions / last fetched</TableCell>
+                        <TableCell>API key</TableCell>
+                        <TableCell>Versions fetched</TableCell>
+                        <TableCell>Last fetch</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -336,35 +343,9 @@ function AdoptionContent({ skill }) {
                           key={`${row.consumerId}:${row.channel}`}
                           sx={{ height: ROW_HEIGHT.default }}
                         >
-                          <TableCell sx={{ overflowWrap: "anywhere" }}>
-                            <Typography variant="s1">
-                              {row.consumerLabel}
-                            </Typography>
-                            <Typography variant="s3" color="text.secondary">
-                              {row.channel} · {timestamp(row.lastAt)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <StatusBadge
-                              status={row.state}
-                              label={
-                                STATE_LABELS[row.state] || "Unknown observation"
-                              }
-                            />
-                          </TableCell>
-                          <TableCell>
-                            {row.versions.map((version) => (
-                              <Typography
-                                key={version.versionId}
-                                variant="s3"
-                                component="div"
-                                color="text.secondary"
-                                title={version.versionId}
-                              >
-                                v{version.version} · {timestamp(version.lastAt)}
-                              </Typography>
-                            ))}
-                          </TableCell>
+                          <TableCell><Typography variant="s1" display="block">{row.consumerLabel} · {row.channel}</Typography><Typography variant="s3" display="block" color="text.secondary">{STATE_LABELS[row.state] || "Unknown observation"}</Typography></TableCell>
+                          <TableCell>{row.versions.map((version) => <Typography key={version.versionId} variant="s3" component="div" title={version.versionId}>v{version.version} · <When value={version.lastAt} /></Typography>)}</TableCell>
+                          <TableCell><When value={row.lastAt} /></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -387,12 +368,12 @@ function AdoptionContent({ skill }) {
             )}
           </>
         )}
-        <Typography variant="s3" color="text.secondary">
+        <TechnicalDetails title="What this activity can tell you"><Typography variant="s3" color="text.secondary">
           Fetches show retrieval, not installation or successful use. One key
-          may represent several processes. Historical timestamp ordering is best
+          may represent several processes, and each channel is counted separately. Historical timestamp ordering is best
           effort; daily counts cannot establish exact post-promotion request
           totals.
-        </Typography>
+        </Typography></TechnicalDetails>
       </Stack>
       {showTraces && target && (
         <TraceDialog
@@ -404,12 +385,12 @@ function AdoptionContent({ skill }) {
     </Section>
   );
 }
-AdoptionContent.propTypes = { skill: PropTypes.object.isRequired };
+AdoptionContent.propTypes = { skill: PropTypes.object.isRequired, days: PropTypes.number, summary: PropTypes.node };
 
-export default function AdoptionPanel({ skill }) {
+export default function AdoptionPanel({ skill, days, summary }) {
   const access = useSkillV11Scope();
   return (
-    <AdoptionContent key={`${access.identity}:${skill.id}`} skill={skill} />
+    <AdoptionContent key={`${access.identity}:${skill.id}:${days ?? "local"}`} skill={skill} days={days} summary={summary} />
   );
 }
-AdoptionPanel.propTypes = { skill: PropTypes.object.isRequired };
+AdoptionPanel.propTypes = AdoptionContent.propTypes;

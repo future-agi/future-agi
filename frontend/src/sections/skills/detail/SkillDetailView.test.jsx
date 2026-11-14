@@ -15,6 +15,9 @@ import { enqueueSnackbar } from "notistack";
 import VersionsTab from "../versions/VersionsTab";
 import SkillDetailView from "./SkillDetailView";
 
+const access = vi.hoisted(() => ({ isViewer: false }));
+vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: access.isViewer, canWrite: !access.isViewer }) }));
+vi.mock("../sources/GitHubSourcePanel", () => ({ default: () => null, GitHubSourceStatus: () => null }));
 vi.mock("src/api/skills", () => ({
   useSkill: vi.fn(),
   useSkillVersion: () => ({ data: { digest: "sha256:" + "a".repeat(64) } }),
@@ -22,7 +25,7 @@ vi.mock("src/api/skills", () => ({
   downloadVersionZip: vi.fn(),
   getSkillErrorCode: (error) => error?.code,
 }));
-vi.mock("../components/VersionSelect", () => ({ default: ({ value, onChange, label }) => <select aria-label={label} value={value} onChange={(event) => onChange(Number(event.target.value))}><option value="1">v1</option><option value="2">v2</option><option value="label:production">Production</option><option value="label:latest">Latest</option></select> }));
+vi.mock("../components/VersionSelect", () => ({ default: ({ value, onChange, label, ariaLabel }) => <select aria-label={ariaLabel || label} value={value} onChange={(event) => onChange(Number(event.target.value))}><option value="1">v1</option><option value="2">v2</option><option value="label:production">Production</option><option value="label:latest">Latest</option></select> }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock('src/api/skills/j1-migration-export', () => ({ useMigrationExport: () => ({ mutateAsync: vi.fn() }) }));
 vi.mock("src/config-global", () => ({ HOST_API: "https://api.example.test" }));
@@ -82,6 +85,7 @@ function show(search = "") {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  access.isViewer = false;
   useSkill.mockReturnValue(success(skill));
   useArchiveSkill.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue(undefined),
@@ -144,13 +148,13 @@ describe("Skill detail route", () => {
       expect.objectContaining({ skill }),
       expect.anything(),
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Usage" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByText("Usage view")).toBeInTheDocument();
     expect(screen.getByLabelText("URL")).toHaveTextContent(
       "tab=usage&version=2&path=references%2Fpolicy.md&source=shared",
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Use skill", exact: true }),
+      screen.getByRole("tab", { name: "Use", exact: true }),
     );
     expect(screen.getByText("Install commands")).toBeInTheDocument();
     expect(
@@ -311,7 +315,7 @@ describe("Skill detail route", () => {
 });
 
 vi.mock("src/sections/skills/tests/TestsTab", () => ({ default: () => <div>Skill tests</div> }));
-vi.mock("src/sections/skills/sources/GitHubSourcePanel", () => ({ default: () => <div>GitHub source</div> }));
+vi.mock("src/sections/skills/sources/GitHubSourcePanel", () => ({ default: () => <div>GitHub source</div>, GitHubSourceStatus: () => null }));
 
 it('mounts Tests without losing immutable result deep links or competing primary actions', () => {
   show('?tab=tests&run=run-id&case=case-id&attempt=attempt-id');
@@ -328,4 +332,18 @@ it("switches the viewed version in the identity row and resets the file path", (
   show("?version=1&path=references%2Fpolicy.md&tab=files");
   fireEvent.change(screen.getByLabelText("Viewing"), { target: { value: "2" } });
   expect(screen.getByLabelText("URL")).toHaveTextContent("version=2&path=SKILL.md&tab=files");
+});
+
+it('keeps viewer edit visibly disabled and Use skill primary', () => {
+  access.isViewer = true;
+  useSkill.mockReturnValue(success({ ...skill, hasDraft: false, permissions: { canArchive: false } }));
+  show();
+  expect(screen.getByRole('button', { name: 'Edit latest v4' })).toBeDisabled();
+  expect(screen.getByText("Viewers can't edit. Ask a workspace admin for edit access.")).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Use skill' })).toHaveClass('MuiButton-contained');
+  fireEvent.click(screen.getByRole('button', { name: 'Use skill' }));
+  expect(screen.getByLabelText('URL')).toHaveTextContent('tab=use');
+  fireEvent.click(screen.getByRole('button', { name: 'Skill actions' }));
+  expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByText("You can't archive this skill. Ask a workspace admin.")).toBeInTheDocument();
 });

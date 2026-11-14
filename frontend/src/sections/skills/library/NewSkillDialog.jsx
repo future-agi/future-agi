@@ -1,3 +1,4 @@
+import ActionReason from "../components/ActionReason";
 import { useId, useState } from "react";
 import { useSkillV11Scope, useSkillTestingOptions } from "src/api/skills/testing";
 import PropTypes from "prop-types";
@@ -41,12 +42,13 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
     <ModalWrapper open={open} onClose={onClose} title="Skill draft created" subTitle={options.data?.assistEnabled ? "Nothing is published. Continue writing, or ask for a private AI proposal to review." : "Nothing is published. Open the editor to continue writing."}
       actionBtnTitle="Open editor" isValid onSubmit={() => { onClose(); navigate(paths.dashboard.skills.edit(created.id)); }}>
       <Stack spacing={2}><Alert severity="info">Provide your policy. Missing facts will be questions, not invented rules.</Alert>
+        {(!options.data?.assistEnabled || created.permissions?.canRunTests !== true) && <ActionReason id="create-action-reason-1" reason={!options.data?.assistEnabled ? "AI drafting is off for this workspace" : "You need test permissions to use AI assistance."} />}
         <Button variant="outlined" disabled={created.permissions?.canRunTests !== true || !options.data?.assistEnabled} onClick={() => { onClose(); navigate(`${paths.dashboard.skills.edit(created.id)}?assist=draft`); }}>Draft with AI</Button>
       </Stack>
     </ModalWrapper>
   );
   return (
-    <ModalWrapper open={open} onClose={onClose} title="New skill" actionBtnTitle="Create skill"
+    <ModalWrapper open={open} onClose={onClose} title="New skill" actionBtnTitle="Create skill" actionBtnProps={{ "aria-describedby": !validName || !validDescription || nameTaken ? "create-action-reason-2" : undefined }}
       onSubmit={submit} isValid={validName && validDescription && !nameTaken} isLoading={create.isPending}>
       <Stack spacing={2}>
         {error && <Alert severity="error">{error}</Alert>}
@@ -68,6 +70,7 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
         {templates.isPending && <Typography variant="s3" color="text.secondary">Loading templates… You can start blank.</Typography>}
         {templates.isError && <Alert severity="warning" action={<Button onClick={templates.refetch}>Retry</Button>}>Templates could not load. You can still start with a blank skill.</Alert>}
         {!templates.isPending && !templates.isError && !(templates.data || []).some((template) => template.id !== "blank") && <Typography variant="s3" color="text.secondary">No templates available — start blank.</Typography>}
+        {(!validName || !validDescription || nameTaken) && <ActionReason id="create-action-reason-2" reason={nameTaken ? "Choose a different name" : !name || !description.trim() ? "Enter a name and description" : !validName ? "Use a valid skill name" : "Shorten the description"} />}
       </Stack>
     </ModalWrapper>
   );

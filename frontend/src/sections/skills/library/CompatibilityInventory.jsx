@@ -10,7 +10,7 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 // Typography/spacing: m3/s1/s3 and shared row heights, 12px groups.
 export default function CompatibilityInventory({ items = [], selectedKeys = [], onSelectionChange, rejected = [], skipped = [], closure, readOnly = false }) {
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="s1">Only text skills from this workspace can be imported.</Typography>
+    <Typography variant="s1">Only supported text files can be imported.</Typography>
     {closure?.blocked && <Alert severity="error">These files exceed the context limits. Choose a smaller set before importing.</Alert>}
     <TechnicalDetails title="Import limits and details">
       {closure ? <Typography variant="s3">Complete compiled tree: {closure.fileCount}/200 files · {closure.totalBytes}/2097152 UTF-8 bytes · {closure.linkCount}/20 links, including generated descriptor and mount prefixes.</Typography> : <Typography variant="s3">Whole-context capacity is not yet checked. A supported leaf inventory alone does not certify the compiled context.</Typography>}

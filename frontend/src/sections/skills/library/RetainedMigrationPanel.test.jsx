@@ -24,6 +24,7 @@ it('treats choosing a private folder as the folder format and asks for inventory
   expect(screen.queryByLabelText('Immutable source identities JSON')).not.toBeInTheDocument();
   const file = new File(['x'], 'SKILL.md');
   fireEvent.change(screen.getByLabelText('Retained private folder'), { target: { files: [file] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Source identity' }));
   expect(screen.getByLabelText('Immutable source identities JSON')).toBeVisible();
   expect(screen.getByText('1 source files selected')).toBeVisible();
 });
@@ -66,9 +67,9 @@ it('collapses source format after preview and restores it only when changing sou
   api.reload.mockResolvedValueOnce([plan]);
   view({ initialPlanIds: ['plan-1'] });
   await screen.findByRole('button', { name: 'Change sources' });
-  expect(screen.queryByRole('combobox', { name: 'Retained source format' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('combobox', { name: 'Source' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Change sources' }));
-  expect(screen.getByRole('combobox', { name: 'Retained source format' })).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Source' })).toBeVisible();
 });
 
 it('rejects a file that is not an inventory packet without previewing anything', async () => {

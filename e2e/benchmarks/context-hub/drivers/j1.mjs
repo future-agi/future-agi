@@ -176,7 +176,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const page = await newPage();
           await go(page, '/dashboard/skills', 'migration-library');
           await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
-          await click(page, 'tab', 'Review sources');
+          await click(page, 'tab', 'From another tool');
           const previews = [];
           const onPreview = response => {
             const url = response.url();
@@ -224,7 +224,7 @@ export async function createDriver({ jobId, runId, registration }) {
               await route.abort('failed');
             } else await route.continue();
           });
-          await operator.click(page.getByRole('checkbox', { name: /^Leave out 1 blocked member/ }), 'exclude-unsupported');
+          await operator.click(page.getByRole('checkbox', { name: /^Leave out 1 skill/ }), 'exclude-unsupported');
           await operator.click(page.getByRole('checkbox', { name: /^I confirm my rights to copy all 14 items/ }), 'confirm-source-rights');
           const packet = plans.map(({ plan }) => plan);
           const decision = { packet_sha256: digest(packet), preconditions_sha256: digest(packet.map(plan => plan.fingerprint)) };

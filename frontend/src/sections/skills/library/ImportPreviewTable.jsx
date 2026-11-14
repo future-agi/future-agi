@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Checkbox, Stack, Typography } from "@mui/material";
-import { DataTable } from "src/components/data-table";
+import { Checkbox, Stack, Table, TableHead, TableBody, TableRow, TableCell, TableContainer, Typography } from "@mui/material";
+import { stackedTableSx } from "../components/responsiveTable";
 import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { formatBytes } from "src/sections/skills/utils/format";
@@ -36,7 +36,12 @@ export default function ImportPreviewTable({ bundles, selected, onToggle, disabl
       </Typography>
     ) },
   ].map((column) => ({ ...column, enableSorting: false }));
-  return <Box sx={{ height: bundles.length * ROW_HEIGHT.twoLine + TABLE_HEADER_HEIGHT.default, minHeight: 120, flexShrink: 0 }}><DataTable columns={columns} data={bundles} rowCount={bundles.length} getRowId={(bundle) => bundle.key} rowHeight={ROW_HEIGHT.twoLine} /></Box>;
+  return <TableContainer><Table size="small" aria-label="Import preview" sx={stackedTableSx}>
+    <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
+    <TableBody>{bundles.map((bundle) => <TableRow hover key={bundle.key} sx={{ height: ROW_HEIGHT.twoLine }}>
+      {columns.map((column) => <TableCell padding={column.id === "selection" ? "checkbox" : "normal"} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: bundle }, getValue: () => bundle[column.accessorKey] }) : bundle[column.accessorKey]}</TableCell>)}
+    </TableRow>)}</TableBody>
+  </Table></TableContainer>;
 }
 
 ImportPreviewTable.propTypes = {

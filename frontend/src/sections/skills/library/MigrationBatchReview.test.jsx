@@ -32,7 +32,7 @@ it('requires the blocked-member acknowledgment and rights before one decision im
   const submit = screen.getByRole('button', { name: 'Import and publish 2 items' });
   fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights to copy all 2 items/ }));
   expect(submit).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: /^Leave out 1 blocked member/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Leave out 1 skill/ }));
   expect(submit).toBeEnabled();
   fireEvent.click(submit);
   await screen.findByText('2 versions published without labels. Production was not changed.');

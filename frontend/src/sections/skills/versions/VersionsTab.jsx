@@ -13,13 +13,14 @@ import {
   Stack,
   Typography,
   Tooltip,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
 } from "@mui/material";
 
 import { useSkillLabels, useSkillVersions } from "src/api/skills";
 import { useRouter } from "src/routes/hooks";
 import { fDateTime, relativeTime } from "src/utils/format-time";
 import ContentSkeleton from "src/components/content-skeleton";
-import { DataTable, DataTablePagination } from "src/components/data-table";
+import { DataTablePagination } from "src/components/data-table";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
@@ -28,6 +29,7 @@ import SelectionBar from "src/components/selection-bar";
 import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
+import { stackedTableSx } from "../components/responsiveTable";
 import IdentityChip from "../components/IdentityChip";
 import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
@@ -85,12 +87,8 @@ export default function VersionsTab({ skill }) {
     {
       accessorKey: "number",
       header: "Version",
-      size: 90,
-      cell: ({ getValue }) => (
-        <Typography variant="s1" fontWeight={500}>
-          v{getValue()}
-        </Typography>
-      ),
+      size: 180,
+      cell: ({ row: { original } }) => <Stack><Typography variant="s1" fontWeight={500}>v{original.number}</Typography><Box onClick={(event) => event.stopPropagation()}><IdentityChip value={original.digest} inline /></Box></Stack>,
     },
     {
       accessorKey: "note",
@@ -133,12 +131,6 @@ export default function VersionsTab({ skill }) {
       size: 170,
       cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={name} />) : '—' }</Stack>,
     },
-    {
-      accessorKey: "digest",
-      header: "Digest",
-      size: 150,
-      cell: ({ getValue }) => <Box onClick={(event) => event.stopPropagation()}><IdentityChip value={getValue()} inline /></Box>,
-    },
     { accessorKey: "fileCount", header: "Files", size: 70 },
     {
       id: "actions",
@@ -176,6 +168,7 @@ export default function VersionsTab({ skill }) {
   return (
     <Stack spacing={3} sx={{ minWidth: 0, flex: 1 }}>
       <Section
+        sx={{ "& > .MuiStack-root:first-of-type": { flexDirection: { xs: "column", sm: "row" }, alignItems: { xs: "flex-start", sm: "center" }, gap: 1.5 } }}
         title="Labels"
         description="Agents fetching a label receive the version it points to."
         actions={
@@ -211,16 +204,20 @@ export default function VersionsTab({ skill }) {
           labels.data?.map((label) => (
             <Stack
               key={label.name}
-              direction="row"
+              direction={{ xs: "column", sm: "row" }}
               spacing={1}
-              alignItems="center"
+              alignItems={{ xs: "flex-start", sm: "center" }}
               sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}
             >
               <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="s1">{label.name} → v{label.version}</Typography>
+                <Typography variant="s1">{label.name.charAt(0).toUpperCase()}{label.name.slice(1)} → v{label.version}</Typography>
                 {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip title={`Only reviewers can move ${label.name}.`}><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
               </Stack>
+              <Stack direction="row" spacing={1} alignItems="center">
+              <Button size="small" disabled={label.canMove !== true} onClick={() => setMove({ label: label.name })}>Move {label.name}</Button>
+              <Button size="small" onClick={() => setHistory(label.name)}>History for {label.name}</Button>
               <IconButton size="small" aria-label={`Actions for ${label.name}`} onClick={(event) => setLabelMenu({ anchor: event.currentTarget, label })}><Iconify icon="solar:menu-dots-bold" /></IconButton>
+              </Stack>
             </Stack>
           ))}
       </Section>
@@ -247,16 +244,12 @@ export default function VersionsTab({ skill }) {
             },
           ]}
         />
-        <Box sx={{ height: rows.length * ROW_HEIGHT.default + TABLE_HEADER_HEIGHT.default, minWidth: 0 }}>
-          <DataTable
-            data={rows}
-            columns={columns}
-            rowCount={versions.data?.count || 0}
-            onRowClick={(row) =>
-              router.push(`${detailPath}?tab=files&version=${row.number}`)
-            }
-          />
-        </Box>
+        <TableContainer><Table size="small" aria-label="Skill versions" sx={stackedTableSx}>
+          <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey}>{column.header}</TableCell>)}</TableRow></TableHead>
+          <TableBody>{rows.map((row) => <TableRow hover key={row.id} sx={{ height: ROW_HEIGHT.twoLine }} onClick={() => router.push(`${detailPath}?tab=files&version=${row.number}`)}>
+            {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-cell={column.id === "actions" ? "actions" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
+          </TableRow>)}</TableBody>
+        </Table></TableContainer>
         <DataTablePagination
           page={page}
           pageSize={pageSize}
