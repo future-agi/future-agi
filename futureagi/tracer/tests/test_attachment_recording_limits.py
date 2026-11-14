@@ -4,6 +4,8 @@ Storage and the remote source are explicit doubles; the sandbox, budgets,
 fences and the partial queue index are real. Every test only uses names that
 also exist on the previous head, so a base-control run reaches its assertions.
 """
+# Pytest injects the imported fixtures (env, rec) by their names.
+# ruff: noqa: F811
 
 import sys
 from datetime import timedelta
@@ -376,4 +378,3 @@ def test_every_attachment_foreign_key_to_users_is_known_and_never_protect():
         assert kind == "a", key  # Django: NO ACTION in the DB, rule in Python
         if on_delete is deletion.SET_NULL:
             assert field.null and not notnull, key
-
