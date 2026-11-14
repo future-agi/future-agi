@@ -10,6 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
 
@@ -25,7 +26,7 @@ function formatPct(val) {
   return `${(val * 100).toFixed(1)}%`;
 }
 
-export default function QueueAgreementTab({ queueId }) {
+export default function QueueAgreementTab({ queueId, queue }) {
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
 
   if (isLoading) {
@@ -34,7 +35,8 @@ export default function QueueAgreementTab({ queueId }) {
 
   if (!agreement) return null;
 
-  const { overall_agreement, labels, annotator_pairs } = agreement;
+  const { overall_agreement, labels, annotator_pairs, judge_vs_human } =
+    agreement;
   const overallAgreement = overall_agreement;
   const labelEntries = Object.entries(labels || {});
   const pairs = annotator_pairs || [];
@@ -103,10 +105,7 @@ export default function QueueAgreementTab({ queueId }) {
                       sx={{ fontVariantNumeric: "tabular-nums" }}
                       align="right"
                     >
-                      <Typography
-                        color={getAgreementColor(label.agreement_pct)}
-                        fontWeight={600}
-                      >
+                      <Typography color="text.secondary" fontWeight={600}>
                         {formatPct(label.agreement_pct)}
                       </Typography>
                     </TableCell>
@@ -187,10 +186,124 @@ export default function QueueAgreementTab({ queueId }) {
           </TableContainer>
         </Box>
       )}
+
+      {/* Judge vs Human Agreement */}
+      {judge_vs_human ? (
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            Judge vs Human Agreement
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Evaluator: {judge_vs_human.evaluator_name}
+          </Typography>
+
+          {/* Overall */}
+          <MetricStrip
+            sx={{ my: 2 }}
+            items={[
+              {
+                label: "Overall Judge-Human Agreement",
+                value: formatPct(judge_vs_human.overall_agreement),
+              },
+              {
+                label: "Comparable item-label pairs",
+                value: judge_vs_human.total_comparisons,
+              },
+            ]}
+          />
+          {judge_vs_human.overall_agreement == null && (
+            <Typography variant="body2" color="text.secondary">
+              Not enough overlapping items with both judge scores and human
+              labels to calculate agreement
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Exact matches against a strict majority of human labels. Numeric
+            labels must use a 0–1 scale; categorical labels must use the
+            evaluator’s choices (Pass/Fail for a pass/fail evaluator). Other
+            scales and vocabularies are not comparable. Numeric values are
+            rounded to two decimal places.
+          </Typography>
+
+          {/* Per-Label */}
+          {Object.keys(judge_vs_human.labels || {}).length > 0 && (
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Label</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell align="right">Agreement</TableCell>
+                    <TableCell align="right">Comparisons</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.entries(judge_vs_human.labels).map(([id, label]) => (
+                    <TableRow key={id}>
+                      <TableCell>{label.label_name}</TableCell>
+                      <TableCell>
+                        <Typography variant="caption">
+                          {label.label_type}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        {label.comparable === false ? (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            title="This label's type isn't comparable with the linked evaluator's output type"
+                          >
+                            N/A
+                          </Typography>
+                        ) : (
+                          <Typography color="text.secondary" fontWeight={600}>
+                            {formatPct(label.judge_human_agreement)}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        {label.total_comparisons ?? 0}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Box>
+      ) : (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            Judge vs Human Agreement
+          </Typography>
+          {queue && queue.custom_eval_config ? (
+            queue.status !== "completed" ? (
+              <Typography variant="body2" color="text.secondary">
+                Mark the queue as completed to compare judge scores against
+                human labels.
+              </Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No comparable data yet: judge scores and human labels have no
+                overlapping items to compare for this queue.
+              </Typography>
+            )
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Link an evaluator to this queue to compare judge scores against
+              human labels.
+            </Typography>
+          )}
+        </Box>
+      )}
     </Box>
   );
 }
 
 QueueAgreementTab.propTypes = {
   queueId: PropTypes.string.isRequired,
+  queue: PropTypes.shape({
+    custom_eval_config: PropTypes.string,
+    status: PropTypes.string,
+  }),
 };
