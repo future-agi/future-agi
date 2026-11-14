@@ -333,13 +333,13 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
 
     [[part.section.row]]
     keys = ["MINIO_URL"]
-    default ="`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
+    default = "`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
     setups = ["S", "D", "H"]
     text = "Base URL of every stored-file link the browser opens (uploads, exports, audio and image previews). Object storage listens on `127.0.0.1` only, so a remote browser needs a reverse proxy in front of port 9005 and this set to its URL. See [Opening the UI from another machine](repo:INSTALLATION.md#opening-the-ui-from-another-machine) in INSTALLATION.md. Wrong: file previews and downloads fail while the rest works."
 
     [[part.section.row]]
     keys = ["FI_COLLECTOR_PUBLIC_URL"]
-    default ="`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
+    default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
     setups = ["S", "D", "H"]
     text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_BASE_URL`. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
 

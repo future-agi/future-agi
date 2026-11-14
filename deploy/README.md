@@ -484,8 +484,11 @@ remove them later, use a dedicated override that replaces the `ports` list
 (`!override` requires Docker Compose v2.24.4 or newer), set the two
 `*_HTTP_ENABLED` variables to `false`, and update both the backend and
 workers' `AGENTCC_INTERNAL_URL` and `AGENTCC_GATEWAY_INTERNAL_URL` to
-`https://agentcc-gateway:8443`. Mount their issuing CA directory and set
-`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to that CA file for in-cluster trust;
+`https://agentcc-gateway:8443`. Mount a CA bundle directory and set
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to the bundle file for in-cluster
+trust; it replaces the image's trust store, so include the public roots
+(e.g. append the issuing CA to the system bundle) when the backend also
+calls public providers;
 the gateway certificate needs the `agentcc-gateway` DNS name. For an HTTPS-only
 gateway set `HEALTHCHECK_URL=https://127.0.0.1:8443/healthz` in the override;
 the frontend image healthcheck selects HTTPS automatically. Both services
