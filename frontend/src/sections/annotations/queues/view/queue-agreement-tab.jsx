@@ -1,6 +1,9 @@
+import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Button,
+  Link,
   Table,
   TableBody,
   TableCell,
@@ -10,7 +13,10 @@ import {
   Typography,
 } from "@mui/material";
 import Section from "src/components/section";
+import Iconify from "src/components/iconify";
 import { LoadingScreen } from "src/components/loading-screen";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
 
 function getAgreementColor(pct) {
@@ -25,8 +31,13 @@ function formatPct(val) {
   return `${(val * 100).toFixed(1)}%`;
 }
 
+function disagreedItemsText(count) {
+  return `${count} disagreed ${count === 1 ? "item" : "items"}`;
+}
+
 export default function QueueAgreementTab({ queueId }) {
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
+  const [openLabelId, setOpenLabelId] = useState(null);
 
   if (isLoading) {
     return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
@@ -91,41 +102,107 @@ export default function QueueAgreementTab({ queueId }) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {labelEntries.map(([id, label]) => (
-                  <TableRow key={id}>
-                    <TableCell>{label.label_name}</TableCell>
-                    <TableCell>
-                      <Typography variant="caption">
-                        {label.label_type}
-                      </Typography>
-                    </TableCell>
-                    <TableCell
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                      align="right"
-                    >
-                      <Typography
-                        color={getAgreementColor(label.agreement_pct)}
-                        fontWeight={600}
-                      >
-                        {formatPct(label.agreement_pct)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                      align="right"
-                    >
-                      {label.cohens_kappa != null
-                        ? label.cohens_kappa.toFixed(3)
-                        : "—"}
-                    </TableCell>
-                    <TableCell
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                      align="right"
-                    >
-                      {label.disagreement_count ?? 0}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {labelEntries.map(([id, label]) => {
+                  const disagreementCount = label.disagreement_count ?? 0;
+                  const disagreementItems = label.disagreement_items || [];
+                  const isOpen = openLabelId === id;
+                  const regionId = `agreement-disagreements-${id}`;
+                  return (
+                    <React.Fragment key={id}>
+                      <TableRow>
+                        <TableCell>{label.label_name}</TableCell>
+                        <TableCell>
+                          <Typography variant="caption">
+                            {label.label_type}
+                          </Typography>
+                        </TableCell>
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
+                          <Typography
+                            color={getAgreementColor(label.agreement_pct)}
+                            fontWeight={600}
+                          >
+                            {formatPct(label.agreement_pct)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
+                          {label.cohens_kappa != null
+                            ? label.cohens_kappa.toFixed(3)
+                            : "—"}
+                        </TableCell>
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
+                          {disagreementCount > 0 ? (
+                            <Button
+                              size="small"
+                              color="inherit"
+                              aria-expanded={isOpen}
+                              aria-controls={isOpen ? regionId : undefined}
+                              aria-label={`View ${disagreedItemsText(disagreementCount)} for ${label.label_name}`}
+                              endIcon={
+                                <Iconify
+                                  icon={
+                                    isOpen
+                                      ? "solar:alt-arrow-up-linear"
+                                      : "solar:alt-arrow-down-linear"
+                                  }
+                                />
+                              }
+                              onClick={() =>
+                                setOpenLabelId(isOpen ? null : id)
+                              }
+                            >
+                              {disagreementCount}
+                            </Button>
+                          ) : (
+                            0
+                          )}
+                        </TableCell>
+                      </TableRow>
+                      {isOpen && (
+                        <TableRow>
+                          <TableCell id={regionId} colSpan={5}>
+                            <Typography
+                              variant="s3"
+                              component="p"
+                              color="text.secondary"
+                            >
+                              {disagreementItems.length < disagreementCount
+                                ? `Showing ${disagreementItems.length} of ${disagreementCount} disagreed items.`
+                                : "Open an item to review it in the annotation workspace."}
+                            </Typography>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 1,
+                                mt: 1,
+                              }}
+                            >
+                              {disagreementItems.map((itemId) => (
+                                <Link
+                                  key={itemId}
+                                  component={RouterLink}
+                                  href={`${paths.dashboard.annotations.annotate(queueId)}?itemId=${itemId}&mode=review`}
+                                  variant="s1"
+                                >
+                                  {itemId}
+                                </Link>
+                              ))}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
