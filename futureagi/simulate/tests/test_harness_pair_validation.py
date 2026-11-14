@@ -3,12 +3,14 @@ import re
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessNudge,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HostedHarnessExecution,
     HostedHarnessJob,
     TestExecution,
@@ -29,6 +31,7 @@ from simulate.services.hosted_harness import (
     record_cleanup,
 )
 from simulate.tests.harness_validation import running_validations, settle_validations
+from simulate.tests.test_harness_affected_scenarios import PROVED
 from simulate.tests.test_harness_agent_versions import (
     _a1,
     _create,
@@ -92,6 +95,27 @@ def _pending(user, workspace, storage, key):
     """An environment whose default pair is not certified yet."""
     environment = _environment(user, workspace, key, storage)
     _uncache(environment)
+    return environment
+
+
+def _built(environment):
+    """The build's own proofs on the default pair: every member proved, as a finished build
+    records them, so a run reads its cases as validated rather than starting a validation."""
+    from django.core.cache import cache
+
+    keys = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=environment.suite_version_id
+    ).values_list("scenario_key", flat=True)
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version_id=environment.suite_version_id,
+        environment_version_id=environment.environment_version_id,
+        defaults={
+            "status": "passed",
+            "proved_at": timezone.now(),
+            "proofs": dict.fromkeys(keys, PROVED),
+        },
+    )
+    cache.clear()
     return environment
 
 
@@ -423,7 +447,7 @@ class TestReconcile:
         from simulate.tests.test_harness_versioning_assembly import _off_defaults
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-78-run")
+        environment = _built(_pending(user, workspace, storage, "pv-78-run"))
         run = _off_defaults(_run(environment))
         attempt = _launch(gateway, run)
         _exit(
@@ -536,7 +560,7 @@ class TestTerminalPaths:
     def test_infrastructure_ending_resets_to_pending_not_blocked(
         self, user, workspace, storage
     ):
-        environment = _pending(user, workspace, storage, "pv-infra")
+        environment = _built(_pending(user, workspace, storage, "pv-infra"))
         job = _start(environment).job
 
         assert _end(job, state="failed", code="sandbox_disappeared") == "retry"
@@ -563,7 +587,7 @@ class TestRunGate:
     def test_only_validation_failures_gate_runs(self, user, workspace, storage):
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-gate")
+        environment = _built(_pending(user, workspace, storage, "pv-gate"))
         _failed(_row(environment))
         assert _run(environment, key="ordinary").assembled_bundle_id
 
@@ -1291,7 +1315,7 @@ class TestReconcileWithoutSandbox:
         from simulate.services.hosted_harness import register_attempt
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _environment(user, workspace, "pv-no-sandbox", storage)
+        environment = _built(_environment(user, workspace, "pv-no-sandbox", storage))
         run = _run(environment)
         attempt = register_attempt(
             run.id, endpoint_base_url="https://platform.example"
@@ -1340,7 +1364,7 @@ class TestDeadline:
     ):
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-deadline")
+        environment = _built(_pending(user, workspace, storage, "pv-deadline"))
         job = _start(environment).job
         attempt = _launch(gateway, job)
         monkeypatch.setattr(
@@ -1671,13 +1695,15 @@ class TestCheckUnavailable:
         assert validation.platform_failure(None) is None
 
     def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
-        self, user, workspace, storage
+        self, user, workspace, storage, settings
     ):
         from structlog.testing import capture_logs
 
         from simulate.services import harness_readiness
         from simulate.tests.test_harness_versioning_runs import _run
 
+        # A pinned template, so the run's own check reads the repeat and runs the cases unvalidated.
+        _template(settings, "b1")
         environment = _pending(user, workspace, storage, "pv-ours")
         job = _start(environment).job
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
@@ -2297,8 +2323,9 @@ def _validation_proofs(environment):
 
 class TestScenarioProving:
     def test_prove_only_job_on_certified_pair(self, user, workspace, storage, gateway):
-        environment = _pending(user, workspace, storage, "pv-prove-only")
-        _ready(_row(environment))
+        # A certified pairing with its sealed files, as a prove-only check finds it.
+        environment = _environment(user, workspace, "pv-prove-only", storage)
+        assert _row(environment).state == "ready"
 
         started = _start(environment, purpose="prove")
         attempt = _launch(gateway, started.job)
@@ -2389,8 +2416,9 @@ class TestScenarioProving:
     ):
         from simulate.services.harness_scenario_actions import validation_status
 
-        environment = _pending(user, workspace, storage, "pv-prove-empty")
-        _ready(_row(environment))
+        # A certified pairing with its sealed files, as a prove-only check finds it.
+        environment = _environment(user, workspace, "pv-prove-empty", storage)
+        assert _row(environment).state == "ready"
         job = _start(environment, purpose="prove").job
         attempt = _launch(gateway, job)
         _exit(gateway, monkeypatch, 0)

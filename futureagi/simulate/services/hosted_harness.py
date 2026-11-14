@@ -381,6 +381,19 @@ def create_selected_harness_run(
         if exc.code != "readiness_unavailable":
             raise
         planned, unreadable = None, exc
+    # Before the lock as well: the validation job it starts, and its dispatch, must commit
+    # although the 409 it raises would roll the run's transaction back.
+    released: set[str] = set()
+    if planned is not None:
+        early = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+        if early is not None:
+            from simulate.services.harness_versioning.validation import (
+                require_pair_runnable,
+            )
+
+            # A failed or validating pairing is refused before any validation starts.
+            require_pair_runnable(environment, early)
+        released = _validate_unproved_pair(environment, planned, early, scenario_keys)
 
     with transaction.atomic():
         try:
@@ -429,9 +442,6 @@ def create_selected_harness_run(
 
             # Before the pins are made: making them resets a failed bundle.
             require_pair_runnable(environment, resolved)
-        released = _validate_unproved_pair(
-            environment, planned, resolved, scenario_keys
-        )
         run_keys = _held_back_checked(
             environment, planned, resolved, scenario_keys, released=released
         )
@@ -575,7 +585,9 @@ def create_selected_harness_run(
             }
         )
         if planned is not None and planned.plan is not None:
-            child_metadata["readiness_selection"] = planned.plan.view
+            child_metadata["readiness_selection"] = _released_view(
+                planned.plan.view, planned.plan.held, released
+            )
         if pins is not None:
             child_metadata["version_pins"] = pins.as_metadata()
             if pins.assembly is not None:
@@ -1021,6 +1033,34 @@ def _validate_unproved_pair(
             },
         },
     )
+
+
+def _released_view(
+    view: dict[str, Any], held: frozenset[str], released: set[str]
+) -> dict[str, Any]:
+    """The run's selection view once cases held only for validation are released because
+    validation cannot run here: they run, and the view says validation was not enforced."""
+    freed = set(held) & set(released)
+    if not freed:
+        return view
+    from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
+
+    still = [key for key in view["held_back"].get("keys") or [] if key not in freed]
+    by = dict(view["held_back"].get("by") or {})
+    left = by.pop(NOT_VALIDATED_ROW, 0) - len(freed)
+    if left > 0:
+        by[NOT_VALIDATED_ROW] = left
+    reasons = dict(view.get("reasons") or {})
+    if NOT_VALIDATED_ROW not in by:
+        reasons.pop(NOT_VALIDATED_ROW, None)
+    count = view["held_back"]["count"] - len(freed)
+    return {
+        **view,
+        "running": view["requested"] - count,
+        "held_back": {**view["held_back"], "count": count, "keys": still, "by": by},
+        "reasons": reasons,
+        "validation": "not_enforced",
+    }
 
 
 def _held_back_checked(
