@@ -350,22 +350,6 @@ const AddExistingDataset = ({
                       onChange={() => handleCheckboxChange(index)}
                       checked={item.checked}
                       sx={{ marginRight: "5px" }}
-                      icon={
-                        <Iconify
-                          icon="system-uicons:checkbox-empty"
-                          color="text.disabled"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
-                      checkedIcon={
-                        <Iconify
-                          icon="famicons:checkbox"
-                          color="primary.light"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
                     />
                     <TextField
                       fullWidth
@@ -450,10 +434,6 @@ const AddExistingDataset = ({
                                   display: "flex",
                                   justifyContent: "space-between",
                                   alignItems: "center",
-                                  color: theme.palette.text.primary,
-                                  "&.Mui-disabled": {
-                                    color: theme.palette.text.disabled,
-                                  },
                                 }}
                               >
                                 {col.name}
@@ -468,7 +448,7 @@ const AddExistingDataset = ({
                                     }}
                                   >
                                     <Iconify
-                                      icon="fluent:edit-16-regular"
+                                      icon="solar:pen-linear"
                                       width={14}
                                       height={14}
                                     />
@@ -532,7 +512,7 @@ const AddExistingDataset = ({
                                   edge="end"
                                 >
                                   <Iconify
-                                    icon="tdesign:enter"
+                                    icon="solar:arrow-left-down-linear"
                                     width="12"
                                     height="12"
                                   />
@@ -637,8 +617,6 @@ const AddExistingDataset = ({
           variant="outlined"
           fullWidth
           sx={{
-            fontSize: "14px",
-            fontWeight: 500,
             color: theme.palette.text.secondary,
             borderColor: theme.palette.divider,
           }}
@@ -658,8 +636,6 @@ const AddExistingDataset = ({
           }
           onClick={handleAddToDataset}
           sx={{
-            fontSize: "14px",
-            fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
               color: theme.palette.text.disabled,

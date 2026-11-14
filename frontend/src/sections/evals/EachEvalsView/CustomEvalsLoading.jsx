@@ -28,16 +28,9 @@ const CustomEvalsLoading = ({ onClose }) => {
             sx={{ borderRadius: 1 }}
           />
         </Box>
-        <IconButton
-          onClick={onClose}
-          sx={{
-            padding: 0,
-            paddingY: 0,
-            height: theme.spacing(4),
-          }}
-        >
+        <IconButton onClick={onClose} size="small">
           <Iconify
-            icon="line-md:close"
+            icon="solar:close-linear"
             sx={{
               width: theme.spacing(4),
               height: theme.spacing(2),

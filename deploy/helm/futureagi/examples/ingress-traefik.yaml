@@ -1,0 +1,36 @@
+# Public UI, API and OTLP/HTTP endpoints behind Traefik (k3s's default ingress
+# controller), with TLS from cert-manager. Layer it over external.yaml (or
+# bundled.yaml):
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace \
+#     -f external.yaml -f ingress-traefik.yaml --timeout 20m
+#
+# Traefik sets timeouts per entrypoint, not per Ingress: its default 60 s read
+# timeout cuts large dataset uploads, so raise it in Traefik's own values, e.g.
+#   ports.websecure.transport.respondingTimeouts.readTimeout: 600s
+# (on k3s, through a HelmChartConfig for the traefik chart). WebSockets are
+# not affected by it once upgraded.
+#
+# urls.* are derived from these hosts (https, because they are in tls).
+urls:
+  app: ""
+  api: ""
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  tls:
+    - secretName: futureagi-tls
+      hosts:
+        - futureagi.example.com
+        - api.futureagi.example.com
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+  otlp:
+    enabled: true

@@ -1,13 +1,18 @@
 import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "src/utils/test-utils";
+import { fireEvent, render, screen } from "src/utils/test-utils";
 
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 
-// Mirrors PersonaListView's `filterFields` (PersonaListView.jsx:441-468).
-// Persona has no filter rendering test of its own; this pins the behaviour
-// that changed when `choiceLabels` was wired into the enum picker.
+vi.mock("src/hooks/use-ai-filter", () => ({
+  useAIFilter: () => ({ parseQuery: vi.fn(), loading: false, error: null }),
+}));
+
+// Mirrors PersonaListView's `filterFields`. Pins that choiceLabels reach the
+// picker (users see "Voice", never the stored value) and that the panel hands
+// back the same object PersonaListView's apply handler reads.
 const PERSONA_FILTER_FIELDS = [
   {
     value: "type",
@@ -31,52 +36,46 @@ const PERSONA_FILTER_FIELDS = [
   },
 ];
 
-const renderPanel = (currentFilters = null) =>
+const renderPanel = (currentFilters = null, onApply = vi.fn()) =>
   render(
-    <FilterPanel
-      anchorEl={document.body}
-      open
-      onClose={vi.fn()}
-      filterFields={PERSONA_FILTER_FIELDS}
-      currentFilters={currentFilters}
-      onApply={vi.fn()}
-    />,
+    <QueryClientProvider client={new QueryClient()}>
+      <ObjectFilterPanel
+        anchorEl={document.body}
+        open
+        onClose={vi.fn()}
+        filterFields={PERSONA_FILTER_FIELDS}
+        currentFilters={currentFilters}
+        onApply={onApply}
+        aiPlaceholder="e.g. 'show custom voice personas'"
+      />
+    </QueryClientProvider>,
   );
-
-const openValuePicker = (rowIndex = 0) => {
-  fireEvent.click(screen.getAllByText("Select values...")[rowIndex]);
-  return within(
-    screen.getByPlaceholderText("Search values...").closest(".MuiPopover-paper"),
-  );
-};
 
 describe("Persona filter panel", () => {
-  it("shows human labels for the field that supplies choiceLabels", () => {
-    renderPanel({ simulation_type: [] });
-    // Row defaults to the first field, so switch to Agent Type first.
-    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
-    fireEvent.click(within(screen.getByRole("listbox")).getByText("Agent Type"));
-
-    const picker = openValuePicker();
-    expect(picker.getByText("Voice")).toBeInTheDocument();
-    expect(picker.getByText("Chat")).toBeInTheDocument();
-    expect(picker.queryByText(AGENT_TYPES.VOICE)).not.toBeInTheDocument();
+  it("shows the stored value as its human label", async () => {
+    renderPanel({ simulation_type: [AGENT_TYPES.VOICE] });
+    expect(await screen.findByText("Agent Type")).toBeInTheDocument();
+    expect(screen.getByText("Voice")).toBeInTheDocument();
+    expect(screen.queryByText(AGENT_TYPES.VOICE)).not.toBeInTheDocument();
   });
 
-  it("still shows raw values for the field with no choiceLabels", () => {
-    renderPanel();
-    const picker = openValuePicker();
-    expect(picker.getByText("prebuilt")).toBeInTheDocument();
-    expect(picker.getByText("custom")).toBeInTheDocument();
+  it("shows raw values for the field with no choiceLabels", async () => {
+    renderPanel({ type: ["custom"] });
+    expect(await screen.findByText("Category")).toBeInTheDocument();
+    expect(screen.getByText("custom")).toBeInTheDocument();
   });
 
-  it("stops a second row once both single-value fields are used", () => {
+  it("uses the page's own Ask AI example", () => {
     renderPanel();
-    const addFilter = screen.getByRole("button", { name: /add filter/i });
+    expect(
+      screen.getByPlaceholderText("e.g. 'show custom voice personas'"),
+    ).toBeInTheDocument();
+  });
 
-    expect(addFilter).toBeEnabled();
-    fireEvent.click(addFilter);
-    expect(screen.getByText("Agent Type")).toBeInTheDocument();
-    expect(addFilter).toBeDisabled();
+  it("clears with null, as PersonaListView expects", async () => {
+    const onApply = vi.fn();
+    renderPanel({ type: ["custom"] }, onApply);
+    fireEvent.click(await screen.findByRole("button", { name: /clear all/i }));
+    expect(onApply).toHaveBeenCalledWith(null);
   });
 });

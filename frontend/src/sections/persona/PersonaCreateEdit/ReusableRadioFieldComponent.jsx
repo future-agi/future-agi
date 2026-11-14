@@ -44,7 +44,7 @@ const ReusableRadioFieldComponent = ({
         })}
         labelTxtsx={{
           fontWeight: 400,
-          fontSize: "15px",
+          fontSize: "12px",
         }}
       />
     </Box>

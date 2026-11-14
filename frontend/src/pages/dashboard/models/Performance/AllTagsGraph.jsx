@@ -63,7 +63,7 @@ const AllTagsGraph = ({ data }) => {
     },
     chart: {
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       toolbar: {
         show: true,
         tools: {
@@ -84,7 +84,7 @@ const AllTagsGraph = ({ data }) => {
       theme: isDark ? "dark" : "light",
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
   };
 

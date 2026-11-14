@@ -1740,7 +1740,7 @@ def _create_dataset_scenario_sync(
             branch_to_category = {}
             if branch_to_situations:
                 llm = LLM(
-                    model_name="vertex_ai/gemini-2.5-pro",
+                    model_name="vertex_ai/gemini-3.7-flash",
                     temperature=0.3,
                     max_tokens=400,
                     provider="vertex_ai",
@@ -2429,6 +2429,10 @@ def _create_graph_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
+        agent_definition_id = validated_data.get("agent_definition_id")
+        source_type = validated_data.get("source_type", "agent_definition")
+        generate_graph = validated_data.get("generate_graph", False)
+        graph_data = validated_data.get("graph")
         no_of_rows = validated_data.get("no_of_rows", 20)
         persona_ids = validated_data.get("personas", [])
         custom_columns = validated_data.get("custom_columns", [])
@@ -2492,6 +2496,10 @@ def _create_graph_scenario_sync(
                 workspace=scenario.workspace,
             )
         else:
+            if agent_definition_id is None:
+                raise AgentDefinition.DoesNotExist(
+                    "A graph scenario needs an agent definition"
+                )
             agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id
             )
@@ -2554,7 +2562,7 @@ def _create_graph_scenario_sync(
                 prompt = USER_INTENT_PROMPT.format(
                     transcript=transcript, agent_definition=agent_description
                 )
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -2584,12 +2592,17 @@ def _create_graph_scenario_sync(
             branches = None
             graph_id = str(scenario_graph.id) if scenario_graph else None
             if graph_id:
+                if not generate_graph:
+                    graph_generator = ConversationGraphGenerator(
+                        scenario=scenario,
+                        agent_definition=agent_definition,
+                    )
                 branches = graph_generator.get_branches(graph_id=graph_id)
 
             if branches:
                 try:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,
@@ -3211,7 +3224,7 @@ def _extract_intents_sync(
             transcript: str, agent_desc: str, audio_url: str = None
         ) -> str:
             try:
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -3313,7 +3326,7 @@ def _extract_intents_sync(
                     intents = cached_intents
                 else:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,

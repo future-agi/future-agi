@@ -129,7 +129,7 @@ const ConditionEdge = (props) => {
               {data?.prompt ? (
                 data?.prompt
               ) : (
-                <Typography typography="s1" color="red.500">
+                <Typography typography="s1" color="status.danger.fg">
                   No Condition Specified
                 </Typography>
               )}

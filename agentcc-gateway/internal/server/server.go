@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/audit"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,8 +32,10 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/otel"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
@@ -39,11 +43,13 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
-	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // Server is the Agentcc gateway HTTP server.
 type Server struct {
+	videoAudit       *audit.Logger
+	videoAuditOnce   sync.Once
 	cfg              *config.Config
 	configPath       string
 	httpServer       *http.Server
@@ -58,7 +64,26 @@ type Server struct {
 	TenantStore      *tenant.Store
 	OrgProviderCache *providers.OrgProviderCache
 	asyncWorker      *async.Worker
+	videoWorker      *lifecycle.Worker
+	videoExporter    otel.SpanExporter
+	videoInitErr     error
+	shadowFlusher    *routing.ShadowFlusher
+	router           *Router
 	ready            atomic.Bool
+}
+
+// PriceTableName is the name the price table keys a provider's models under,
+// as the provider that served an org's request states it: the org's own
+// instance when the org has one, else the config.yaml provider with that ID.
+func (s *Server) PriceTableName(orgID, providerID string) string {
+	var p providers.Provider
+	if orgID != "" && s.OrgProviderCache != nil {
+		p = s.OrgProviderCache.Get(orgID, providerID)
+	}
+	if p == nil && s.registry != nil {
+		p, _ = s.registry.GetProvider(providerID)
+	}
+	return providers.PriceTableName(p)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -82,12 +107,21 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	if cfg != nil && keyStore == nil {
 		keyStore = auth.NewKeyStore(cfg.Auth)
 	}
+	// Load settles this, but a Config built in code need not have been through
+	// it, and a server without a ceiling is one no request is bounded by.
+	if cfg != nil && cfg.Server.MaxRequestTimeout <= 0 {
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
+	}
 	authKeyStore := keyStore
 	if !authEnabled {
 		authKeyStore = nil
 	}
 
-	orgProviderCache := providers.NewOrgProviderCache(cfg.Providers)
+	orgProviderCache := providers.NewOrgProviderCache(cfg.Providers, cfg.OrgProviders.AllowPrivateURLs)
+	if cfg.OrgProviders.AllowPrivateURLs {
+		slog.Warn("org provider base URLs may point at private/LAN addresses; do not enable this on a gateway shared by untrusted orgs",
+			"env", config.EnvAllowPrivateProviderURLs)
+	}
 
 	s := &Server{
 		cfg:              cfg,
@@ -150,13 +184,22 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	// Create health monitor.
+	// Share the router's monitor so adaptive weights are driven by actual
+	// request outcomes. A separate monitor would stay empty forever.
 	var healthMonitor *routing.HealthMonitor
 	var latencyTracker *routing.LatencyTracker
-	if registry.Router() != nil {
-		latencyTracker = registry.Router().GetLatencyTracker()
+	if router := registry.Router(); router != nil {
+		latencyTracker = router.GetLatencyTracker()
+		healthMonitor = router.GetHealthMonitor()
 	}
-	healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
+		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	} else {
+		healthMonitor.SetCircuitBreakerRegistry(cbReg)
+	}
 
 	// Create traffic mirror.
 	var mirror *routing.Mirror
@@ -185,8 +228,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 					flushInterval = 60 * time.Second
 				}
 				webhookURL := routing.FormatWebhookURL(cfg.ControlPlane.URL)
-				flusher := routing.NewShadowFlusher(shadowStore, webhookURL, cfg.ControlPlane.WebhookSecret, flushInterval)
-				go flusher.Run(context.Background())
+				s.shadowFlusher = routing.NewShadowFlusher(shadowStore, webhookURL, cfg.ControlPlane.WebhookSecret, flushInterval)
+				go s.shadowFlusher.Run(context.Background())
 				slog.Info("shadow result capture enabled",
 					"max_stored", maxStored,
 					"flush_interval", flushInterval.String(),
@@ -200,10 +243,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
+	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -214,12 +259,23 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	responsesStore := responses.NewStore(responses.DefaultResponseTTL)
 	handlers.responsesStore = responsesStore
 
-	// Set up Video Generation store.
-	handlers.videoStore = video.NewMemoryStore()
+	// Video routes stay unconfigured when disabled (pin N2).
+	if cfg.Video.Enabled {
+		s.videoInitErr = s.configureVideo(redisClient)
+	}
+	// Shared through Redis when there is one, so the pod that sees a run
+	// finish can charge it whichever pod started it.
+	if redisClient != nil {
+		handlers.runCharges = &redisRunCharges{client: redisClient}
+	} else {
+		handlers.runCharges = newMemoryRunCharges()
+	}
 
 	// Set up async inference support.
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
+	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
+	handlers.resultIPACL = cfg.IPACL
 
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
@@ -285,6 +341,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			"max_concurrent", cfg.Routing.Fastest.MaxConcurrent,
 		)
 	}
+
+	// Decision calls by internal callers take only a base_url from config.yaml.
+	handlers.decisionBaseURLs = providers.DecisionDialectBaseURLs(cfg.Providers)
 
 	// Provider locking.
 	handlers.providerLockResolver = routing.NewProviderLockResolver(cfg.Routing.ProviderLock)
@@ -377,6 +436,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	// Structured decisions, on the customer's own provider key only.
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
+	router.Handle("POST", "/v1/decisions", handlers.Decisions)
+	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
@@ -445,6 +508,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Native Google GenAI API.
 	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
+	router.Handle("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler)
 
 	// Search API.
 	router.Handle("POST", "/v1/search", handlers.Search)
@@ -465,10 +529,17 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	})
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
 
+	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
+	for _, ep := range speech.Endpoints() {
+		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+	}
+
 	// Video Generation API.
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
 	router.Handle("GET", "/v1/videos", handlers.ListVideos)
 	// NOTE: specific sub-routes before generic {video_id}.
+	router.Handle("POST", "/v1/videos/{video_id}/cancel", handlers.CancelVideo)
+	router.Handle("GET", "/v1/videos/{video_id}/content", handlers.GetVideoContent)
 	router.Handle("GET", "/v1/videos/{video_id}", handlers.GetVideoStatus)
 	router.Handle("DELETE", "/v1/videos/{video_id}", handlers.DeleteVideo)
 
@@ -546,6 +617,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		s.keyHandlers = NewKeyHandlers(keyStore, cfg.Admin.Token)
 		router.Handle("GET", "/-/keys", s.keyHandlers.ListKeys)
 		router.Handle("POST", "/-/keys", s.keyHandlers.CreateKey)
+		router.Handle("POST", "/-/keys/sync", s.keyHandlers.ImportKeys)
 		router.Handle("GET", "/-/keys/{key_id}", s.keyHandlers.GetKey)
 		router.Handle("DELETE", "/-/keys/{key_id}", s.keyHandlers.RevokeKey)
 		router.Handle("PUT", "/-/keys/{key_id}", s.keyHandlers.UpdateKey)
@@ -587,6 +659,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		router.Handle("POST", "/-/admin/providers/{id}/rotate/rollback", rotHandlers.RollbackRotation)
 	}
 
+	// Video administration uses the existing admin token and /-/admin prefix.
+	router.Handle("GET", "/-/admin/video/capabilities", s.adminVideoCapabilities)
+	router.Handle("POST", "/-/admin/video/killswitch", s.adminVideoKillSwitch)
+	router.Handle("POST", "/-/admin/video/jobs/{id}/attach", s.adminVideoAttach)
+	router.Handle("GET", "/-/admin/video/unsettled", s.adminVideoUnsettled)
 	// Cluster admin endpoint.
 	if cfg.Cluster.Enabled {
 		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
@@ -790,7 +867,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -798,8 +875,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
@@ -866,10 +950,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
+	s.router = router
+
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
+	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -878,11 +964,14 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handler = middleware.Recovery(handler)
 
 	s.httpServer = &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:              cfg.Addr(),
+		Handler:           handler,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		// 0 leaves net/http's default (1MB).
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
 
 	return s
@@ -890,6 +979,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
 func (s *Server) Start() error {
+	if s.videoInitErr != nil {
+		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
+	}
+	if s.videoWorker != nil {
+		s.videoWorker.Start()
+	}
 	s.ready.Store(true)
 
 	// Start cluster heartbeat if enabled.
@@ -920,15 +1015,40 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.clusterMgr.Stop()
 	}
 
+	// Stop video calls and release leases before closing shared Redis.
+	if s.videoWorker != nil {
+		if err := s.videoWorker.Stop(ctx); err != nil {
+			return err
+		}
+	}
 	// Stop async workers.
 	if s.asyncWorker != nil {
 		s.asyncWorker.Stop()
 	}
 
-	if err := s.httpServer.Shutdown(ctx); err != nil {
+	err := s.httpServer.Shutdown(ctx)
+	// Send the shadow results captured so far with what is left of ctx; if
+	// the requests used it all, this logs how many were not sent.
+	if s.shadowFlusher != nil {
+		s.shadowFlusher.Close(ctx)
+	}
+	if err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
+	if s.videoAudit != nil {
+		s.videoAudit.Close()
+	}
+	if s.videoExporter != nil {
+		if exportErr := s.videoExporter.Shutdown(); exportErr != nil {
+			slog.Warn("video trace exporter shutdown failed")
+		}
+	}
+	if s.handlers.videoService != nil {
+		if closeErr := s.handlers.videoService.Close(); closeErr != nil {
+			slog.Warn("video artifact store close failed")
+		}
+	}
 	if err := s.registry.Close(); err != nil {
 		slog.Warn("error closing registry", "error", err)
 	}
@@ -1043,6 +1163,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
+		return
+	}
 	// Limit batch request body to 10MB to prevent OOM.
 	const maxBatchBodySize = 10 << 20
 	limited := io.LimitReader(r.Body, maxBatchBodySize+1)
@@ -1084,6 +1209,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1138,6 +1268,11 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1259,6 +1394,12 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				CachedInputPerToken: co.Pricing.CachedInputPerToken,
 				BatchInputPerToken:  co.Pricing.BatchInputPerToken,
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
+				InputPerSecond:      co.Pricing.InputPerSecond,
+				InputPerCharacter:   co.Pricing.InputPerCharacter,
+				InputPerQuery:       co.Pricing.InputPerQuery,
+				PerPage:             co.Pricing.PerPage,
+				OutputPerImage:      co.Pricing.OutputPerImage,
+				OutputPerSecond:     co.Pricing.OutputPerSecond,
 			}
 		}
 		if co.Capabilities != nil {

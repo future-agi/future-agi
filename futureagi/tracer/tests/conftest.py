@@ -384,7 +384,8 @@ def stub_run_eval(monkeypatch):
 
     Returns a callable ``set_result(value=..., reason=..., failure=...)`` so
     tests can flip pass/fail or simulate engine-side failures without
-    re-patching. Default outcome is a passing eval.
+    re-patching. Default outcome is a passing eval. The callable also carries
+    ``.requests``: every ``EvalRequest`` the engine was handed, in order.
 
     Patched at the package re-export (``evaluations.engine.run_eval``) AND at
     the underlying definition (``evaluations.engine.runner.run_eval``) because
@@ -393,6 +394,7 @@ def stub_run_eval(monkeypatch):
     from evaluations.engine.runner import EvalResult
 
     state = {"value": True, "reason": "stubbed pass", "failure": None}
+    requests = []
 
     def _make_result():
         return EvalResult(
@@ -413,6 +415,7 @@ def stub_run_eval(monkeypatch):
         )
 
     def _stub(_request):
+        requests.append(_request)
         return _make_result()
 
     monkeypatch.setattr("evaluations.engine.run_eval", _stub, raising=False)
@@ -423,6 +426,7 @@ def stub_run_eval(monkeypatch):
         state["reason"] = reason
         state["failure"] = failure
 
+    set_result.requests = requests
     return set_result
 
 
