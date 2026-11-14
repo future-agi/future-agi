@@ -93,12 +93,16 @@ export async function loadReleaseInspection(packet, fingerprint, config) {
 export const STALE_REVIEW_CODES = Object.freeze(['release_conflict', 'impact_changed', 'target_configuration_changed', 'target_retired', 'annotation_conflict', 'evidence_expired', 'evidence_share_required', 'review_stale', 'review_conflict']);
 export const isStaleReview = (error) => [403, 409, 410].includes(operationStatus(error)) && STALE_REVIEW_CODES.includes(error?.code);
 const renewalPath = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/renewal/', { request_id });
-export const mapRenewal = (value) => ({
-  requestId: value.request_id, revision: value.revision, status: value.status, subjectId: value.subject_id,
-  previousFingerprint: value.previous_fingerprint, fingerprint: value.fingerprint, packet: mapReleasePacket(value.packet),
-  changes: value.changes.map((row) => ({ item: row.item, before: row.before, after: row.after })),
-  removedEvidence: value.removed_evidence.map((row) => ({ source: row.source, sourceId: row.source_id, reason: row.reason })),
-});
+export const mapRenewal = (value) => {
+  const packet = mapReleasePacket(value.packet);
+  return {
+    requestId: value.request_id, revision: value.revision, status: value.status, subjectId: value.subject_id,
+    previousFingerprint: value.previous_fingerprint, fingerprint: value.fingerprint,
+    packet: { ...packet, evidence: packet.evidence.map((ref) => ({ ...ref, resultState: 'not_loaded' })) },
+    changes: value.changes.map((row) => ({ item: row.item, before: row.before, after: row.after })),
+    removedEvidence: value.removed_evidence.map((row) => ({ source: row.source, sourceId: row.source_id, reason: row.reason })),
+  };
+};
 export async function loadRenewal(requestId, config) {
   return mapRenewal(skillV11Result(await axios.get(renewalPath(requestId), config)));
 }
@@ -141,7 +145,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
             const resource = skillV11Result(await axios.get(url, config));
             name = resource.context?.name || resource.name;
           } catch { /* Metadata is optional; this never grants authority. */ }
-          let review = { complete: false };
+          let review = { complete: false, evidence: renewal.packet.evidence.map((ref) => ({ ...ref, resultState: 'not_loaded' })) };
           try {
             const next = renewal.packet;
             const inspected = next.subjectKind === 'agent_context'
@@ -151,7 +155,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
             // Context comparison uses the current pointer. Never present it as
             // this renewal's diff if that pointer moved during the read.
             const matchesBaseline = next.subjectKind === 'skill' || (label?.version ?? null) === next.transition.expectedVersion;
-            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { complete: false, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
+            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { ...review, complete: false, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
           } catch { /* Read-only detail is optional. Renewal remains explicit. */ }
           return { request: { id: requestId, revision: renewal.revision, status: renewal.status, name, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, preview: { packet: renewal.packet, fingerprint: renewal.fingerprint, current: false }, review, renewalRequired: error.code || 'evidence_expired', canExecute: false };
         }
@@ -181,7 +185,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
     try { inspection = await loadReleaseInspection(packet, raw.fingerprint, config); } catch (error) {
       if (!isStaleReview(error)) throw error;
       staleCode = error.code;
-      inspection = { capabilities: null, summaries: [], targetConfiguration: null };
+      inspection = { capabilities: null, summaries: [], targetConfiguration: null, evidence: mapReleasePacket(packet).evidence.map((ref) => ({ ...ref, resultState: 'not_loaded' })) };
     }
     // Revalidate after all comparison reads, not before potentially slow pages.
     let current = null;

@@ -71,12 +71,12 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await authorPage.getByRole('option', { name, exact: true }).click();
     await authorPage.getByLabel('Published candidate').click();
     await authorPage.getByRole('option', { name: /^v2/ }).click();
-    const preparedResponse = authorPage.waitForResponse(res => res.url().endsWith('/release-requests/preview/') && res.request().method() === 'POST');
-    await authorPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
-    preview = (await (await preparedResponse).json()).result;
     await authorPage.getByLabel('Assigned reviewer').click();
     const reviewerOption = authorPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true });
     await reviewerOption.click();
+    const preparedResponse = authorPage.waitForResponse(res => res.url().endsWith('/release-requests/preview/') && res.request().method() === 'POST');
+    await authorPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
+    preview = (await (await preparedResponse).json()).result;
     await authorPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
     await expect(authorPage.getByRole('button', { name: 'Send review request', exact: true })).toBeEnabled();
     await authorPage.screenshot({ path: `${output}/shots/00-author-packet.png` });
@@ -173,9 +173,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
       await expect(renewalPage.getByRole('heading', { name: 'Renew release review', exact: true })).toBeVisible();
       await renewalPage.getByLabel('Published candidate').click();
       await renewalPage.getByRole('option', { name: /^v2/ }).click();
-      await renewalPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
       await renewalPage.getByLabel('Assigned reviewer').click();
       await renewalPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
+      await renewalPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
       await renewalPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
       const renewed = renewalPage.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
       await renewalPage.getByRole('button', { name: 'Send review request', exact: true }).click();

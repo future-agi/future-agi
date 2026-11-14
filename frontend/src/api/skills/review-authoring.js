@@ -1,4 +1,5 @@
 import axios from 'src/utils/axios';
+import { evidenceOutcome } from 'src/sections/skills/utils/review-display';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { useSkillV11Query, useSkillV11Mutation, skillV11Result, idempotencyHeaders } from './testing';
 import { mapEvidenceRef, mapTargetConfiguration, evidenceSelectionInput, targetConfigurationInput } from './r3-mappers';
@@ -21,7 +22,7 @@ export function useReviewSubjects(kind, page, search = '') {
     params: { page, page_size: 25, search }, mapper: (value) => value });
 }
 // A listed application run's reduced state, as a status badge; anything else stays unrecorded.
-const OPTION_OUTCOME = { works_on_examples: 'pass', needs_changes: 'needs_changes', inconclusive: 'incomplete' };
+// Shared presentation preserves both text and application outcome vocabulary.
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),
     load: async (config) => {
@@ -29,7 +30,7 @@ export function useReviewOptions(kind, resourceId, candidateId) {
         axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
         axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
       ]);
-      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map((row) => ({ ...mapEvidenceRef(row), outcome: OPTION_OUTCOME[row.outcome], counts: row.counts || undefined })), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
+      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map((row) => ({ ...mapEvidenceRef(row), outcome: evidenceOutcome(row), counts: row.counts || undefined, completedAt: row.completed_at })), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
     } });
 }
 export async function prepareReleaseReview(input, config) {

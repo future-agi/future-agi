@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Button, Stack, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, Stack, Tooltip, Typography } from '@mui/material';
 import { enqueueSnackbar } from 'notistack';
 import StatusBadge from 'src/components/status-badge';
 import { relativeReviewTime, reviewPersonName } from '../utils/review-display';
@@ -21,9 +21,14 @@ export default function ReleaseReceipt({ receipt, request }) {
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
   return <Stack spacing={1.5} aria-label="Release receipt">
       <Typography variant="s3" color="text.secondary">Release receipt</Typography>
-      <Stack direction="row" gap={1} alignItems="center"><StatusBadge status="released" label="Released" /><Typography variant="m3">{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography></Stack>
-      <Typography variant="s3" color="text.secondary">Released by {reviewPersonName(receipt.executedByName)} · Approved by {reviewPersonName(receipt.approvedByName)}{receipt.recordedAt && <> · <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip></>}</Typography>
-      <Typography variant="s1" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}><Stack spacing={1}>
+        <Stack direction="row" gap={1} alignItems="center"><StatusBadge status="released" label="Released" /><Typography variant="s1" sx={{ fontWeight: 600 }}>{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography></Stack>
+        <Stack direction="row" gap={1}><Typography variant="s3" color="text.secondary">Before the move</Typography><Typography variant="s3">{before != null ? `${labelName} v${before}` : `${labelName} unassigned`}</Typography></Stack>
+        <Stack direction="row" gap={1}><Typography variant="s3" color="text.secondary">After the move</Typography><Typography variant="s3">{labelName} v{after.version}</Typography></Stack>
+        <Typography variant="s3">Approved by {reviewPersonName(receipt.approvedByName)}</Typography>
+        <Typography variant="s3">Released by {reviewPersonName(receipt.executedByName)}{receipt.recordedAt && <> · <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip></>}</Typography>
+        <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
+      </Stack></Box>
       <Stack direction="row" flexWrap="wrap" gap={1}>
         <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
         <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=versions` : undefined} disabled={!resourceUrl}>View release history</Button>
@@ -40,11 +45,6 @@ export default function ReleaseReceipt({ receipt, request }) {
         <Typography variant="s3">Approval covered this candidate, target and attached evidence. This receipt records the release; it does not imply that expired evidence is still available.</Typography>
         {request?.packet && <Typography variant="s3">{request.packet.evidence.length} attached results · candidate v{request.packet.transition.version}</Typography>}
       </Stack></TechnicalDetails>
-      {/* Before/after state is the receipt's evidence, so it stays visible in plain words; the revision counters are audit details. */}
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
-        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Before the move</Typography><Typography variant="s1">{before != null ? `${labelName} v${before}` : `${labelName} unassigned`}</Typography></Stack>
-        <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">After the move</Typography><Typography variant="s1">{labelName} v{after.version}</Typography></Stack>
-      </Stack>
       <TechnicalDetails title="Audit details">
         <Stack spacing={1}>
           <IdentityChip label="Request" kind="id" value={receipt.requestId} />
