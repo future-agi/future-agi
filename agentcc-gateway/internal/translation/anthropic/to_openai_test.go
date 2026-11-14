@@ -475,3 +475,168 @@ func TestRequestToCanonical_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 }
+
+// ─── Document and container_upload blocks (issue #2888) ──────────────────────
+
+func TestRequestToCanonical_DocumentBase64(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "text", "text": "Analyze this:"},
+				{"type": "document", "source": {
+					"type": "base64",
+					"media_type": "application/pdf",
+					"data": "JVBERi0xLjQK"
+				}}
+			]
+		}]
+	}`)
+
+	req, _, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(req.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(req.Messages))
+	}
+
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+		File *struct {
+			FileID   string `json:"file_id"`
+			FileData string `json:"file_data"`
+			Format   string `json:"format"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(req.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("failed to unmarshal content parts: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	if parts[0].Text != "Analyze this:" {
+		t.Errorf("text part lost: %+v", parts[0])
+	}
+	if parts[1].Type != "file" || parts[1].File == nil {
+		t.Fatalf("expected file part, got %+v", parts[1])
+	}
+	if parts[1].File.FileData != "data:application/pdf;base64,JVBERi0xLjQK" {
+		t.Errorf("FileData = %q, want the data URI", parts[1].File.FileData)
+	}
+	if parts[1].File.Format != "application/pdf" {
+		t.Errorf("Format = %q, want application/pdf", parts[1].File.Format)
+	}
+}
+
+func TestRequestToCanonical_DocumentURL(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [{"type": "document", "source": {
+				"type": "url", "url": "https://example.com/report.pdf"
+			}}]
+		}]
+	}`)
+
+	req, _, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		File *struct {
+			FileID string `json:"file_id"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(req.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("failed to unmarshal content parts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].File == nil {
+		t.Fatalf("expected 1 file part, got %+v", parts)
+	}
+	if parts[0].File.FileID != "https://example.com/report.pdf" {
+		t.Errorf("FileID = %q, want the source URL", parts[0].File.FileID)
+	}
+}
+
+func TestRequestToCanonical_DocumentOnlyTurnIsNotEmpty(t *testing.T) {
+	// A document-only user turn used to become the empty string, so the model
+	// answered as if nothing was attached.
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [{"type": "document", "source": {
+				"type": "base64",
+				"media_type": "application/pdf",
+				"data": "JVBERi0xLjQK"
+			}}]
+		}]
+	}`)
+
+	req, _, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var s string
+	if err := json.Unmarshal(req.Messages[0].Content, &s); err == nil {
+		t.Fatalf("document-only turn collapsed to the string %q", s)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(req.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("content is neither a string nor a parts array: %v", err)
+	}
+	if len(parts) != 1 || parts[0]["type"] != "file" {
+		t.Fatalf("expected the file part to survive, got %+v", parts)
+	}
+}
+
+func TestRequestToCanonical_ContainerUploadRejected(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [{"type": "container_upload", "file_id": "file-abc"}]
+		}]
+	}`)
+
+	_, _, err := tr.RequestToCanonical(body)
+	if err == nil {
+		t.Fatal("expected error for container_upload, got nil")
+	}
+	if !strings.Contains(err.Error(), "container_upload") {
+		t.Errorf("error = %v, want it to name container_upload", err)
+	}
+}
+
+func TestRequestToCanonical_UnknownBlockRejected(t *testing.T) {
+	// A block with no OpenAI representation is rejected rather than silently
+	// dropped, which would leave an empty or partially emptied turn behind.
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "text", "text": "Hello"},
+				{"type": "mystery_block", "data": "untranslatable"}
+			]
+		}]
+	}`)
+
+	_, _, err := tr.RequestToCanonical(body)
+	if err == nil {
+		t.Fatal("expected error for an unknown block type, got nil")
+	}
+	if !strings.Contains(err.Error(), "mystery_block") {
+		t.Errorf("error = %v, want it to name the block type", err)
+	}
+}

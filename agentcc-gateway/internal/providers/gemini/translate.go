@@ -265,6 +265,46 @@ func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
 	}
 }
 
+// RejectUnroutableFileParts scans message content for file parts whose file_id
+// is a managed identifier rather than a fetchable URL. Gemini's fileUri only
+// accepts http(s) and gs:// locations, so forwarding an opaque identifier
+// would ask Google to fetch a string that is not a location and the model
+// would receive a broken reference. file_data (inline base64) parts and URL
+// file_id values are unaffected.
+//
+// Kept apart from translateVisionContent for the same reason as
+// RejectUnsupportedTools: a validation error does not belong in a translator's
+// return values.
+func RejectUnroutableFileParts(messages []models.Message) *models.APIError {
+	for _, msg := range messages {
+		var parts []struct {
+			Type string `json:"type"`
+			File *struct {
+				FileID   string `json:"file_id"`
+				FileData string `json:"file_data"`
+			} `json:"file"`
+		}
+		if err := json.Unmarshal(msg.Content, &parts); err != nil {
+			continue // plain-string content: nothing to check
+		}
+		for _, p := range parts {
+			if p.Type != "file" || p.File == nil || p.File.FileID == "" || p.File.FileData != "" {
+				continue
+			}
+			if strings.HasPrefix(p.File.FileID, "http://") ||
+				strings.HasPrefix(p.File.FileID, "https://") ||
+				strings.HasPrefix(p.File.FileID, "gs://") {
+				continue
+			}
+			slog.Warn("gemini: file part references a managed file identifier",
+				"file_id", p.File.FileID)
+			return models.ErrBadRequest("unsupported_content_part",
+				fmt.Sprintf("file part references a managed file identifier %q that cannot be routed to Gemini without resolution; pass a URL (http://, https://, gs://) or inline file_data instead", p.File.FileID))
+		}
+	}
+	return nil
+}
+
 type geminiFuncDecl struct {
 	Name                 string          `json:"name"`
 	Description          string          `json:"description,omitempty"`
