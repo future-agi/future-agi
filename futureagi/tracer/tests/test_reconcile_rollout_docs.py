@@ -1,5 +1,6 @@
 """The legacy PG trace-tag handoff must straddle every documented rollout."""
 
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,25 +71,50 @@ def test_helm_chart_and_runbook_reconcile_on_both_sides_of_rollout():
 
 
 def test_upgrade_entry_points_explain_the_manual_handoff():
-    installation = (ROOT / "INSTALLATION.md").read_text().split("## Upgrading", 1)[1]
+    installation = (
+        (ROOT / "INSTALLATION.md")
+        .read_text()
+        .split("**One-time trace/span tag-editor upgrade:**", 1)[1]
+        .split("On Helm:", 1)[0]
+    )
     update = (ROOT / "deploy/update/README.md").read_text()
-    standalone = update.split("## Update a production install", 1)[0]
+    standalone = update.split("**One-time trace/span tag-editor transition:**", 1)[
+        1
+    ].split("`check` changes nothing.", 1)[0]
     production = update.split("## Update a production install", 1)[1].split(
         "## Roll back", 1
     )[0]
-    for guide in (installation, standalone):
-        assert "reconcile_legacy_trace_tags" in guide
-        assert "./bin/update apply" in guide
-        assert "automatic" in guide.lower()
-        assert "UPGRADING.md#standalone" in guide
+    _in_order(
+        installation,
+        (
+            "[Standalone handoff](deploy/helm/futureagi/UPGRADING.md#standalone)",
+            "or [Distributed production handoff](deploy/README.md#upgrading-a-production-install)",
+            "Run `reconcile_legacy_trace_tags --dry-run`, review the count, then apply",
+            "run the second apply\nimmediately after rollout",
+            "Neither\n`./bin/install` nor `./bin/update apply` performs this handoff automatically.",
+            "If automatic updates are enabled, pause them **before**",
+        ),
+    )
+    _in_order(
+        standalone,
+        (
+            "`./bin/update check` does not\nreconcile old PG trace tags",
+            "`./bin/update apply` does not run\n`reconcile_legacy_trace_tags`",
+            "[Standalone operator handoff](../helm/futureagi/UPGRADING.md#standalone)",
+            "`./bin/update apply --stage`",
+            "dry-run and first\napply while the old app still serves",
+            "Finish with `./bin/update apply`, then\nrun the second apply immediately after update rollout.",
+            "Automatic updates (apply mode) do not run this\nhandoff either: pause them **before**",
+        ),
+    )
     _in_order(
         production,
         (
             "--production apply --stage",
-            "reconcile_legacy_trace_tags --dry-run",
-            "reconcile_legacy_trace_tags",
-            "--production apply",
-            "reconcile_legacy_trace_tags",
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run",
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+            "--production apply           # restart",
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
         ),
     )
     assert "../README.md#upgrading-a-production-install" in production
@@ -106,6 +132,79 @@ def test_rollout_guides_do_not_claim_the_editor_is_gated():
         assert "Do not expose the new" not in guide
         assert "before releasing the editor" not in guide
         assert "run the second apply immediately" in guide.lower()
+
+
+def test_helm_failed_dry_run_resumes_as_dry_run_and_wait_is_bounded():
+    section = (
+        (ROOT / "deploy/helm/futureagi/UPGRADING.md")
+        .read_text()
+        .split("## Direct Helm", 1)[1]
+        .split("## Standalone", 1)[0]
+    )
+    assert "reconcile_tags --dry-run --after-id <cursor> && reconcile_tags" in section
+    assert "reconcile_tags --after-id <cursor>" in section
+    assert "A failed dry-run" in section
+    assert "A failed apply" in section
+    assert "and rerun `reconcile_tags --after-id <cursor>`" not in section
+    assert "each run" in section and "without `--after-id`" in section
+    bash = section.split("```bash\n", 1)[1].split("\n```", 1)[0]
+    subprocess.run(["bash", "-n"], input=bash, text=True, check=True)
+    assert "RECONCILE_WAIT_TIMEOUT_SECONDS" in bash
+    assert "SECONDS >= deadline" in bash
+    assert "last cursor:" in bash
+    assert "return 1" in bash
+    assert "\nset -e\n" not in bash
+
+
+def test_distributed_handoff_uses_the_installer_compose_file_and_backend():
+    compose = (ROOT / "docker-compose.distributed.yml").read_text()
+    assert "  backend:" in compose
+    assert "  app:" not in compose
+    installer = (ROOT / "bin/install").read_text()
+    assert "docker-compose.distributed.yml" in installer
+    installation = (
+        (ROOT / "INSTALLATION.md")
+        .read_text()
+        .split("**One-time trace/span tag-editor upgrade:**", 1)[1]
+        .split("On Helm:", 1)[0]
+    )
+    update = (
+        (ROOT / "deploy/update/README.md")
+        .read_text()
+        .split("**One-time trace/span tag-editor transition:**", 1)[1]
+        .split("`check` changes nothing.", 1)[0]
+    )
+    for section in (installation, update):
+        assert "--distributed" in section
+        assert "COMPOSE_FILE=docker-compose.distributed.yml" in section
+        assert "docker compose -f docker-compose.distributed.yml" in section
+        _in_order(
+            section,
+            (
+                "--entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run",
+                "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+                "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+            ),
+        )
+        assert (
+            "-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator" in section
+        )
+        assert "--rm --no-deps" in section
+
+
+def test_changed_during_scan_after_resume_requires_full_pass():
+    for path, heading in (
+        ("deploy/README.md", "Check the final `changed during scan` count"),
+        (
+            "deploy/helm/futureagi/UPGRADING.md",
+            "Inspect the final `changed during scan` count",
+        ),
+    ):
+        section = (ROOT / path).read_text().split(heading, 1)[1].split("\n\n", 1)[0]
+        assert "--after-id" in section
+        assert "each run" in section
+        assert "any run" in section
+        assert "without `--after-id`" in section
 
 
 def test_standalone_runbook_reconciles_on_both_sides_of_rollout():

@@ -102,14 +102,23 @@ publish the rendered Job if its env or values contain credentials.
 
 Run in bash (no `set -e`): the function prints logs even when the Job fails,
 then preserves that failed Job for inspection. The two condition waits poll
-until either Complete or Failed; neither the Job nor this loop has an 18-minute
-scan deadline. If you interrupt the shell, inspect the Job and its logs before
-retrying.
+until either Complete or Failed, for at most `RECONCILE_WAIT_TIMEOUT_SECONDS`
+(default 7200 seconds). Set a larger positive number in the operator shell for
+large scans; the Job itself has no scan deadline. On a wait timeout the function
+prints the logs and last cursor and returns nonzero, but the Job may still be
+running: inspect or stop it before retrying. If you interrupt the shell, inspect
+the Job and its logs before retrying.
 
 ```bash
 set -o pipefail
 NEW=X.Y.Z
 reconcile_tags() {
+  local wait_seconds="${RECONCILE_WAIT_TIMEOUT_SECONDS:-7200}"
+  if [[ ! "$wait_seconds" =~ ^[1-9][0-9]*$ ]] ||
+     (( ${#wait_seconds} > 5 )) || (( wait_seconds > 86400 )); then
+    echo 'RECONCILE_WAIT_TIMEOUT_SECONDS must be 1..86400 seconds' >&2
+    return 1
+  fi
   helm template futureagi "$HOME/futureagi-release-$NEW/futureagi-$NEW.tgz" \
     -n futureagi -f my-values.yaml --show-only templates/bootstrap/job.yaml |
     python3 -c '
@@ -125,8 +134,13 @@ container["command"] = ["python", "manage.py", "reconcile_legacy_trace_tags"]
 container["args"] = sys.argv[1:]
 yaml.safe_dump(job, sys.stdout)
 ' "$@" | kubectl --context CONTEXT -n futureagi create -f - || return 1
-  local complete=false
+  local complete=false timed_out=false logs last_cursor
+  local deadline=$((SECONDS + wait_seconds))
   while :; do
+    if (( SECONDS >= deadline )); then
+      timed_out=true
+      break
+    fi
     if kubectl --context CONTEXT -n futureagi wait \
       --for=condition=complete job/futureagi-reconcile-legacy-tags --timeout=10s >/dev/null 2>&1; then
       complete=true
@@ -137,9 +151,18 @@ yaml.safe_dump(job, sys.stdout)
       break
     fi
   done
-  kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags || return 1
+  if ! logs=$(kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags 2>&1); then
+    printf '%s\n' "$logs" >&2
+    return 1
+  fi
+  printf '%s\n' "$logs"
+  last_cursor=$(printf '%s\n' "$logs" | sed -nE 's/.*resume with --after-id ([[:xdigit:]-]{36}).*/\1/p' | tail -n 1)
+  if [ "$timed_out" = true ]; then
+    echo "Reconcile Job wait timed out; last cursor: ${last_cursor:-none}. Job may still be running; inspect or stop it before retrying." >&2
+    return 1
+  fi
   if [ "$complete" != true ]; then
-    echo 'Reconcile Job failed; keep it for inspection, then delete and resume from its last cursor.' >&2
+    echo "Reconcile Job failed; last cursor: ${last_cursor:-none}. Keep it for inspection, then delete and resume the same pass." >&2
     return 1
   fi
   kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true
@@ -149,19 +172,25 @@ reconcile_tags --dry-run && reconcile_tags  # first apply while the old backend 
 ```
 
 Inspect the final `changed during scan` count in each Job's logs (including the
-second apply below). If nonzero, its rerun instruction means repeat that pass
-from the beginning, without `--after-id`, before moving to the next step. The
-Job completes successfully despite concurrent edits so it does not
-block the scripted two-pass rollout; operators must act on the logged count.
+second apply below). After a resume with `--after-id`, check each run's own
+`changed during scan` count: if any run of that pass reported a nonzero count,
+repeat the whole pass from the beginning, without `--after-id`, before moving
+to the next step. The Job completes successfully despite concurrent edits so
+it does not block the scripted two-pass rollout; operators must act on the
+logged count.
 
 On a failure, read the printed logs: each progress line includes a final
 `resume with --after-id <cursor>`. Diagnose and repair the failure, retain the
 logs, then **delete the failed Job** with
-`kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true`
-and rerun `reconcile_tags --after-id <cursor>` (or rerun from the beginning if
-no cursor was printed). Do not proceed to the rollout until the first apply
-succeeds; rerun an apply if it reports rows changed during the scan. A failed
-Job cannot be retried by applying or creating another Job with the same name.
+`kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true`.
+Rerun the *same* pass with its original flags plus the cursor. A failed dry-run
+resumes with `reconcile_tags --dry-run --after-id <cursor> && reconcile_tags`:
+the first apply still scans from the beginning. A failed apply resumes with
+`reconcile_tags --after-id <cursor>`. With no cursor, restart that pass without
+`--after-id`. On a timeout, the Job may still be running: inspect or stop it
+before deleting it; never start another Job over a running scan. Do not proceed
+to the rollout until the first apply succeeds. A failed Job cannot be retried
+by applying or creating another Job with the same name.
 Use the verified local chart, intended context/namespace and complete current
 values file:
 

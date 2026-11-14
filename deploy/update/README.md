@@ -153,6 +153,32 @@ handoff either: pause them **before** the tag-editor update, complete the
 reconcile as an operator. Do not assume unattended updates preserve legacy
 tags without this step; notify/download modes do not apply a release.
 
+For a **non-production Distributed** install (`./bin/install --distributed`),
+use `backend` instead of Standalone's `app`. The installer records
+`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`; the explicit
+`docker compose -f docker-compose.distributed.yml` below selects that file
+and reads the root `.env`, not the production env file/overlay. After staging
+with `./bin/update apply --stage`, review any schema prerequisites and run the
+dry-run and first apply on the staged new backend image while the old backend
+serves. Finish the update, then run the second apply immediately after rollout
+(omit it only if the old backend was stopped before its last write). Review
+counts and rerun any pass with rows changed during its scan.
+
+```bash
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+# Review the dry-run count before applying.
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+./bin/update apply    # complete the staged update
+# Catch old-backend edits made between the first pass and rollout.
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+```
+
 `check` changes nothing. It prints the next command to run, or why the update
 is blocked: each reason names what fixes it. Step 3 is for a `.env` that
 `./bin/install` wrote; if yours uses `export`, indentation or spaces around

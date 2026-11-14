@@ -529,8 +529,9 @@ $COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MOD
 # If it reports rows changed during the scan, run this apply again.
 ```
 
-Check the final `changed during scan` count after each dry-run/apply. If it is
-nonzero, the command prints a rerun instruction: repeat that pass from the
+Check the final `changed during scan` count after each dry-run/apply. After a
+resume with `--after-id`, check each run's own count: if any run of that pass
+reported a nonzero `changed during scan` count, repeat the whole pass from the
 beginning (without `--after-id`) before moving to the next step. The command
 still exits successfully so the scripted two-pass rollout and Helm Job
 completion are not interrupted by a concurrent edit.

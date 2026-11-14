@@ -1021,6 +1021,32 @@ successful apply after its last old-editor write; the linked two-pass procedure
 also covers upgrades where the old app serves during staging. Rerun an apply if
 it reports rows changed during the scan.
 
+For a **non-production Distributed** install (`./bin/install --distributed`),
+use `backend`, not Standalone's `app` or the production overlay's `$COMPOSE`.
+The installer records `COMPOSE_FILE=docker-compose.distributed.yml` in `.env`;
+`docker compose -f docker-compose.distributed.yml` explicitly selects that
+file and reads the install's root `.env`. After pulling/staging the new backend
+image (and reviewing any schema prerequisites), but **before** starting it,
+run the dry-run and first apply while the old backend serves. Finish the
+upgrade with `./bin/install --distributed` (or the staged `./bin/update apply`),
+then run the second apply immediately after rollout. A cold-stopped old backend
+needs only the first successful apply after its last write.
+
+```bash
+docker compose -f docker-compose.distributed.yml pull backend
+# Review the dry-run count before the first apply.
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+./bin/install --distributed    # or: ./bin/update apply after staging
+docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+```
+
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
