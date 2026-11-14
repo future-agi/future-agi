@@ -1,4 +1,4 @@
-"""Token-only SDK usage receives a labelled estimate through the real HTTP API."""
+"""Real HTTP preview preserves character units and labels token-only estimates."""
 
 import json
 import threading
@@ -14,6 +14,8 @@ from model_hub.models.develop_dataset import Dataset, Row
 
 @pytest.fixture
 def character_usage_provider():
+    observed_usage = []
+
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -21,6 +23,9 @@ def character_usage_provider():
         def do_POST(self):
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             scenario = request["messages"][-1]["content"]
+            if isinstance(scenario, list):
+                scenario = "".join(part.get("text", "") for part in scenario)
+            assert scenario in {"explicit characters", "tokens only"}, scenario
             usage = {
                 "prompt_tokens": 10000,
                 "completion_tokens": 2000,
@@ -28,6 +33,7 @@ def character_usage_provider():
             }
             if scenario == "explicit characters":
                 usage.update(input_characters=50000, output_characters=10000)
+            observed_usage.append(usage)
             payload = {
                 "id": "synthetic-completion",
                 "object": "chat.completion",
@@ -53,7 +59,7 @@ def character_usage_provider():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f"http://127.0.0.1:{server.server_port}/v1"
+    yield f"http://127.0.0.1:{server.server_port}/v1", observed_usage
     server.shutdown()
     thread.join(timeout=5)
     server.server_close()
@@ -61,9 +67,10 @@ def character_usage_provider():
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("scenario", ["explicit characters", "tokens only"])
-def test_preview_api_labels_estimate_for_token_only_sdk_usage(
+def test_preview_api_preserves_character_usage_or_labels_estimate(
     live_server, user, workspace, character_usage_provider, scenario
 ):
+    provider_url, observed_usage = character_usage_provider
     organization = user.organization
     key = OrgApiKey.objects.create(
         name="Synthetic pricing check",
@@ -80,7 +87,7 @@ def test_preview_api_labels_estimate_for_token_only_sdk_usage(
         workspace=workspace,
         config_json={
             "key": "synthetic-local-provider",
-            "api_base": character_usage_provider,
+            "api_base": provider_url,
         },
     )
     dataset = Dataset.objects.create(
@@ -119,16 +126,25 @@ def test_preview_api_labels_estimate_for_token_only_sdk_usage(
             {
                 "scenario": scenario,
                 "http_status": response.status_code,
+                "upstream_usage": observed_usage,
                 "result": result,
             },
             sort_keys=True,
         )
     )
     assert result["responses"] == ["Synthetic reply"], result
-    # LiteLLM's OpenAI transport retains only standard token usage, including
-    # when the upstream sends character extensions. Never claim that those
-    # tokens are characters or that an unavailable catalog cost is free.
-    assert result["cost"]["pricing_source"] == "default", result
-    assert result["cost"]["total_cost"] == 0.0027, result
-    assert "input_characters" not in result["token_usage"]
-    assert "output_characters" not in result["token_usage"]
+    assert len(observed_usage) == 1
+    if scenario == "explicit characters":
+        assert observed_usage[0]["input_characters"] == 50000
+        assert observed_usage[0]["output_characters"] == 10000
+        assert result["token_usage"]["input_characters"] == 50000
+        assert result["token_usage"]["output_characters"] == 10000
+        assert result["cost"]["pricing_source"] == "available_models", result
+        assert result["cost"]["total_cost"] == 0.42, result
+    else:
+        assert "input_characters" not in observed_usage[0]
+        assert "output_characters" not in observed_usage[0]
+        assert result["cost"]["pricing_source"] == "default", result
+        assert result["cost"]["total_cost"] == 0.0027, result
+        assert "input_characters" not in result["token_usage"]
+        assert "output_characters" not in result["token_usage"]
