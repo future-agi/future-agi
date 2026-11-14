@@ -60,7 +60,8 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
           : unchanged ? "Nothing changed yet."
             : null;
   return (
-    <Section title="Spending allowance">
+    // The page title names the setting; this block carries no second heading.
+    <Section>
       <Stack spacing={1.5}>
         {/* Conclusion first: what is allowed now and what has been used this period. */}
         <Typography variant="m3" role="status">
@@ -128,13 +129,14 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
             </Button>
           )}
           {onRefresh && (
-            <Button disabled={operation.busy} onClick={onRefresh}>
+            // Alone at the start of the row (members), the text button aligns with the content edge.
+            <Button disabled={operation.busy} onClick={onRefresh} sx={canManage ? undefined : { ml: -1 }}>
               Refresh
             </Button>
           )}
           {canManage && <ActionReason id={SAVE_REASON_ID} reason={saveReason} />}
         </Stack>
-        <TechnicalDetails title="Accounting details">
+        <TechnicalDetails title="How usage is counted">
           <Stack spacing={1}>
             <IdentityValue label="Period (UTC)" value={`${policy.startsAt} → ${policy.endsAt}`} />
             <IdentityValue label="Configured allowance (USD)" value={policy.periodLimitUsd ?? "Not configured"} />

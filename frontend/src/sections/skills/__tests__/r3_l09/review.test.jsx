@@ -730,7 +730,7 @@ describe("publication and explicit spending", () => {
     );
     // Unsettled spend stays visible in the summary; exact decimals are one click away.
     expect(screen.getByText(/\$1\.00 is held by runs whose final cost isn.t settled yet/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Accounting details" }));
+    fireEvent.click(screen.getByRole("button", { name: "How usage is counted" }));
     expect(screen.getByText("0.50000000")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Save" }),
