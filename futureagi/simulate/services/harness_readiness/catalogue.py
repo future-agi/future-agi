@@ -134,6 +134,36 @@ class Fix(TypedDict):
     recheck: FixRecheck | None
 
 
+class WorkerToolView(TypedDict):
+    # The contract tool name, e.g. "update_order_status".
+    tool: str
+    # The sealed world action, e.g. "POST orders.update_status"; None when the tool has no route.
+    action: str | None
+    boundary: Literal["allowed", "blocked", "not_enforced"]
+
+
+class WorkerBypass(TypedDict):
+    run_id: str
+    call_execution_id: str
+    tool: str | None
+
+
+class WorkerBoundaryView(TypedDict):
+    """One declared worker's limits as this pairing holds them. Never "supported": the limit is cooperative."""
+
+    worker_id: str
+    name: str
+    binding: Literal["separate", "shared"]
+    status: Status
+    reason_code: str
+    reason: str
+    tools: list[WorkerToolView]
+    # Newest first, at most five.
+    bypassed: list[WorkerBypass]
+    fix: Fix | None
+    checked_at: str | None
+
+
 class RowView(TypedDict):
     id: str
     label: str
