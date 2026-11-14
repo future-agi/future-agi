@@ -95,15 +95,17 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             with transaction.atomic():
                 if checks_list:
                     # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name="__ui_guardrails__",
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": True,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
                         policy, data={"checks": checks_list}, partial=True

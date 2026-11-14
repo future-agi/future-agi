@@ -77,7 +77,11 @@ class TestToProviderMessagesScrubbing:
         # Empty content + tool_calls (a pure tool call) contributes nothing to
         # the persona's view.
         out = self.svc._to_provider_messages(
-            [ChatMessage(role=ChatRole.ASSISTANT, content="", tool_calls=[_tool_call()])]
+            [
+                ChatMessage(
+                    role=ChatRole.ASSISTANT, content="", tool_calls=[_tool_call()]
+                )
+            ]
         )
         assert out == []
 
@@ -103,9 +107,7 @@ class TestToProviderMessagesScrubbing:
                 )
             ]
         )
-        assert out == [
-            {"role": "assistant", "content": "Let me check that for you."}
-        ]
+        assert out == [{"role": "assistant", "content": "Let me check that for you."}]
         assert "tool_calls" not in out[0]
 
     def test_genuinely_empty_message_is_skipped(self):
@@ -130,9 +132,7 @@ class TestToProviderMessagesScrubbing:
                 ChatMessage(
                     role=ChatRole.TOOL, content="ORD-1 shipped", tool_call_id="call_1"
                 ),
-                ChatMessage(
-                    role=ChatRole.ASSISTANT, content="It shipped yesterday."
-                ),
+                ChatMessage(role=ChatRole.ASSISTANT, content="It shipped yesterday."),
             ]
         )
         assert out == [
@@ -174,10 +174,13 @@ class TestGenerateSimulatorResponseRoleFlip:
     def _run(self, messages):
         captured = {}
 
-        with patch(
-            "simulate.services.futureagi_chat.llm_client.ModelConfigs.get_provider",
-            return_value="openai",
-        ), patch("simulate.services.futureagi_chat.llm_client.LLM") as mock_llm_cls:
+        with (
+            patch(
+                "simulate.services.futureagi_chat.llm_client.ModelConfigs.get_provider",
+                return_value="openai",
+            ),
+            patch("simulate.services.futureagi_chat.llm_client.LLM") as mock_llm_cls,
+        ):
 
             def _complete(full_messages, _tools):
                 captured["messages"] = full_messages
@@ -249,10 +252,13 @@ class TestGenerateSimulatorResponseRoleFlip:
             id="tc1",
             function=SimpleNamespace(name="endCall", arguments='{"reason": "done"}'),
         )
-        with patch(
-            "simulate.services.futureagi_chat.llm_client.ModelConfigs.get_provider",
-            return_value="openai",
-        ), patch("simulate.services.futureagi_chat.llm_client.LLM") as mock_llm_cls:
+        with (
+            patch(
+                "simulate.services.futureagi_chat.llm_client.ModelConfigs.get_provider",
+                return_value="openai",
+            ),
+            patch("simulate.services.futureagi_chat.llm_client.LLM") as mock_llm_cls,
+        ):
             mock_llm_cls.return_value._get_completion_with_tools.return_value = (
                 _fake_llm_response(content="", tool_calls=[end_call])
             )

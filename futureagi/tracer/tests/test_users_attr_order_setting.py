@@ -1,4 +1,5 @@
 """Focused public contract for helper-local ordered-aggregation opt-out."""
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,14 +11,24 @@ pytestmark = pytest.mark.unit
 COMMON = "use_skip_indexes_if_final = 0, optimize_use_projections = 1"
 
 
-@pytest.mark.parametrize("sql,head,tail", [
-    ("SELECT 1", "SELECT 1\nSETTINGS ", ""),
-    ("SELECT 1;", "SELECT 1\nSETTINGS ", ""),
-    ("SELECT 1 FORMAT JSON", "SELECT 1\nSETTINGS ", " FORMAT JSON"),
-    ("SELECT 1 SETTINGS max_threads = 8", "SELECT 1 SETTINGS max_threads = 8, ", ""),
-    ("SELECT 1 SETTINGS max_threads = 8 FORMAT JSONEachRow",
-     "SELECT 1 SETTINGS max_threads = 8, ", " FORMAT JSONEachRow"),
-])
+@pytest.mark.parametrize(
+    "sql,head,tail",
+    [
+        ("SELECT 1", "SELECT 1\nSETTINGS ", ""),
+        ("SELECT 1;", "SELECT 1\nSETTINGS ", ""),
+        ("SELECT 1 FORMAT JSON", "SELECT 1\nSETTINGS ", " FORMAT JSON"),
+        (
+            "SELECT 1 SETTINGS max_threads = 8",
+            "SELECT 1 SETTINGS max_threads = 8, ",
+            "",
+        ),
+        (
+            "SELECT 1 SETTINGS max_threads = 8 FORMAT JSONEachRow",
+            "SELECT 1 SETTINGS max_threads = 8, ",
+            " FORMAT JSONEachRow",
+        ),
+    ],
+)
 def test_append_defaults_preserve_previous_sql_bytes(sql, head, tail):
     expected = head + COMMON + ", optimize_aggregation_in_order = 1" + tail
     assert _append_v2_settings(sql) == expected
@@ -40,7 +51,8 @@ def test_only_users_attribute_helper_opts_out(finite, workspace):
     start = datetime(2026, 8, 8, tzinfo=UTC)
     sql, params = _users_attr_enrichment_query(
         **({"project_ids": [project]} if workspace else {"project_id": project}),
-        attribute_keys=["tag", "absent"], start_date=start,
+        attribute_keys=["tag", "absent"],
+        start_date=start,
         end_date=start + timedelta(hours=1),
         candidate_end_user_id_map={survivor: survivor} if finite else None,
     )

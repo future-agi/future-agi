@@ -237,6 +237,7 @@ def _log_composite_usage(
     try:
         from sdk.utils.helpers import _get_api_call_type
         from tfc.constants.api_calls import APICallStatusChoices
+
         try:
             from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:

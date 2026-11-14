@@ -38,9 +38,7 @@ class TestRoutingPolicyList:
         _make_policy(user, name="chatty", version=1, is_active=False)
         _make_policy(user, name="chatty", version=2, is_active=True)
 
-        response = auth_client.get(
-            "/agentcc/routing-policies/?active_only=true"
-        )
+        response = auth_client.get("/agentcc/routing-policies/?active_only=true")
         assert response.status_code == 200
         rows = response.json()["result"]
         assert len(rows) == 1
@@ -56,9 +54,7 @@ class TestRoutingPolicyList:
 class TestRoutingPolicyRetrieve:
     def test_retrieve_returns_policy(self, auth_client, user):
         policy = _make_policy(user, name="lookup-me")
-        response = auth_client.get(
-            f"/agentcc/routing-policies/{policy.id}/"
-        )
+        response = auth_client.get(f"/agentcc/routing-policies/{policy.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(policy.id)
 
@@ -70,9 +66,7 @@ class TestRoutingPolicyCreate:
         "agentcc.views.routing_policy.AgentccRoutingPolicyViewSet._sync_routing_to_gateway",
         return_value=True,
     )
-    def test_create_new_version_deactivates_prior(
-        self, mock_sync, auth_client, user
-    ):
+    def test_create_new_version_deactivates_prior(self, mock_sync, auth_client, user):
         prior = _make_policy(user, name="fastest", version=1, is_active=True)
 
         response = auth_client.post(
@@ -117,9 +111,7 @@ class TestRoutingPolicyDestroy:
     )
     def test_destroy_soft_deletes_and_syncs(self, mock_sync, auth_client, user):
         policy = _make_policy(user, name="to-delete")
-        response = auth_client.delete(
-            f"/agentcc/routing-policies/{policy.id}/"
-        )
+        response = auth_client.delete(f"/agentcc/routing-policies/{policy.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["deleted"] is True
         mock_sync.assert_called_once()
@@ -132,15 +124,11 @@ class TestRoutingPolicyActivate:
         "agentcc.views.routing_policy.AgentccRoutingPolicyViewSet._sync_routing_to_gateway",
         return_value=True,
     )
-    def test_activate_swaps_active_within_same_name(
-        self, mock_sync, auth_client, user
-    ):
+    def test_activate_swaps_active_within_same_name(self, mock_sync, auth_client, user):
         v1 = _make_policy(user, name="fastest", version=1, is_active=True)
         v2 = _make_policy(user, name="fastest", version=2, is_active=False)
 
-        response = auth_client.post(
-            f"/agentcc/routing-policies/{v2.id}/activate/"
-        )
+        response = auth_client.post(f"/agentcc/routing-policies/{v2.id}/activate/")
         assert response.status_code == 200, response.json()
         v1.refresh_from_db()
         v2.refresh_from_db()

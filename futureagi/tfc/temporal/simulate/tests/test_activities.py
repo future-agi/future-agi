@@ -212,9 +212,11 @@ class TestResolveScenarioAgent:
     adapter resolution that the graph/script activities already use.
     """
 
-    def _make_scenario(self, *, agent_definition=None, prompt_template=None,
-                       prompt_version=None):
+    def _make_scenario(
+        self, *, agent_definition=None, prompt_template=None, prompt_version=None
+    ):
         from types import SimpleNamespace
+
         org = SimpleNamespace(id="org-1")
         ws = SimpleNamespace(id="ws-1")
         return SimpleNamespace(
@@ -294,9 +296,7 @@ class TestResolveScenarioAgent:
     def test_prompt_source_without_template_falls_back_to_agent_definition(self):
         from tfc.temporal.simulate.activities import _resolve_scenario_agent
 
-        scenario = self._make_scenario(
-            agent_definition=None, prompt_template=None
-        )
+        scenario = self._make_scenario(agent_definition=None, prompt_template=None)
         result = _resolve_scenario_agent(scenario, "prompt")
         assert result is None
 
@@ -305,9 +305,7 @@ class TestResolveScenarioAgent:
         from unittest.mock import MagicMock
         from tfc.temporal.simulate.activities import _resolve_scenario_agent
 
-        prompt_version = SimpleNamespace(
-            prompt_config_snapshot={"messages": []}
-        )
+        prompt_version = SimpleNamespace(prompt_config_snapshot={"messages": []})
         prompt_template = MagicMock()
         prompt_template.id = "pt-2"
         prompt_template.name = "Empty"

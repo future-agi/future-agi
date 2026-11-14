@@ -256,7 +256,9 @@ def validate_file_url(
             )
         return
 
-    content_type = response.headers.get("Content-Type", "").lower().split(";")[0].strip()
+    content_type = (
+        response.headers.get("Content-Type", "").lower().split(";")[0].strip()
+    )
     if content_type in config["rejected_content_types"]:
         raise ValueError(
             f"URL content-type '{content_type}' is not an allowed {file_type} type."

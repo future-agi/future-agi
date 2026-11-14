@@ -158,7 +158,9 @@ class TestLLMGatewayFirstRouting:
             assert result == "litellm only"
 
     @patch("agentic_eval.core.llm.llm.log_to_clickhouse")
-    def test_futureagi_managed_model_uses_managed_ai_service(self, mock_ch, monkeypatch):
+    def test_futureagi_managed_model_uses_managed_ai_service(
+        self, mock_ch, monkeypatch
+    ):
         managed = types.ModuleType("ee.licensing.managed_ai")
 
         def is_managed_model(model):
@@ -170,7 +172,11 @@ class TestLLMGatewayFirstRouting:
             calls.append(payload)
             return {
                 "choices": [{"message": {"content": "managed ai response"}}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                },
             }
 
         managed.is_managed_model = is_managed_model

@@ -49,14 +49,18 @@ class _ProjectScopeStub:
 
 @pytest.mark.parametrize("outer", [False, True])
 @pytest.mark.parametrize("failure", [None, "statement"])
-def test_filter_value_pg_read_restores_without_statement_timer(monkeypatch, outer, failure):
+def test_filter_value_pg_read_restores_without_statement_timer(
+    monkeypatch, outer, failure
+):
     from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
     pg = FakePostgres(outer=outer, failure=failure)
     deadline = Mock()
     deadline.remaining_ms.return_value = 3_725
     monkeypatch.setattr(dashboard_view, "connection", pg)
-    monkeypatch.setattr(dashboard_view, "transaction", SimpleNamespace(atomic=pg.atomic))
+    monkeypatch.setattr(
+        dashboard_view, "transaction", SimpleNamespace(atomic=pg.atomic)
+    )
 
     def read():
         pg.execute("SELECT owned_project")

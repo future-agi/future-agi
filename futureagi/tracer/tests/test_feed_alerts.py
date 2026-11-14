@@ -601,7 +601,11 @@ class TestAlertEventPipeline:
 
         # 99 -> 100 fires. A re-eval retires a member (99) and assign brings it
         # back (100): the same threshold must not fire again.
-        for key, before, after in (("up-1", 99, 100), ("down", 100, 99), ("up-2", 99, 100)):
+        for key, before, after in (
+            ("up-1", 99, 100),
+            ("down", 100, 99),
+            ("up-2", 99, 100),
+        ):
             events._queue_event(crossing(key, before, after))
 
         assert (

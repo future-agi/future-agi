@@ -29,6 +29,7 @@ Splitting rules (must match the legacy spans_mv exactly, per DECISIONS #014):
     Numbers that don't fit Float64 (abs > 1.7e308) go to overflow. We do not
     silently truncate.
 """
+
 from __future__ import annotations
 
 import json
@@ -153,7 +154,7 @@ def split_attributes(
 
         if v is None:
             extra[k] = None
-        elif isinstance(v, bool):                                  # MUST come before int (bool subclasses int)
+        elif isinstance(v, bool):  # MUST come before int (bool subclasses int)
             b[k] = 1 if v else 0
         elif isinstance(v, int):
             # Bound to Float64; anything bigger goes to overflow rather than lose precision.
@@ -165,10 +166,10 @@ def split_attributes(
             if math.isfinite(v):
                 n[k] = v
             else:
-                extra[k] = v                                       # NaN/Inf go to overflow rather than corrupt Float64 maps
+                extra[k] = v  # NaN/Inf go to overflow rather than corrupt Float64 maps
         elif isinstance(v, str):
             s[k] = v
-        else:                                                       # list, dict, other
+        else:  # list, dict, other
             extra[k] = v
     return s, n, b, extra
 
@@ -216,10 +217,14 @@ def _ensure_dt_utc(v: Any) -> datetime:
     if v is None:
         raise AdapterError("expected datetime, got None")
     if isinstance(v, datetime):
-        return v.astimezone(timezone.utc) if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        return (
+            v.astimezone(timezone.utc) if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        )
     if isinstance(v, str):
         try:
-            return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc)
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
         except ValueError as e:
             raise AdapterError(f"unparseable datetime: {v!r}") from e
     raise AdapterError(f"expected datetime, got {type(v).__name__}: {v!r}")
@@ -262,21 +267,49 @@ def _value_or_empty_json(v: Any) -> str:
 # These are the column names we expect on the PG row dict — match the Django
 # ObservationSpan model. The orchestrator selects exactly these columns.
 EXPECTED_PG_COLUMNS: tuple[str, ...] = (
-    "id", "project_id", "project_version_id", "trace_id", "parent_span_id",
-    "name", "observation_type", "operation_name",
-    "start_time", "end_time",
-    "input", "output",
-    "model", "model_parameters", "latency_ms",
-    "org_id", "org_user_id",
-    "prompt_tokens", "completion_tokens", "total_tokens", "response_time",
-    "eval_id", "cost",
-    "status", "status_message",
-    "tags", "metadata", "span_events", "provider",
-    "input_images", "eval_input", "eval_attributes",
-    "custom_eval_config_id", "eval_status",
-    "end_user_id", "prompt_version_id", "prompt_label_id",
-    "span_attributes", "resource_attributes", "semconv_source",
-    "created_at", "updated_at", "deleted",
+    "id",
+    "project_id",
+    "project_version_id",
+    "trace_id",
+    "parent_span_id",
+    "name",
+    "observation_type",
+    "operation_name",
+    "start_time",
+    "end_time",
+    "input",
+    "output",
+    "model",
+    "model_parameters",
+    "latency_ms",
+    "org_id",
+    "org_user_id",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "response_time",
+    "eval_id",
+    "cost",
+    "status",
+    "status_message",
+    "tags",
+    "metadata",
+    "span_events",
+    "provider",
+    "input_images",
+    "eval_input",
+    "eval_attributes",
+    "custom_eval_config_id",
+    "eval_status",
+    "end_user_id",
+    "prompt_version_id",
+    "prompt_label_id",
+    "span_attributes",
+    "resource_attributes",
+    "semconv_source",
+    "created_at",
+    "updated_at",
+    "deleted",
     # joined-in column (from tracer_trace.trace_session_id)
     "trace_session_id",
 )
@@ -301,7 +334,9 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
         if not trace_id:
             raise AdapterError("trace_id is empty")
         observation_type = _as_str(pg_row.get("observation_type"), "unknown")
-        start_time = _ensure_dt_utc(pg_row.get("start_time") or pg_row.get("created_at"))
+        start_time = _ensure_dt_utc(
+            pg_row.get("start_time") or pg_row.get("created_at")
+        )
     except KeyError as e:
         raise AdapterError(f"missing required column: {e}") from e
 
@@ -336,13 +371,21 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
                 v = json.loads(v)
             except json.JSONDecodeError:
                 continue
-        if v in ({}, []):                                          # treat empty containers as "not set"
+        if v in ({}, []):  # treat empty containers as "not set"
             continue
         overflow[col] = v
 
     # Derive hot LLM fields from attrs when the dedicated PG column is null.
-    model = _as_str(pg_row.get("model")) or s_map.get("gen_ai.request.model", "") or s_map.get("llm.model_name", "")
-    provider = _as_str(pg_row.get("provider")) or s_map.get("gen_ai.system", "") or s_map.get("llm.provider", "")
+    model = (
+        _as_str(pg_row.get("model"))
+        or s_map.get("gen_ai.request.model", "")
+        or s_map.get("llm.model_name", "")
+    )
+    provider = (
+        _as_str(pg_row.get("provider"))
+        or s_map.get("gen_ai.system", "")
+        or s_map.get("llm.provider", "")
+    )
     gen_ai_system = s_map.get("gen_ai.system", "")
     gen_ai_operation = s_map.get("gen_ai.operation.name", "")
 
@@ -371,10 +414,8 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
         id=span_id,
         parent_span_id=_as_str(pg_row.get("parent_span_id"), ""),
         name=_as_str(pg_row.get("name"), ""),
-
         end_time=_maybe_dt(pg_row.get("end_time")),
         latency_ms=_as_int(pg_row.get("latency_ms"), 0),
-
         org_id=_as_uuid_str(pg_row.get("org_id")),
         project_version_id=_as_uuid_str(pg_row.get("project_version_id")),
         end_user_id=_as_uuid_str(pg_row.get("end_user_id")),
@@ -382,41 +423,35 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
         prompt_version_id=_as_uuid_str(pg_row.get("prompt_version_id")),
         prompt_label_id=_as_uuid_str(pg_row.get("prompt_label_id")),
         custom_eval_config_id=_as_uuid_str(pg_row.get("custom_eval_config_id")),
-
         status=_as_str(pg_row.get("status"), ""),
         status_message=_as_str(pg_row.get("status_message"), ""),
-
         model=model,
         provider=provider,
         gen_ai_system=gen_ai_system,
         gen_ai_operation=gen_ai_operation,
         operation_name=_as_str(pg_row.get("operation_name"), ""),
-
         prompt_tokens=_as_int(pg_row.get("prompt_tokens"), 0),
         completion_tokens=_as_int(pg_row.get("completion_tokens"), 0),
         total_tokens=_as_int(pg_row.get("total_tokens"), 0),
         cost=_as_float(pg_row.get("cost"), 0.0),
-
         attrs_string=s_map,
         attrs_number=n_map,
         attrs_bool=b_map,
-
         attributes_extra=_to_json_text(overflow),
         resource_attrs=_to_json_text(resource_attrs),
         metadata=_to_json_text(pg_row.get("metadata") or {}),
-
         input=_value_or_empty_json(pg_row.get("input")),
         output=_value_or_empty_json(pg_row.get("output")),
         input_gcs_url=None,
         output_gcs_url=None,
         tags=_to_json_text(pg_row.get("tags") or []),
         span_events=_to_json_text(pg_row.get("span_events") or []),
-
         eval_status=_as_str(pg_row.get("eval_status"), ""),
-
         semconv_source=_as_str(pg_row.get("semconv_source"), ""),
         created_at=_ensure_dt_utc(pg_row.get("created_at") or start_time),
-        updated_at=_ensure_dt_utc(pg_row.get("updated_at") or pg_row.get("created_at") or start_time),
+        updated_at=_ensure_dt_utc(
+            pg_row.get("updated_at") or pg_row.get("created_at") or start_time
+        ),
         is_deleted=1 if pg_row.get("deleted") else 0,
     )
     return row
@@ -425,36 +460,100 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
 # Ordered tuple matching the spans table column layout in 002_spans_v2.sql.
 # Used by the orchestrator's native-driver bulk insert.
 CH_INSERT_COLUMNS: tuple[str, ...] = (
-    "project_id", "observation_type", "service_name", "start_time",
-    "trace_id", "id", "parent_span_id", "name",
-    "end_time", "latency_ms",
-    "org_id", "project_version_id", "end_user_id", "trace_session_id",
-    "prompt_version_id", "prompt_label_id", "custom_eval_config_id",
-    "status", "status_message",
-    "model", "provider", "gen_ai_system", "gen_ai_operation", "operation_name",
-    "prompt_tokens", "completion_tokens", "total_tokens", "cost",
-    "attrs_string", "attrs_number", "attrs_bool",
-    "attributes_extra", "resource_attrs", "metadata",
-    "input", "output", "input_gcs_url", "output_gcs_url", "tags", "span_events",
+    "project_id",
+    "observation_type",
+    "service_name",
+    "start_time",
+    "trace_id",
+    "id",
+    "parent_span_id",
+    "name",
+    "end_time",
+    "latency_ms",
+    "org_id",
+    "project_version_id",
+    "end_user_id",
+    "trace_session_id",
+    "prompt_version_id",
+    "prompt_label_id",
+    "custom_eval_config_id",
+    "status",
+    "status_message",
+    "model",
+    "provider",
+    "gen_ai_system",
+    "gen_ai_operation",
+    "operation_name",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cost",
+    "attrs_string",
+    "attrs_number",
+    "attrs_bool",
+    "attributes_extra",
+    "resource_attrs",
+    "metadata",
+    "input",
+    "output",
+    "input_gcs_url",
+    "output_gcs_url",
+    "tags",
+    "span_events",
     "eval_status",
-    "semconv_source", "created_at", "updated_at", "is_deleted",
+    "semconv_source",
+    "created_at",
+    "updated_at",
+    "is_deleted",
 )
 
 
 def row_to_tuple(r: CHSpanRow) -> tuple:
     """Project CHSpanRow → tuple in CH_INSERT_COLUMNS order."""
     return (
-        r.project_id, r.observation_type, r.service_name, r.start_time,
-        r.trace_id, r.id, r.parent_span_id, r.name,
-        r.end_time, r.latency_ms,
-        r.org_id, r.project_version_id, r.end_user_id, r.trace_session_id,
-        r.prompt_version_id, r.prompt_label_id, r.custom_eval_config_id,
-        r.status, r.status_message,
-        r.model, r.provider, r.gen_ai_system, r.gen_ai_operation, r.operation_name,
-        r.prompt_tokens, r.completion_tokens, r.total_tokens, r.cost,
-        r.attrs_string, r.attrs_number, r.attrs_bool,
-        r.attributes_extra, r.resource_attrs, r.metadata,
-        r.input, r.output, r.input_gcs_url, r.output_gcs_url, r.tags, r.span_events,
+        r.project_id,
+        r.observation_type,
+        r.service_name,
+        r.start_time,
+        r.trace_id,
+        r.id,
+        r.parent_span_id,
+        r.name,
+        r.end_time,
+        r.latency_ms,
+        r.org_id,
+        r.project_version_id,
+        r.end_user_id,
+        r.trace_session_id,
+        r.prompt_version_id,
+        r.prompt_label_id,
+        r.custom_eval_config_id,
+        r.status,
+        r.status_message,
+        r.model,
+        r.provider,
+        r.gen_ai_system,
+        r.gen_ai_operation,
+        r.operation_name,
+        r.prompt_tokens,
+        r.completion_tokens,
+        r.total_tokens,
+        r.cost,
+        r.attrs_string,
+        r.attrs_number,
+        r.attrs_bool,
+        r.attributes_extra,
+        r.resource_attrs,
+        r.metadata,
+        r.input,
+        r.output,
+        r.input_gcs_url,
+        r.output_gcs_url,
+        r.tags,
+        r.span_events,
         r.eval_status,
-        r.semconv_source, r.created_at, r.updated_at, r.is_deleted,
+        r.semconv_source,
+        r.created_at,
+        r.updated_at,
+        r.is_deleted,
     )
