@@ -136,6 +136,16 @@ class LocalizationCase:
         self.inspected: dict[str, set[str]] = {}
         self.result: LocalizerResult | None = None
 
+    def missing_media_tool(self) -> MediaToolUnavailable | None:
+        """The stored ffmpeg error, unless the agent localized findings anyway.
+
+        An "unlocalizable" submission has no findings: after a tool reported a
+        missing ffmpeg, that is the cause, not the agent's free-text reason.
+        """
+        if self.result is not None and self.result.analysis:
+            return None
+        return self.media_tool_error
+
     def _source(self, key):
         if key not in (self.localizer.input_type or {}) or key not in (
             self.localizer.input or {}
@@ -503,9 +513,10 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                                 if isinstance(message, ResultMessage):
                                     terminal = message
                         # Without findings, a missing ffmpeg is the cause to
-                        # report, whatever the agent did after hitting it.
-                        if case.result is None and case.media_tool_error is not None:
-                            raise case.media_tool_error
+                        # report, whatever the agent did after hitting it
+                        # (including giving up as "unlocalizable").
+                        if (missing := case.missing_media_tool()) is not None:
+                            raise missing
                         failure_code = _terminal_failure_code(terminal)
                         if failure_code is not None:
                             raise LocalizationFailure(failure_code)
@@ -514,8 +525,8 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                                 LocalizationFailureCode.MISSING_FINDINGS
                             )
         except TimeoutError:
-            if case.result is None and case.media_tool_error is not None:
-                raise case.media_tool_error from None
+            if (missing := case.missing_media_tool()) is not None:
+                raise missing from None
             raise LocalizationFailure(LocalizationFailureCode.TIMEOUT) from None
         finally:
             # CLI prices the wire alias as Claude. Bill the actual Gemini token

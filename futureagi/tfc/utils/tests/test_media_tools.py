@@ -140,6 +140,20 @@ class TestStorageCallSites:
         assert "ffmpeg is not installed in this backend image" in logged
         no_ffmpeg.assert_not_called()
 
+    def test_upload_audio_to_s3_python_literal_dict_keeps_the_named_error(
+        self, no_ffmpeg
+    ):
+        """A dict sent as a Python-literal string (single quotes, bytes
+        literal) is parsed with ast.literal_eval. The named error used to be
+        swallowed there as a ValueError."""
+        with (
+            patch.object(storage, "get_storage_client") as client,
+            pytest.raises(MediaToolUnavailable) as caught,
+        ):
+            storage.upload_audio_to_s3("{'bytes': b'RIFF....WAVE'}")
+        _assert_named(caught.value)
+        client.assert_not_called()
+
 
 class TestMissingAudioExtra:
     def test_upload_audio_to_s3_duration_names_the_extra(self):
@@ -158,6 +172,27 @@ class TestMissingAudioExtra:
         assert "optional `audio` dependency group" in message
         assert "corrupted" not in message
 
+    def test_upload_audio_to_s3_duration_dict_input_names_the_extra(self):
+        """A Hugging Face audio column (array + sampling_rate) is written to
+        WAV with soundfile, also in the `audio` extra. It used to answer
+        "Unable to Process Audio at this time, Please try again later."."""
+        from tfc.utils.lazy_extras import _MissingExtra
+
+        with (
+            patch.object(storage, "sf", _MissingExtra("soundfile", "audio")),
+            patch.object(storage, "get_storage_client") as client,
+            pytest.raises(ValueError) as caught,
+        ):
+            storage.upload_audio_to_s3_duration(
+                {"array": [0.0] * 80, "sampling_rate": 8000, "path": "clip.wav"}
+            )
+        message = str(caught.value)
+        assert "`soundfile` is part of the optional `audio` dependency group" in (
+            message
+        )
+        assert "try again" not in message.lower()
+        client.assert_not_called()
+
 
 class TestTemporalMapping:
     def test_named_error_becomes_non_retryable(self):
@@ -175,3 +210,41 @@ class TestTemporalMapping:
 
     def test_other_errors_keep_their_retry_policy(self):
         raise_non_retryable_if_media_tool_missing(ValueError("network blip"))
+
+    def test_suppressed_context_is_not_followed(self):
+        """`raise ... from None` while handling the named error: the new
+        error is unrelated, so it keeps its retry policy."""
+        try:
+            try:
+                raise MediaToolUnavailable("audio format detection")
+            except MediaToolUnavailable:
+                raise ConnectionError("storage blip") from None
+        except ConnectionError as unrelated:
+            raise_non_retryable_if_media_tool_missing(unrelated)
+
+    def test_implicit_context_is_still_followed(self):
+        """A handler that re-raises without `from` still carries the cause."""
+        from temporalio.exceptions import ApplicationError
+
+        try:
+            try:
+                raise MediaToolUnavailable("audio format detection")
+            except MediaToolUnavailable as exc:
+                raise ValueError(f"Audio upload failed: {exc}")  # noqa: B904
+        except ValueError as wrapped:
+            with pytest.raises(ApplicationError) as caught:
+                raise_non_retryable_if_media_tool_missing(wrapped)
+        assert caught.value.non_retryable is True
+
+    def test_explicit_cause_wins_over_a_suppressed_context(self):
+        from temporalio.exceptions import ApplicationError
+
+        cause = MediaToolUnavailable("call recording channel split")
+        try:
+            try:
+                raise KeyError("unrelated")
+            except KeyError:
+                raise RuntimeError("activity failed") from cause
+        except RuntimeError as wrapped:
+            with pytest.raises(ApplicationError):
+                raise_non_retryable_if_media_tool_missing(wrapped)
