@@ -2981,8 +2981,8 @@ def fetch_eval_chart_series_ch(
         )
     ]
     if not refresh:
-        # Polls of a served, running or failed snapshot schedule nothing, so
-        # they need no tag preflight (and must not fail on a tag-source outage).
+        # A poll of an existing snapshot needs no tag preflight (and must not
+        # fail on a tag-source outage): it schedules no new graph.
         cached = _read_or_refresh_exact_graph(
             namespace="observe-eval-chart-series",
             identity=dict(identity),
@@ -2992,16 +2992,30 @@ def fetch_eval_chart_series_ch(
             workspace_id=workspace_id,
             schedule_on_miss=False,
         )
-        if isinstance(cached, list) and any(
-            isinstance(item, dict)
-            and (
-                item.get("query_status") != "pending"
-                or item.get("query_refreshing") is True
-                or item.get("query_refresh_failed") is True
-            )
-            for item in cached
+        items = (
+            [item for item in cached if isinstance(item, dict)]
+            if isinstance(cached, list)
+            else []
+        )
+        if any(
+            item.get("query_status") != "pending"
+            or item.get("query_refresh_failed") is True
+            for item in items
         ):
+            # Served or failed: the cached state is the answer.
             return cached
+        if any(item.get("query_refreshing") is True for item in items):
+            # Running and not complete: poll through the normal read, which
+            # re-enqueues a dispatch claim the worker left terminal. Still no
+            # preflight: this re-runs the graph already scheduled.
+            return _read_or_refresh_exact_graph(
+                namespace="observe-eval-chart-series",
+                identity=identity,
+                refresh=False,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
     # This read schedules the worker: a too-broad Tag filter is a 400 now, not
     # a failed refresh that every later poll reports as retryable.
     _preflight_scheduled_graph_tags(identity)

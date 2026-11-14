@@ -371,13 +371,29 @@ def test_eval_chart_cached_series_is_served_without_tag_preflight(monkeypatch):
     """A tag-source outage must not hide a complete cached series on a poll."""
     for cached in (
         _series(query_refreshing=False, query_refresh_failed=False),
-        [{"query_status": "pending", "query_refreshing": True}],
         [{"query_status": "pending", "query_refresh_failed": True}],
     ):
         result, calls, preflights = _eval_series(False, monkeypatch, cached)
         assert result == cached
         assert preflights == []
         assert [call["schedule_on_miss"] for call in calls] == [False]
+
+
+def test_eval_chart_running_series_polls_the_dispatch_without_tag_preflight(
+    monkeypatch,
+):
+    """A running, incomplete snapshot is polled through the normal read.
+
+    That read re-enqueues a dispatch claim the worker left terminal; the
+    cache-only probe alone would report "running" forever. It schedules no
+    new work of its own, so it needs no tag preflight.
+    """
+    running = [{"query_status": "pending", "query_refreshing": True}]
+    result, calls, preflights = _eval_series(False, monkeypatch, running)
+    assert result == ["scheduled"]
+    assert preflights == []
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False, True]
+    assert all(call["refresh"] is False for call in calls)
 
 
 def test_eval_chart_cold_miss_and_refresh_preflight_before_scheduling(monkeypatch):
