@@ -108,6 +108,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
+    MediaToolUnavailable,
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
@@ -672,6 +673,9 @@ def process_list_content(
             # Handle other media types
             try:
                 processed_content.append(handle_media(item, model_name))
+            except MediaToolUnavailable:
+                # The original audio_url item is not a provider input format.
+                raise
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
                 # Keep original item if processing fails
@@ -1749,7 +1753,9 @@ class AddRunPromptColumnView(APIView):
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=organization.id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2026,7 +2032,9 @@ class EditRunPromptColumnView(APIView):
                 return self._gm.not_found("Column or dataset not found")
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=dataset.organization_id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2274,7 +2282,10 @@ class RetrieveRunPromptOptionsView(APIView):
                 organization_id=getattr(self.request, "organization", None)
                 or self.request.user.organization.id,
             )
-            available_models = model_manager.models
+            available_models = []
+            for model in model_manager.models:
+                assert isinstance(model, dict)
+                available_models.append(model.copy())
 
             # Get provider status
             providers = LiteLlmModelProvider.get_choices()
@@ -2411,7 +2422,7 @@ class LiteLLMModelListView(APIView):
         responses={
             200: ModelListResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
-        }
+        },
     )
     def get(self, request, *args, **kwargs):
         # Get the organization from the request
@@ -2746,8 +2757,10 @@ class RunPromptForRowsView(APIView):
                     return self._gm.not_found("Row not found")
 
             deprecated_models = [
-                rp.model for rp in run_prompters
-                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+                rp.model
+                for rp in run_prompters
+                if rp.model
+                and not is_model_in_catalog(rp.model, organization_id=user_org_id)
             ]
             if deprecated_models:
                 names = ", ".join(f"'{m}'" for m in set(deprecated_models))

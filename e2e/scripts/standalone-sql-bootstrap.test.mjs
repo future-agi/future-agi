@@ -80,7 +80,7 @@ test('standalone up streams the guarded bootstrap once, after health/schema and 
   assert.deepEqual(result.calls.map(call => call.kind), ['up', 'backend', 'spans', 'indexes', 'sql', 'frontend']);
   const up = result.calls[0];
   assert.deepEqual(up.args.slice(up.args.indexOf('up')), ['up', '-d', '--wait', '--wait-timeout', '1200',
-    'app', 'postgres', 'clickhouse', 'mock-llm', 'mock-google']);
+    'app', 'postgres', 'clickhouse', 'mock-llm', 'mock-google', 'code-executor', 'link-canary', 'link-worker-canary']);
   const sql = result.calls.find(call => call.kind === 'sql');
   assert.deepEqual(sql.args.slice(0, sql.args.indexOf('exec')), up.args.slice(0, up.args.indexOf('up')));
   assert.deepEqual(sql.args.slice(sql.args.indexOf('exec')), ['exec', '-T', '-w', '/app/backend',

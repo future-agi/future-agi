@@ -29,7 +29,6 @@ class ScoreSerializer(serializers.ModelSerializer):
         choices=ScoreSource.get_choices(), default=ScoreSource.HUMAN.value
     )
 
-
     class Meta:
         model = Score
         fields = [

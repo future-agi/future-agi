@@ -33,10 +33,7 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     inner_config = req_config.get("config", {})
     run_config = req_config.get("run_config", {})
     mapping = req_config.get("mapping") or (eval_metric.config or {}).get("mapping", {})
-    resolved_model = (
-        request_data.get("model") or eval_metric.model
-        or tpl.model or ""
-    )
+    resolved_model = request_data.get("model") or eval_metric.model or tpl.model or ""
 
     # Build snapshot: template base → FE config → run_config → top-level fields
     snap = dict(tpl.config or {})
@@ -62,12 +59,15 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     current_pinned = eval_metric.pinned_version
     if current_pinned:
         new_snap_json = json.dumps(snap, sort_keys=True, default=str)
-        old_snap_json = json.dumps(current_pinned.config_snapshot or {}, sort_keys=True, default=str)
+        old_snap_json = json.dumps(
+            current_pinned.config_snapshot or {}, sort_keys=True, default=str
+        )
         if new_snap_json == old_snap_json:
             return None
 
     prompt_messages = config_to_prompt_messages(
-        snap, criteria=criteria,
+        snap,
+        criteria=criteria,
         eval_type_id=snap.get("eval_type_id"),
     )
 
