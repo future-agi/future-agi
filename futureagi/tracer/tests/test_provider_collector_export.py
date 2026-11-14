@@ -29,7 +29,9 @@ def test_provider_collector_trace_id_is_project_scoped():
     a = op._provider_collector_trace_id("proj-A", "vapi", "call_123")
     a_again = op._provider_collector_trace_id("proj-A", "vapi", "call_123")
     b = op._provider_collector_trace_id("proj-B", "vapi", "call_123")
-    assert a == a_again  # deterministic within a project (re-poll idempotency preserved)
+    assert (
+        a == a_again
+    )  # deterministic within a project (re-poll idempotency preserved)
     assert a != b  # distinct per project
 
 
@@ -258,7 +260,9 @@ def test_export_builds_conversation_span_and_drops_raw_log(monkeypatch):
     assert s["attributes"]["output.value"] == "ok"
     assert s["parent_span_id"] is None
     assert s["trace_id"] == "ffffffffffffffffffffffffffffffff"
-    assert s["span_id"] == op._provider_collector_span_id(project.id, "vapi", "call_123")
+    assert s["span_id"] == op._provider_collector_span_id(
+        project.id, "vapi", "call_123"
+    )
     assert "start_time" in s and "end_time" in s
 
 
@@ -386,4 +390,3 @@ def test_export_stamps_error_status_for_failed_call(monkeypatch):
     op._export_provider_call_to_collector(span, "twilio", "c2")
     # Failed call must carry ERROR status (collector copies status_code -> spans.status).
     assert captured["spans"][0].get("status_code") == "ERROR"
-

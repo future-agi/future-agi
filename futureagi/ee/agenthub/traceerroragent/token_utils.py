@@ -68,7 +68,9 @@ def estimate_tokens_lines(lines: Iterable[str], model_name: str | None = None) -
     return total
 
 
-def estimate_outline_line_tokens(path: str, span_name: str, span_id: str, model_name: str | None = None) -> int:
+def estimate_outline_line_tokens(
+    path: str, span_name: str, span_id: str, model_name: str | None = None
+) -> int:
     """Estimate tokens for one outline line in our summary format."""
     line = f"{path}  {span_name}  [Span ID: {span_id}]"
     return estimate_tokens_text(line, model_name=model_name)
@@ -237,7 +239,9 @@ class BudgetedSubtreeSplitter:
         subtree_cost: dict[int, int] = {}
         self._compute_costs(root_nodes, node_cost, subtree_cost)
 
-        working_budget = max(0, self.token_budget - self.reserve_outline - self.reserve_evidence)
+        working_budget = max(
+            0, self.token_budget - self.reserve_outline - self.reserve_evidence
+        )
         total_cost = sum(subtree_cost.get(self._k(r), 0) for r in root_nodes)
         if total_cost <= working_budget:
             return [self._collect_all_span_ids(root_nodes)]
@@ -359,6 +363,7 @@ class BudgetedSubtreeSplitter:
 
     def _layers(self, root: dict[str, Any]) -> list[list[dict[str, Any]]]:
         from collections import deque
+
         q = deque([(root, 0)])
         layers: list[list[dict[str, Any]]] = []
         while q:
@@ -380,10 +385,12 @@ class BudgetedSubtreeSplitter:
 
     def _collect_all_span_ids(self, roots: list[dict[str, Any]]) -> list[str]:
         ids: list[str] = []
+
         def walk(n: dict[str, Any]):
             ids.append(self._span_id(n))
             for ch in n.get("children", []) or []:
                 walk(ch)
+
         for r in roots:
             walk(r)
         return ids
@@ -391,5 +398,3 @@ class BudgetedSubtreeSplitter:
     def _k(self, node: dict[str, Any]) -> int:
         # Use object identity as key (node dicts are unhashable)
         return id(node)
-
-

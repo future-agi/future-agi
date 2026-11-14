@@ -1923,7 +1923,9 @@ class RerunOperationView(APIView):
                 elif operation_type == "execute_code":
                     effective_metadata.update(
                         {
-                            "code": metadata.get("code", effective_metadata.get("code")),
+                            "code": metadata.get(
+                                "code", effective_metadata.get("code")
+                            ),
                             "concurrency": metadata.get(
                                 "concurrency", effective_metadata.get("concurrency", 5)
                             ),
@@ -1992,9 +1994,7 @@ class RerunOperationView(APIView):
                     api_config = metadata.get("config") or metadata
                     effective_metadata.update(
                         {
-                            "url": api_config.get(
-                                "url", effective_metadata.get("url")
-                            ),
+                            "url": api_config.get("url", effective_metadata.get("url")),
                             "method": api_config.get(
                                 "method", effective_metadata.get("method")
                             ),
@@ -2059,7 +2059,9 @@ class RerunOperationView(APIView):
                     column, effective_metadata, column.dataset.id
                 )
             elif operation_type == "api_call":
-                return self._rerun_api_call(column, effective_metadata, column.dataset.id)
+                return self._rerun_api_call(
+                    column, effective_metadata, column.dataset.id
+                )
 
         except Exception as e:
             logger.exception(f"Error in rerunning operation: {str(e)}")

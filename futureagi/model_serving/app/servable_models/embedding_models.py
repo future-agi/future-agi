@@ -92,7 +92,9 @@ class ImageEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
+                    response = requests.get(
+                        data, timeout=10, headers=_IMAGE_FETCH_HEADERS
+                    )
                     response.raise_for_status()
                     return Image.open(io.BytesIO(response.content))
                 except Exception as e:
@@ -235,7 +237,9 @@ class ImageTextEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
+                    response = requests.get(
+                        data, timeout=10, headers=_IMAGE_FETCH_HEADERS
+                    )
                     response.raise_for_status()
                     return {
                         "data": Image.open(io.BytesIO(response.content)),

@@ -688,9 +688,7 @@ def test_link_made_during_the_prerequisite_check_is_switched_not_replaced(
     _delete_project(agent)
     stale = _stored_agent(agent)
     newer = _row(organization, workspace, {})
-    ObservabilityProvider.no_workspace_objects.filter(pk=newer.pk).update(
-        enabled=False
-    )
+    ObservabilityProvider.no_workspace_objects.filter(pk=newer.pk).update(enabled=False)
     created = _created()
 
     def read(agent_id):

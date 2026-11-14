@@ -18,6 +18,7 @@ from sdk.utils.helpers import (
 )
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -107,9 +108,7 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     # partial_input warning attached to the response.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_model, run_params
-    )
+    partial_input_warning, run_params = validate_eval_inputs(eval_model, run_params)
 
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
@@ -336,7 +335,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                             "source": "standalone_v2",
                             "source_id": str(eval_template.id),
                             "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": str(api_call_log_row.log_id)
+                            if api_call_log_row
+                            else None,
                             **token_usage_properties(token_usage),
                         },
                     )
@@ -506,7 +507,10 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs,
+            user,
+            eval_template,
+            True,
+            protect_inputs,
             model="protect_flash" if protect_flash else "protect",
             workspace=workspace,
         )

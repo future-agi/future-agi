@@ -814,9 +814,7 @@ class TestSavedViewDuplicate:
     @pytest.mark.django_db
     def test_duplicate_twice_uniquifies_copy_name(self, auth_client, saved_view):
         """Repeat duplicates auto-uniquify instead of colliding."""
-        first = auth_client.post(
-            _view_url(saved_view, "duplicate/"), {}, format="json"
-        )
+        first = auth_client.post(_view_url(saved_view, "duplicate/"), {}, format="json")
         assert first.status_code == 200
         assert first.json()["result"]["name"] == "Error Traces (Copy)"
 

@@ -149,7 +149,10 @@ def _reconstruct_evaluator(config: Dict[str, Any]):
         from ee.agenthub.fix_your_agent.fix_your_agent import SimulationEvaluator
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return None
 
     # Convert serialized eval configs to proxy objects

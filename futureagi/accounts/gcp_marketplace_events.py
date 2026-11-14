@@ -413,11 +413,9 @@ def handle_entitlement_cancelled(payload: dict) -> None:
     entitlement_id = _subject_id(payload)
     # What this row was before Google's cancellation overwrote it. Whether the
     # tail is billed depends on it, and sync_entitlement discards it.
-    was_live = (
-        GCPMarketplaceEntitlement.objects.filter(
-            entitlement_id=entitlement_id, status__in=IN_SERVICE_STATES
-        ).exists()
-    )
+    was_live = GCPMarketplaceEntitlement.objects.filter(
+        entitlement_id=entitlement_id, status__in=IN_SERVICE_STATES
+    ).exists()
     row = sync_entitlement(entitlement_id)
     if row is None:
         return
@@ -447,7 +445,10 @@ def _settle_left_service(row: GCPMarketplaceEntitlement, *, was_live: bool) -> N
             surviving_entitlement_id=survivor.entitlement_id,
         )
 
-    if was_live or GCPMarketplaceUsageCheckpoint.objects.filter(entitlement=row).exists():
+    if (
+        was_live
+        or GCPMarketplaceUsageCheckpoint.objects.filter(entitlement=row).exists()
+    ):
         _report_final_window_after_commit(row)
     else:
         logger.info(
