@@ -34,6 +34,24 @@ def _error(code: str, message: str, status_code: int) -> HostedHarnessError:
     return HostedHarnessError(code, message, status_code=status_code)
 
 
+def _write(
+    locked: HostedHarnessJob, suite: list[dict[str, Any]], **kwargs: Any
+) -> None:
+    """Write the suite draft; a change the archive cannot hold is a 409, never a server error."""
+    from simulate.services.harness_versioning.drafts import write_suite_edit
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
+
+    try:
+        write_suite_edit(locked, suite, **kwargs)
+    except AuthoringArchiveKept as exc:
+        raise _error(
+            "scenario_files_missing",
+            "This change would leave a scenario without its files, so it was not made. "
+            "Ask the builder chat to make it instead.",
+            409,
+        ) from exc
+
+
 def _of_environment(
     model: Any, environment: HostedHarnessJob, value: Any, default: Any
 ) -> Any:
@@ -236,7 +254,7 @@ def archive_scenario(
 ) -> dict[str, Any]:
     """Take a case out of future selection, keeping its identity, runs and evidence."""
     from simulate.services.harness_versioning import read as version_reads
-    from simulate.services.harness_versioning.drafts import draft_rows, write_suite_edit
+    from simulate.services.harness_versioning.drafts import draft_rows
     from simulate.services.harness_versioning.versions import lock_environment
     from simulate.services.hosted_harness_gateway import _scenario_token
 
@@ -283,11 +301,7 @@ def archive_scenario(
             )
             content = dict(member or {})
         else:
-            write_suite_edit(
-                locked,
-                [one for one in suite if one is not content],
-                user=user,
-            )
+            _write(locked, [one for one in suite if one is not content], user=user)
         row.archived_at = timezone.now()
         row.archived_by = user if getattr(user, "is_authenticated", False) else None
         row.archive_reason = (reason or "")[:255]
@@ -318,10 +332,7 @@ def restore_scenario(
     """Put an archived case back into the suite draft under its own key; it reads Draft until saved."""
     from simulate.services.harness_scenario_lifecycle import in_draft_view
     from simulate.services.harness_versioning import read as version_reads
-    from simulate.services.harness_versioning.drafts import (
-        archived_folder_files,
-        write_suite_edit,
-    )
+    from simulate.services.harness_versioning.drafts import archived_folder_files
     from simulate.services.harness_versioning.versions import lock_environment
 
     version_reads.require_versioning()
@@ -350,7 +361,7 @@ def restore_scenario(
                 "updated_at",
             ]
         )
-        write_suite_edit(
+        _write(
             locked,
             [*_suite_now(locked), content],
             user=user,
