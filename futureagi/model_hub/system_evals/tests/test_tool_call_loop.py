@@ -13,6 +13,23 @@ from model_hub.management.commands.seed_system_evals import (
 from model_hub.models.evals_metric import EvalTemplate
 
 
+@pytest.mark.django_db
+def test_previous_catalog_cache_does_not_skip_new_diagnostic():
+    from django.core.cache import cache
+
+    from model_hub.management.commands.seed_system_evals import seed_evals
+
+    EvalTemplate.no_workspace_objects.filter(eval_id=220).delete()
+    cache.set("system_evals_version", 30)
+    try:
+        seed_evals()
+        template = EvalTemplate.no_workspace_objects.get(eval_id=220)
+        assert template.name == "tool_call_loop_repetition"
+        assert template.visible_ui is False
+    finally:
+        cache.delete("system_evals_version")
+
+
 def definition():
     return next(
         e for e in load_yaml_evals() if e["name"] == "tool_call_loop_repetition"
