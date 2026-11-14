@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import secrets
+import ssl
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,6 +25,22 @@ from aiohttp import web
 
 MODEL = "vertex_ai/gemini-3.7-flash"
 WIRE_MODEL = "claude-sonnet-4-6"
+
+
+def gateway_tls_verify() -> ssl.SSLContext | bool:
+    """Certificate trust for the gateway hop.
+
+    The client sets trust_env=False so proxy variables and .netrc stay out of
+    this hop, but in httpx 0.28 that also drops SSL_CERT_FILE/SSL_CERT_DIR.
+    Those carry the Helm chart's global.caBundle, which is how pods trust an
+    HTTPS-only gateway with a private-CA certificate, so honour them here the
+    way httpx does with trust_env=True. Without them, httpx's default applies.
+    """
+    if cafile := os.environ.get("SSL_CERT_FILE"):
+        return ssl.create_default_context(cafile=cafile)
+    if capath := os.environ.get("SSL_CERT_DIR"):
+        return ssl.create_default_context(capath=capath)
+    return True
 
 
 @dataclass
@@ -36,8 +54,6 @@ class GatewayConfig:
 
     @classmethod
     def from_env(cls):
-        import os
-
         url = (
             (
                 os.getenv("ERROR_LOCALIZER_AGENTCC_URL")
@@ -266,7 +282,10 @@ class AgentCCTransport:
             app, access_log=None, shutdown_timeout=1, handler_cancellation=True
         )
         async with httpx.AsyncClient(
-            timeout=self.config.timeout, follow_redirects=False, trust_env=False
+            timeout=self.config.timeout,
+            follow_redirects=False,
+            trust_env=False,
+            verify=gateway_tls_verify(),
         ) as client:
             self._client = client
             try:
