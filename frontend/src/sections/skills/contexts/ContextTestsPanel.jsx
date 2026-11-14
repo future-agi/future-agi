@@ -19,7 +19,7 @@ import TestCaseEditor from '../tests/TestCaseEditor';
 import TestInventoryReview from '../tests/TestInventoryReview';
 import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadReview';
 import ContextNativePanel from './ContextNativePanel';
-import { When } from '../tests/sharedSeams';
+import When from '../components/When';
 import { answerConclusion, passedAll } from '../utils/conclusions';
 import { reviewComposerUrl } from '../utils/review-links';
 import { paths } from 'src/routes/paths';

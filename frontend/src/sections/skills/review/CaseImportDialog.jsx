@@ -23,7 +23,7 @@ import {
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 import ApplicationBehaviorFields from "../tests/ApplicationBehaviorFields";
 import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
-import { ActionReason, reasonProps } from "../tests/sharedSeams";
+import ActionReason, { reasonProps } from "../components/ActionReason";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
 function ReviewedExample({

@@ -29,7 +29,8 @@ import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import TestInventoryReview from "./TestInventoryReview";
 import CapabilityNotice from "../components/CapabilityNotice";
-import { ActionReason, reasonProps, useSkillsAccess } from "./sharedSeams";
+import ActionReason, { reasonProps } from "../components/ActionReason";
+import { useSkillsAccess } from "../utils/access";
 
 async function draftCandidate(draft) {
   return { kind: 'draft', revision: draft.revision, digest: await skillFilesDigest(draft.files) };

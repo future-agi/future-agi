@@ -11,7 +11,7 @@ import {
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import TechnicalDetails from "../components/TechnicalDetails";
-import { When } from "../tests/sharedSeams";
+import When from "../components/When";
 import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 

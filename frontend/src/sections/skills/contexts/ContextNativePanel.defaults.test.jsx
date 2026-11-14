@@ -7,7 +7,7 @@ import { noReviewsYet } from '../utils/conclusions';
 
 const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: vi.fn(), runs: [], detail: undefined, annotations: [], annotationIds: [], annotationError: undefined, prepared: undefined, spend: {}, access: { canAdmin: true }, targets: undefined }));
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => h.spend }));
-vi.mock('../tests/sharedSeams', async (original) => ({ ...(await original()), useSkillsAccess: () => h.access }));
+vi.mock('../utils/access', async (original) => ({ ...(await original()), useSkillsAccess: () => h.access }));
 vi.mock('src/api/skills/context-testing', () => ({
   useNativeTargets: () => ({ data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets ?? [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
