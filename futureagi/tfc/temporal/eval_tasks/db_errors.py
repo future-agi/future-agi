@@ -117,8 +117,9 @@ def database_control_errors(
 
     Never repeat that attempt: a repeat cannot learn which rows the first one
     may have claimed. Park and leave unacknowledged IDs to the existing
-    stale-claim reaper, so no entry is claimed or billed twice. A confirmed read-only
-    rejection rolls back, so it can keep the normal bounded activity retries.
+    stale-claim reaper, so no entry is evaluated or billed twice. A confirmed
+    read-only rejection rolls back, so it can keep the normal bounded activity
+    retries.
     Connection establishment failures also retain that budget: no claim could
     commit before submission. Without a submission witness, stay conservative.
     """

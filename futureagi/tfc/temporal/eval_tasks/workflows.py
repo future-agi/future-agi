@@ -76,7 +76,7 @@ from tfc.temporal.eval_tasks.types import (
 # * A claim whose reply was lost after its SQL was submitted is raised as
 #   non-retryable ``EvalTaskClaimOutcomeUnknown``, which Temporal never retries
 #   whatever ``maximum_attempts`` says, so the claim is never re-run in place
-#   and no entry is claimed or billed twice. Neither workflow type fails on it
+#   and no entry is evaluated or billed twice. Neither workflow type fails on it
 #   (the historical drain within the cap of
 #   ``_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS`` lost replies in a row; histories
 #   recorded before ``_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH`` keep failing
@@ -190,10 +190,11 @@ _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # pressed Resume. The drain now treats that claim as an empty one: finalize
 # (which only succeeds if nothing is pending or running), else wait
 # ``_FINALIZE_WAIT``, reap, and claim again. The claim is never retried in
-# place, and no entry is claimed or billed twice: if the lost claim
+# place, and no entry is evaluated or billed twice: if the lost claim
 # committed, its entries stay RUNNING with no activity dispatched for them
-# until the reaper requeues them, and they are then claimed and evaluated
-# once; if it rolled back, the next claim takes them as ordinary pending work.
+# until the reaper requeues them, and they are then claimed again and
+# evaluated once; if it rolled back, the next claim takes them as ordinary
+# pending work.
 # While a committed batch is still too young for the reaper, the drain goes on
 # claiming and evaluating the task's other pending entries.
 #
