@@ -430,6 +430,10 @@ export const AGENT_VERSIONS_COPY = {
 };
 
 export const RUN_DIALOG_COPY = {
+  willRun: (running, requested) => `${running} of ${requested} cases will run.`,
+  heldBack: (count, reason) => `${count} held back: ${reason}`,
+  showCases: "Show cases",
+  hideCases: "Hide cases",
   title: "Run simulation",
   pieces: {
     agent: "Agent version",

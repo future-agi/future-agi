@@ -30,6 +30,8 @@ vi.mock("src/api/simulate-environments/versions", async () => {
       }
       return { data: plan, isLoading: false, isError: false };
     }),
+    // The held-back list reads the selection report; these tests are about the plan.
+    useRunSelection: vi.fn(() => ({ data: undefined })),
     useDrafts: vi.fn((envId, { enabled } = {}) => ({
       data: enabled && state.drafts ? actual.toDrafts(state.drafts) : undefined,
     })),
