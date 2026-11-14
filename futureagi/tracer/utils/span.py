@@ -17,7 +17,9 @@ def run_evals_on_spans():
     # flag that goes stale when eval configs change. A span marked "Completed" will never
     # be re-evaluated if new evals are added. Should instead query for spans that are
     # missing EvalLogger rows for their configured eval configs.
-    spans = ObservationSpan.objects.filter(
+    # Primary: the previous poll's RUNNING marks and the runner's results must
+    # be visible, or a span is dispatched again and its stale row saved back.
+    spans = ObservationSpan.objects.using("default").filter(
         eval_status=StatusType.NOT_STARTED.value, project_version__isnull=False
     )
 

@@ -863,6 +863,7 @@ import type {
   ModelHubGetEvalLogsDetailsListParams,
   ModelHubGetEvalLogsListParams,
   ModelHubGetEvalMetricsListParams,
+  ModelHubKbDownloadFileParams,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
   ModelHubOptimisationList200,
@@ -45696,6 +45697,101 @@ export const modelHubKbDelete = async (
     ...options,
     method: "DELETE",
   });
+};
+
+export type modelHubKbDownloadFileResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type modelHubKbDownloadFileResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubKbDownloadFileResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubKbDownloadFileResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubKbDownloadFileResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubKbDownloadFileResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubKbDownloadFileResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubKbDownloadFileResponseSuccess =
+  modelHubKbDownloadFileResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type modelHubKbDownloadFileResponseError = (
+  | modelHubKbDownloadFileResponse400
+  | modelHubKbDownloadFileResponse403
+  | modelHubKbDownloadFileResponse404
+  | modelHubKbDownloadFileResponse409
+  | modelHubKbDownloadFileResponse500
+  | modelHubKbDownloadFileResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type modelHubKbDownloadFileResponse =
+  | modelHubKbDownloadFileResponseSuccess
+  | modelHubKbDownloadFileResponseError;
+
+export const getModelHubKbDownloadFileUrl = (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/kb/${id}/download-file/?${stringifiedParams}`
+    : `/model-hub/kb/${id}/download-file/`;
+};
+
+/**
+ * Download an active file from the knowledge-base file collection. Requires current organization and workspace read access. Returns an attachment, never a public storage URL. Unauthorized scope is 403; a missing or deleted file is 404.
+ * @summary Download a KB file.
+ */
+export const modelHubKbDownloadFile = async (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+  options?: RequestInit,
+): Promise<modelHubKbDownloadFileResponse> => {
+  return apiMutator<modelHubKbDownloadFileResponse>(
+    getModelHubKbDownloadFileUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type modelHubKnowledgeBaseListResponse200 = {
