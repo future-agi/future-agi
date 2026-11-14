@@ -33,6 +33,7 @@ logger = structlog.get_logger(__name__)
 # 29: contains_any / contains_none ignore blank keywords and regex_pii_detection
 # rejects unsupported detect_types instead of silently narrowing the scan.
 # 30: spearman_correlation uses Pearson over midranks and scores constant input as undefined.
+# 31: link checks ignore prose and require operator-approved public destinations.
 # 32: register the hidden completed-tool-call repetition diagnostic.
 SYSTEM_EVALS_VERSION = 32
 
