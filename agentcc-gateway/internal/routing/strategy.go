@@ -27,9 +27,9 @@ func NewStrategy(name string) (Strategy, error) {
 	case "cost-optimized":
 		return NewCostOptimized(), nil
 	case "adaptive":
-		// Adaptive requires tracker + health monitor; return round-robin as placeholder.
-		// The actual adaptive strategy is injected by the server during init.
-		return NewRoundRobin(), nil
+		// NewRouter owns the tracker, health monitor, and strategy lifecycle.
+		// Callers of this dependency-free factory must not silently downgrade.
+		return nil, fmt.Errorf("adaptive routing requires NewRouter with initialized health metrics")
 	case "fastest":
 		// Fastest (race) mode is handled by RaceExecutor, not the Strategy interface.
 		// Use round-robin for any fallback routing within race mode.

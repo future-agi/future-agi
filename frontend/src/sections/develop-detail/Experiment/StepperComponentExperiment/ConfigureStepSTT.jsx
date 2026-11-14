@@ -43,7 +43,7 @@ const ConfigureStepSTT = ({
           fontWeight={"fontWeightMedium"}
         >
           Select Models
-          <Typography type="span" sx={{ color: "red.500" }}>
+          <Typography type="span" sx={{ color: "status.danger.fg" }}>
             *
           </Typography>
         </Typography>

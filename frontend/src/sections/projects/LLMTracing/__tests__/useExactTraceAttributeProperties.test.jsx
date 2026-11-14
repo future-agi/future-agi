@@ -132,6 +132,47 @@ describe("useExactTraceAttributeProperties", () => {
     expect(fetchNextPage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the catalog-backed property array stable across unchanged renders", () => {
+    mocks.catalogResult = {
+      data: { pages: [{ metrics: [] }] },
+      error: null,
+      legacyFallbackRequired: false,
+      metrics: [
+        {
+          name: "customer.plan",
+          property_id: "custom_attribute:customer.plan",
+          type: "string",
+        },
+      ],
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      isSuccess: true,
+      isFetchNextPageError: false,
+      cursorChainStopped: false,
+      queryReadState: "complete",
+      refetch: vi.fn(),
+    };
+
+    const { result, rerender } = renderHook(
+      () =>
+        useUnifiedExactTraceAttributeProperties({
+          projectId: "project-a",
+          search: "",
+        }),
+      { wrapper: createWrapper() },
+    );
+    const first = result.current.data;
+    rerender();
+
+    // TraceFilterPanel memoizes its picker inventory on this array; a new
+    // array per render recomputed that chain on every render (as in B13).
+    expect(result.current.data).toBe(first);
+  });
+
   it("loads ten retained keys first and de-duplicates cursor pages", async () => {
     mocks.get
       .mockResolvedValueOnce({
@@ -750,7 +791,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result } = renderHook(
       () =>
         useExactTraceAttributeProperties({
-          projectId: "project-whatfix",
+          projectId: "project-tertiary-fixture",
           search: "prompt",
           source: "spans",
         }),
@@ -898,7 +939,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result, rerender } = renderHook(
       ({ search }) =>
         useExactTraceAttributeProperties({
-          projectId: "project-coletia",
+          projectId: "project-observe",
           search,
           source: "traces",
         }),
@@ -977,7 +1018,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result } = renderHook(
       () =>
         useExactTraceAttributeProperties({
-          projectId: "project-coletia",
+          projectId: "project-observe",
           search: "prompt_slug",
           source: "traces",
         }),
@@ -1021,7 +1062,7 @@ describe("useExactTraceAttributeProperties", () => {
       "/api/traces/span-attribute-keys/",
       expect.objectContaining({
         params: {
-          project_id: "project-coletia",
+          project_id: "project-observe",
           page_size: 10,
           q: "prompt_slug",
           cursor: "exact-13",

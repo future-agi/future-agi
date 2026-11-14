@@ -16,16 +16,16 @@ const FolderSkeleton = ({ isChildren = false, hasChildren = false }) => {
         display: "flex",
         alignItems: "center",
         gap: 1,
-        py: 1,
+        py: 0.5,
         px: isChildren ? 2 : 1,
-        minHeight: "40px", // Adjust based on your Folder component height
+        minHeight: "28px", // matches Folder row height
       }}
     >
       {/* Icon skeleton */}
       <Skeleton
         variant="rectangular"
-        width={20}
-        height={20}
+        width={16}
+        height={16}
         sx={{ borderRadius: "4px" }}
       />
 
@@ -42,7 +42,7 @@ const FolderSkeleton = ({ isChildren = false, hasChildren = false }) => {
           variant="rectangular"
           width={16}
           height={16}
-          sx={{ ml: "auto", borderRadius: "2px" }}
+          sx={{ ml: "auto", borderRadius: "4px" }}
         />
       )}
     </Box>
@@ -196,13 +196,13 @@ export default function FileSystem({
             alignItems: "center",
             gap: 1,
             mt: theme.spacing(1),
-            py: 1,
+            py: 0.5,
           }}
         >
           <Skeleton
             variant="rectangular"
-            width={20}
-            height={20}
+            width={16}
+            height={16}
             sx={{ borderRadius: "4px" }}
           />
           <Skeleton variant="text" width={100} height={20} />
@@ -233,6 +233,7 @@ export default function FileSystem({
         }}
       >
         <Button
+          size="small"
           onClick={onAddNew}
           disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           sx={{
@@ -243,11 +244,8 @@ export default function FileSystem({
           }}
           startIcon={
             <SvgColor
-              sx={{
-                color: "primary.main",
-                height: 20,
-                width: 20,
-              }}
+              width={16}
+              sx={{ color: "primary.main" }}
               src="/assets/icons/ic_add.svg"
             />
           }

@@ -1845,14 +1845,24 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
 // ---------------------------------------------------------------------------
 /**
  * Fetch annotation queue items for one or more sources.
+ *
+ * The same trace / span id can exist in several projects, each with its own
+ * queue items; `projectId` lists only the items of the copy the drawer shows.
  * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} sources
  */
-export const useQueueItemsForSource = (sources = [], options = {}) => {
+export const useQueueItemsForSource = (
+  sources = [],
+  { projectId, ...options } = {},
+) => {
   // Filter out entries with missing values
   const validSources = sources.filter((s) => s.sourceType && s.sourceId);
 
   return useQuery({
-    queryKey: ["annotation-queues", "for-source", validSources],
+    // The project goes last, so invalidating ["annotation-queues",
+    // "for-source"] also refreshes every project-pinned read.
+    queryKey: projectId
+      ? ["annotation-queues", "for-source", validSources, projectId]
+      : ["annotation-queues", "for-source", validSources],
     queryFn: () =>
       axios.get(annotationQueueEndpoints.forSource, {
         params: {
@@ -1863,7 +1873,11 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
               span_notes_source_id: s.spanNotesSourceId,
             })),
           ),
+          ...(projectId ? { project_id: projectId } : {}),
         },
+        // A slow server shouldn't leave the annotate panel loading forever:
+        // give up after 15 s so the panel can offer a retry.
+        timeout: 15000,
       }),
     select: (d) =>
       selectContractedList(d, {
@@ -1872,6 +1886,13 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
         label: "annotation-queues/for-source",
       }),
     enabled: validSources.length > 0,
+    // A slow or failing server (timeout, 5xx) won't get faster on retry;
+    // show the panel's Retry state now instead of waiting through retries.
+    // (The app's axios rejects with { statusCode, message }.)
+    retry: (count, error) =>
+      !(error?.statusCode >= 500) &&
+      !/timeout/i.test(error?.message || "") &&
+      count < 2,
     staleTime: 1000 * 30,
     ...options,
   });

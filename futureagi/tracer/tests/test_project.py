@@ -162,6 +162,30 @@ class TestProjectListAPI:
         data = get_result(response)
         assert data["projects"][0]["name"] == "Zebra Project"
 
+    def test_list_keeps_accepting_large_page_sizes(
+        self, auth_client, organization, workspace
+    ):
+        """Documenting the ViewSet list must not cap page_size; page_size=200
+        worked before the query serializer existed."""
+        Project.objects.create(
+            name="Large page project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="experiment",
+        )
+
+        response = auth_client.get("/tracer/project/", {"page_size": 200})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = get_result(response)
+        assert any(row["name"] == "Large page project" for row in data["projects"])
+
+    def test_list_still_rejects_non_positive_page_size(self, auth_client):
+        response = auth_client.get("/tracer/project/", {"page_size": 0})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -1041,6 +1065,24 @@ class TestProjectSDKCodeAPI:
         assert "a" * 32 not in payload_text
         assert "b" * 32 not in payload_text
 
+    def test_self_hosted_keys_point_at_the_install_collector(
+        self, auth_client, settings
+    ):
+        """The SDKs default FI_BASE_URL to Future AGI Cloud."""
+        settings.CLOUD_DEPLOYMENT = ""
+        settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4318"
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        keys = get_result(response)["keys"]
+        assert 'os.environ["FI_BASE_URL"] = "http://localhost:4318"' in keys["Python"]
+        assert (
+            'process.env.FI_BASE_URL = "http://localhost:4318";' in keys["TypeScript"]
+        )
+
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""
         response = auth_client.get(
@@ -1107,7 +1149,17 @@ class TestProjectGraphDataAPI:
             )
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
-        assert data == {"system_metrics": exact_metrics, "evaluations": {}}
+        assert data == {
+            "system_metrics": exact_metrics,
+            # Declared per-series statistic: latency is always the mean.
+            "system_metric_statistics": {
+                "latency": "mean",
+                "tokens": "sum",
+                "cost": "mean",
+                "traffic": "count",
+            },
+            "evaluations": {},
+        }
 
     @pytest.mark.parametrize(
         ("failure", "expected_status", "expected_code"),

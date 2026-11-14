@@ -191,6 +191,7 @@ const SimulationTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       onClearResult,
@@ -1231,9 +1232,10 @@ const SimulationTestMode = React.forwardRef(
               }
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1287,6 +1289,7 @@ const SimulationTestMode = React.forwardRef(
       compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
+      runConfig,
       model,
       executeComposite,
       executeCompositeAdhoc,
@@ -1354,7 +1357,14 @@ const SimulationTestMode = React.forwardRef(
             !!selectedExecutionId)));
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
@@ -1399,7 +1409,7 @@ const SimulationTestMode = React.forwardRef(
                 placeholder="Search simulations..."
                 InputProps={{
                   ...params.InputProps,
-                  sx: { ...params.InputProps.sx, fontSize: "13px" },
+                  sx: { ...params.InputProps.sx, fontSize: "12px" },
                   endAdornment: loadingRunTests ? (
                     <InputAdornment position="end">
                       <CircularProgress size={14} />
@@ -1421,7 +1431,7 @@ const SimulationTestMode = React.forwardRef(
                   {...rest}
                   sx={{
                     ...rest.sx,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     display: "flex",
                     gap: 1,
                     alignItems: "center",
@@ -1430,16 +1440,16 @@ const SimulationTestMode = React.forwardRef(
                   <Iconify
                     icon={
                       type === "voice"
-                        ? "mdi:phone-outline"
+                        ? "solar:phone-linear"
                         : type === "chat"
-                          ? "mdi:chat-outline"
-                          : "mdi:play-circle-outline"
+                          ? "solar:chat-round-line-linear"
+                          : "solar:play-circle-linear"
                     }
                     width={16}
                     sx={{
                       color:
                         type === "voice"
-                          ? "warning.main"
+                          ? "status.warning.fg"
                           : type === "chat"
                             ? "info.main"
                             : "primary.main",
@@ -1449,7 +1459,7 @@ const SimulationTestMode = React.forwardRef(
                   <Box sx={{ minWidth: 0 }}>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: "13px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {option.name || option.id}
@@ -1457,7 +1467,7 @@ const SimulationTestMode = React.forwardRef(
                     <Typography
                       variant="caption"
                       color="text.disabled"
-                      sx={{ fontSize: "11px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {[
@@ -1489,7 +1499,7 @@ const SimulationTestMode = React.forwardRef(
               role="alert"
               sx={{ mt: 0.75, display: "flex", alignItems: "center", gap: 1 }}
             >
-              <Typography variant="caption" color="error.main">
+              <Typography variant="caption" color="status.danger.fg">
                 {runTestsError.message}
               </Typography>
               <Button
@@ -1522,19 +1532,14 @@ const SimulationTestMode = React.forwardRef(
                 setCallDetail(null);
               }}
               disabled={!!initialExecutionId}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {selectedExecutionId &&
                 !executions.some((ex) => ex.id === selectedExecutionId) && (
-                  <MenuItem
-                    value={selectedExecutionId}
-                    sx={{ fontSize: "13px" }}
-                  >
-                    Selected run
-                  </MenuItem>
+                  <MenuItem value={selectedExecutionId}>Selected run</MenuItem>
                 )}
               {executions.map((ex, i) => (
-                <MenuItem key={ex.id} value={ex.id} sx={{ fontSize: "13px" }}>
+                <MenuItem key={ex.id} value={ex.id}>
                   Run {i + 1} — {ex.status || "completed"}{" "}
                   {ex.created_at
                     ? `(${new Date(ex.created_at).toLocaleDateString()})`
@@ -1567,7 +1572,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {executionsError.message}
             </Typography>
             {!executionsError.terminal && (
@@ -1601,7 +1606,7 @@ const SimulationTestMode = React.forwardRef(
             }}
           >
             <Iconify
-              icon="mdi:table-off"
+              icon="solar:table-linear"
               width={28}
               sx={{ color: "text.disabled" }}
             />
@@ -1633,7 +1638,7 @@ const SimulationTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1669,9 +1674,8 @@ const SimulationTestMode = React.forwardRef(
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-left" width={16} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={16} />
               </IconButton>
               <IconButton
                 size="small"
@@ -1682,9 +1686,8 @@ const SimulationTestMode = React.forwardRef(
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-right" width={16} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={16} />
               </IconButton>
               {callsCursor && !callsError && (
                 <Button
@@ -1703,7 +1706,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {callsError.message}
             </Typography>
             {!callsError.terminal && (
@@ -1727,7 +1730,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {callDetailError.message}
             </Typography>
             <Button
@@ -1770,7 +1773,7 @@ const SimulationTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1785,10 +1788,7 @@ const SimulationTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "#fafafa",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1869,7 +1869,7 @@ const SimulationTestMode = React.forwardRef(
                       startAdornment: (
                         <InputAdornment position="start">
                           <Iconify
-                            icon="mdi:magnify"
+                            icon="solar:magnifier-linear"
                             width={14}
                             sx={{ color: "text.disabled" }}
                           />
@@ -1885,10 +1885,7 @@ const SimulationTestMode = React.forwardRef(
                     display: "flex",
                     px: 1.5,
                     py: 0.5,
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.03)"
-                        : "#fafafa",
+                    backgroundColor: "background.neutral",
                     borderBottom: "1px solid",
                     borderColor: "divider",
                   }}
@@ -2039,7 +2036,7 @@ const SimulationTestMode = React.forwardRef(
                                       whiteSpace: "pre-wrap",
                                       wordBreak: "break-all",
                                       fontFamily: "monospace",
-                                      fontSize: 11,
+                                      fontSize: 12,
                                       maxWidth: 520,
                                     }}
                                   >
@@ -2216,7 +2213,7 @@ const SimulationTestMode = React.forwardRef(
                       }}
                     >
                       <Iconify
-                        icon="mdi:code-braces"
+                        icon="solar:code-linear"
                         width={14}
                         sx={{ color: "text.secondary" }}
                       />
@@ -2229,7 +2226,7 @@ const SimulationTestMode = React.forwardRef(
                       </Typography>
                     </Box>
                     <Iconify
-                      icon="mdi:arrow-right"
+                      icon="solar:arrow-right-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -2289,11 +2286,11 @@ const SimulationTestMode = React.forwardRef(
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: "error.main",
-              backgroundColor: "error.lighter",
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
             }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -2309,6 +2306,7 @@ SimulationTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,

@@ -11,10 +11,12 @@ import {
   ListItemText,
   MenuItem,
   Popover,
+  Tab,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 
 const GROUP_OPTIONS = [
   { key: "trace", label: "Trace" },
@@ -29,10 +31,10 @@ const SectionHeader = ({ children }) => (
   <Typography
     variant="overline"
     sx={{
-      fontSize: 10,
-      fontWeight: 700,
+      fontSize: 12,
+      fontWeight: 600,
       color: "text.disabled",
-      letterSpacing: "0.08em",
+      letterSpacing: 0,
       px: 2,
       pt: 1.5,
       pb: 0.5,
@@ -53,7 +55,7 @@ const PanelRow = ({ label, value, onClick, hasMenu = false }) => (
   <ListItemButton onClick={onClick} dense sx={{ px: 2, py: 0.5 }}>
     <ListItemText
       primary={label}
-      primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+      primaryTypographyProps={{ variant: "body2", fontSize: 12 }}
     />
     {value && (
       <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
@@ -62,7 +64,7 @@ const PanelRow = ({ label, value, onClick, hasMenu = false }) => (
     )}
     {hasMenu && (
       <Iconify
-        icon="mdi:chevron-right"
+        icon="solar:alt-arrow-right-linear"
         width={16}
         color="text.disabled"
         sx={{ ml: 0.5 }}
@@ -92,7 +94,7 @@ const PanelCheck = ({ label, checked, onChange }) => (
         />
       }
       label={
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           {label}
         </Typography>
       }
@@ -111,93 +113,12 @@ PanelCheck.propTypes = {
 // ---------------------------------------------------------------------------
 // View mode tab button (Graph View / Agent Graph / Agent Path)
 // ---------------------------------------------------------------------------
+// Labels only: with an icon, "Agent Graph" doesn't fit a third of the 320px panel.
 const VIEW_MODES = [
-  { key: "graph", label: "Graph View", icon: "mdi:chart-line" },
-  { key: "agentGraph", label: "Agent Graph", icon: "mdi:graph-outline" },
-  {
-    key: "agentPath",
-    label: "Agent Path",
-    icon: "mdi:transit-connection-variant",
-  },
+  { key: "graph", label: "Graph View" },
+  { key: "agentGraph", label: "Agent Graph" },
+  { key: "agentPath", label: "Agent Path" },
 ];
-
-const ViewTabButton = ({
-  icon,
-  label,
-  isActive,
-  onClick,
-  disabled = false,
-  disabledReason = "Unavailable",
-}) => {
-  const button = (
-    <ButtonBase
-      onClick={onClick}
-      disabled={disabled}
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 0.25,
-        flex: 1,
-        py: 0.75,
-        px: 0.5,
-        borderRadius: 0.5,
-        bgcolor: isActive ? "background.paper" : "transparent",
-        boxShadow: isActive ? "2px 2px 6px 0px rgba(0,0,0,0.08)" : "none",
-        opacity: disabled ? 0.5 : 1,
-        "&:hover": {
-          bgcolor: isActive ? "background.paper" : "action.hover",
-        },
-      }}
-    >
-      <Iconify
-        icon={icon}
-        width={14}
-        sx={{
-          color: disabled
-            ? "text.disabled"
-            : isActive
-              ? "text.primary"
-              : "text.secondary",
-        }}
-      />
-      <Typography
-        variant="caption"
-        sx={{
-          fontSize: 12,
-          fontWeight: 400,
-          color: disabled
-            ? "text.disabled"
-            : isActive
-              ? "text.primary"
-              : "text.secondary",
-          lineHeight: "18px",
-          textAlign: "center",
-        }}
-      >
-        {label}
-      </Typography>
-    </ButtonBase>
-  );
-
-  if (!disabled) return button;
-  return (
-    <CustomTooltip show arrow size="small" type="black" title={disabledReason}>
-      <Box sx={{ flex: 1, display: "flex", cursor: "not-allowed" }}>
-        {button}
-      </Box>
-    </CustomTooltip>
-  );
-};
-
-ViewTabButton.propTypes = {
-  icon: PropTypes.string.isRequired,
-  label: PropTypes.string.isRequired,
-  isActive: PropTypes.bool,
-  onClick: PropTypes.func,
-  disabled: PropTypes.bool,
-  disabledReason: PropTypes.string,
-};
 
 // ---------------------------------------------------------------------------
 // DisplayPanel
@@ -283,36 +204,45 @@ const DisplayPanel = ({
       {isTraces && (
         <>
           <Box sx={{ px: 1.5, pt: 1, pb: 0.5 }}>
-            <Box
+            <SegmentedTabs
+              value={viewMode}
+              onChange={(_, key) => onViewModeChange?.(key)}
               sx={{
-                display: "flex",
-                gap: 0,
-                p: 0.5,
-                borderRadius: 0.5,
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark" ? "action.hover" : "grey.200",
+                width: "100%",
+                "& .MuiTab-root": { flex: 1, whiteSpace: "nowrap" },
               }}
             >
               {VIEW_MODES.map((vm) => {
                 const isDisabled =
                   vm.key !== "graph" && (isSimulator || !agentGraphEnabled);
-                return (
-                  <ViewTabButton
+                const tab = (
+                  <Tab
                     key={vm.key}
-                    icon={vm.icon}
+                    value={vm.key}
                     label={vm.label}
-                    isActive={viewMode === vm.key}
-                    onClick={() => onViewModeChange?.(vm.key)}
                     disabled={isDisabled}
-                    disabledReason={
+                  />
+                );
+                if (!isDisabled) return tab;
+                // A disabled tab gets no pointer events, so the tooltip wraps it.
+                return (
+                  <CustomTooltip
+                    key={vm.key}
+                    show
+                    size="small"
+                    arrow
+                    placement="top"
+                    title={
                       isSimulator
                         ? "Not available for voice projects"
                         : "Select a project filter to use agent visualizations"
                     }
-                  />
+                  >
+                    <Box sx={{ flex: 1, display: "flex" }}>{tab}</Box>
+                  </CustomTooltip>
                 );
               })}
-            </Box>
+            </SegmentedTabs>
           </Box>
           <Divider sx={{ my: 0.5 }} />
         </>
@@ -321,7 +251,7 @@ const DisplayPanel = ({
       {/* ROWS section */}
       <SectionHeader>ROWS</SectionHeader>
       <PanelRow
-        icon="mdi:arrow-split-horizontal"
+        icon="solar:branching-paths-up-linear"
         label="Row height"
         value={cellHeight || "Short"}
         hasMenu
@@ -333,7 +263,7 @@ const DisplayPanel = ({
         onClose={() => setRowHeightAnchor(null)}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { minWidth: 140, ml: 0.5 } } }}
+        slotProps={{ paper: { sx: { minWidth: 200, ml: 0.5 } } }}
       >
         {ROW_HEIGHT_OPTIONS.map((opt) => {
           const isSelected = opt === (cellHeight || "Short");
@@ -346,7 +276,6 @@ const DisplayPanel = ({
                 setCellHeight?.(opt);
               }}
               sx={{
-                fontSize: 13,
                 py: 0.75,
                 display: "flex",
                 alignItems: "center",
@@ -354,7 +283,7 @@ const DisplayPanel = ({
               }}
             >
               {isSelected ? (
-                <Iconify icon="mdi:check" width={14} />
+                <Iconify icon="solar:check-linear" width={14} />
               ) : (
                 <Box sx={{ width: 14 }} />
               )}
@@ -369,7 +298,7 @@ const DisplayPanel = ({
       {/* COLUMNS section */}
       <SectionHeader>COLUMNS</SectionHeader>
       <PanelRow
-        icon="mdi:eye-outline"
+        icon="solar:eye-linear"
         label="View columns"
         value={hiddenCount > 0 ? `${hiddenCount} hidden` : undefined}
         hasMenu
@@ -383,7 +312,7 @@ const DisplayPanel = ({
         onClick={onAutoSize}
       />
       <PanelRow
-        icon="mdi:plus"
+        icon="solar:add-linear"
         label="Add custom columns"
         value={customColumnCount > 0 ? `${customColumnCount} added` : undefined}
         hasMenu
@@ -399,7 +328,7 @@ const DisplayPanel = ({
           <SectionHeader>METRICS</SectionHeader>
           {isSimulator && (
             <PanelCheck
-              icon="mdi:phone-outline"
+              icon="solar:phone-linear"
               label="Show simulated calls"
               checked={!excludeSimulationCalls}
               onChange={onToggleSimulationCalls}
@@ -407,20 +336,20 @@ const DisplayPanel = ({
           )}
           {showEvalToggle && (
             <PanelCheck
-              icon="mdi:check-circle-outline"
+              icon="solar:check-circle-linear"
               label="Show traces with evals"
               checked={hasEvalFilter}
               onChange={onToggleEvalFilter}
             />
           )}
           <PanelCheck
-            icon="mdi:alert-circle-outline"
+            icon="solar:danger-circle-linear"
             label="Errors"
             checked={!!showErrors}
             onChange={onToggleErrors}
           />
           <PanelCheck
-            icon="mdi:comment-off-outline"
+            icon="solar:chat-round-linear"
             label="Non annotated"
             checked={!!showNonAnnotated}
             onChange={onToggleNonAnnotated}
@@ -438,7 +367,7 @@ const DisplayPanel = ({
           {/* GROUP section */}
           <SectionHeader>GROUP</SectionHeader>
           <PanelRow
-            icon="mdi:group"
+            icon="solar:users-group-rounded-linear"
             label="Group traces by"
             value={activeGroup?.label}
             hasMenu
@@ -450,7 +379,7 @@ const DisplayPanel = ({
             onClose={() => setGroupAnchor(null)}
             anchorOrigin={{ vertical: "top", horizontal: "right" }}
             transformOrigin={{ vertical: "top", horizontal: "left" }}
-            slotProps={{ paper: { sx: { minWidth: 140, ml: 0.5 } } }}
+            slotProps={{ paper: { sx: { minWidth: 200, ml: 0.5 } } }}
           >
             {GROUP_OPTIONS.filter(
               (opt) => !hiddenGroupByOptions.includes(opt.key),
@@ -465,7 +394,6 @@ const DisplayPanel = ({
                     onGroupByChange?.(opt.key);
                   }}
                   sx={{
-                    fontSize: 13,
                     py: 0.75,
                     display: "flex",
                     alignItems: "center",
@@ -473,7 +401,7 @@ const DisplayPanel = ({
                   }}
                 >
                   {isSelected ? (
-                    <Iconify icon="mdi:check" width={14} />
+                    <Iconify icon="solar:check-linear" width={14} />
                   ) : (
                     <Box sx={{ width: 14 }} />
                   )}
@@ -488,7 +416,7 @@ const DisplayPanel = ({
           {/* GRAPH section */}
           <SectionHeader>GRAPH</SectionHeader>
           <PanelCheck
-            icon="mdi:chart-line"
+            icon="solar:graph-up-linear"
             label="Compare graph"
             checked={isCompareActive}
             onChange={onCompareToggle}
@@ -516,7 +444,7 @@ const DisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 14,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
             py: 0.5,
@@ -530,10 +458,9 @@ const DisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 14,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            color: (t) =>
-              t.palette.mode === "dark" ? "text.primary" : "#573FCC",
+            color: "text.link",
             py: 0.5,
           }}
         >

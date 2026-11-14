@@ -19,9 +19,11 @@ import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import RowType, RunType
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
@@ -29,6 +31,7 @@ from tracer.services.clickhouse.read_budget import (
 )
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_MIN_PROOF_WINDOW
+from tracer.utils.filter_operators import split_comma_joined_uuid_members
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
@@ -57,6 +60,12 @@ _EVAL_TASK_TRACE_WITNESS_SECONDS_RESERVE = 14.0
 _EVAL_TASK_TRACE_WITNESS_WIDE_WALL_MS_PER_QUERY = 500
 _EVAL_TASK_BUFFERED_ID_LIMIT = 10_000
 _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD = 10_000
+_EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES = frozenset(
+    {"query_budget_exceeded", "scan_budget_exceeded"}
+)
+_EVAL_TASK_WORKFLOW_ESCALATION_ERROR_CODES = _EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES | {
+    "deadline_exceeded"
+}
 # Reconciliation has a three-hour activity timeout. Keep ten minutes outside
 # the ClickHouse proof for Python buffering, witness validation, materializer
 # hand-off, heartbeats, and scheduler jitter.
@@ -196,17 +205,22 @@ def _eval_config_ids_for_filters(
     from tracer.models.custom_eval_config import CustomEvalConfig
 
     try:
+        # Primary: a config created or deleted moments ago changes the fence,
+        # and the reconcile pass that consumes it advances the task cursor.
         return tuple(
             str(config_id)
             for config_id in CustomEvalConfig.objects.filter(
                 project_id=project_id,
                 deleted=False,
-            ).values_list("id", flat=True)
+            )
+            .using("default")
+            .values_list("id", flat=True)
         )
     except DatabaseError:
         raise EvalTaskReadBudgetExceeded(_SAFE_EVAL_METADATA_MESSAGE) from None
 
 
+@primary_required
 def _eval_filter_metadata_for_filters(
     project_id: str,
     ui_filters: list[dict[str, Any]],
@@ -217,6 +231,12 @@ def _eval_filter_metadata_for_filters(
     builders' compatibility fallback. An explicit mapping is authoritative;
     each malformed or project-external identifier is represented by a known
     empty config set and therefore remains a deterministic no-match.
+
+    Runs on the primary: the frozen metadata decides which rows the pass
+    materializes before the cursor moves past them, so a config the user just
+    created must not read as a no-match from a lagging replica. Ordinary
+    filter browsing calls ``resolve_eval_filter_metadata`` directly and stays
+    replica-eligible.
     """
 
     eval_ids_in_order: list[str] = []
@@ -543,6 +563,66 @@ def iter_desired_rows(
     yield from _iter_id_batches(list(resolved.matched_ids), batch_size=batch_size)
 
 
+# Filter keys that may accompany an explicit id list; anything else means the
+# task is a real filter query and takes the bounded proof below. A
+# date_range is not one: this read doesn't apply it, so a task with ids and a
+# range keeps the bounded proof, which does.
+_EXPLICIT_ID_COMPANIONS = frozenset({"project_id"})
+
+
+def _explicit_id_rows(
+    task: EvalTask, *, limit: int | None, sampling_rate: float
+) -> ResolvedRowSet | None:
+    """Rows of a historical task that names its sessions or traces outright
+    (Instant eval asks about exactly the rows a person picked) or spans. One ClickHouse
+    read confirms the ids belong to the project; the time-sliced bounded proof,
+    which exists to page through filter matches, would only add latency here
+    and its 30-day default window would drop older rows the person chose."""
+    if task.run_type != RunType.HISTORICAL or sampling_rate < 100:
+        return None
+    filters = task.filters or {}
+    key = {
+        RowType.SESSIONS: "session_id",
+        RowType.TRACES: "trace_id",
+        RowType.SPANS: "span_id",
+    }.get(task.row_type)
+    if key is None:
+        return None
+    raw = filters.get(key)
+    if not isinstance(raw, list | tuple) or not raw:
+        return None
+    others = {k for k, v in filters.items() if v not in (None, "", [], {})} - {key}
+    if others - _EXPLICIT_ID_COMPANIONS:
+        return None
+    wanted = list(dict.fromkeys(str(v) for v in raw if v not in (None, "")))
+    project_id = str(task.project_id)
+    with get_reader() as reader:
+        if task.row_type == RowType.SESSIONS:
+            # Only these sessions (and their remap groups) are read, never the
+            # project's spans; each comes back under the id it was asked by.
+            present = {
+                str(root.trace_session_id)
+                for root in reader.roots_by_session_ids(wanted, project_id=project_id)
+            }
+        elif task.row_type == RowType.TRACES:
+            present = set(
+                reader.root_ids_by_trace_ids(wanted, project_ids=[project_id])
+            )
+        else:
+            present = {
+                str(row["id"])
+                for row in reader.list_by_ids(
+                    wanted, include_heavy=False, project_id=project_id, columns=["id"]
+                )
+            }
+    ids = tuple(i for i in wanted if i in present)
+    # The limit counts rows that exist: cutting before the presence check
+    # returned fewer than `limit` when some ids were gone.
+    if limit:
+        ids = ids[: int(limit)]
+    return ResolvedRowSet(ids, ids, True)
+
+
 def resolve_desired_rows(
     task: EvalTask, *, ceiling: datetime | None = None
 ) -> ResolvedRowSet:
@@ -559,6 +639,14 @@ def resolve_desired_rows(
             sampling_rate=float(sampling_rate),
         )
 
+    # An Instant eval run picked its rows (a hash-ordered sample of a view, or
+    # rows handed over) and stored them with their facets; it reads those.
+    from tracer.services.instant_eval_rows import resolve_instant_rows
+
+    instant = resolve_instant_rows(task)
+    if instant is not None:
+        return ResolvedRowSet(instant, instant, True)
+
     # A strict datetime complement can make the requested interval provably
     # empty (for example ``is_null`` on non-nullable start_time). Preserve the
     # compatibility SQL for non-empty requests, but do zero CH reads when the
@@ -572,6 +660,10 @@ def resolve_desired_rows(
         historical_ui_filters, strict=True
     ).empty:
         return ResolvedRowSet((), (), True)
+
+    explicit = _explicit_id_rows(task, limit=limit, sampling_rate=float(sampling_rate))
+    if explicit is not None:
+        return explicit
 
     if (
         task.row_type
@@ -632,28 +724,30 @@ def resolve_desired_rows(
 
 def _continuous_classifier_budget_ms(
     *, candidate_count: int, classify_size: int
-) -> tuple[int, int]:
+) -> tuple[int, int | None]:
     """Preflight one finite exact-classification envelope.
 
-    Continuous discovery is capped at 10k public candidates. A custom-attribute
+    Fast-path discovery is capped at 10k public candidates. A custom-attribute
     trace classifier may safely process only ten identities per statement, so
     a legitimate pass can require 1,000 fully bounded reads. Reserve transport
-    headroom separately from the 3 s server deadline and reject the complete
-    pass before its first query if it cannot fit the three-hour reconcile
-    activity. This changes only the physical query schedule, not membership.
+    headroom separately from the 3 s server deadline. The caller escalates a
+    validated candidate set exceeding this preflight to the shared workflow
+    budget, which measures actual queries and time without widening statements.
+    Return ``None`` for the wall budget when workflow escalation is needed.
     """
 
     if candidate_count < 0 or classify_size < 1:
         raise EvalTaskSelectionRejected(_SAFE_UNSUPPORTED_FILTER_MESSAGE)
     required_queries = ceil(candidate_count / classify_size) if candidate_count else 0
-    if required_queries > _EVAL_TASK_CONTINUOUS_MAX_CLASSIFY_QUERIES:
-        raise EvalTaskSelectionRejected(_SAFE_READ_BUDGET_MESSAGE)
     budget_ms = (
         _EVAL_TASK_CONTINUOUS_CLASSIFY_FIXED_WALL_MS
         + required_queries * _EVAL_TASK_FILTER_CLASSIFY_WALL_MS_PER_QUERY
     )
-    if budget_ms > _EVAL_TASK_CONTINUOUS_CLASSIFY_MAX_WALL_MS:
-        raise EvalTaskSelectionRejected(_SAFE_READ_BUDGET_MESSAGE)
+    if (
+        required_queries > _EVAL_TASK_CONTINUOUS_MAX_CLASSIFY_QUERIES
+        or budget_ms > _EVAL_TASK_CONTINUOUS_CLASSIFY_MAX_WALL_MS
+    ):
+        return required_queries, None
     return required_queries, budget_ms
 
 
@@ -724,6 +818,7 @@ def _resolve_continuous_rows(
         ContinuousCandidateOverflow,
         ContinuousCandidateQueryCapExceeded,
         ContinuousCandidateReadError,
+        ContinuousWorkflowReadBudget,
         discover_continuous_candidates,
         sample_public_ids,
     )
@@ -754,7 +849,8 @@ def _resolve_continuous_rows(
         return ResolvedRowSet((), (), True)
     analytics = V2AnalyticsQueryService()
     try:
-        candidates = discover_continuous_candidates(
+        discover = partial(
+            discover_continuous_candidates,
             analytics,
             project_id=str(task.project_id),
             row_type=task.row_type,
@@ -764,10 +860,23 @@ def _resolve_continuous_rows(
             salt=str(task.id),
             sampling_rate=sampling_rate,
             deadline_seconds=_EVAL_TASK_CONTINUOUS_DISCOVERY_SECONDS,
-            minimum_ceiling=(
-                floor + CONTINUOUS_MIN_PROOF_WINDOW if not full_state else None
-            ),
         )
+        workflow_budget = None
+        try:
+            candidates = discover(
+                minimum_ceiling=(
+                    floor + CONTINUOUS_MIN_PROOF_WINDOW if not full_state else None
+                ),
+            )
+        except (ContinuousCandidateOverflow, ContinuousCandidateQueryCapExceeded):
+            # A small filtered result can still require reading a dense arrival
+            # window. Restart its complete proof with keyset pages under one
+            # background-workflow budget; never publish the fast path's prefix.
+            workflow_budget = ContinuousWorkflowReadBudget(
+                row_type=task.row_type,
+                deadline_seconds=_EVAL_TASK_WORKFLOW_EXACT_SECONDS,
+            )
+            candidates = discover(workflow_budget=workflow_budget)
         if not candidates.classifier_ids:
             return ResolvedRowSet(
                 candidates.public_ids,
@@ -785,7 +894,7 @@ def _resolve_continuous_rows(
         annotation_label_ids = _annotation_label_ids_for_filters(
             str(task.project_id), ui_filters
         )
-        # Continuous reconciliation can classify up to 1,000 finite batches.
+        # Continuous reconciliation classifies finite identity batches.
         # Resolve annotation completeness once for the operation and preserve
         # an explicit empty project label set as authoritative.  Otherwise
         # span/session builders collapse ``[]`` into unknown metadata and
@@ -826,8 +935,26 @@ def _resolve_continuous_rows(
             candidate_count=len(candidates.classifier_ids),
             classify_size=classify_size,
         )
+        if workflow_budget is None:
+            if classify_budget_ms is None:
+                # Validated small classifier batches can exceed the fast
+                # preflight even when discovery itself fits. Keep its complete
+                # candidate proof and escalate classification as well.
+                workflow_budget = ContinuousWorkflowReadBudget(
+                    row_type=task.row_type,
+                    deadline_seconds=_EVAL_TASK_WORKFLOW_EXACT_SECONDS,
+                )
+                workflow_budget.record_rows(
+                    [{"id": value} for value in candidates.public_ids]
+                )
+            else:
+                deadline = time.monotonic() + classify_budget_ms / 1_000
+        if workflow_budget is not None:
+            # Large scans consume actual bounded statements/time, sharing the
+            # discovery envelope instead of multiplying a worst-case timeout
+            # estimate by every candidate or resetting budgets for each page.
+            deadline = workflow_budget.deadline
         classify_read_settings = _filter_classifier_read_settings(builder)
-        deadline = time.monotonic() + classify_budget_ms / 1_000
         matched: list[str] = []
         matched_rows: list[dict[str, Any]] = []
         executed_queries = 0
@@ -845,6 +972,8 @@ def _resolve_continuous_rows(
             )
             if not query:
                 raise EvalTaskSelectionRejected(_SAFE_UNSUPPORTED_FILTER_MESSAGE)
+            if workflow_budget is not None:
+                workflow_budget.timeout_ms()
             try:
                 result = analytics.execute_ch_query(
                     query,
@@ -869,6 +998,8 @@ def _resolve_continuous_rows(
                 "root_span_id" if task.row_type == RowType.VOICE_CALLS else key_field
             )
             result_rows = list(result.data or [])
+            if workflow_budget is not None:
+                workflow_budget.record_rows(result_rows)
             matched_rows.extend(result_rows)
             matched.extend(
                 str(row[result_key])
@@ -887,6 +1018,7 @@ def _resolve_continuous_rows(
                 salt=str(task.id),
                 sampling_rate=sampling_rate,
                 deadline_seconds=_EVAL_TASK_CONTINUOUS_SAMPLING_SECONDS,
+                workflow_budget=workflow_budget,
             )
         # A classifier may only admit public identities proved by C. This also
         # fences malformed/multi-root output before reconciliation can write.
@@ -940,6 +1072,7 @@ def _resolve_bounded_historical_span_ids(
     batch_size: int,
     row_type: str = RowType.SPANS,
     include_trace_filter_witnesses: bool = False,
+    workflow_exact: bool = False,
 ) -> list[str] | _BoundedHistoricalResult:
     """Resolve a complete historical span/trace/session/voice set with bounded reads.
 
@@ -994,11 +1127,6 @@ def _resolve_bounded_historical_span_ids(
         row_type=row_type,
         bounded_trace_root=True,
     )
-    time_columns = {"created_at", "start_time"}
-    has_time_filter = any(
-        (item.get("column_id") or item.get("columnId")) in time_columns
-        for item in ui_filters
-    )
     annotation_label_ids = _annotation_label_ids_for_filters(
         str(project_id), ui_filters
     )
@@ -1009,7 +1137,7 @@ def _resolve_bounded_historical_span_ids(
     # Exactly 10k already exceeds the interactive 128-query proof for the
     # shape-specific classifiers (and for trace witness replay). Route the
     # boundary value through the background-workflow contract as well.
-    workflow_exact = limit >= _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD
+    workflow_exact = workflow_exact or limit >= _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD
     bounded_limit = int(limit)
 
     query_type, key_field = _BUILDER_BY_ROW_TYPE[row_type]
@@ -1066,25 +1194,22 @@ def _resolve_bounded_historical_span_ids(
         raise EvalTaskSelectionRejected(_SAFE_UNSUPPORTED_FILTER_MESSAGE)
     if start_date >= end_date:
         return resolved_result(())
-    if not has_time_filter:
-        # BaseQueryBuilder's default window is relative to ``utcnow()``. Pin
-        # that one resolved window before adjacent seed pages are built;
-        # otherwise every builder call advances the lower bound by a few
-        # microseconds and the final slice can fall just outside its own
-        # request window.
-        ui_filters = [
-            *ui_filters,
-            {
-                "column_id": "created_at",
-                "filter_config": {
-                    "filter_type": "datetime",
-                    "filter_op": "between",
-                    "filter_value": [start_date, end_date],
-                },
+    # Missing bounds are relative to utcnow(), including one-sided and
+    # complement filters. Freeze both edges for every builder call and any
+    # workflow escalation, retaining the original predicates and exclusions.
+    ui_filters = [
+        *ui_filters,
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [start_date, end_date],
             },
-        ]
-        builder.filters = ui_filters
-        builder_kwargs["filters"] = ui_filters
+        },
+    ]
+    builder.filters = ui_filters
+    builder_kwargs["filters"] = ui_filters
 
     classify_batch_size = _recommended_filter_classify_batch_size(
         builder,
@@ -1248,6 +1373,7 @@ def _resolve_bounded_historical_span_ids(
             read_settings=bounded_read_settings,
             classify_read_settings=bounded_classify_read_settings,
             workflow_exact=workflow_exact,
+            exact_population_time_discovery=row_type == RowType.SPANS,
             query_timeout_ms=_EVAL_TASK_FILTER_CLASSIFY_QUERY_TIMEOUT_MS,
         )
     except (TypeError, ValueError):
@@ -1257,10 +1383,28 @@ def _resolve_bounded_historical_span_ids(
             raise
         raise EvalTaskReadBudgetExceeded(_SAFE_READ_BUDGET_MESSAGE) from None
 
-    if not page.complete and page.error_code in {
-        "query_budget_exceeded",
-        "scan_budget_exceeded",
-    }:
+    if (
+        not page.complete
+        and not workflow_exact
+        and page.error_code in _EVAL_TASK_WORKFLOW_ESCALATION_ERROR_CODES
+    ):
+        # A filter matching fewer rows than the limit must classify the whole
+        # window, which can outgrow the interactive envelope at any row limit.
+        return _resolve_bounded_historical_span_ids(
+            analytics,
+            sql=sql,
+            params=params,
+            project_id=project_id,
+            salt=salt,
+            sampling_rate=sampling_rate,
+            filters={**(filters or {}), "date_range": [start_date, end_date]},
+            limit=limit,
+            batch_size=batch_size,
+            row_type=row_type,
+            include_trace_filter_witnesses=include_trace_filter_witnesses,
+            workflow_exact=True,
+        )
+    if not page.complete and page.error_code in _EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES:
         # These codes mean the selector's fixed statement envelope cannot prove
         # this requested prefix. Re-running the same immutable task contract
         # cannot add query capacity, unlike a deadline/resource/drift failure.
@@ -1407,7 +1551,8 @@ def _validated_task_filter_items(
         raise ValueError(f"{key} must be a list")
     if any(not isinstance(item, dict) for item in values):
         raise ValueError(f"{key} entries must be objects")
-    return list(values)
+    # Tasks saved before the request contract split pasted ids read the same.
+    return [split_comma_joined_uuid_members(item) for item in values]
 
 
 def _validated_task_filters(filters: dict | None) -> dict[str, Any]:
@@ -1537,6 +1682,7 @@ def _build_sample_query(
     limit: int | None,
     created_at_floor: datetime | None = None,
     created_at_ceiling: datetime | None = None,
+    source_table: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -1609,6 +1755,10 @@ def _build_sample_query(
     # on arrival time (``created_at``). Injecting the floor into ``ui_filters``
     # would make ``parse_time_range`` apply it to historical ``start_time``.
     builder = get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters)
+    if source_table is not None:
+        if source_table != "sampling_source":
+            raise ValueError("Unsupported internal sampling source")
+        builder.TABLE = source_table
     inner_sql, params = builder.build_id_query(
         created_at_floor=created_at_floor, created_at_ceiling=created_at_ceiling
     )
@@ -1635,7 +1785,7 @@ def _build_sample_query(
         # can't match ids from another project or soft-deleted rows.
         ot_pred = (
             f"AND {id_col} IN "
-            f"(SELECT {src} FROM spans "
+            f"(SELECT {src} FROM {source_table or 'spans'} "
             f"WHERE observation_type IN %(otypes)s "
             f"AND project_id = %(ot_project_id)s AND is_deleted = 0"
             f"{root_pred})"
