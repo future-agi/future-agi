@@ -11,6 +11,7 @@ import { useScenarioRevisions } from "src/api/harness/scenarios";
 import { useDrafts, useSaveDrafts } from "src/api/simulate-environments/versions";
 import { draftSaveRequests } from "../drafts/draftSave";
 import SourceCompareDialog from "./SourceCompareDialog";
+import ValidateScenariosButton from "./ValidateScenariosButton";
 
 // A scenario, in full — the expanded body of a list-view row.
 //
@@ -314,6 +315,13 @@ export function LifecycleSections({ row, jobId }) {
           )}
           {lifecycle.state === "validated" && jobId && (
             <ActivateButton jobId={jobId} />
+          )}
+          {jobId && row?.scenarioKey && lifecycle.state !== "archived" && (
+            <ValidateScenariosButton
+              jobId={jobId}
+              keys={[row.scenarioKey]}
+              label={SCENARIOS_COPY.validateOne}
+            />
           )}
           {comparing && (
             <SourceCompareDialog

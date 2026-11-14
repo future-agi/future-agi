@@ -2871,7 +2871,13 @@ class HostedHarnessGateway:
                     )
             elif validation and proving_only(job):
                 bundle_command = (
-                    bundle_cache.prove_suite_command(deadline_at=deadline_at) + "true"
+                    bundle_cache.prove_suite_command(
+                        deadline_at=deadline_at,
+                        keys=((job.payload or {}).get("metadata") or {}).get(
+                            "scenario_keys"
+                        ),
+                    )
+                    + "true"
                 )
             elif only_reading:
                 bundle_command = bundle_cache.agent_reading_command() + "true"
