@@ -95,11 +95,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
   }, [open, policy]);
 
   const change = (field, value) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-      ...(field === "scope" && value === "global" ? { applied_keys: [] } : {}),
-    }));
+    setForm((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
   const setCheck = (name, patch) => {
@@ -122,8 +118,14 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
     });
     setErrors((prev) => ({ ...prev, checks: undefined }));
   };
+  // A deleted key keeps its ID in a saved policy, but the picker lists only
+  // existing keys. Saving only the listed ones keeps such an ID from making
+  // every later save fail.
+  const appliedKeys = form.applied_keys.filter((id) =>
+    keys.some((key) => key.id === id),
+  );
   const save = async () => {
-    if (form.scope === "key" && !form.applied_keys.length) {
+    if (!appliedKeys.length) {
       setErrors({ applied_keys: "Select at least one active key." });
       return;
     }
@@ -138,9 +140,11 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
     const payload = {
       name: form.name.trim(),
       description: form.description,
-      scope: form.scope,
+      // This tab manages key policies only; org-wide checks are set on the
+      // Overview and Rules tabs.
+      scope: "key",
       mode: form.mode,
-      applied_keys: form.scope === "key" ? form.applied_keys : [],
+      applied_keys: appliedKeys,
       checks: form.checks,
       is_active: form.is_active,
     };
@@ -203,35 +207,11 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
               value={form.description}
               onChange={(event) => change("description", event.target.value)}
             />
-            <FormControl error={Boolean(errors.scope)}>
-              <FormLabel>Scope</FormLabel>
-              <RadioGroup
-                row
-                value={form.scope}
-                onChange={(event) => change("scope", event.target.value)}
-              >
-                <FormControlLabel
-                  value="global"
-                  control={<Radio size="small" />}
-                  label="Org-wide"
-                />
-                <FormControlLabel
-                  value="key"
-                  control={<Radio size="small" />}
-                  label="Keys"
-                />
-              </RadioGroup>
-              {errors.scope && (
-                <Typography variant="s3" color="error">
-                  {errorText(errors.scope)}
-                </Typography>
-              )}
-            </FormControl>
-            {form.scope === "key" && (
+            <Box>
               <Autocomplete
                 multiple
                 options={keys}
-                value={keys.filter((key) => form.applied_keys.includes(key.id))}
+                value={keys.filter((key) => appliedKeys.includes(key.id))}
                 getOptionLabel={(key) =>
                   `${key.name} (${keyPrefixLabel(key)}…) · ${key.status}`
                 }
@@ -248,12 +228,20 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                     {...params}
                     label="API keys"
                     size="small"
-                    error={Boolean(errors.applied_keys)}
-                    helperText={errorText(errors.applied_keys)}
+                    error={Boolean(errors.applied_keys || errors.scope)}
+                    helperText={errorText(errors.applied_keys || errors.scope)}
                   />
                 )}
               />
-            )}
+              <Typography
+                variant="s3"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                This policy applies only to the keys you choose. Org-wide checks
+                are set on the Overview and Rules tabs and apply to every key.
+              </Typography>
+            </Box>
             <FormControl error={Boolean(errors.mode)}>
               <FormLabel>Mode</FormLabel>
               <RadioGroup

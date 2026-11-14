@@ -39,7 +39,7 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
     userGoal: 'An admin rolls a guardrail out to a single API key: monitor it first, then enforce it, without affecting other keys or weakening org-wide guardrails',
     steps: [
       'seed a local mock provider and two gateway keys in an organization of this test',
-      'open Guardrails Policies, create a Secret Detection block policy scoped to key A in Monitor mode, picking the key by name',
+      'open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope',
       'a prompt with a fake AWS key sent with key A gets the unchanged echo; key B also gets it',
       'switch the policy to Enforce in the dialog; key A is refused with content_blocked and key B still gets the echo',
       'add an org-wide Secret Detection block and set the key policy back to Monitor; key A is still refused',
@@ -151,13 +151,14 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       return savePolicy(page);
     };
 
-    // 1. Create the policy from the UI: Secret Detection block, scope Keys = key A, Monitor.
+    // 1. Create the policy from the UI: Secret Detection block, key A, Monitor.
     await page.goto(POLICIES_ROUTE);
     await page.getByRole('button', { name: 'New policy', exact: true }).first().click({ timeout: UI_READY });
     const dialog = page.getByTestId('guardrail-policy-dialog');
     await expect(dialog).toBeVisible({ timeout: UI_READY });
     await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(policyName);
-    await dialog.getByRole('radio', { name: 'Keys', exact: true }).check();
+    // The tab manages key policies only: there is no Org-wide scope to pick.
+    await expect(dialog.getByRole('radio', { name: 'Org-wide' })).toHaveCount(0);
     const picker = dialog.getByRole('combobox', { name: 'API keys' });
     await picker.click();
     await picker.fill(keyA.name);

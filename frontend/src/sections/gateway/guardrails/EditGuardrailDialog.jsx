@@ -36,7 +36,12 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
     }
   }, [guardrail, open]);
 
+  // A confidence threshold is a score from 0 to 1; the API refuses others.
+  const thresholdInvalid =
+    threshold !== "" && !(Number(threshold) >= 0 && Number(threshold) <= 1);
+
   const handleSave = () => {
+    if (thresholdInvalid) return;
     const config = {
       ...guardrail,
       action,
@@ -104,7 +109,13 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
             fullWidth
             value={threshold}
             onChange={(e) => setThreshold(e.target.value)}
-            helperText="Numeric threshold for the guardrail (optional)"
+            inputProps={{ min: 0, max: 1, step: 0.05 }}
+            error={thresholdInvalid}
+            helperText={
+              thresholdInvalid
+                ? "Enter a number from 0 to 1, for example 0.8"
+                : "Confidence threshold from 0 to 1 (optional)"
+            }
           />
           {updateGuardrail.isError && (
             <Alert severity="error">
@@ -118,7 +129,7 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={updateGuardrail.isPending}
+          disabled={updateGuardrail.isPending || thresholdInvalid}
         >
           {updateGuardrail.isPending ? "Saving..." : "Save"}
         </Button>

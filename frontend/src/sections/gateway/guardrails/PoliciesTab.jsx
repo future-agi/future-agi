@@ -46,8 +46,14 @@ export default function PoliciesTab({ gatewayId }) {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [menu, setMenu] = useState(null);
+  // Only key policies are managed here. Org-wide policies (from the API) are
+  // merged into the org's checks, which the Overview and Rules tabs manage;
+  // saving one from here would replace those checks.
   const visible = useMemo(
-    () => policies.filter((policy) => !policy.name?.startsWith("__")),
+    () =>
+      policies.filter(
+        (policy) => policy.scope === "key" && !policy.name?.startsWith("__"),
+      ),
     [policies],
   );
 
@@ -55,7 +61,7 @@ export default function PoliciesTab({ gatewayId }) {
     const id = searchParams.get("policy");
     if (id && !isLoading && policies.length) {
       const selected = visible.find((policy) => String(policy.id) === id);
-      if (selected && selected.scope !== "project") setEditing(selected);
+      if (selected) setEditing(selected);
     }
   }, [searchParams, isLoading, policies, visible]);
 
@@ -129,7 +135,7 @@ export default function PoliciesTab({ gatewayId }) {
           variant="first-run"
           icon="solar:shield-check-linear"
           title="No policies yet"
-          description="Create a policy to monitor or enforce guardrails for chosen keys."
+          description="Create a policy to monitor or enforce guardrails for chosen API keys. Org-wide checks are set on the Overview and Rules tabs."
           action={
             <Button
               variant="contained"
@@ -145,7 +151,6 @@ export default function PoliciesTab({ gatewayId }) {
           <TableHead>
             <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
               <TableCell>Name</TableCell>
-              <TableCell>Scope</TableCell>
               <TableCell>Keys</TableCell>
               <TableCell>Mode</TableCell>
               <TableCell>Active</TableCell>
@@ -164,18 +169,7 @@ export default function PoliciesTab({ gatewayId }) {
                 <TableCell>
                   <Typography variant="s1">{policy.name}</Typography>
                 </TableCell>
-                <TableCell>
-                  {policy.scope === "global"
-                    ? "Org-wide"
-                    : policy.scope === "key"
-                      ? "Keys"
-                      : "Project"}
-                </TableCell>
-                <TableCell>
-                  {policy.scope === "key"
-                    ? policy.applied_keys?.length || 0
-                    : "—"}
-                </TableCell>
+                <TableCell>{policy.applied_keys?.length || 0}</TableCell>
                 <TableCell>
                   <StatusBadge
                     status={policy.mode}
@@ -219,7 +213,6 @@ export default function PoliciesTab({ gatewayId }) {
         onClose={() => setMenu(null)}
       >
         <MenuItem
-          disabled={menu?.policy.scope === "project"}
           onClick={() => {
             setEditing(menu.policy);
             setMenu(null);

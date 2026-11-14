@@ -40,14 +40,11 @@ vi.mock("./hooks/useGuardrailPolicies", () => ({
 vi.mock("./PolicyDialog", () => ({ default: () => null }));
 
 describe("PoliciesTab", () => {
-  it("hides reserved policies and shows scope, mode and key count", () => {
+  it("hides reserved policies and shows mode and key count", () => {
     render(<PoliciesTab gatewayId="gateway" />);
     expect(screen.queryByText("__ui_guardrails__")).not.toBeInTheDocument();
     expect(screen.getByText("Staging policy")).toBeInTheDocument();
-    expect(screen.getAllByText("Keys")[1]).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.getByText("Monitor")).toBeInTheDocument();
-    expect(screen.getByText("Org-wide")).toBeInTheDocument();
-    expect(screen.getByText("Enforce")).toBeInTheDocument();
   });
 });

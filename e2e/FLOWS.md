@@ -1615,7 +1615,7 @@
 **User steps:**
 
 1. seed a local mock provider and two gateway keys in an organization of this test
-2. open Guardrails Policies, create a Secret Detection block policy scoped to key A in Monitor mode, picking the key by name
+2. open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope
 3. a prompt with a fake AWS key sent with key A gets the unchanged echo; key B also gets it
 4. switch the policy to Enforce in the dialog; key A is refused with content_blocked and key B still gets the echo
 5. add an org-wide Secret Detection block and set the key policy back to Monitor; key A is still refused
