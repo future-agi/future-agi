@@ -15,6 +15,7 @@ import {
   useContextCampaignAvailability, useCreateContextCampaign,
 } from 'src/api/skills/context-campaigns';
 import CapabilityNotice from 'src/sections/skills/components/CapabilityNotice';
+import { skillsRouteSx } from 'src/sections/skills/components/routeGutter';
 import { useSkillsAccess } from 'src/sections/skills/utils/access';
 import IdentityChip from 'src/sections/skills/components/IdentityChip';
 import ContextCampaignList from 'src/sections/skills/contexts/ContextCampaignList';
@@ -82,7 +83,7 @@ function CampaignRoute() {
 export default function ContextCampaignPage() {
   const access = useSkillV11Scope();
   const role = useSkillsAccess();
-  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={{ minWidth: 0, px: { xs: 2, md: 3 }, py: 1.5 }}>
+  return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={skillsRouteSx}>
     {campaignsContractReady() ? <CampaignRoute key={access.identity} /> : <>
       <PageHeader title="Repository rollouts" description="Fixed repository plans with separate delivery observations." />
       <RolloutsOffNotice access={role} />
