@@ -5,10 +5,12 @@ an isolated past UTC hour, so a self-hosted heartbeat is known to carry the
 trace, span and eval counts of its window: exact numbers when there was
 activity, null only when a collector failed, never a silent 0.
 
-The ClickHouse case writes to a scratch database holding a copy of ``spans``,
-so the deployment-wide counts are exact. It is opt-in like the other live
-ClickHouse suites: set ``FI_LIVE_CH_TESTS=1`` with a loopback ``CH25_HOST``.
-The Postgres and failure cases always run.
+The ClickHouse cases write to an owned test database with the repo's v2
+schema on the test sidecar (conftest's guarded helpers), so the deployment-wide
+counts are exact. They run wherever the sidecar is named, as in backend-ci
+(``FI_CH_TEST_SIDECAR_NATIVE_PORT`` / ``FI_CH_TEST_SIDECAR_HTTP_PORT``), and
+skip only when no test ClickHouse is named. The Postgres and failure cases
+always run.
 """
 
 from __future__ import annotations
@@ -25,11 +27,11 @@ from tfc.deployment_telemetry import ch_counts
 from tfc.deployment_telemetry.collectors import collect_counts
 from tfc.deployment_telemetry.payloads import build_heartbeat_payload
 
-LIVE_CH_TESTS_ENV_VAR = "FI_LIVE_CH_TESTS"
-
 TRACE_A = "a7420000-0000-4000-8000-00000000000a"
 TRACE_B = "b7420000-0000-4000-8000-00000000000b"
 TRACE_OUTSIDE = "c7420000-0000-4000-8000-00000000000c"
+# Its only span's newest version is a tombstone, in a project of its own.
+TRACE_GONE = "d7420000-0000-4000-8000-00000000000d"
 
 EVAL_LOGGERS = 2
 MODEL_HUB_EVALUATIONS = 3
@@ -57,50 +59,59 @@ def fresh_ch_client():
     ch_counts._ch25_client = None
 
 
+@pytest.fixture(scope="module")
+def ch_spans_database():
+    """An owned test database with the repo's v2 schema, dropped after the module."""
+    from conftest import _ch_test_apply_v2_schema, _ch_test_owned_database
+
+    with _ch_test_owned_database("test_th7420_") as database:
+        _ch_test_apply_v2_schema(database)
+        yield database
+
+
 @pytest.fixture
-def scratch_spans(settings, fresh_ch_client):
-    """A scratch ClickHouse database with a copy of ``spans``, which the
-    telemetry counts read through ``get_v2_config`` for the test."""
-    if os.environ.get(LIVE_CH_TESTS_ENV_VAR, "").strip().lower() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        pytest.skip(f"live ClickHouse tests are opt-in: set {LIVE_CH_TESTS_ENV_VAR}=1")
-
-    import clickhouse_connect
-
-    from conftest import _require_safe_ch25_test_target
-    from tracer.services.clickhouse.v2 import get_v2_config
-
-    config = get_v2_config()
-    scratch = f"test_th7420_{uuid.uuid4().hex[:8]}"
-    _require_safe_ch25_test_target(host=config["host"], database=config["database"])
-    _require_safe_ch25_test_target(host=config["host"], database=scratch)
-    ch = clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["http_port"],
-        username=config["user"],
-        password=config["password"],
-        database=config["database"],
+def scratch_spans(ch_spans_database, monkeypatch, fresh_ch_client):
+    """Empty ``spans`` in the owned database, which the telemetry counts read
+    through ``get_v2_config`` for the test. Yields an insert function."""
+    from conftest import (
+        _ch_test_http_port,
+        _ch_test_native_port,
+        _open_ch_test_http_client,
     )
-    ch.command(f"CREATE DATABASE {scratch}")
+    from tracer.services.clickhouse import v2 as v2_module
+
+    database = ch_spans_database
+    ch = _open_ch_test_http_client(database=database)
     try:
-        ch.command(f"CREATE TABLE {scratch}.spans AS {config['database']}.spans")
+        ch.command("TRUNCATE TABLE spans")
         # Keep every inserted version and tombstone in its own part, as an
         # unmerged table is in production, so only FINAL collapses them.
-        ch.command(f"SYSTEM STOP MERGES {scratch}.spans")
-        settings.CLICKHOUSE_V2 = {
-            **(getattr(settings, "CLICKHOUSE_V2", {}) or {}),
-            "CH25_DATABASE": scratch,
-        }
+        ch.command("SYSTEM STOP MERGES spans")
+        monkeypatch.setattr(
+            v2_module,
+            "get_v2_config",
+            lambda: {
+                "host": os.environ.get("CH25_HOST", "127.0.0.1"),
+                "tcp_port": _ch_test_native_port().port,
+                "http_port": _ch_test_http_port().port,
+                "user": os.environ.get("CH25_USER")
+                or os.environ.get("CH_USERNAME")
+                or "default",
+                "password": os.environ.get("CH25_PASSWORD")
+                or os.environ.get("CH_PASSWORD")
+                or "",
+                "database": database,
+                "server_enforced_readonly": False,
+            },
+        )
+        project_id = uuid.uuid4()
 
-        def insert(*, trace_id, span_id, start, version, deleted=0):
+        def insert(*, trace_id, span_id, start, version, deleted=0, project=None):
             ch.insert(
-                f"{scratch}.spans",
+                "spans",
                 [
                     [
-                        str(project_id),
+                        str(project or project_id),
                         "llm",
                         "svc",
                         _ch_text(start),
@@ -126,10 +137,9 @@ def scratch_spans(settings, fresh_ch_client):
                 ],
             )
 
-        project_id = uuid.uuid4()
+        insert.project_id = project_id
         yield insert
     finally:
-        ch.command(f"DROP DATABASE IF EXISTS {scratch}")
         ch.close()
 
 
@@ -137,13 +147,28 @@ def _seed_spans(insert, window_start, window_end):
     """2 traces with 3 live spans in the window, plus rows that must not count."""
     t = window_start + timedelta(minutes=10)
     insert(trace_id=TRACE_A, span_id="a-root", start=t, version=10)
-    insert(trace_id=TRACE_A, span_id="a-child", start=t, version=10)
+    # Exactly at the window start: counted.
+    insert(trace_id=TRACE_A, span_id="a-child", start=window_start, version=10)
     # Written twice: one span after FINAL.
     insert(trace_id=TRACE_B, span_id="b-root", start=t, version=10)
     insert(trace_id=TRACE_B, span_id="b-root", start=t, version=20)
     # Its newest version is a tombstone: not counted.
     insert(trace_id=TRACE_B, span_id="b-gone", start=t, version=10)
     insert(trace_id=TRACE_B, span_id="b-gone", start=t, version=20, deleted=1)
+    # A trace whose only span's newest version is a tombstone: neither the
+    # trace nor its project counts.
+    gone_project = uuid.uuid4()
+    insert(
+        trace_id=TRACE_GONE, span_id="d-only", start=t, version=10, project=gone_project
+    )
+    insert(
+        trace_id=TRACE_GONE,
+        span_id="d-only",
+        start=t,
+        version=20,
+        deleted=1,
+        project=gone_project,
+    )
     # Outside the half-open window [start, end).
     insert(trace_id=TRACE_OUTSIDE, span_id="at-end", start=window_end, version=10)
     insert(
@@ -185,20 +210,21 @@ def _seed_evaluations(organization, workspace, user, window_start, window_end):
         EvalLogger.no_workspace_objects.create(
             target_type=EvalTargetType.SESSION, trace_session=session
         )
-        for _ in range(EVAL_LOGGERS + 1)
+        for _ in range(EVAL_LOGGERS + 2)
     ]
-    place(
-        EvalLogger.no_workspace_objects.filter(id__in=[e.id for e in loggers[:-1]]),
-        inside,
-        "created_at",
-        "updated_at",
-    )
-    place(
-        EvalLogger.no_workspace_objects.filter(id=loggers[-1].id),
-        outside,
-        "created_at",
-        "updated_at",
-    )
+    # One inside, one just before the window end (counted), one outside and
+    # one exactly at the window end (not counted: the window is half-open).
+    for logger, moment in zip(
+        loggers,
+        (inside, window_end - timedelta(microseconds=1), outside, window_end),
+        strict=True,
+    ):
+        place(
+            EvalLogger.no_workspace_objects.filter(id=logger.id),
+            moment,
+            "created_at",
+            "updated_at",
+        )
 
     template = EvalTemplate.no_workspace_objects.create(
         name=f"th7420-{uuid.uuid4().hex[:8]}",
@@ -302,6 +328,9 @@ def test_heartbeat_counts_activity_in_the_window(
     assert not [
         e for e in logs if e["event"] == "deployment_telemetry_collector_failed"
     ]
+    assert ch_counts.ingesting_project_ids(window_start, window_end) == [
+        str(scratch_spans.project_id)
+    ]
 
     # The heartbeat carries them as collected.
     payload: dict[str, object] = dict(
@@ -319,10 +348,14 @@ def test_heartbeat_counts_activity_in_the_window(
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_heartbeat_counts_do_not_depend_on_the_process_timezone(
+def test_heartbeat_counts_do_not_depend_on_the_worker_process_timezone(
     scratch_spans, organization, workspace, user
 ):
-    """The window is UTC whatever TZ the worker runs in."""
+    """The window is UTC whatever TZ the Python worker runs in.
+
+    This covers the worker only: clickhouse-driver ignores the process TZ.
+    The ClickHouse server's own timezone is the next test.
+    """
     window_start, window_end = _isolated_window()
     _seed_spans(scratch_spans, window_start, window_end)
 
@@ -340,6 +373,84 @@ def test_heartbeat_counts_do_not_depend_on_the_process_timezone(
 
     assert counts["traces_count"] == 2
     assert counts["spans_count"] == 3
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_heartbeat_counts_on_a_clickhouse_server_not_in_utc(
+    scratch_spans, organization, workspace, user, monkeypatch
+):
+    """A ClickHouse server whose timezone is not UTC still counts the UTC window.
+
+    clickhouse-driver renders an aware datetime parameter in the timezone the
+    server reported at connect (``ServerInfo.get_timezone``), so this server
+    reports Asia/Kolkata. The counts must be exact, not those of a window
+    5h30 later.
+    """
+    from clickhouse_driver.connection import ServerInfo
+
+    window_start, window_end = _isolated_window()
+    _seed_spans(scratch_spans, window_start, window_end)
+    monkeypatch.setattr(ServerInfo, "get_timezone", lambda _self: "Asia/Kolkata")
+
+    assert ch_counts.count_traces(window_start, window_end) == 2
+    assert ch_counts.count_spans(window_start, window_end) == 3
+    assert ch_counts.ingesting_project_ids(window_start, window_end) == [
+        str(scratch_spans.project_id)
+    ]
+    # The heartbeat path too: exact counts, no collector failure.
+    counts = collect_counts(window_start, window_end)
+    assert (counts["traces_count"], counts["spans_count"]) == (2, 3)
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        (datetime(2026, 1, 1, 12), datetime(2026, 1, 1, 13, tzinfo=UTC)),
+        (datetime(2026, 1, 1, 12, tzinfo=UTC), datetime(2026, 1, 1, 13)),
+    ],
+)
+def test_count_window_must_be_timezone_aware(bounds, fresh_ch_client, monkeypatch):
+    """A naive bound is refused before any read, never read as local time."""
+
+    class _Unreachable:
+        def execute_read(self, *args, **kwargs):
+            raise AssertionError("no read for a naive window")
+
+    monkeypatch.setattr(ch_counts, "_ch25_client", _Unreachable())
+    for count in (
+        ch_counts.count_spans,
+        ch_counts.count_traces,
+        ch_counts.ingesting_project_ids,
+    ):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            count(*bounds)
+
+
+def test_counts_client_takes_the_v2_server_enforced_readonly(
+    fresh_ch_client, settings, monkeypatch
+):
+    """The counts client follows CH25's readonly setting, not the legacy one."""
+    from tracer.services.clickhouse import v2 as v2_module
+
+    settings.CLICKHOUSE = {
+        **(getattr(settings, "CLICKHOUSE", {}) or {}),
+        "CH_SERVER_ENFORCED_READONLY": False,
+    }
+    monkeypatch.setattr(
+        v2_module,
+        "get_v2_config",
+        lambda: {
+            "host": "127.0.0.1",
+            "tcp_port": 9,
+            "http_port": 9,
+            "user": "default",
+            "password": "",
+            "database": "test_th7420_readonly",
+            "server_enforced_readonly": True,
+        },
+    )
+    assert ch_counts._get_ch25_client().server_enforced_readonly is True
 
 
 @pytest.mark.integration
