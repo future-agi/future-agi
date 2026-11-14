@@ -123,6 +123,7 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         return normalized
 
     def validate(self, attrs):
+        self._validate_stored_checks_before_running(attrs)
         if self.instance is not None and not ({"scope", "applied_keys"} & attrs.keys()):
             # A change that leaves scope and keys alone (Active, mode, checks)
             # is not refused for a pairing an older version saved.
@@ -141,6 +142,31 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             )
         # Project policies are persisted but not evaluated by the gateway yet.
         return attrs
+
+    def _validate_stored_checks_before_running(self, attrs):
+        # Every save through this API makes an active key policy run on the
+        # gateway. A row saved before checks were validated can hold values
+        # this API refuses (a threshold of 50 never fires, as scores stop at
+        # 1), so a save that leaves its checks alone must not activate them.
+        instance = self.instance
+        if instance is None or "checks" in attrs or self._is_org_config_row():
+            return
+        scope = attrs.get("scope", instance.scope)
+        active = attrs.get("is_active", instance.is_active)
+        if scope != AgentccGuardrailPolicy.SCOPE_KEY or not active:
+            return
+        try:
+            self.validate_checks(instance.checks)
+        except serializers.ValidationError as e:
+            reasons = "; ".join(str(d) for d in e.detail)
+            raise serializers.ValidationError(
+                {
+                    "checks": (
+                        f"The stored checks cannot run on the gateway ({reasons}). "
+                        "Send corrected checks with this save."
+                    )
+                }
+            ) from e
 
     def _is_org_config_row(self):
         # The org config editor (views/org_config.py) stores org-wide checks in
