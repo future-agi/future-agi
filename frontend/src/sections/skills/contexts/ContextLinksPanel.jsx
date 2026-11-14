@@ -89,7 +89,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     {!links.length && <Typography variant="s3">No linked skills. AGENTS.md remains standing context.</Typography>}
     {proposed && !readOnly && <Alert severity="info">{links.length} skills from your migration are proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
     {links.length > 0 && <Container sx={{ maxWidth: 1 }}><Collection {...(compact ? { spacing: 1.5, role: 'list' } : { size: 'small' })} aria-label="Linked skills">
-      {!compact && <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update policy', 'Locked version', 'Update status', 'Actions'].map((heading) => <TableCell key={heading} align={heading === 'Actions' ? 'right' : 'left'}>{heading}</TableCell>)}</TableRow></TableHead>}
+      {!compact && <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update rule', 'Version in this context', 'Status'].map((heading) => <TableCell key={heading} align={heading === 'Actions' ? 'right' : 'left'}>{heading}</TableCell>)}</TableRow></TableHead>}
       <Rows>{links.map((link) => {
         const included = lock.find((entry) => entry.skillId === link.skillId);
         const query = upstreamQueries[link.skillId];
@@ -100,11 +100,11 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         const unavailable = !pinned && (query?.isError || !newer);
         const changed = !pinned && !unavailable && included && (newer.version !== included.version || (newer.versionId && included.versionId && newer.versionId !== included.versionId));
         const name = skill?.name || included?.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'Linked skill';
-        const status = <Stack direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}><StatusBadge status={pinned ? 'pinned' : checking ? 'checking' : unavailable ? 'unavailable' : changed ? 'update_available' : included ? 'up_to_date' : 'draft'} label={pinned ? 'Pinned intentionally' : checking ? 'Checking…' : unavailable ? "Couldn't check" : changed ? `v${newer.version} available` : included ? 'Up to date' : 'Preview required'} />
+        const status = <Stack direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}><StatusBadge status={pinned ? 'pinned' : checking ? 'checking' : unavailable ? 'unavailable' : changed ? 'update_available' : included ? 'up_to_date' : 'draft'} label={pinned ? 'Pinned on purpose' : checking ? 'Checking…' : unavailable ? "Couldn't check" : changed ? `v${newer.version} available` : included ? 'Up to date' : 'Preview required'} />
           {unavailable && !checking && query?.refetch && <Button variant="outlined" size="small" onClick={() => query.refetch()}>Retry</Button>}
         </Stack>;
-        const identity = <><Typography variant="s1" display="block">{name}</Typography><Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{included?.mount || 'Mount assigned on acceptance'}</Typography></>;
-        const details = <TechnicalDetails title="Lock details"><IdentityChip value={link.skillId} kind="id" label="Skill" />{included?.digest && <IdentityChip value={included.digest} label="Locked digest" />}{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Locked version" />}</TechnicalDetails>;
+        const identity = <Typography variant="s1" display="block">{name}</Typography>;
+        const details = <TechnicalDetails title="Technical details">{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Version ID" />}{included?.digest && <IdentityChip value={included.digest} label="Content fingerprint" />}</TechnicalDetails>;
         const actions = readOnly ? changed && <Button fullWidth={compact} variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Review update</Button> : <>
           {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
           <Button disabled={operation.pending || Boolean(session.mutationError)} onClick={() => { setLinks(links.filter((entry) => entry.skillId !== link.skillId)); setRefresh(refresh.filter((id) => id !== link.skillId)); invalidate(); }}>Remove from context</Button>
@@ -117,8 +117,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
           <TableCell>{identity}{details}</TableCell>
           <TableCell>{selectorLabel(link.selector)}</TableCell>
           <TableCell>{included ? `v${included.version}` : 'Not yet accepted'}</TableCell>
-          <TableCell>{status}</TableCell>
-          <TableCell align="right"><Stack spacing={0.5} alignItems="flex-end">{actions}</Stack></TableCell>
+          <TableCell><Stack spacing={0.5} alignItems="flex-start">{status}{actions}</Stack></TableCell>
         </TableRow>;
       })}</Rows>
     </Collection></Container>}
@@ -142,7 +141,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         {(preview.changes || []).map((change) => <Typography key={change.skillId} variant="s1">{change.mount} · {change.change} · {change.before ? `v${change.before.version}` : "absent"} → {change.after ? `v${change.after.version}` : "removed"}</Typography>)}
         {preview.checks?.summary?.errors > 0 && <Alert severity="error">The compiled context has blocking checks. No partial dependency set can be applied.</Alert>}
         {!current && <Alert severity="warning">{session.mutationError ? "Recover the original dependency update with Retry dependency update before previewing or publishing." : "The draft changed. Preview again before applying."}</Alert>}
-        <FormControlLabel control={<Checkbox checked={confirmed} disabled={!current || operation.pending} onChange={(event) => setConfirmed(event.target.checked)} />} label="Accept these exact resolved versions and selector policies." />
+        <FormControlLabel control={<Checkbox checked={confirmed} disabled={!current || operation.pending} onChange={(event) => setConfirmed(event.target.checked)} />} label="Accept these linked-skill versions and update rules for 1 context." />
         <Button color="primary" variant="contained" disabled={!onApply || !current || !confirmed || operation.pending || preview.checks?.summary?.errors > 0} onClick={apply}>Apply selected updates to draft</Button>
       </>}
     </>}

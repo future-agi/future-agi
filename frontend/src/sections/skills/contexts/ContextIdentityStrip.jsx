@@ -1,17 +1,15 @@
 import PropTypes from 'prop-types';
-import { Stack, Typography } from '@mui/material';
+import { Stack } from '@mui/material';
+import VersionIdentityRow from '../components/VersionIdentityRow';
 
-// Release selection and plain-language facts share one wrapping row, including on phones.
+// Intent: keep the selected bytes, latest publication and production distinct.
+// Hierarchy: shared identity row, with the exact-version picker alongside it.
+// Palette/depth/surfaces: neutral theme roles and flat page; status alone uses colour.
+// Typography/spacing: shared s3 facts, wrapping 8px groups on the 4px grid.
 export default function ContextIdentityStrip({ viewed, latestVersion, productionVersion, draft, extra, releaseControl }) {
-  const number = viewed?.version ?? viewed?.number;
-  return <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
-    {releaseControl || <Typography variant="s3">{viewed ? `Viewing v${number}` : 'No releases yet'}</Typography>}
-    <Typography variant="s3" color="text.secondary">
-      {latestVersion != null && `${number === latestVersion ? 'Latest' : `Latest v${latestVersion}`} · `}
-      {productionVersion == null ? 'Not in production' : `Production v${productionVersion}`}
-      {draft && ` · Your draft${draft.baseVersion != null ? ` (from v${draft.baseVersion})` : ''}`}
-    </Typography>
-    {extra}
+  return <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: { xs: 'flex-start', sm: 'center' }, minWidth: 0 }}>
+    {releaseControl}
+    <VersionIdentityRow viewing={{ number: viewed?.version ?? viewed?.number, digest: viewed?.digest }} latest={latestVersion == null ? null : { number: latestVersion }} production={productionVersion == null ? null : { number: productionVersion }} draft={draft ? { baseNumber: draft.baseVersion } : null} extra={extra} />
   </Stack>;
 }
 ContextIdentityStrip.propTypes = { viewed: PropTypes.object, latestVersion: PropTypes.number, productionVersion: PropTypes.number, draft: PropTypes.object, extra: PropTypes.node, releaseControl: PropTypes.node };

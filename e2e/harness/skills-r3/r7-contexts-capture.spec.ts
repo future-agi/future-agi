@@ -28,7 +28,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await mkdir(output, { recursive: true });
   const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Verify consumers', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
   const overflows = [];
-  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Use', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Recovery' };
+  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Use', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Rollback' };
   await page.goto('/dashboard/skills/contexts');
   await expect(page.getByRole('button', { name: 'Create agent context', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: /Search agent contexts/ })).toHaveCount(0);
@@ -193,13 +193,13 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
   await shot('context-dependents');
   await page.getByRole('button', { name: 'Prepare draft updates for 2 contexts', exact: true }).click();
-  const acknowledgement = page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies for all 2 contexts.', exact: true });
+  const acknowledgement = page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 2 contexts.', exact: true });
   await expect(acknowledgement).toBeVisible();
   await shot('context-impact-preview');
   await acknowledgement.check();
   await page.getByRole('checkbox', { name: 'Select escalation-agent v1 for update', exact: true }).uncheck();
   await expect(page.getByText('Selection changed — prepare again.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: /Accept these exact resolved versions/ })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /Accept these linked-skill versions/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
   await shot('context-selection-changed');
   await page.getByRole('checkbox', { name: 'Select support-agent v1 for update', exact: true }).uncheck();
@@ -207,7 +207,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await shot('context-selection-empty');
   await page.getByRole('checkbox', { name: 'Select support-agent v1 for update', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare draft updates for 1 context', exact: true }).click();
-  await page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies for all 1 context.', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
   await page.getByRole('button', { name: 'Apply selected updates to 1 context draft', exact: true }).click();
   await expect(page.getByText('Draft updated for 1 context. Production unchanged.', { exact: true })).toBeVisible();
   await shot('context-draft-updated');

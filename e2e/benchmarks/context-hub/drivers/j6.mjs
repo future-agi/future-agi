@@ -612,7 +612,7 @@ export async function createDriver({ jobId, runId, registration }) {
           localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'dark' }));
         });
         await authorPage.reload();
-        await authorPage.getByRole('tab', { name: 'Recovery', exact: true }).click();
+        await authorPage.getByRole('tab', { name: 'Rollback', exact: true }).click();
         const darkTable = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(darkTable).toBeVisible();
         await darkTable.scrollIntoViewIfNeeded();

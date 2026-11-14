@@ -10,16 +10,19 @@ import { CustomTabs, SegmentedTabs } from 'src/components/tabs/tabs';
 import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
 import IdentityChip from '../components/IdentityChip';
-import TechnicalDetails from '../components/TechnicalDetails';
+import { reviewComposerUrl } from '../utils/review-links';
+import { useSkillsAccess } from '../utils/access';
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import FileTree from '../components/FileTree';
 import SkillMarkdownPreview from '../components/SkillMarkdownPreview';
 import ContextIdentityStrip from './ContextIdentityStrip';
 import ContextLinksPanel from './ContextLinksPanel';
 
 // URL owns section identity; version/file loading never replaces the object shell.
-const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Recovery'], ['use', 'Use']];
+const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Rollback'], ['use', 'Use']];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
+  const { isViewer, canWrite, ready } = useSkillsAccess();
   const [fileMode, setFileMode] = useState(() => { try { return localStorage.getItem('context-file-view') === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } });
   const unpublished = query.data?.context?.latestVersion == null && !params.get('version');
   const tabs = TABS.filter(([value]) => unpublished ? value === 'context' : ['context', 'links'].includes(value) || sections[value]);
@@ -30,6 +33,8 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || (!query.data && query.isLoading)) return <ContentSkeleton variant="page" />;
   if (state === 'denied' || [401, 403].includes(query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus)) return <EmptyState icon="solar:lock-keyhole-linear" title="You can't open this context" description="It may belong to another workspace, or your access changed." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to agent contexts</Button>} />;
+  const missing = (query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus) === 404 || (!query.error && !query.data?.context);
+  if (missing) return <Stack spacing={1.5}><ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: 'Not found' }]} title="Agent context not found" /><EmptyState title="Agent context not found. It may have been archived or belong to another workspace." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to agent contexts</Button>} /></Stack>;
   if (query.error) return <ErrorState title="Couldn't load this context" detail="Check your connection and try again." onRetry={query.refetch} />;
   const context = query.data?.context;
   if (!context) return <ErrorState title="Context not found" detail="Choose an authorized context in this workspace." />;
@@ -41,15 +46,21 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
   const editPrimary = ['context', 'links'].includes(tab);
+  const cannotEdit = !canWrite || query.data.releaseState?.permissions?.canPublish === false;
+  const editReason = isViewer ? "Viewers can't edit. Ask a workspace admin for edit access." : ready && cannotEdit ? "You don't have permission to edit this agent context. Ask a workspace admin for edit access." : '';
+  const production = context.labels?.find((label) => label.name === 'production')?.version;
+  const latest = query.data.latest || versions.find((row) => row.number === context.latestVersion);
+  const newerPublished = production != null && latest?.number > production && latest?.id && latest?.digest;
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
-    <ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: { xs: 'none', sm: 'block' } } }} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
+    <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack spacing={0.5}>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {query.data.ownDraft && <Button color="primary" variant={editPrimary ? 'contained' : 'outlined'} disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+          {query.data.ownDraft && <Button color="primary" variant={editPrimary ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
           {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
-          {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={!onStartDraft} onClick={onStartDraft}>Start draft</Button>}
-          {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary ? 'contained' : 'outlined'} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
+          {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}
+          {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={cannotEdit || !viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
         </Stack>
+        <ActionReason id="context-edit-reason" reason={editReason} />
         {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">Editing {viewed ? `v${viewed.number}` : 'a release'} first saves and suspends your current draft.</Typography>}
       </Stack>}
       identity={<ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === 'production')?.version} draft={query.data.ownDraft}
@@ -63,6 +74,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
       tabs={<CustomTabs value={tab} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile onChange={(_, value) => selectTab(value)} aria-label="Context detail sections">
         {tabs.map(([value, label]) => <Tab key={value} value={value} label={label} id={`context-tab-${value}`} aria-controls={`context-panel-${value}`} />)}
       </CustomTabs>} />
+    {newerPublished && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }}><Typography variant="s3">v{latest.number} published · Production is still v{production}.</Typography><Button component={RouterLink} variant="outlined" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button></Stack>}
     {!available && <Typography variant="s3" color="text.secondary">That section isn&apos;t available here. Showing Instructions.</Typography>}
     <Box role="tabpanel" id={`context-panel-${tab}`} aria-labelledby={`context-tab-${tab}`} sx={{ minWidth: 0 }}>
       {versionQuery.isLoading || state === 'loading' ? <ContentSkeleton variant="panel" /> : versionQuery.error || state === 'error' ? <ErrorState title={`Couldn't load ${params.get('version') ? `v${params.get('version')}` : 'this release'}`} detail="The release request failed. Check your connection and try again." onRetry={versionQuery.refetch} /> : noRelease || state === 'empty' ? <EmptyState title="No published files" description="Open your draft to review and publish it." action={onReviewDraft && query.data.ownDraft ? <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button> : undefined} /> : <>
@@ -77,7 +89,6 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
           </Stack>
         </Stack>}
         {tab === 'links' && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}
-        {tab === 'versions' && viewed?.digest && <TechnicalDetails title="Release details"><IdentityChip value={viewed.digest} label="Digest" /></TechnicalDetails>}
         {sections[tab]}
       </>}
     </Box>
