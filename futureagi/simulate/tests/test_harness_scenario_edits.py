@@ -254,3 +254,20 @@ def test_amend_to_empty_sources_is_refused(user, workspace, storage, auth_client
 
     assert refused["receipts"][0]["outcome"] == "refused"
     assert refused["receipts"][0]["why"] == NO_SOURCES
+
+
+def test_amend_to_a_blank_assumption_is_refused(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "ed-blank-assumption")
+
+    refused = _amend_with(
+        auth_client,
+        environment,
+        NAMES[0],
+        "sources",
+        [{"kind": "assumption", "quote": "  ", "supports": ""}],
+    )
+
+    assert refused["receipts"][0]["outcome"] == "refused"
+    assert refused["receipts"][0]["why"] == (
+        "sources[0]: an assumption source says what was assumed"
+    )
