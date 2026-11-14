@@ -673,6 +673,7 @@ class TestApiKeyFromAgentDefinition:
         type(agent.latest_version).credentials = PropertyMock(
             return_value=SimpleNamespace(
                 provider_type="vapi",
+                api_key="enc::synthetic",
                 get_api_key=lambda: "version-key",
                 assistant_id="row-assistant",
             )
@@ -693,6 +694,61 @@ class TestApiKeyFromAgentDefinition:
             "definition-key",
             "synthetic-assistant",
         )
+
+    @pytest.mark.parametrize("source", ["version", "legacy", "preversioned"])
+    @pytest.mark.parametrize(
+        "state",
+        [
+            "keyed",
+            "empty",
+            "unreadable",
+            "decrypted-empty",
+            "wrong-provider",
+            "wrong-empty",
+        ],
+    )
+    def test_credential_source_distinguishes_empty_and_unusable_keys(
+        self, source, state
+    ):
+        agent = self._agent(
+            plaintext="definition-key", versioned=source != "preversioned"
+        )
+        decrypt = Mock(return_value="" if state == "decrypted-empty" else "row-key")
+        if state == "unreadable":
+            decrypt.side_effect = ValueError("Synthetic unreadable credential")
+        credentials = SimpleNamespace(
+            provider_type="retell" if state.startswith("wrong") else "vapi",
+            api_key="" if state in ("empty", "wrong-empty") else "enc::synthetic",
+            get_api_key=decrypt,
+            assistant_id="row-assistant",
+            agent_version=None,
+        )
+        if source == "version":
+            type(agent.latest_version).credentials = PropertyMock(
+                return_value=credentials
+            )
+        else:
+            type(agent).credentials_legacy = PropertyMock(return_value=credentials)
+
+        if state == "unreadable":
+            with pytest.raises(ValueError, match="Synthetic unreadable credential"):
+                VapiRecordingService.configuration_from_agent_definition(agent)
+            decrypt.assert_called_once_with()
+            return
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        if state == "empty":
+            expected = ("definition-key", "synthetic-assistant")
+            decrypt.assert_not_called()
+        elif state.startswith("wrong"):
+            expected = (None, None)
+            decrypt.assert_not_called()
+        else:
+            expected = (
+                None if state == "decrypted-empty" else "row-key",
+                "row-assistant",
+            )
+            decrypt.assert_called_once_with()
+        assert (configuration.api_key, configuration.assistant_id) == expected
 
     def test_falls_back_when_no_version_or_encrypted_credentials(self):
         agent = self._agent(versioned=False, plaintext="legacy-plaintext")
@@ -718,7 +774,10 @@ class TestGetApiKeyForProject:
             latest_version=SimpleNamespace(
                 configuration_snapshot={"assistant_id": "synthetic-assistant"},
                 credentials=SimpleNamespace(
-                    provider_type="vapi", get_api_key=lambda: "abc", assistant_id=""
+                    provider_type="vapi",
+                    api_key="enc::synthetic",
+                    get_api_key=lambda: "abc",
+                    assistant_id="",
                 ),
             ),
         )

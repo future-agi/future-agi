@@ -370,45 +370,169 @@ def test_direct_vapi_rehost_preserves_preversioned_plaintext_key(provider, monke
 
 
 @pytest.mark.parametrize("provider", ["vapi"], indirect=True)
-@pytest.mark.parametrize("state", ["absent", "empty", "wrong_provider", "unreadable"])
+@pytest.mark.parametrize("legacy", [False, True], ids=["no-legacy", "stale-legacy"])
+@pytest.mark.parametrize(
+    "state",
+    ["keyed", "absent", "empty", "wrong_provider", "wrong_provider_empty", "unreadable"],
+)
 def test_versioned_vapi_credential_authority_with_legacy_key(
-    provider, monkeypatch, state
+    provider, monkeypatch, state, legacy
 ):
-    agent = attach_agent(provider, api_key="obsolete-plaintext")
+    agent = attach_agent(
+        provider, api_key="definition-key", assistant_id="definition-assistant"
+    )
     version = AgentVersion.objects.create(
         agent_definition=agent,
         organization=provider.organization,
         workspace=provider.workspace,
         version_number=1,
         status="active",
+        configuration_snapshot={"assistant_id": "snapshot-assistant"},
         commit_message="Synthetic version",
     )
-    ProviderCredentials.objects.create(
-        agent_definition=agent, provider_type="vapi", api_key="legacy-encrypted-key"
-    )
+    if legacy:
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type="vapi",
+            api_key="legacy-encrypted-key",
+            assistant_id="legacy-assistant",
+        )
     if state != "absent":
         ProviderCredentials.objects.create(
             agent_version=version,
-            provider_type="retell" if state == "wrong_provider" else "vapi",
+            provider_type="retell" if state.startswith("wrong_provider") else "vapi",
             api_key=""
-            if state == "empty"
-            else ("enc::invalid" if state == "unreadable" else "other-provider-key"),
+            if state in ("empty", "wrong_provider_empty")
+            else ("enc::invalid" if state == "unreadable" else "row-key"),
+            assistant_id="row-assistant",
         )
     normalizer = Mock(return_value={})
     monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
+    listing = Mock(return_value=Mock(json=lambda: []))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    watermark = provider.last_fetched_at
 
-    if state == "absent":
-        # Versions predating the credential migration may use the encrypted row.
+    if state in ("keyed", "absent", "empty"):
+        # Only an absent version row may use legacy credentials. An empty row
+        # created by a masked/omitted-key save uses the entire definition pair.
+        if state == "keyed":
+            expected = ("row-key", "row-assistant")
+        elif state == "absent" and legacy:
+            expected = ("legacy-encrypted-key", "legacy-assistant")
+        else:
+            expected = ("definition-key", "definition-assistant")
         op.process_and_store_logs([{"id": "synthetic-call"}], provider)
-        assert normalizer.call_args.kwargs["api_key"] == "legacy-encrypted-key"
-        assert ObservabilityService.resolve_vapi_configuration(provider).api_key == (
-            "legacy-encrypted-key"
+        assert normalizer.call_args.kwargs["api_key"] == expected[0]
+        configuration = ObservabilityService.resolve_vapi_configuration(provider)
+        assert (configuration.api_key, configuration.assistant_id) == expected
+        assert poll(provider) == op.StoreOutcome(0, 0, 0)
+        listing.assert_called_once()
+        assert listing.call_args.kwargs["headers"]["Authorization"] == (
+            f"Bearer {expected[0]}"
         )
+        assert listing.call_args.kwargs["params"]["assistantId"] == expected[1]
+        provider.refresh_from_db()
+        assert "configuration_health" not in provider.poll_state
     else:
-        # An existing version row must not resurrect either kind of stale key.
+        # Neither unreadable ciphertext nor another provider's row permits any
+        # fallback, even when both the legacy and definition keys are usable.
         with pytest.raises(ValueError):
             op.process_and_store_logs([{"id": "synthetic-call"}], provider)
         normalizer.assert_not_called()
+        assert poll(provider) is None
+        listing.assert_not_called()
+        provider.refresh_from_db()
+        assert provider.poll_state["configuration_health"]["reason_code"] == (
+            "credential_unreadable" if state == "unreadable" else "missing_key"
+        )
+        assert provider.last_fetched_at == watermark
+    assert provider.poll_state["other"] == {"sentinel": "preserved"}
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+@pytest.mark.parametrize("versioned", [False, True])
+def test_empty_vapi_row_without_definition_key_stays_misconfigured(
+    provider, monkeypatch, versioned
+):
+    agent = attach_agent(provider, api_key=None)
+    if versioned:
+        version = AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=provider.organization,
+            workspace=provider.workspace,
+            version_number=1,
+            status="active",
+            commit_message="Synthetic version",
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version, provider_type="vapi", api_key=""
+        )
+    ProviderCredentials.objects.create(
+        agent_definition=agent,
+        provider_type="vapi",
+        api_key="stale-legacy-key" if versioned else "",
+        assistant_id="legacy-assistant",
+    )
+    listing = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    watermark = provider.last_fetched_at
+    assert poll(provider) is None
+    listing.assert_not_called()
+    provider.refresh_from_db()
+    assert provider.poll_state["configuration_health"]["reason_code"] == "missing_key"
+    assert provider.last_fetched_at == watermark
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+@pytest.mark.parametrize("migrated", [False, True], ids=["pre-migration", "backfilled"])
+@pytest.mark.parametrize("row_assistant", ["", "legacy-assistant"])
+def test_vapi_legacy_key_uses_its_own_assistant_source(
+    provider, monkeypatch, migrated, row_assistant
+):
+    agent = attach_agent(
+        provider, api_key="definition-key", assistant_id="definition-assistant"
+    )
+    AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=1,
+        status="active",
+        configuration_snapshot={"assistant_id": "selected-assistant"},
+        commit_message="Synthetic selected version",
+    )
+    newer = AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=2,
+        status="draft",
+        configuration_snapshot={"assistant_id": "legacy-snapshot-assistant"},
+        commit_message="Synthetic latest version",
+    )
+    # Migration 0076 adds a latest-version link without clearing the legacy FK.
+    credentials = ProviderCredentials.objects.create(
+        agent_definition=agent,
+        agent_version=newer if migrated else None,
+        provider_type="vapi",
+        api_key="legacy-key",
+        assistant_id=row_assistant,
+    )
+    original_ciphertext = credentials.api_key
+    expected_assistant = row_assistant or (
+        "legacy-snapshot-assistant" if migrated else "definition-assistant"
+    )
+    listing = Mock(return_value=Mock(json=lambda: []))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    assert poll(provider) == op.StoreOutcome(0, 0, 0)
+    listing.assert_called_once()
+    assert listing.call_args.kwargs["headers"]["Authorization"] == "Bearer legacy-key"
+    assert listing.call_args.kwargs["params"]["assistantId"] == expected_assistant
+    credentials.refresh_from_db()
+    assert credentials.api_key == original_ciphertext
+    assert credentials.assistant_id == row_assistant
+    assert credentials.agent_definition_id == agent.pk
+    assert credentials.agent_version_id == (newer.pk if migrated else None)
 
 
 @pytest.mark.parametrize("explicit_key", [None, ""])

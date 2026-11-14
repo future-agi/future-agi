@@ -241,39 +241,51 @@ class VapiRecordingService:
     ) -> VapiConfiguration:
         """Select one source for the key and the assistant, never one of each.
 
-        The selected version's credential row holds both; in-place edits update
-        its assistant together with its key, while the version snapshot can
-        predate such edits and is only the fallback for a row without one.
-        Activating a historical version does not restore AgentDefinition's
-        fields, so a version's row is never mixed with the definition. A
-        version without a row uses the encrypted legacy row (predating the
-        migration). With no encrypted row at all, the definition's own key and
-        assistant are used together, as call listing did before versions held
-        credentials.
+        A keyed version row supplies the pair; its own snapshot only fills in
+        a missing assistant. A missing row permits the legacy credential source.
+        Migration 0076 can link that legacy row to a different version, whose
+        snapshot must then be used rather than the selected version's snapshot.
+
+        Saving a masked or omitted key can create an empty credential row while
+        leaving the definition's key intact. Only an absent row or empty stored
+        key permits the definition's key AND assistant as a pair, never its key
+        with a credential/snapshot assistant. A wrong-provider row or a nonempty
+        key that cannot be decrypted must not fall back to another source.
         """
         from simulate.models.agent_definition import ProviderCredentials
 
         version = agent_def.active_version or agent_def.latest_version
-        fallback_assistant = (
-            (version.configuration_snapshot or {}).get("assistant_id")
-            if version is not None
-            else agent_def.assistant_id
-        )
-        try:
-            if version is None:
+        credentials = None
+        credential_version = version
+        if version is not None:
+            try:
+                credentials = version.credentials
+            except ProviderCredentials.DoesNotExist:
+                pass
+        if credentials is None:
+            try:
                 credentials = agent_def.credentials_legacy
+            except ProviderCredentials.DoesNotExist:
+                pass
             else:
-                try:
-                    credentials = version.credentials
-                except ProviderCredentials.DoesNotExist:
-                    credentials = agent_def.credentials_legacy
-        except ProviderCredentials.DoesNotExist:
+                credential_version = credentials.agent_version
+        if (
+            credentials is not None
+            and credentials.provider_type != ProviderCredentials.ProviderType.VAPI
+        ):
+            return VapiConfiguration(None, None)
+        # Check storage, not the decrypted result: ciphertext is authoritative
+        # even if decrypting it fails or yields no usable key. An empty selected
+        # row must not resurrect a stale legacy row either.
+        if credentials is None or not credentials.api_key:
             return VapiConfiguration(
                 agent_def.api_key or None, agent_def.assistant_id or None
             )
-        if credentials.provider_type != ProviderCredentials.ProviderType.VAPI:
-            return VapiConfiguration(None, None)
-        # A present row is authoritative for the key even when empty or unreadable.
+        fallback_assistant = (
+            (credential_version.configuration_snapshot or {}).get("assistant_id")
+            if credential_version is not None
+            else agent_def.assistant_id
+        )
         return VapiConfiguration(
             credentials.get_api_key() or None,
             credentials.assistant_id or fallback_assistant or None,

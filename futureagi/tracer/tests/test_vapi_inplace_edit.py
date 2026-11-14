@@ -58,7 +58,9 @@ def vapi_setup(user, workspace):
     return provider, client
 
 
-def seed_version(provider, assistant, number=1, status="active", agent=None):
+def seed_version(
+    provider, assistant, number=1, status="active", agent=None, *, with_credentials=True
+):
     if agent is None:
         agent = AgentDefinition.objects.create(
             agent_name="Synthetic voice agent",
@@ -81,12 +83,14 @@ def seed_version(provider, assistant, number=1, status="active", agent=None):
         configuration_snapshot={"assistant_id": assistant, "description": "preserved"},
         commit_message="Synthetic fixture",
     )
-    credentials = ProviderCredentials.objects.create(
-        agent_version=version,
-        provider_type="vapi",
-        assistant_id=assistant,
-        api_key="synthetic-key-A",
-    )
+    credentials = None
+    if with_credentials:
+        credentials = ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type="vapi",
+            assistant_id=assistant,
+            api_key="synthetic-key-A",
+        )
     return agent, version, credentials
 
 
@@ -519,6 +523,74 @@ def test_versioned_agent_without_credentials_uses_the_definitions_pair(
     assert imported == [("call-for-assistant-D", "assistant-D")]
     provider.refresh_from_db()
     assert "configuration_health" not in provider.poll_state
+
+
+@pytest.mark.parametrize("route", ["edit", "operations", "save-version"])
+@pytest.mark.parametrize(
+    "key", [None, "********", "synt...ey-A"], ids=["omitted", "masked", "display-mask"]
+)
+def test_save_without_credential_row_keeps_definition_pair(
+    vapi_setup, monkeypatch, route, key
+):
+    from simulate.services.agent_setup import agent_summary
+
+    provider, client = vapi_setup
+    agent, original, _ = seed_version(provider, "assistant-A", with_credentials=False)
+    assert not ProviderCredentials.objects.filter(agent_version=original).exists()
+    assert not ProviderCredentials.objects.filter(agent_definition=agent).exists()
+    payload = {"assistant_id": "assistant-B"}
+    if key is not None:
+        payload["api_key"] = key
+    if route == "save-version":
+        response = client.post(
+            f"/simulate/agent-definitions/{agent.id}/versions/create/",
+            {
+                **payload,
+                "commit_message": "Synthetic saved version",
+                "observability_enabled": True,
+            },
+            format="json",
+        )
+        expected_status = 201
+    else:
+        response = update_agent(client, agent, payload, route)
+        expected_status = 200
+    assert response.status_code == expected_status, response.data
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    credentials = selected.credentials
+    assert credentials.provider_type == "vapi"
+    assert credentials.api_key == ""
+    assert credentials.assistant_id == "assistant-B"
+    assert selected.configuration_snapshot["assistant_id"] == "assistant-B"
+    assert agent.api_key == "synthetic-key-A"
+    assert agent.assistant_id == "assistant-B"
+    summary = agent_summary(agent.id)
+    assert summary.key_present
+    assert summary.credential_id is None
+    assert summary.provider_agent_id == "assistant-B"
+    if route == "save-version":
+        assert selected.pk != original.pk
+        original.refresh_from_db()
+        assert original.status == "archived"
+        assert original.configuration_snapshot["assistant_id"] == "assistant-A"
+        assert not ProviderCredentials.objects.filter(agent_version=original).exists()
+    else:
+        assert selected.pk == original.pk
+
+    watermark = provider.last_fetched_at
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    assert poll(provider) == op.StoreOutcome(1, 0, 0)
+    assert requests_seen == [("Bearer synthetic-key-A", "assistant-B")]
+    assert imported == [("call-for-assistant-B", "assistant-B")]
+    VapiRecordingService.fetch_and_parse_call_logs.assert_called_once_with(
+        call_id="call-for-assistant-B", api_key="synthetic-key-A", legacy_url=None
+    )
+    provider.refresh_from_db()
+    assert "configuration_health" not in provider.poll_state
+    assert provider.last_fetched_at > watermark
+    assert provider.poll_state["other"] == {"sentinel": "preserved"}
 
 
 def test_edit_before_snapshots_tracked_assistants_uses_the_rows_pair(
