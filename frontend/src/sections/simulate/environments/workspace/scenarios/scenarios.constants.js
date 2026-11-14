@@ -66,6 +66,15 @@ export const SCENARIOS_COPY = {
     `Suite ${suite} on environment ${environment}${candidate ? " (candidate)" : ""}`,
   versionsInView:
     "Showing these versions. Cases proved here read Validated; they read Active once these versions are saved.",
+  recordHint: "This case presumes a record the world does not hold.",
+  recordTable: "Table",
+  recordPick: "Record",
+  useRealRecord: "Use a real record",
+  approveSynthetic: "Approve as a synthetic record",
+  syntheticId: "Synthetic record id",
+  realRecordMessage: (key, table, id) =>
+    `Change scenario ${key} to use ${table} record ${id} instead of the record it presumes that the world does not hold.`,
+  syntheticQuote: (user) => `Synthetic record approved by ${user}`,
   activate: "Activate",
   activateHint: "Activating saves these versions. It does not start a run.",
   activateNothing: "Nothing to save: these versions are not unsaved changes.",

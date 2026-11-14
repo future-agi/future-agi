@@ -9,6 +9,7 @@ import {
   amendHarnessScenarios,
   archiveHarnessScenario,
   getHarnessScenarioCoverage,
+  getHarnessScenarioRecords,
   getHarnessScenarioValidation,
   getHarnessSourceChanges,
   listHarnessScenarioRevisions,
@@ -179,6 +180,16 @@ export function useArchiveScenario(jobId) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: scenariosListKey(jobId) });
     },
+  });
+}
+
+/** Seeded rows of one table for a case whose record is missing; read-only. */
+export function useScenarioRecords(jobId, key, table) {
+  return useQuery({
+    queryKey: [...scenariosListKey(jobId), "records", key, table],
+    queryFn: () => getHarnessScenarioRecords(jobId, key, table),
+    enabled: Boolean(jobId && key && table),
+    meta: { errorHandled: true },
   });
 }
 

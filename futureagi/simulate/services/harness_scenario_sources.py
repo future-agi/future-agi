@@ -127,6 +127,48 @@ def requested_uncovered(environment: Any) -> list[str]:
     return [line for line in lines if normalise(line) not in quotes]
 
 
+SEED_STATE = "state.json"
+SEED_ROWS_MAX = 50
+
+
+def seed_records(environment: Any, table: str) -> dict[str, Any]:
+    """Up to 50 rows of one table as the default environment version's seeded world holds them,
+    read from its stored archive (never the live database). `available` is false for a world whose
+    records live only in the agent's own service."""
+    import json
+
+    version = getattr(environment, "environment_version", None)
+    body = (
+        file_bodies(version, {SEED_STATE}).get(SEED_STATE)
+        if version is not None
+        else None
+    )
+    if body is None:
+        return {"table": table, "rows": [], "available": False}
+    try:
+        state = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {"table": table, "rows": [], "available": False}
+    tables = (
+        state.get("tables")
+        if isinstance(state, Mapping) and isinstance(state.get("tables"), Mapping)
+        else state
+    )
+    found = tables.get(table) if isinstance(tables, Mapping) else None
+    if isinstance(found, Mapping):
+        rows = [
+            {"id": str(key), **value}
+            if isinstance(value, Mapping)
+            else {"id": str(key), "value": value}
+            for key, value in found.items()
+        ]
+    elif isinstance(found, list):
+        rows = [one if isinstance(one, Mapping) else {"value": one} for one in found]
+    else:
+        rows = []
+    return {"table": table, "rows": rows[:SEED_ROWS_MAX], "available": True}
+
+
 def _sub_goal_names(sub_goals: object) -> set[str]:
     return {
         str(one.get("name") if isinstance(one, Mapping) else one)
