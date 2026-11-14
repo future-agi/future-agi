@@ -135,7 +135,7 @@ export default function EditableAccordionCategorical({
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}
@@ -218,7 +218,7 @@ export default function EditableAccordionCategorical({
                           bgcolor={"background.neutral"}
                           fontWeight={"600"}
                           sx={{
-                            fontSize: "13px",
+                            fontSize: "12px",
                             padding: "5px 10px",
                             borderLeft:
                               index === 0 ? "none" : "1px solid black",

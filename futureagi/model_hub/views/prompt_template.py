@@ -2032,11 +2032,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if (
-                                    emit is not None
-                                    and UsageEvent is not None
-                                    and BillingEventType is not None
-                                ):
+                                if emit is not None and UsageEvent is not None:
                                     emit(
                                         UsageEvent(
                                             org_id=str(organization.id),
@@ -2286,9 +2282,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 prompt_eval.mapping = new_config.get("mapping", {})
                 prompt_eval.config = normalized_config
                 prompt_eval.kb = kb
-                prompt_eval.error_localizer = new_config.get(
-                    "error_localizer", False
-                )
+                prompt_eval.error_localizer = new_config.get("error_localizer", False)
                 prompt_eval.save(
                     update_fields=[
                         "name",

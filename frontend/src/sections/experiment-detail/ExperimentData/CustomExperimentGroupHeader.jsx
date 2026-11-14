@@ -104,7 +104,7 @@ const CustomExperimentGroupHeader = ({
         {renderIcon()}
         <Typography
           fontWeight={600}
-          fontSize="13px"
+          fontSize="12px"
           color={"text.secondary"}
           sx={{
             textOverflow: "ellipsis",

@@ -25,6 +25,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import { useAddQueueItems } from "src/api/annotation-queues/annotation-queues";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -1196,7 +1197,7 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
                 )}
               </Box>
               <Box sx={{ flex: 1 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+                <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                   {src.label}
                 </Typography>
                 <Typography variant="caption" color="text.tertiary">
@@ -1354,7 +1355,7 @@ function StatusBar({ api }) {
   }, [api]);
 
   return (
-    <Box sx={{ px: 2, py: 1, fontSize: 13, color: "text.secondary" }}>
+    <Box sx={{ px: 2, py: 1, fontSize: 12, color: "text.secondary" }}>
       Showing Rows: {loadedRows} /{" "}
       {totalRowsIsLowerBound ? "Matching Rows: at least" : "Total Rows:"}{" "}
       {totalRows}
@@ -3510,7 +3511,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       suppressSizeToFit: false,
       cellStyle: {
         padding: "0px 20px",
-        fontSize: "13px",
+        fontSize: "12px",
         height: "100%",
       },
     }),

@@ -34,7 +34,7 @@ export const FilterListItemButton = styled(ListItemButton)(() => ({
 export const FilterListItemText = styled(ListItemText)(() => ({
   ".MuiListItemText-primary": {
     fontWeight: 400,
-    fontSize: "13px",
+    fontSize: "12px",
     color: "text.primary",
   },
 }));

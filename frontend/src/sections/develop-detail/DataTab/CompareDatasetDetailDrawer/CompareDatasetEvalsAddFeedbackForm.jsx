@@ -100,7 +100,7 @@ const AllSelectField = ({ label, ...rest }) => {
 const Label1 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -114,7 +114,7 @@ const Label1 = () => {
 const Label2 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re- calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -128,7 +128,7 @@ const Label2 = () => {
 const Label3 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune and re-calculate for this dataset
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -250,7 +250,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: "400",
             lineHeight: "21px",
             padding: "16px",
@@ -378,7 +378,7 @@ const SubmittedFeedback = ({ control, data }) => {
           borderRadius: "12px",
         }}
       >
-        <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+        <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
           {data?.eval_name}
         </Typography>
         <Typography sx={{ fontSize: "12px" }}>

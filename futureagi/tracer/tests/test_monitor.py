@@ -631,6 +631,58 @@ class TestUserAlertMonitorListAPI:
         rendered = rows[0]["metric_type"]
         assert rendered == f"{eval_config.name} (Incomplete)"
 
+    @pytest.mark.parametrize("config_name", [None, "Named Eval Config"])
+    def test_choice_monitor_metric_name_uses_display_name(
+        self, auth_client, organization, workspace, observe_project, config_name
+    ):
+        template = EvalTemplate.objects.create(
+            name=f"Choices Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "choices"},
+            choices=["Complete", "Incomplete"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=config_name,
+            project=observe_project,
+            eval_template=template,
+            config={},
+            mapping={},
+            filters={},
+        )
+        monitor = UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Choice Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Incomplete",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+        expected = f"{config_name or template.name} (Incomplete)"
+
+        response = auth_client.get(
+            "/tracer/user-alerts/", {"project_id": str(observe_project.id)}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result_rows(response)[0]["metric_name"] == expected
+
+        response = auth_client.get(
+            "/tracer/user-alerts/list_monitors/",
+            {"project_id": str(observe_project.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["table"][0]["metric_type"] == expected
+
+        response = auth_client.get(f"/tracer/user-alerts/{monitor.id}/details/")
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["metric_name"] == expected
+
 
 @pytest.mark.integration
 @pytest.mark.api

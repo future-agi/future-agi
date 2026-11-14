@@ -475,7 +475,7 @@ const NotFoundView = () => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="13px"
+          fontSize="12px"
           fontStyle="italic"
           lineHeight={1.6}
           maxWidth="450px"

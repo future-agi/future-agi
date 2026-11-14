@@ -30,6 +30,7 @@ queries with the same execution semantics the view would use.
 Routing decisions and diff-logging live in v2/shadow.py — this module
 just glues that to the dispatch table + the execute callable.
 """
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -53,14 +54,14 @@ logger = structlog.get_logger(__name__)
 
 # Helper type aliases — these are just callables; declaring them makes the
 # helper signatures self-documenting.
-BuildFn   = Callable[[type], Tuple[str, dict]]
+BuildFn = Callable[[type], Tuple[str, dict]]
 ExecuteFn = Callable[[str, dict], Any]
 
 
 def run_with_v2_shadow(
     *,
     query_type: str,
-    build:   BuildFn,
+    build: BuildFn,
     execute: ExecuteFn,
     normalize: Callable[[Any], Any] = lambda x: x,
 ) -> Any:
@@ -159,23 +160,30 @@ def run_with_v2_shadow(
         n2 = normalize(v2_result)
         if n1 != n2:
             sr.diff_count = 1
-            sr.diff_examples = [{
-                "v1_rows": _safe_len(v1_result),
-                "v2_rows": _safe_len(v2_result),
-                "v1_sample": _short(n1),
-                "v2_sample": _short(n2),
-            }]
+            sr.diff_examples = [
+                {
+                    "v1_rows": _safe_len(v1_result),
+                    "v2_rows": _safe_len(v2_result),
+                    "v1_sample": _short(n1),
+                    "v2_sample": _short(n2),
+                }
+            ]
 
     log_payload = {
-        "query_type": query_type, "mode": mode.value,
-        "v1_ms": sr.v1_elapsed_ms, "v2_ms": sr.v2_elapsed_ms,
-        "rows_v1": sr.rows_v1, "rows_v2": sr.rows_v2,
+        "query_type": query_type,
+        "mode": mode.value,
+        "v1_ms": sr.v1_elapsed_ms,
+        "v2_ms": sr.v2_elapsed_ms,
+        "rows_v1": sr.rows_v1,
+        "rows_v2": sr.rows_v2,
         "diff_count": sr.diff_count,
-        "err_v1": sr.error_v1, "err_v2": sr.error_v2,
+        "err_v1": sr.error_v1,
+        "err_v2": sr.error_v2,
     }
     if sr.diff_count or sr.error_v1 or sr.error_v2:
-        logger.warning("ch25_shadow_diff", **log_payload,
-                       diff_examples=sr.diff_examples)
+        logger.warning(
+            "ch25_shadow_diff", **log_payload, diff_examples=sr.diff_examples
+        )
     else:
         logger.info("ch25_shadow_match", **log_payload)
 
@@ -184,8 +192,9 @@ def run_with_v2_shadow(
         if v2_ok:
             return v2_result
         # v2 failed — fall back to v1 to keep the user-facing path alive.
-        logger.error("ch25_v2_primary_fallback_to_v1",
-                     query_type=query_type, err=sr.error_v2)
+        logger.error(
+            "ch25_v2_primary_fallback_to_v1", query_type=query_type, err=sr.error_v2
+        )
         if v1_ok:
             return v1_result
         # Both failed — re-raise the v2 exception so the operator sees it.

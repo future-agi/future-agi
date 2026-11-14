@@ -125,9 +125,12 @@ func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*ht
 }
 
 func (a *crowdstrikeAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp crowdstrikeResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse crowdstrike response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse crowdstrike response: %v", err))
 	}
 
 	if !resp.Result.Blocked {

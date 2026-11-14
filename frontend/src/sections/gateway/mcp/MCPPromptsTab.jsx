@@ -139,7 +139,7 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                           <Typography
                             variant="body2"
                             fontWeight={600}
-                            sx={{ fontFamily: "monospace", fontSize: 13 }}
+                            sx={{ fontFamily: "monospace", fontSize: 12 }}
                           >
                             {prompt.name}
                           </Typography>

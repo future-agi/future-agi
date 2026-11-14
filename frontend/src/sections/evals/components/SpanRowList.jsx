@@ -155,7 +155,7 @@ const SpanRowList = ({
               <Typography
                 variant="caption"
                 fontWeight={500}
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
                 noWrap
               >
                 {nameLabel}

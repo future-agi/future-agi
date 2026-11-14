@@ -170,7 +170,9 @@ def provider_list(monkeypatch):
         module.calls += 1
         if not module.published:
             raise ProviderListNotPublished("not published")
-        return types.SimpleNamespace(providers={name: object() for name in module.listed})
+        return types.SimpleNamespace(
+            providers={name: object() for name in module.listed}
+        )
 
     module.read_provider_list = read_provider_list
     monkeypatch.setitem(sys.modules, "simulate.services.provider_list", module)
@@ -234,7 +236,10 @@ def _without_extension(agent):
 def test_source_agent_round_trips(version):
     agent = source_agent()
 
-    assert store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3") == "stored"
+    assert (
+        store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3")
+        == "stored"
+    )
 
     assert stored_agent(version.id, with_raw_setup=True) == agent
     assert stored_agent(version.id) == _without_extension(agent)
@@ -245,7 +250,9 @@ def test_hosted_agent_with_every_column_round_trips(hosted_version, provider_lis
     agent = hosted_agent()
 
     assert (
-        store_agent(agent_version_id=hosted_version.id, agent=agent, sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=hosted_version.id, agent=agent, sdk_version="0.2.3"
+        )
         == "stored"
     )
 
@@ -273,10 +280,14 @@ SHAPE_REFUSALS = {
     "unknown_top_level_key": lambda a: a.update(owner="me"),
     "unknown_nested_key": lambda a: a["behaviour"][0].update(owner="me"),
     "missing_field": lambda a: a.pop("gaps"),
-    "source_with_provider_ref": lambda a: a.update(provider_ref={"provider": "vapi", "id": "x"}),
+    "source_with_provider_ref": lambda a: a.update(
+        provider_ref={"provider": "vapi", "id": "x"}
+    ),
     "hosted_without_provider_ref": lambda a: a.update(kind="hosted"),
     "empty_behaviour": lambda a: a.update(behaviour=[]),
-    "repeated_unit_id": lambda a: a["behaviour"].append(copy.deepcopy(a["behaviour"][0])),
+    "repeated_unit_id": lambda a: a["behaviour"].append(
+        copy.deepcopy(a["behaviour"][0])
+    ),
     "unit_id_pattern": lambda a: a["behaviour"][0].update(id="Main Unit"),
     "unit_tool_unknown": lambda a: a["behaviour"][0]["tools"].append("nope"),
     "unknown_type": lambda a: a.update(type="email"),
@@ -294,8 +305,12 @@ SHAPE_REFUSALS = {
     "parameters_not_object": lambda a: a["tools"][0].update(parameters=[1]),
     "boolean_as_number": lambda a: a.update(model={"name": "m", "temperature": True}),
     "extension_not_object": lambda a: a.update(extension=[]),
-    "max_tokens_over_the_column": lambda a: a.update(model={"name": "m", "max_tokens": 2**31}),
-    "max_tokens_below_the_column": lambda a: a.update(model={"name": "m", "max_tokens": -(2**31) - 1}),
+    "max_tokens_over_the_column": lambda a: a.update(
+        model={"name": "m", "max_tokens": 2**31}
+    ),
+    "max_tokens_below_the_column": lambda a: a.update(
+        model={"name": "m", "max_tokens": -(2**31) - 1}
+    ),
     "nul_in_instructions": lambda a: a["behaviour"][0].update(instructions="a\x00b"),
     "nul_in_name": lambda a: a.update(name="a\x00b"),
     "nul_in_tool_description": lambda a: a["tools"][0].update(description="a\x00b"),
@@ -309,7 +324,9 @@ SHAPE_REFUSALS = {
 @pytest.mark.parametrize("mutate", SHAPE_REFUSALS.values(), ids=SHAPE_REFUSALS.keys())
 def test_store_repeats_the_sdk_shape_checks(version, provider_list, mutate):
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=_invalid(mutate), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=_invalid(mutate), sdk_version="0.2.3"
+        )
 
     assert raised.value.code == "agent_invalid"
     assert _rows() == (0, 0, 0, 0)
@@ -330,34 +347,51 @@ def test_store_accepts_the_text_backslash_u0000_and_the_largest_column_int(versi
 @pytest.mark.parametrize("sdk_version", ["", "x" * 33, 3])
 def test_store_refuses_a_bad_sdk_version(version, sdk_version):
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version=sdk_version)
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version=sdk_version
+        )
 
     assert raised.value.code == "agent_invalid"
 
 
 @pytest.mark.django_db
-def test_store_accepts_null_parameters_null_model_and_extension_keys_of_its_own(version):
+def test_store_accepts_null_parameters_null_model_and_extension_keys_of_its_own(
+    version,
+):
     agent = source_agent()
     agent["tools"][0]["parameters"] = None
     agent["extension"] = {"contract": {"anything": {"nested": [1, 2]}}, "extra": True}
 
-    assert store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3") == "stored"
+    assert (
+        store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3")
+        == "stored"
+    )
 
 
 @pytest.mark.django_db
 def test_store_rejects_in_order(version, monkeypatch):
     monkeypatch.setattr(service, "AGENT_MAX_BYTES", 10)
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=uuid.uuid4(), agent=_invalid(lambda a: a.update(type="x")), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=uuid.uuid4(),
+            agent=_invalid(lambda a: a.update(type="x")),
+            sdk_version="0.2.3",
+        )
     assert raised.value.code == "agent_too_large"
 
     monkeypatch.setattr(service, "AGENT_MAX_BYTES", 1_048_576)
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=uuid.uuid4(), agent=_invalid(lambda a: a.update(type="x")), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=uuid.uuid4(),
+            agent=_invalid(lambda a: a.update(type="x")),
+            sdk_version="0.2.3",
+        )
     assert raised.value.code == "agent_version_not_found"
 
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=float("nan"), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=float("nan"), sdk_version="0.2.3"
+        )
     assert raised.value.code == "agent_invalid"
     assert _rows() == (0, 0, 0, 0)
 
@@ -367,7 +401,9 @@ def test_store_refuses_a_deleted_version(version):
     version.delete()
 
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
 
     assert raised.value.code == "agent_version_not_found"
 
@@ -376,7 +412,12 @@ def test_store_refuses_a_deleted_version(version):
 def test_source_agent_never_reads_the_provider_list(version, monkeypatch):
     monkeypatch.delitem(sys.modules, "simulate.services.provider_list", raising=False)
 
-    assert store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3") == "stored"
+    assert (
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
+        == "stored"
+    )
 
 
 @pytest.mark.django_db
@@ -384,7 +425,11 @@ def test_hosted_agent_needs_a_published_provider_list(hosted_version, provider_l
     provider_list.published = False
 
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=hosted_version.id,
+            agent=hosted_agent(),
+            sdk_version="0.2.3",
+        )
 
     assert raised.value.code == "agent_schema_unavailable"
     assert _rows() == (0, 0, 0, 0)
@@ -395,13 +440,19 @@ def test_hosted_agent_needs_a_listed_provider(hosted_version, provider_list):
     provider_list.listed = {"retell"}
 
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=hosted_version.id,
+            agent=hosted_agent(),
+            sdk_version="0.2.3",
+        )
 
     assert raised.value.code == "provider_not_listed"
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(("assistant_id", "outcome"), [("asst_other", "refused"), ("asst_1", "stored")])
+@pytest.mark.parametrize(
+    ("assistant_id", "outcome"), [("asst_other", "refused"), ("asst_1", "stored")]
+)
 def test_hosted_agent_must_match_the_versions_credential_row(
     hosted_version, provider_list, assistant_id, outcome
 ):
@@ -413,10 +464,21 @@ def test_hosted_agent_must_match_the_versions_credential_row(
     )
 
     if outcome == "stored":
-        assert store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3") == "stored"
+        assert (
+            store_agent(
+                agent_version_id=hosted_version.id,
+                agent=hosted_agent(),
+                sdk_version="0.2.3",
+            )
+            == "stored"
+        )
         return
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=hosted_version.id,
+            agent=hosted_agent(),
+            sdk_version="0.2.3",
+        )
     assert raised.value.code == "provider_ref_mismatch"
 
 
@@ -424,24 +486,49 @@ def test_hosted_agent_must_match_the_versions_credential_row(
 def test_first_outcome_wins(version):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
-    assert store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3") == "unchanged"
+    assert (
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
+        == "unchanged"
+    )
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=source_agent(setup_hash=HASH_B), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id,
+            agent=source_agent(setup_hash=HASH_B),
+            sdk_version="0.2.3",
+        )
     assert raised.value.code == "setup_outcome_already_stored"
-    assert store_setup_failure(agent_version_id=version.id, code="invalid_key", message="x") == "ignored"
+    assert (
+        store_setup_failure(
+            agent_version_id=version.id, code="invalid_key", message="x"
+        )
+        == "ignored"
+    )
     assert _rows()[0] == 1
 
 
 @pytest.mark.django_db
 def test_a_failed_outcome_also_wins(version):
-    assert store_setup_failure(agent_version_id=version.id, code="invalid_key", message="m" * 3000) == "failed"
+    assert (
+        store_setup_failure(
+            agent_version_id=version.id, code="invalid_key", message="m" * 3000
+        )
+        == "failed"
+    )
 
     with pytest.raises(AgentStoreError) as raised:
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
 
     assert raised.value.code == "setup_outcome_already_stored"
     outcome = setup_outcome(version.id)
-    assert (outcome.status, outcome.failure_code, len(outcome.failure_message)) == ("failed", "invalid_key", 2000)
+    assert (outcome.status, outcome.failure_code, len(outcome.failure_message)) == (
+        "failed",
+        "invalid_key",
+        2000,
+    )
 
 
 @pytest.mark.django_db
@@ -452,24 +539,41 @@ def test_setup_outcome_and_stored_agent_without_a_row(version):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
     outcome = setup_outcome(version.id)
-    assert (outcome.status, outcome.failure_code, outcome.failure_message) == ("stored", "", "")
+    assert (outcome.status, outcome.failure_code, outcome.failure_message) == (
+        "stored",
+        "",
+        "",
+    )
 
 
 @pytest.mark.django_db
-def test_stored_agent_hides_a_stale_hosted_agent(hosted_definition, hosted_version, provider_list):
-    store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
-    AgentDefinition.objects.filter(id=hosted_definition.id).update(assistant_id="asst_new")
+def test_stored_agent_hides_a_stale_hosted_agent(
+    hosted_definition, hosted_version, provider_list
+):
+    store_agent(
+        agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3"
+    )
+    AgentDefinition.objects.filter(id=hosted_definition.id).update(
+        assistant_id="asst_new"
+    )
 
     assert stored_agent(hosted_version.id) is None
-    assert stored_agent(hosted_version.id, include_stale=True)["provider_ref"]["id"] == "asst_1"
+    assert (
+        stored_agent(hosted_version.id, include_stale=True)["provider_ref"]["id"]
+        == "asst_1"
+    )
 
 
 @pytest.mark.django_db
 def test_the_endpoint_shows_a_stale_hosted_agent(
     auth_client, hosted_definition, hosted_version, provider_list
 ):
-    store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
-    AgentDefinition.objects.filter(id=hosted_definition.id).update(assistant_id="asst_new")
+    store_agent(
+        agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3"
+    )
+    AgentDefinition.objects.filter(id=hosted_definition.id).update(
+        assistant_id="asst_new"
+    )
 
     response = auth_client.get(
         f"/simulate/agent-definitions/{hosted_definition.id}/versions/{hosted_version.id}/agent/"
@@ -484,7 +588,9 @@ def test_the_endpoint_shows_a_stale_hosted_agent(
 @pytest.mark.django_db
 def test_a_source_agent_is_never_stale(definition, version):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
-    AgentDefinition.objects.filter(id=definition.id).update(provider="livekit", assistant_id="x")
+    AgentDefinition.objects.filter(id=definition.id).update(
+        provider="livekit", assistant_id="x"
+    )
 
     assert stored_agent(version.id) is not None
     assert agent_summary(definition.id).setup_stale is False
@@ -498,7 +604,11 @@ def test_summary_of_a_stored_source_agent(definition, version):
     summary = agent_summary(definition.id)
 
     assert summary.agent_stored is True
-    assert (summary.kind, summary.type, summary.instrumentation) == ("source", "chat", "traceai")
+    assert (summary.kind, summary.type, summary.instrumentation) == (
+        "source",
+        "chat",
+        "traceai",
+    )
     assert (summary.unit_ids, summary.setup_hash) == (("main",), HASH_A)
     assert (summary.provider, summary.provider_agent_id) == ("livekit", "")
     assert summary.agent_version_id == version.id
@@ -509,7 +619,11 @@ def test_summary_of_a_legacy_agent(definition, version):
     summary = agent_summary(definition.id)
 
     assert summary.agent_stored is False
-    assert (summary.kind, summary.instrumentation, summary.setup_hash) == (None, "none", None)
+    assert (summary.kind, summary.instrumentation, summary.setup_hash) == (
+        None,
+        "none",
+        None,
+    )
     assert (summary.type, summary.unit_ids) == ("chat", ("main",))
     assert summary.missing == ("provider", "provider_agent_id", "credential")
 
@@ -526,7 +640,9 @@ def test_summary_of_a_failed_row_is_legacy(definition, version):
 @pytest.mark.django_db
 def test_summary_falls_back_to_the_newest_stored_row(definition, version):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
 
     summary = agent_summary(definition.id)
 
@@ -537,9 +653,13 @@ def test_summary_falls_back_to_the_newest_stored_row(definition, version):
 @pytest.mark.django_db
 def test_summary_prefers_the_newest_of_two_stored_rows(definition, version):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
     store_agent(
-        agent_version_id=newer.id, agent=source_agent(setup_hash=HASH_B), sdk_version="0.2.3"
+        agent_version_id=newer.id,
+        agent=source_agent(setup_hash=HASH_B),
+        sdk_version="0.2.3",
     )
 
     summary = agent_summary(definition.id)
@@ -557,31 +677,53 @@ def test_summary_ignores_the_row_of_a_deleted_version(definition, version):
 
 
 @pytest.mark.django_db
-def test_summary_of_a_stale_hosted_agent(hosted_definition, hosted_version, provider_list):
-    store_agent(agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3")
-    AgentDefinition.objects.filter(id=hosted_definition.id).update(assistant_id="asst_new")
+def test_summary_of_a_stale_hosted_agent(
+    hosted_definition, hosted_version, provider_list
+):
+    store_agent(
+        agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3"
+    )
+    AgentDefinition.objects.filter(id=hosted_definition.id).update(
+        assistant_id="asst_new"
+    )
 
     summary = agent_summary(hosted_definition.id)
 
-    assert (summary.agent_stored, summary.setup_stale, summary.kind) == (False, True, None)
+    assert (summary.agent_stored, summary.setup_stale, summary.kind) == (
+        False,
+        True,
+        None,
+    )
     assert summary.provider_agent_id == "asst_new"
 
 
 @pytest.mark.django_db
 def test_summary_finds_the_active_versions_key(hosted_definition, hosted_version):
     credential = ProviderCredentials.objects.create(
-        agent_version=hosted_version, provider_type="vapi", api_key="sk-test", assistant_id="asst_1"
+        agent_version=hosted_version,
+        provider_type="vapi",
+        api_key="sk-test",
+        assistant_id="asst_1",
     )
 
     summary = agent_summary(hosted_definition.id)
 
-    assert (summary.credential_id, summary.key_present, summary.missing) == (credential.id, True, ())
+    assert (summary.credential_id, summary.key_present, summary.missing) == (
+        credential.id,
+        True,
+        (),
+    )
 
 
 @pytest.mark.django_db
-def test_summary_ignores_a_key_of_another_provider_type(hosted_definition, hosted_version):
+def test_summary_ignores_a_key_of_another_provider_type(
+    hosted_definition, hosted_version
+):
     ProviderCredentials.objects.create(
-        agent_version=hosted_version, provider_type="retell", api_key="sk-other", assistant_id="asst_1"
+        agent_version=hosted_version,
+        provider_type="retell",
+        api_key="sk-other",
+        assistant_id="asst_1",
     )
 
     summary = agent_summary(hosted_definition.id)
@@ -593,27 +735,45 @@ def test_summary_ignores_a_key_of_another_provider_type(hosted_definition, hoste
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("provider", "credential_type"),
-    [("retell", "retell"), ("livekit", "livekit"), ("livekit_bridge", "livekit"), ("anything_else", "vapi")],
+    [
+        ("retell", "retell"),
+        ("livekit", "livekit"),
+        ("livekit_bridge", "livekit"),
+        ("anything_else", "vapi"),
+    ],
 )
 def test_summary_looks_up_the_credential_type_of_each_provider(
     hosted_definition, hosted_version, provider, credential_type
 ):
     AgentDefinition.objects.filter(id=hosted_definition.id).update(provider=provider)
     credential = ProviderCredentials.objects.create(
-        agent_version=hosted_version, provider_type=credential_type, api_key="sk-test", assistant_id="asst_1"
+        agent_version=hosted_version,
+        provider_type=credential_type,
+        api_key="sk-test",
+        assistant_id="asst_1",
     )
 
     assert agent_summary(hosted_definition.id).credential_id == credential.id
 
 
 @pytest.mark.django_db
-def test_summary_pins_the_active_versions_key_over_a_newer_versions(hosted_definition, hosted_version):
+def test_summary_pins_the_active_versions_key_over_a_newer_versions(
+    hosted_definition, hosted_version
+):
     active_key = ProviderCredentials.objects.create(
-        agent_version=hosted_version, provider_type="vapi", api_key="sk-active", assistant_id="asst_1"
+        agent_version=hosted_version,
+        provider_type="vapi",
+        api_key="sk-active",
+        assistant_id="asst_1",
     )
-    newer = hosted_definition.create_version(description="", commit_message="draft", status="draft")
+    newer = hosted_definition.create_version(
+        description="", commit_message="draft", status="draft"
+    )
     ProviderCredentials.objects.create(
-        agent_version=newer, provider_type="vapi", api_key="sk-newer", assistant_id="asst_1"
+        agent_version=newer,
+        provider_type="vapi",
+        api_key="sk-newer",
+        assistant_id="asst_1",
     )
 
     assert agent_summary(hosted_definition.id).credential_id == active_key.id
@@ -653,18 +813,29 @@ def test_store_logs_the_outcome_without_the_document(version):
     from structlog.testing import capture_logs
 
     with capture_logs() as logs:
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
         with pytest.raises(AgentStoreError):
-            store_agent(agent_version_id=version.id, agent=source_agent(setup_hash=HASH_B), sdk_version="0.2.3")
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(setup_hash=HASH_B),
+                sdk_version="0.2.3",
+            )
 
     events = [entry["event"] for entry in logs]
     assert events == ["agent_setup_stored", "agent_setup_rejected"]
-    assert all("harbor_hotels" not in str(entry) and "booking assistant" not in str(entry) for entry in logs)
+    assert all(
+        "harbor_hotels" not in str(entry) and "booking assistant" not in str(entry)
+        for entry in logs
+    )
 
 
 @pytest.mark.django_db
 def test_versions_keep_no_part_of_the_agent(version):
-    snapshot = copy.deepcopy(AgentVersion.objects.get(id=version.id).configuration_snapshot)
+    snapshot = copy.deepcopy(
+        AgentVersion.objects.get(id=version.id).configuration_snapshot
+    )
 
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
@@ -697,16 +868,32 @@ def miss_next_read(monkeypatch):
 
 @pytest.mark.django_db
 def test_concurrent_store_one_row(definition, version, miss_next_read):
-    other = definition.create_version(description="", commit_message="second", status="draft")
+    other = definition.create_version(
+        description="", commit_message="second", status="draft"
+    )
     with transaction.atomic():
-        assert store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3") == "stored"
+        assert (
+            store_agent(
+                agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+            )
+            == "stored"
+        )
 
         miss_next_read()
         with pytest.raises(AgentStoreError) as raised:
-            store_agent(agent_version_id=version.id, agent=source_agent(setup_hash=HASH_B), sdk_version="0.2.3")
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(setup_hash=HASH_B),
+                sdk_version="0.2.3",
+            )
 
         assert raised.value.code == "setup_outcome_already_stored"
-        assert store_setup_failure(agent_version_id=other.id, code="invalid_key", message="x") == "failed"
+        assert (
+            store_setup_failure(
+                agent_version_id=other.id, code="invalid_key", message="x"
+            )
+            == "failed"
+        )
 
     assert AgentVersionSetup.all_objects.filter(agent_version=version).count() == 1
     assert AgentVersionSetup.all_objects.get(agent_version=version).setup_hash == HASH_A
@@ -715,10 +902,14 @@ def test_concurrent_store_one_row(definition, version, miss_next_read):
 @pytest.mark.django_db
 def test_concurrent_store_of_the_same_agent_is_unchanged(version, miss_next_read):
     with transaction.atomic():
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
 
         miss_next_read()
-        outcome = store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        outcome = store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
 
     assert outcome == "unchanged"
     assert AgentVersionSetup.all_objects.filter(agent_version=version).count() == 1
@@ -727,10 +918,14 @@ def test_concurrent_store_of_the_same_agent_is_unchanged(version, miss_next_read
 @pytest.mark.django_db
 def test_concurrent_failure_after_a_store_is_ignored(version, miss_next_read):
     with transaction.atomic():
-        store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+        store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
 
         miss_next_read()
-        outcome = store_setup_failure(agent_version_id=version.id, code="invalid_key", message="x")
+        outcome = store_setup_failure(
+            agent_version_id=version.id, code="invalid_key", message="x"
+        )
 
         assert outcome == "ignored"
         assert setup_outcome(version.id).status == "stored"
@@ -741,7 +936,13 @@ def test_concurrent_failure_after_a_store_is_ignored(version, miss_next_read):
 def _unit_agent(unit_id, setup_hash):
     agent = source_agent(setup_hash=setup_hash)
     agent["behaviour"] = [
-        {"id": unit_id, "shape": "external", "instructions": "x", "tools": [], "transitions": []}
+        {
+            "id": unit_id,
+            "shape": "external",
+            "instructions": "x",
+            "tools": [],
+            "transitions": [],
+        }
     ]
     agent["tools"] = []
     return agent
@@ -753,49 +954,109 @@ def _archive(version):
 
 @pytest.mark.django_db
 def test_summary_pinned_version(definition, version):
-    store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
-    store_agent(agent_version_id=newer.id, agent=_unit_agent("newer", HASH_B), sdk_version="0.2.3")
+    store_agent(
+        agent_version_id=version.id,
+        agent=_unit_agent("older", HASH_A),
+        sdk_version="0.2.3",
+    )
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
+    store_agent(
+        agent_version_id=newer.id,
+        agent=_unit_agent("newer", HASH_B),
+        sdk_version="0.2.3",
+    )
 
     pinned = agent_summary(definition.id, agent_version_id=version.id)
     unpinned = agent_summary(definition.id)
 
-    assert (pinned.agent_version_id, pinned.unit_ids, pinned.setup_hash) == (version.id, ("older",), HASH_A)
-    assert (unpinned.agent_version_id, unpinned.unit_ids, unpinned.setup_hash) == (newer.id, ("newer",), HASH_B)
+    assert (pinned.agent_version_id, pinned.unit_ids, pinned.setup_hash) == (
+        version.id,
+        ("older",),
+        HASH_A,
+    )
+    assert (unpinned.agent_version_id, unpinned.unit_ids, unpinned.setup_hash) == (
+        newer.id,
+        ("newer",),
+        HASH_B,
+    )
 
 
 @pytest.mark.django_db
 def test_summary_pinned_version_with_nothing_stored_reads_no_other_row(
     definition, version
 ):
-    store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
+    store_agent(
+        agent_version_id=version.id,
+        agent=_unit_agent("older", HASH_A),
+        sdk_version="0.2.3",
+    )
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
 
     pinned = agent_summary(definition.id, agent_version_id=newer.id)
     unpinned = agent_summary(definition.id)
 
-    assert (pinned.agent_version_id, pinned.agent_stored, pinned.setup_hash) == (newer.id, False, None)
-    assert (pinned.kind, pinned.instrumentation, pinned.unit_ids) == (None, "none", ("main",))
-    assert (unpinned.agent_version_id, unpinned.agent_stored, unpinned.setup_hash) == (newer.id, True, HASH_A)
+    assert (pinned.agent_version_id, pinned.agent_stored, pinned.setup_hash) == (
+        newer.id,
+        False,
+        None,
+    )
+    assert (pinned.kind, pinned.instrumentation, pinned.unit_ids) == (
+        None,
+        "none",
+        ("main",),
+    )
+    assert (unpinned.agent_version_id, unpinned.agent_stored, unpinned.setup_hash) == (
+        newer.id,
+        True,
+        HASH_A,
+    )
 
 
 @pytest.mark.django_db
 def test_summary_pinned_deleted_version_falls_back(definition, version):
-    store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
-    store_agent(agent_version_id=newer.id, agent=_unit_agent("newer", HASH_B), sdk_version="0.2.3")
+    store_agent(
+        agent_version_id=version.id,
+        agent=_unit_agent("older", HASH_A),
+        sdk_version="0.2.3",
+    )
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
+    store_agent(
+        agent_version_id=newer.id,
+        agent=_unit_agent("newer", HASH_B),
+        sdk_version="0.2.3",
+    )
     version.delete()
 
     summary = agent_summary(definition.id, agent_version_id=version.id)
 
-    assert (summary.agent_version_id, summary.unit_ids, summary.setup_hash) == (newer.id, ("newer",), HASH_B)
+    assert (summary.agent_version_id, summary.unit_ids, summary.setup_hash) == (
+        newer.id,
+        ("newer",),
+        HASH_B,
+    )
 
 
 @pytest.mark.django_db
 def test_summary_newest_stored_row_wins_unpinned(definition, version):
-    store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
-    store_agent(agent_version_id=newer.id, agent=_unit_agent("newer", HASH_B), sdk_version="0.2.3")
+    store_agent(
+        agent_version_id=version.id,
+        agent=_unit_agent("older", HASH_A),
+        sdk_version="0.2.3",
+    )
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
+    store_agent(
+        agent_version_id=newer.id,
+        agent=_unit_agent("newer", HASH_B),
+        sdk_version="0.2.3",
+    )
     _archive(newer)
 
     summary = agent_summary(definition.id)
@@ -807,12 +1068,20 @@ def test_summary_newest_stored_row_wins_unpinned(definition, version):
 @pytest.mark.django_db
 def test_summary_pinned_version_uses_the_active_key(hosted_definition, hosted_version):
     pinned_key = ProviderCredentials.objects.create(
-        agent_version=hosted_version, provider_type="vapi", api_key="sk-old", assistant_id="asst_1"
+        agent_version=hosted_version,
+        provider_type="vapi",
+        api_key="sk-old",
+        assistant_id="asst_1",
     )
     _archive(hosted_version)
-    active = hosted_definition.create_version(description="", commit_message="corrected key", status="active")
+    active = hosted_definition.create_version(
+        description="", commit_message="corrected key", status="active"
+    )
     active_key = ProviderCredentials.objects.create(
-        agent_version=active, provider_type="vapi", api_key="sk-corrected", assistant_id="asst_1"
+        agent_version=active,
+        provider_type="vapi",
+        api_key="sk-corrected",
+        assistant_id="asst_1",
     )
 
     summary = agent_summary(hosted_definition.id, agent_version_id=hosted_version.id)
@@ -861,7 +1130,11 @@ def test_legacy_type_equals_sync_provider_credentials(definition, version, word)
 def test_summary_ignores_workspace_context(organization, user, provider_list):
     home, elsewhere = (
         Workspace.objects.create(
-            name=name, organization=organization, is_default=False, is_active=True, created_by=user
+            name=name,
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
         )
         for name in ("Home", "Elsewhere")
     )
@@ -875,9 +1148,14 @@ def test_summary_ignores_workspace_context(organization, user, provider_list):
         organization=organization,
         workspace=home,
     )
-    version = definition.create_version(description="", commit_message="connect", status="active")
+    version = definition.create_version(
+        description="", commit_message="connect", status="active"
+    )
     credential = ProviderCredentials.objects.create(
-        agent_version=version, provider_type="vapi", api_key="sk-test", assistant_id="asst_1"
+        agent_version=version,
+        provider_type="vapi",
+        api_key="sk-test",
+        assistant_id="asst_1",
     )
     store_agent(agent_version_id=version.id, agent=hosted_agent(), sdk_version="0.2.3")
 

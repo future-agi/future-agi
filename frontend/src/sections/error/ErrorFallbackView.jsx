@@ -412,7 +412,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="13px"
+          fontSize="12px"
           fontStyle="italic"
           lineHeight={1.6}
         >
@@ -470,7 +470,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="13px"
+          fontSize="12px"
         >
           We hit an exception while performing your action. If this keeps
           happening, our ground control team is standing by at{" "}

@@ -25,7 +25,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { useAuthContext } from "src/auth/hooks";
-import { ROLE_OPTIONS } from "./constants";
+import { DEFAULT_ROLES, ROLE_OPTIONS } from "./constants";
 import { organizationSchema } from "./zodSchema";
 import OnboardingProfileForm from "./onboarding-profile-form";
 import { generateNameFromEmail, redirectAfterOrgSetup } from "./common";
@@ -307,9 +307,12 @@ const SetupOrganization = ({ getStarted = false }) => {
       });
       enqueueSnackbar("Profile updated successfully", { variant: "success" });
       const provider = localStorage.getItem("signupProvider");
+      // Only a listed role is sent by name; any other role is reported as a flag.
+      const roleIsCustom = !DEFAULT_ROLES.includes(variables?.role);
       trackEvent(Events.signUpCompleted, {
         [PropertyName.email]: user?.email,
-        [PropertyName.role]: variables?.role,
+        ...(roleIsCustom ? {} : { [PropertyName.role]: variables?.role }),
+        role_is_custom: roleIsCustom,
         [PropertyName.goals]: variables?.goals,
         [PropertyName.method]: provider,
       });
@@ -466,12 +469,14 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       trackEvent(Events.setupOrganizationClicked, {
         [PropertyName.click]: true,
-        [PropertyName.email_list]: membersToTrack,
+        members_added: membersToTrack.length,
+        roles_assigned: [
+          ...new Set(membersToTrack.map((m) => m?.organization_role)),
+        ],
       });
 
       trackEvent(Events.pageView, {
         [PropertyName.click]: {
-          org_name: variables?.orgName,
           members_added: membersToTrack?.length,
           roles_assigned: [
             ...new Set(membersToTrack.map((m) => m?.organization_role)),
@@ -756,7 +761,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"13px"}
+              fontSize={"12px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now

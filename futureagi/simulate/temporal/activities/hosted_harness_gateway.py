@@ -57,7 +57,7 @@ async def record_hosted_harness_launch_failure(
         # terminal job just because the Temporal activity response was lost.
         # An attempt whose sandbox is already verified gone (an earlier attempt of a
         # re-run job) is not that call.
-        attempt = job.attempts.order_by('-attempt_number').first()
+        attempt = job.attempts.order_by("-attempt_number").first()
         if (
             attempt is not None
             and attempt.provider_ref
@@ -76,7 +76,15 @@ async def record_hosted_harness_launch_failure(
         }
         job.terminal_at = timezone.now()
         with transaction.atomic():
-            job.save(update_fields=["state", "current_stage", "failure", "terminal_at", "updated_at"])
+            job.save(
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "failure",
+                    "terminal_at",
+                    "updated_at",
+                ]
+            )
             project_terminal_job_onto_run(job, job.terminal_at)
         return HostedHarnessLaunchRecoveryOutput(state=job.state)
 

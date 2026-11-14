@@ -124,13 +124,13 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, color: "text.secondary" }}
+            sx={{ fontSize: 12, color: "text.secondary" }}
           >
             Trace ID :
           </Typography>
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, fontWeight: 500, fontFamily: "monospace" }}
+            sx={{ fontSize: 12, fontWeight: 500, fontFamily: "monospace" }}
           >
             {traceId?.substring(0, 20)}...
           </Typography>
@@ -178,7 +178,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
           <Iconify icon="solar:link-linear" width={16} color="primary.main" />
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, fontWeight: 600, color: "primary.main" }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "primary.main" }}
           >
             Trace
           </Typography>
@@ -235,7 +235,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
           />
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, color: "text.disabled" }}
+            sx={{ fontSize: 12, color: "text.disabled" }}
           >
             Search
           </Typography>

@@ -2,6 +2,8 @@ import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { render, screen, fireEvent } from "src/utils/test-utils";
+import { createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 import CostAnalytics from "./CostAnalytics";
 
@@ -96,6 +98,32 @@ describe("CostAnalytics", () => {
       expect.objectContaining({ groupBy: "application" }),
     );
     expect(screen.getByText("Cost by Application")).toBeInTheDocument();
+  });
+
+  it("draws cost by group and distribution in the purple dataMono shades", () => {
+    mockUseAnalyticsCost.mockReturnValue({
+      isLoading: false,
+      data: {
+        total_cost: "12",
+        breakdown: [
+          { name: "checkout", total_cost: "9" },
+          { name: "search", total_cost: "3" },
+        ],
+      },
+    });
+
+    render(
+      <CostAnalytics start="2026-01-01" end="2026-01-02" gatewayId="gw_123" />,
+    );
+
+    const calls = chartSpy.mock.calls.map(([props]) => props);
+    const barCall = calls.find((props) => props.type === "bar");
+    const donutCall = calls.find((props) => props.type === "donut");
+    const mono = createTheme({ palette: palette("light") }).palette.dataMono;
+
+    expect(barCall.options.colors).toEqual(mono);
+    expect(donutCall.options.colors).toEqual(mono);
+    expect(barCall.options.dataLabels.style.colors).toHaveLength(mono.length);
   });
 
   it("keeps the cost axis to a few short ticks so the labels never run together", () => {

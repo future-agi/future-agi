@@ -394,7 +394,8 @@ def _users_attr_enrichment_query(
         )
     if walked_typed_filter is not None:
         params.update(walked_typed_filter.order_params)
-        matching_activity_clauses.append(walked_typed_filter.order_clause)
+        if walked_typed_filter.order_clause:
+            matching_activity_clauses.append(walked_typed_filter.order_clause)
     matching_activity_projection = (
         ",\n        maxIf(latest_start_time, (("
         + ") OR (".join(matching_activity_clauses)
@@ -402,6 +403,14 @@ def _users_attr_enrichment_query(
         if matching_activity_clauses
         else ""
     )
+    if walked_typed_filter is not None and walked_typed_filter.canonical_values:
+        # One newest timestamp per distinct stored value, not one record per
+        # span. Python applies the very same canonical comparison as membership.
+        matching_activity_projection = """,
+        maxMapIf(
+            map(assumeNotNull(latest_attribute_value_json), latest_start_time),
+            latest_attribute_value_type = 'string'
+        ) AS canonical_string_activity"""
     sql = f"""
     WITH
     eu_survivor_map AS ({eu_map}),
@@ -632,7 +641,9 @@ class UsersListManager:
                 filter_type = config.get("filter_type") or config.get("filterType")
                 raw_value = config.get("filter_value", config.get("filterValue"))
                 raw_values = raw_value if isinstance(raw_value, list) else [raw_value]
-                value_types = config.get("attribute_value_types")
+                value_types = config.get(
+                    "attribute_value_types", config.get("attributeValueTypes")
+                )
                 if (
                     operation not in {"equals", "in"}
                     or filter_type not in {"text", "string"}
@@ -914,6 +925,21 @@ class UsersListManager:
                 if not uid or not key:
                     continue
                 newest_match = attr_row.get("latest_matching_start_time")
+                walked = self._walked_typed_filter
+                if walked is not None and walked.canonical_values and key == walked.key:
+                    matches = [
+                        moment
+                        for raw, moment in attr_row.get(
+                            "canonical_string_activity", {}
+                        ).items()
+                        if self._candidate_value_matches(
+                            json.loads(raw),
+                            "in",
+                            list(walked.canonical_values),
+                            case_insensitive=True,
+                        )
+                    ]
+                    newest_match = max(matches, default=None)
                 if isinstance(newest_match, datetime):
                     if newest_match.tzinfo is None:
                         newest_match = newest_match.replace(tzinfo=UTC)

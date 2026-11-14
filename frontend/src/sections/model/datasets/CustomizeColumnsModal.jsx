@@ -215,7 +215,7 @@ const ColumnItem = ({ column, id, enabled, setEnabled }) => {
             sx={{ padding: 0 }}
             color="secondary"
           />
-          <Typography fontSize="13px" fontWeight={400} color="text.primary">
+          <Typography fontSize="12px" fontWeight={400} color="text.primary">
             {column?.label}
           </Typography>
         </Box>

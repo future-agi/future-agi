@@ -7,6 +7,7 @@ were removed in the CH25 migration close-out (2026-05-26). The CH25 read
 endpoints assume CH is reachable; if it's down, the request fails loudly.
 """
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -957,7 +958,19 @@ class AnalyticsQueryService:
                 "result_overflow_mode": "throw",
             },
         )
-        return result.data[0] if result.data else None
+        if not result.data:
+            return None
+        row: dict = result.data[0]
+        # CDC stores JSONFields as strings. Decode at the read boundary so the
+        # detail view can expose localization written by the worker.
+        metadata = row.get("output_metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except ValueError:
+                metadata = None
+            row["output_metadata"] = metadata if isinstance(metadata, dict) else {}
+        return row
 
     def get_trace_eval_scores_ch(
         self,

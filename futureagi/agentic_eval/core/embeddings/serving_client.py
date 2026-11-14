@@ -62,8 +62,8 @@ class ModelServingClient:
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or serving_base_url()
 
-        self.default_timeout = int(os.getenv('MODEL_SERVING_TIMEOUT', '120'))
-        self.max_retries = int(os.getenv('MODEL_SERVING_MAX_RETRIES', '3'))
+        self.default_timeout = int(os.getenv("MODEL_SERVING_TIMEOUT", "120"))
+        self.max_retries = int(os.getenv("MODEL_SERVING_MAX_RETRIES", "3"))
 
         self.session = self._create_session()
 
@@ -76,16 +76,15 @@ class ModelServingClient:
             max_retries=self.max_retries,  # Built-in retry support
             pool_connections=10,
             pool_maxsize=20,
-            pool_block=False
+            pool_block=False,
         )
 
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
-        session.headers.update({
-            'Content-Type': 'application/json',
-            'User-Agent': 'ModelServingClient/1.0'
-        })
+        session.headers.update(
+            {"Content-Type": "application/json", "User-Agent": "ModelServingClient/1.0"}
+        )
 
         return session
 
@@ -95,7 +94,9 @@ class ModelServingClient:
         if not serving_available(self.base_url):
             raise ServingUnavailableError()
 
-    def _make_request(self, endpoint: str, data: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
+    def _make_request(
+        self, endpoint: str, data: dict[str, Any], timeout: int | None = None
+    ) -> dict[str, Any]:
         """Make a request to the serving service with built-in retry."""
         url = f"{self.base_url}/model/v1{endpoint}"
         request_timeout = timeout or self.default_timeout
@@ -113,11 +114,11 @@ class ModelServingClient:
 
             # Handle response status codes
             if response.status_code == 200:
-                response_json= response.json()
+                response_json = response.json()
                 if response_json["embeddings"]:
                     if isinstance(response_json["embeddings"][0], list):
                         # import numpy as np
-                        response_json["embeddings"]=response_json["embeddings"][0]
+                        response_json["embeddings"] = response_json["embeddings"][0]
 
                         # response_json["embeddings"]=np.array(response_json["embeddings"][0]).tolist()
                         # print(f"Response embeddings: {response_json['embeddings']}, type of embeddings: {type(response_json['embeddings'])}")
@@ -141,7 +142,9 @@ class ModelServingClient:
             logger.error(f"Request to serving service failed: {e}")
             raise RuntimeError(f"Request failed: {e}")
 
-    def embed_text(self, text: str | list[str], model_name: str = "text_embedding") -> list[float]:
+    def embed_text(
+        self, text: str | list[str], model_name: str = "text_embedding"
+    ) -> list[float]:
         """
         ✅ IMPROVED: Get text embeddings from the serving service with input validation.
         """
@@ -159,10 +162,7 @@ class ModelServingClient:
         if not all(isinstance(t, str) for t in text_list):
             raise ValueError("All text inputs must be strings")
 
-        data = {
-            "text": text_list,
-            "input_type": "text"
-        }
+        data = {"text": text_list, "input_type": "text"}
 
         try:
             response = self._make_request("/embed", data)
@@ -198,12 +198,13 @@ class ModelServingClient:
             # Contract violation — caller decides how to fall back rather
             # than us silently returning misaligned vectors.
             raise ValueError(
-                f"serving returned {len(embeddings)} embeddings for "
-                f"{len(texts)} texts"
+                f"serving returned {len(embeddings)} embeddings for {len(texts)} texts"
             )
         return embeddings
 
-    def embed_image(self, image: str | Image.Image | bytes, model_name: str = "image_embedding") -> list[float]:
+    def embed_image(
+        self, image: str | Image.Image | bytes, model_name: str = "image_embedding"
+    ) -> list[float]:
         """
         ✅ IMPROVED: Get image embeddings from the serving service with better image handling.
         """
@@ -212,10 +213,7 @@ class ModelServingClient:
 
         processed_image = self._process_image_input(image)
 
-        data = {
-            "image": processed_image,
-            "input_type": "image"
-        }
+        data = {"image": processed_image, "input_type": "image"}
 
         try:
             response = self._make_request("/embed/image", data)
@@ -249,7 +247,11 @@ class ModelServingClient:
             logger.error(f"Audio embedding failed: {e}")
             raise
 
-    def embed_image_text(self, content: str | Image.Image | bytes, model_name: str = "image_text_embedding") -> list[float]:
+    def embed_image_text(
+        self,
+        content: str | Image.Image | bytes,
+        model_name: str = "image_text_embedding",
+    ) -> list[float]:
         """
         Get image-text embeddings from the serving service.
 
@@ -284,13 +286,14 @@ class ModelServingClient:
     def get_syn_data_embedding(self, text: str | list[str]) -> list[float]:
         """Get synthetic data embeddings from the serving service."""
         self._require_serving()
-        data = {
-            "text": text,
-            "input_type": "text"
-        }
+        data = {"text": text, "input_type": "text"}
         try:
             # Session handles retries automatically via HTTPAdapter
-            response = self.session.post(f"{self.base_url}/model/v1/embed/syn-data", json=data, timeout=self.default_timeout)
+            response = self.session.post(
+                f"{self.base_url}/model/v1/embed/syn-data",
+                json=data,
+                timeout=self.default_timeout,
+            )
             # Handle response status codes
             if response.status_code == 200:
                 return response.json()["embeddings"]
@@ -316,13 +319,13 @@ class ModelServingClient:
             # Convert PIL Image to base64
             buffer = io.BytesIO()
             # Use format from image if available, otherwise default to JPEG
-            format_name = getattr(image, 'format', 'JPEG') or 'JPEG'
+            format_name = getattr(image, "format", "JPEG") or "JPEG"
             image.save(buffer, format=format_name)
-            image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             return f"data:image/{format_name.lower()};base64,{image_data}"
         elif isinstance(image, bytes):
             # Convert bytes to base64
-            image_data = base64.b64encode(image).decode('utf-8')
+            image_data = base64.b64encode(image).decode("utf-8")
             return f"data:image/jpeg;base64,{image_data}"
         else:
             raise ValueError(f"Unsupported image type: {type(image)}")
@@ -333,14 +336,14 @@ class ModelServingClient:
         """
         if isinstance(audio_data, str):
             # If it's already a string, check it it is a link else assume it's base64 encoded
-            if audio_data.startswith('http://') or audio_data.startswith('https://'):
+            if audio_data.startswith("http://") or audio_data.startswith("https://"):
                 return audio_data
-            elif not audio_data.startswith('data:'):
+            elif not audio_data.startswith("data:"):
                 return f"data:audio/wav;base64,{audio_data}"
             return audio_data
         elif isinstance(audio_data, bytes):
             # Convert bytes to base64
-            audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+            audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             return f"data:audio/wav;base64,{audio_b64}"
         elif isinstance(audio_data, list):
             # If it's a waveform array, convert to base64
@@ -352,14 +355,14 @@ class ModelServingClient:
 
             # Create a temporary WAV file in memory
             buffer = io.BytesIO()
-            with wave.open(buffer, 'wb') as wav_file:
+            with wave.open(buffer, "wb") as wav_file:
                 wav_file.setnchannels(1)  # Mono
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(16000)  # 16kHz sample rate
                 wav_file.writeframes((audio_array * 32767).astype(np.int16).tobytes())
 
             # Convert to base64
-            audio_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            audio_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
             return f"data:audio/wav;base64,{audio_b64}"
         elif isinstance(audio_data, np.ndarray):
             # If it's a numpy array, convert to base64
@@ -368,14 +371,14 @@ class ModelServingClient:
 
             # Create a temporary WAV file in memory
             buffer = io.BytesIO()
-            with wave.open(buffer, 'wb') as wav_file:
+            with wave.open(buffer, "wb") as wav_file:
                 wav_file.setnchannels(1)  # Mono
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(16000)  # 16kHz sample rate
                 wav_file.writeframes((audio_data * 32767).astype(np.int16).tobytes())
 
             # Convert to base64
-            audio_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            audio_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
             return f"data:audio/wav;base64,{audio_b64}"
         else:
             raise ValueError(f"Unsupported audio type: {type(audio_data)}")
@@ -402,7 +405,7 @@ class ModelServingClient:
         text: list[str],
         model_provider: str,
         model_name: str,
-        model_params: dict[str, Any] | None = None
+        model_params: dict[str, Any] | None = None,
     ) -> list[list[float]]:
         """
         Get embeddings from the model_serving API.
@@ -422,24 +425,24 @@ class ModelServingClient:
         # ✅ IMPROVED: Pass model name correctly based on provider
         params = model_params or {}
         params["model"] = model_name
-        
+
         request_body: dict[str, Any] = {
             "text": text,
             "input_type": "text",
-            "model_params": params
+            "model_params": params,
         }
 
         try:
             logger.info(f"Requesting embeddings from {endpoint} for model {model_name}")
-            response = self.session.post(endpoint, json=request_body,timeout=30000)
+            response = self.session.post(endpoint, json=request_body, timeout=30000)
 
-             # Handle response status codes
+            # Handle response status codes
             if response.status_code == 200:
-                response_json= response.json()
+                response_json = response.json()
                 if response_json["embeddings"]:
                     if isinstance(response_json["embeddings"][0], list):
                         # import numpy as np
-                        response_json["embeddings"]=response_json["embeddings"][0]
+                        response_json["embeddings"] = response_json["embeddings"][0]
 
                 logger.info("Successfully received embeddings.")
                 return response_json["embeddings"]
@@ -459,7 +462,7 @@ class ModelServingClient:
         """
         ✅ NEW: Properly close the session and clean up resources.
         """
-        if hasattr(self, 'session'):
+        if hasattr(self, "session"):
             self.session.close()
             logger.debug("Model serving client session closed")
 
@@ -523,12 +526,20 @@ def serving_available(base_url: str | None = None, use_cache: bool = True) -> bo
         return False
 
     cached = _probe_cache.get(base)
-    if use_cache and cached and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS:
+    if (
+        use_cache
+        and cached
+        and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS
+    ):
         return cached[0]
 
     with _probe_lock:
         cached = _probe_cache.get(base)
-        if use_cache and cached and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS:
+        if (
+            use_cache
+            and cached
+            and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS
+        ):
             return cached[0]
         available = _probe(base)
         _probe_cache[base] = (available, time.monotonic())

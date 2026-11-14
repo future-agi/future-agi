@@ -347,8 +347,6 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           paper: {
             sx: {
               borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
               mt: 0.5,
               width: 240,
               py: 0.5,

@@ -324,7 +324,7 @@ const VersionCard = ({
                 </Box>
               </Box>
               <Typography
-                fontSize={"13px"}
+                fontSize={"12px"}
                 fontWeight={400}
                 color={"text.primary"}
               >
@@ -435,7 +435,7 @@ const VersionCard = ({
                 src="/assets/icons/ic_variables.svg"
                 sx={{ width: "20px", height: "20px", color: "text.primary" }}
               />
-              <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>
+              <Typography sx={{ fontSize: "12px", fontWeight: 500 }}>
                 Variables :
               </Typography>
 
@@ -454,7 +454,7 @@ const VersionCard = ({
                         bgcolor: "success.lighter",
                         padding: 0.5,
                         color: "success.dark",
-                        fontSize: "13px",
+                        fontSize: "12px",
                         alignItems: "center",
                         fontWeight: 500,
                       }}

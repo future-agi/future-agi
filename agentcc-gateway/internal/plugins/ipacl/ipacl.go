@@ -55,6 +55,9 @@ func New(cfg config.IPACLConfig, tenantStore *tenant.Store) *Plugin {
 func (p *Plugin) Name() string  { return "ipacl" }
 func (p *Plugin) Priority() int { return 10 } // Earliest: block bad IPs before any processing.
 
+// IsAccessGate marks the address lists as an access check (pipeline.AccessGate).
+func (p *Plugin) IsAccessGate() bool { return true }
+
 // AllowCount returns the number of allow rules.
 func (p *Plugin) AllowCount() int { return len(p.allow) }
 

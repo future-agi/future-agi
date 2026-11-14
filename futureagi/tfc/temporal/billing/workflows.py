@@ -45,7 +45,10 @@ class MonthlyClosingWorkflow:
             "monthly_closing_activity",
             MonthlyClosingInput(period=period),
             start_to_close_timeout=timedelta(hours=2),
-            # Activity heartbeats per org; 5 min covers a slow Stripe RTT.
+            # The activity heartbeats on a timer and before each organization,
+            # so slow reset or Stripe work stays alive. On cancellation queued
+            # heartbeats are dropped and the invoice loop raises CancelledError
+            # at its next organization boundary, never mid-organization.
             heartbeat_timeout=timedelta(minutes=5),
             retry_policy=CLOSING_RETRY_POLICY,
         )
