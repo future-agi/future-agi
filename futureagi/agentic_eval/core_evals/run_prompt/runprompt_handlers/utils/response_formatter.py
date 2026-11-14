@@ -22,6 +22,7 @@ from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_
 
 logger = structlog.get_logger(__name__)
 
+
 @dataclass
 class UsageInfo:
     """
@@ -34,22 +35,26 @@ class UsageInfo:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    input_characters: Optional[int] = None
+    output_characters: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
-        return {
+        usage = {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
         }
+        # Omit unavailable counts rather than turning them into zero usage.
+        for field in ("input_characters", "output_characters"):
+            count = getattr(self, field)
+            if count is not None:
+                usage[field] = count
+        return usage
 
     def to_cost_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format expected by calculate_total_cost."""
-        return {
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-        }
+        return self.to_dict()
 
 
 class ResponseFormatter:
@@ -153,6 +158,8 @@ class ResponseFormatter:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
+            input_characters=getattr(response.usage, "input_characters", None),
+            output_characters=getattr(response.usage, "output_characters", None),
         )
 
         # Build metadata
@@ -255,9 +262,7 @@ class ResponseFormatter:
             try:
                 return ast.literal_eval(unfenced)
             except (ValueError, SyntaxError):
-                logger.warning(
-                    "response_format_parse_failed", preview=unfenced[:200]
-                )
+                logger.warning("response_format_parse_failed", preview=unfenced[:200])
                 return content
 
     @staticmethod
