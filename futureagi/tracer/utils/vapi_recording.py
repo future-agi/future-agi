@@ -274,9 +274,9 @@ class VapiRecordingService:
         # A present row is authoritative even when empty or unreadable.
         return VapiConfiguration(
             credentials.get_api_key() or None,
-            assistant_id if version is not None else (
-                credentials.assistant_id or assistant_id
-            ),
+            assistant_id
+            if version is not None
+            else (credentials.assistant_id or assistant_id),
         )
 
     @classmethod
