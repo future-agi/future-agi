@@ -13,6 +13,7 @@ import { useParams } from "react-router";
 import CompareDrawerSkeleton from "./Common/CompareDrawerSkeleton";
 import Tooltip from "@mui/material/Tooltip";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const CompareDatasetDrawer = ({
   onCompareDatasetDrawerClose,
@@ -116,10 +117,12 @@ const CompareDatasetDrawer = ({
       option.value !== datasetId, // Exclude current dataset from filtered list
   );
 
+  const covered = useDrawerCovered(compareDatasetDrawerVisible);
   return (
     <Drawer
       anchor="right"
       open={compareDatasetDrawerVisible}
+      sx={coveredDrawerSx(covered)}
       onClose={onCompareDatasetDrawerClose}
       variant="persistent"
       PaperProps={{
@@ -128,8 +131,7 @@ const CompareDatasetDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 20,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           display: "flex",
           flexDirection: "column",
@@ -149,24 +151,17 @@ const CompareDatasetDrawer = ({
             alignItems: "center",
           }}
         >
-          <Box sx={{ display: "flex" }}>
-            <Typography
-              sx={{ fontWeight: 500, fontSize: "16px", color: "text.primary" }}
-            >
-              Current dataset selected:
+          {/* Design system: drawer title 15/600, the current dataset as one quiet line. */}
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600, color: "text.primary" }}>
+              Compare datasets
             </Typography>
             <Tooltip title={currentDataset?.label}>
               <Typography
-                sx={{
-                  fontWeight: 500,
-                  fontSize: "16px",
-                  color: "text.primary",
-                  ml: 0.6,
-                }}
+                noWrap
+                sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
               >
-                {currentDataset?.label?.length > 35
-                  ? currentDataset?.label?.substring(0, 35) + "..."
-                  : currentDataset?.label}
+                Current: {currentDataset?.label}
               </Typography>
             </Tooltip>
           </Box>
@@ -183,7 +178,7 @@ const CompareDatasetDrawer = ({
               }
             }}
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <FormSearchField
@@ -194,7 +189,7 @@ const CompareDatasetDrawer = ({
             mt: 1.5,
             mb: 2,
             "& .MuiOutlinedInput-root": {
-              borderRadius: "5px",
+              borderRadius: "6px",
               minHeight: "34px",
             },
           }}
@@ -202,7 +197,7 @@ const CompareDatasetDrawer = ({
           onChange={(e) => setSearchQuery(e.target.value)}
         />
         <Typography
-          sx={{ fontWeight: 400, fontSize: "14px", color: "text.primary" }}
+          sx={{ fontWeight: 400, fontSize: "12px", color: "text.primary" }}
         >
           Select datasets to compare with:
         </Typography>
@@ -238,7 +233,7 @@ const CompareDatasetDrawer = ({
                       sx={{
                         color: "text.primary",
                         fontWeight: 400,
-                        fontSize: "14px",
+                        fontSize: "12px",
                       }}
                     >
                       {val?.label?.length > 68
@@ -269,12 +264,10 @@ const CompareDatasetDrawer = ({
             }}
           >
             <Button
+              size="small"
               sx={{
                 width: "49%",
-                height: "30px",
-                fontSize: "12px",
                 color: "text.secondary",
-                borderRadius: "8px",
               }}
               variant="outlined"
               onClick={() => {
@@ -292,11 +285,9 @@ const CompareDatasetDrawer = ({
               Cancel
             </Button>
             <Button
+              size="small"
               sx={{
                 width: "49%",
-                height: "30px",
-                fontSize: "12px",
-                borderRadius: "8px",
               }}
               variant="contained"
               color="primary"

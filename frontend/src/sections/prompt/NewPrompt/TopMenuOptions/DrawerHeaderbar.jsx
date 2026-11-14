@@ -25,7 +25,7 @@ const DrawerHeaderbar = (props) => {
         {actionButton}
         {showCloseIcon ? (
           <IconButton onClick={onClose}>
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         ) : null}
       </Box>

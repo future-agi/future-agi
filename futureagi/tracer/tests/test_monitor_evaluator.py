@@ -10,9 +10,13 @@ from typing import Any, List, Optional
 from unittest import mock
 
 import pytest
+from django.core import mail
+from django.test import override_settings
 from django.utils import timezone
+from structlog.testing import capture_logs
 
-from tracer.models.monitor import UserAlertMonitorLog
+from tfc.utils.error_codes import get_error_message
+from tracer.models.monitor import MonitorMetricTypeChoices, UserAlertMonitorLog
 from tracer.utils import monitor as monitor_mod
 from tracer.utils.monitor import (
     MONITOR_CH_SETTINGS,
@@ -20,6 +24,7 @@ from tracer.utils.monitor import (
     MonitorConfigError,
     _get_metric_value,
     _process_monitor,
+    _send_alert_email,
     build_monitor_ch_builder,
     get_interval_kind,
     process_monitor_task,
@@ -244,6 +249,49 @@ def test_invalid_observation_type_filter_raises_config_error(
         build_monitor_ch_builder(user_alert_monitor)
 
 
+@pytest.mark.parametrize("metric_type", MonitorMetricTypeChoices.values)
+def test_projectless_monitor_raises_config_error_at_builder(
+    user_alert_monitor, metric_type: str
+) -> None:
+    # Production: monitors with a NULL project bound ``project_id = 'None'``
+    # and failed in ClickHouse (Code 376) on every run. The guard runs before
+    # the eval-config lookup, so every metric type reports the missing project.
+    user_alert_monitor.project = None
+    user_alert_monitor.metric_type = metric_type
+    if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
+        user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
+    with pytest.raises(MonitorConfigError) as exc_info:
+        build_monitor_ch_builder(user_alert_monitor)
+    assert str(exc_info.value) == get_error_message("MONITOR_PROJECT_REQUIRED")
+
+
+@pytest.mark.parametrize(
+    "metric_type,filters",
+    [
+        ("count_of_errors", {}),
+        ("error_rates_for_function_calling", {"observation_type": "tool"}),
+        ("daily_tokens_spent", {}),
+    ],
+)
+def test_projectless_monitor_is_skipped_without_ch_or_retry(
+    user_alert_monitor, metric_type: str, filters: dict
+) -> None:
+    # The three production metric types that failed hourly with Code 376.
+    user_alert_monitor.project = None
+    user_alert_monitor.metric_type = metric_type
+    user_alert_monitor.filters = filters
+    user_alert_monitor.save()
+    task_fn = process_monitor_task._original_func
+    patcher = _patch_ch([])  # any CH call raises
+    with patcher, capture_logs() as records:
+        # Returns (no raise, so no Temporal retry) before any CH statement.
+        task_fn(str(user_alert_monitor.id), timezone.now().isoformat())
+    patcher.ch_instance.execute_ch_query.assert_not_called()
+    skipped = [r for r in records if r["event"] == "monitor_misconfigured"]
+    assert [r["monitor_id"] for r in skipped] == [str(user_alert_monitor.id)]
+    assert UserAlertMonitorLog.objects.count() == 0
+
+
 def test_deleted_monitor_returns_quietly() -> None:
     task_fn = process_monitor_task._original_func
     with _patch_ch([]):  # no CH call may happen for a missing monitor
@@ -259,6 +307,24 @@ def test_notification_helpers_receive_alert_args(user_alert_monitor) -> None:
     assert args[0] == user_alert_monitor
     assert "breached the critical threshold" in args[1]
     assert args[2] == "critical"
+
+
+@override_settings(APP_BASE_URL="https://app.eu.futureagi.com")
+def test_alert_email_button_links_to_this_deployment(user_alert_monitor) -> None:
+    user_alert_monitor.notification_emails = ["alerts@example.com"]
+    user_alert_monitor.save(update_fields=["notification_emails"])
+    mail.outbox.clear()
+
+    _send_alert_email(user_alert_monitor, "breached the critical threshold", "critical")
+
+    assert len(mail.outbox) == 1
+    alternative = mail.outbox[0].alternatives[0]
+    html_body = (
+        alternative.content if hasattr(alternative, "content") else alternative[0]
+    )
+    assert 'href="https://app.eu.futureagi.com/dashboard/alerts"' in html_body
+    assert 'href="/dashboard/alerts"' not in html_body
+    assert "app.futureagi.com" not in html_body.replace("app.eu.futureagi.com", "")
 
 
 @pytest.mark.parametrize(

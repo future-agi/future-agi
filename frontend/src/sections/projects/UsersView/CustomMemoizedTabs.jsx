@@ -25,30 +25,14 @@ const CustomTabs = memo(function CustomTabs({
       onChange={onChange}
       aria-label="Custom Tabs"
       sx={{
-        minHeight: 0,
         "& .MuiTab-root": {
           margin: "0 !important",
-          fontWeight: "600",
-          typography: "s1",
-          color: "primary.main",
-          "&:not(.Mui-selected)": {
-            color: "text.disabled",
-            fontWeight: "500",
-          },
         },
         ...sx,
       }}
-      TabIndicatorProps={{
-        style: { backgroundColor: theme.palette.primary.main },
-      }}
     >
       {tabs.map((tab) => (
-        <Tab
-          key={tab.value}
-          label={tab.label}
-          value={tab.value}
-          sx={{ px: theme.spacing(1.875) }}
-        />
+        <Tab key={tab.value} label={tab.label} value={tab.value} />
       ))}
     </Tabs>
   );
