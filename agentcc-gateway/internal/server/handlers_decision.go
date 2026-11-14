@@ -284,22 +284,33 @@ func newDecisionModel(db *modeldb.ModelDB, orgCfg *tenant.OrgConfig, providerID,
 	if format == "" {
 		return decisionModel{}, false
 	}
+	// A Models entry may carry the provider's own prefix
+	// ("openrouter/typesafe/jev-1.13"); the call sends it upstream without it.
+	bare := stripProviderPrefix(model, providerID)
+	id := providerID + "/" + bare
 	var known *modeldb.PricingInfo
 	if db != nil {
-		known, _ = db.DecisionPricing(model)
+		// The names a call of this entry goes by, in the cost plugin's order
+		// (decisionModelNames: upstream, then provider-qualified), so the
+		// listing shows the price it charges.
+		known, _ = db.DecisionPricingAny(bare, id)
 	}
 	if format == models.DecisionFormatOpenAI && known == nil {
 		// An OpenAI provider lists chat models too; only decision ones count.
 		return decisionModel{}, false
 	}
 	entry := decisionModel{
-		ID:       providerID + "/" + stripProviderPrefix(model, providerID),
+		ID:       id,
 		Object:   "model",
 		Provider: providerID,
 		Format:   format,
 	}
 	if orgCfg != nil && orgCfg.CostTracking != nil && orgCfg.CostTracking.Enabled {
-		for _, name := range []string{model, entry.ID} {
+		// The cost plugin's order (decisionOrgPriceNames) for a call of this
+		// entry by its listed id or its configured name: that id, then the
+		// name sent upstream. Only a dated resolved name, which a listing
+		// cannot know, comes first.
+		for _, name := range []string{entry.ID, bare} {
 			if custom := orgCfg.CostTracking.CustomPricing[name]; custom != nil {
 				entry.Pricing = &decisionModelPricing{InputPerMTok: custom.InputPerMTok, OutputPerMTok: custom.OutputPerMTok}
 				return entry, true
