@@ -423,8 +423,9 @@ func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
 		if !ok {
 			continue
 		}
-		format := apiFormatDecisionFormat(apiFormat, id, pcfg.BaseURL)
-		openRouterChat := providers.IsOpenRouterChat(apiFormat, id, pcfg.BaseURL)
+		baseURL := h.orgProviderCache.BaseURL(id, pcfg)
+		format := apiFormatDecisionFormat(apiFormat, id, baseURL)
+		openRouterChat := providers.IsOpenRouterChat(apiFormat, id, baseURL)
 		for _, model := range pcfg.Models {
 			if openRouterChat && !isOpenRouterDecisionModel(db, stripProviderPrefix(model, id)) {
 				continue

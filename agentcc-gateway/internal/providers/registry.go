@@ -64,14 +64,16 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 		}
 		r.providers[name] = p
 		if IsOpenRouterChat(pcfg.APIFormat, name, pcfg.BaseURL) {
-			dp, err := NewOpenRouterDecisionProvider(name, pcfg)
-			if err != nil {
-				return nil, fmt.Errorf("creating decision provider %q: %w", name, err)
+			// A bad decision route must not stop the gateway: the provider's
+			// chat traffic still works, and its decisions are refused.
+			if dp, err := NewOpenRouterDecisionProvider(name, pcfg); err != nil {
+				slog.Error("OpenRouter decision route not available", "provider", name, "error", err)
+			} else {
+				if r.decisionProviders == nil {
+					r.decisionProviders = make(map[string]Provider)
+				}
+				r.decisionProviders[name] = dp
 			}
-			if r.decisionProviders == nil {
-				r.decisionProviders = make(map[string]Provider)
-			}
-			r.decisionProviders[name] = dp
 		}
 
 		attrs := []any{"name", name, "format", pcfg.APIFormat, "base_url", pcfg.BaseURL}

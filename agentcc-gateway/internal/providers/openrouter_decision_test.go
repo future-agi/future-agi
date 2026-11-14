@@ -127,3 +127,24 @@ func TestOrgProviderCacheOpenRouterDecisionDoesNotAliasProviderIDs(t *testing.T)
 		t.Fatalf("built %T, want a System One provider", p)
 	}
 }
+
+// One OpenRouter entry whose decision route cannot be built does not stop the
+// gateway: its chat provider is registered, and decisions fall back to it.
+func TestRegistryKeepsStartingWithABadOpenRouterDecisionRoute(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers["openrouter"] = config.ProviderConfig{
+		APIFormat: "openai", BaseURL: "ftp://openrouter.ai/api/v1", APIKey: "synthetic", Models: []string{"typesafe/jev-1.13"},
+	}
+	r, err := NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	chat, ok := r.GetProvider("openrouter")
+	if !ok {
+		t.Fatal("chat provider not registered")
+	}
+	if dp, _ := r.DecisionProvider("openrouter"); dp != chat {
+		t.Errorf("decision provider = %T, want the chat provider when the decision route failed", dp)
+	}
+}

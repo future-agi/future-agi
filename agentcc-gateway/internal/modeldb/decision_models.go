@@ -96,6 +96,16 @@ func (db *ModelDB) DecisionPricingAny(names ...string) (*PricingInfo, bool) {
 	return nil, false
 }
 
+// DecisionPricingExact returns the price under "decision:<model>" only: no
+// last path segment, no Jev normalization, so "openai/gpt-6-luna" is not
+// priced as the decision model "gpt-6-luna".
+func (db *ModelDB) DecisionPricingExact(model string) (*PricingInfo, bool) {
+	if m, ok := db.models[DecisionKeyPrefix+model]; ok && m.Pricing.HasPricing() {
+		return &m.Pricing, true
+	}
+	return nil, false
+}
+
 // lastPathSegment returns what follows a model name's last "/", or the name
 // itself when there is no "/" or nothing follows it.
 func lastPathSegment(model string) string {

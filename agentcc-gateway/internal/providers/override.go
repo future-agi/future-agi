@@ -203,6 +203,13 @@ func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.Provi
 	}, true
 }
 
+// BaseURL returns the base_url the org's provider is built with: its own, or
+// the config.yaml entry's it is layered onto when it states none.
+func (c *OrgProviderCache) BaseURL(providerID string, tenantCfg *tenant.ProviderConfig) string {
+	baseCfg, _ := c.baseConfig(providerID, tenantCfg)
+	return baseCfg.BaseURL
+}
+
 // APIFormat returns the api_format GetOrCreateWithTenantConfig would build the
 // org's provider with, without building it: no DNS lookup, no transport.
 // False when there is nothing to build it from, or when the build is refused
