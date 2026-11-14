@@ -88,12 +88,24 @@ services:
   # Their base YAML anchor is expanded before this overlay is merged.
   worker-default:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-tasks-s:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-tasks-l:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-tasks-xl:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-exact-aggregation:
     networks: [default, link-public]
     restart: "no"
@@ -109,10 +121,19 @@ services:
         condition: service_completed_successfully
   worker-trace-ingestion:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-agent-compass:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-simulation-runner:
     networks: [default, link-public]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   worker-sql-workbench:
     networks: [default, link-public]
     restart: "no"
@@ -195,34 +216,6 @@ services:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   serving:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-default:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-tasks-s:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-tasks-l:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-tasks-xl:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-trace-ingestion:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-agent-compass:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-  worker-simulation-runner:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
