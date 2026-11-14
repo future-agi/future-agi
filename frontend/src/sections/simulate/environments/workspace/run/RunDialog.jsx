@@ -23,6 +23,7 @@ import {
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
+import HeldBackList from "./HeldBackList";
 import { useValidateScenarios } from "src/api/harness/scenarios";
 
 // Seconds left before a refused run may be tried again; re-read on each new error.
@@ -353,6 +354,12 @@ export default function RunDialog({
               {warning.message}
             </Alert>
           ))}
+          <HeldBackList
+            envId={env?.id}
+            picks={picks}
+            keys={runIds}
+            enabled={open && Boolean(data) && !blocked}
+          />
         </Stack>
       </>
     );
