@@ -9,6 +9,7 @@ from django.db import close_old_connections
 
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
@@ -55,6 +56,29 @@ def _canonical_playground_output(value, response, template, api_call_log_row):
     if payload.get("ground_truth_examples") is None:
         payload.pop("ground_truth_examples", None)
     return payload
+
+
+def _mark_api_call_log_error(api_call_log_row, mappings, e):
+    try:
+        if api_call_log_row:
+            from tfc.ee_gates import jev_error_message
+
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            current_config = json.loads(api_call_log_row.config)
+            current_config.update(
+                {
+                    "output": {
+                        "output": None,
+                        "reason": jev_error_message(e) or str(e),
+                    },
+                    "mappings": mappings,
+                    "required_keys": list(mappings.keys()),
+                }
+            )
+            api_call_log_row.config = json.dumps(current_config, default=str)
+            api_call_log_row.save()
+    except Exception as exc:
+        logger.exception(f"Error updating api call log row status: {str(exc)}")
 
 
 def run_eval_func(
@@ -582,29 +606,12 @@ def run_eval_func(
 
         return output
 
+    except EvalConfigError as e:
+        _mark_api_call_log_error(api_call_log_row, mappings, e)
+        logger.warning(f"Error running evaluation: {str(e)}")
+        raise e
     except Exception as e:
-        try:
-            if api_call_log_row:
-                from tfc.ee_gates import jev_error_message
-
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
-                current_config.update(
-                    {
-                        "output": {
-                            "output": None,
-                            "reason": jev_error_message(e) or str(e),
-                        },
-                        "mappings": mappings,
-                        "required_keys": list(mappings.keys()),
-                    }
-                )
-                api_call_log_row.config = json.dumps(current_config, default=str)
-                api_call_log_row.save()
-        except Exception as exc:
-            logger.exception(f"Error updating api call log row status: {str(exc)}")
-            pass
-
+        _mark_api_call_log_error(api_call_log_row, mappings, e)
         logger.exception(f"Error running evaluation: {str(e)}")
         raise e
 
