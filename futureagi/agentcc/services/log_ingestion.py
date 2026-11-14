@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import structlog
 
@@ -223,11 +224,27 @@ def _sanitize_headers(headers):
     return {k: "***" if k.lower() in sensitive_keys else v for k, v in headers.items()}
 
 
+def _optional_character_count(value):
+    """Keep explicit zero distinct from missing or malformed usage."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return count if count >= 0 else None
+
+
 def _compute_cost(entry):
+    """Compatibility scalar for callers that only need the amount."""
+    return _compute_cost_details(entry)["total_cost"]
+
+
+def _compute_cost_details(entry):
     gateway_cost = entry.get("cost", 0)
     try:
         if gateway_cost and Decimal(str(gateway_cost)) > 0:
-            return gateway_cost
+            return {"total_cost": gateway_cost, "pricing_source": "gateway"}
     except (InvalidOperation, TypeError):
         pass
 
@@ -249,10 +266,8 @@ def _compute_cost(entry):
     except (TypeError, ValueError):
         completion_tokens = 0
 
-    try:
-        input_characters = int(metadata.get("input_characters") or 0)
-    except (TypeError, ValueError):
-        input_characters = 0
+    input_characters = _optional_character_count(metadata.get("input_characters"))
+    output_characters = _optional_character_count(metadata.get("output_characters"))
 
     try:
         audio_seconds = float(metadata.get("audio_seconds") or 0)
@@ -267,11 +282,19 @@ def _compute_cost(entry):
     except (TypeError, ValueError):
         images_generated = 0
 
+    # Input images are separate from generated images. Keep an explicit zero
+    # rather than treating it as an absent count.
+    try:
+        num_images = max(int(metadata.get("num_images") or 0), 0)
+    except (TypeError, ValueError, OverflowError):
+        num_images = 0
+
     quality = metadata.get("quality") or "standard"
 
     from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
     from agentic_eval.core_evals.run_prompt.model_pricing import get_model_info
 
+    estimate = None
     for model in [entry.get("resolved_model"), entry.get("model")]:
         if not model:
             continue
@@ -285,18 +308,29 @@ def _compute_cost(entry):
             not prompt_tokens
             and not completion_tokens
             and not input_characters
+            and not output_characters
             and not audio_seconds
             and not (images_generated or 0)
+            and not num_images
             and not is_image_model
         ):
             continue
 
-        token_usage = {
+        token_usage: dict[str, Any] = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "input_characters": input_characters,
-            "audio_seconds": audio_seconds,
         }
+        # Optional usage fields also select fallback units. Do not fabricate
+        # character/audio usage for token-only requests.
+        if input_characters is not None:
+            token_usage["input_characters"] = input_characters
+        if output_characters is not None:
+            token_usage["output_characters"] = output_characters
+        if "audio_seconds" in metadata:
+            token_usage["audio_seconds"] = audio_seconds
+
+        if "num_images" in metadata:
+            token_usage["num_images"] = num_images
 
         if images_generated is not None or is_image_model:
             token_usage["images_generated"] = (
@@ -306,13 +340,16 @@ def _compute_cost(entry):
 
         try:
             result = calculate_total_cost(model, token_usage)
-            total = result.get("total_cost", 0)
-            if total:
-                return total
+            # Prefer known pricing (including zero) over a default estimate for
+            # an unrecognized resolved-model alias.
+            if result.get("pricing_source") != "default":
+                return result
+            if estimate is None:
+                estimate = result
         except Exception:
             pass
 
-    return 0
+    return estimate or {"total_cost": 0, "pricing_source": "unavailable"}
 
 
 def ingest_request_logs(logs):
@@ -332,6 +369,10 @@ def _ingest_org_logs(org, logs):
     entries = []
     for entry in logs:
         try:
+            cost = _compute_cost_details(entry)
+            metadata = entry.get("metadata") or {}
+            if isinstance(metadata, dict):
+                metadata = {**metadata, "pricing_source": cost["pricing_source"]}
             obj = AgentccRequestLog(
                 organization=org,
                 request_id=entry.get("request_id", ""),
@@ -349,7 +390,7 @@ def _ingest_org_logs(org, logs):
                     entry.get("completion_tokens") or entry.get("output_tokens") or 0
                 ),
                 total_tokens=int(entry.get("total_tokens", 0)),
-                cost=_compute_cost(entry),
+                cost=cost["total_cost"],
                 status_code=int(entry.get("status_code", 0)),
                 is_stream=bool(entry.get("is_stream", False)),
                 is_error=bool(entry.get("is_error", False))
@@ -362,7 +403,7 @@ def _ingest_org_logs(org, logs):
                 user_id=entry.get("user_id", ""),
                 session_id=_sanitize_session_id(entry.get("session_id", "")),
                 routing_strategy=entry.get("routing_strategy", ""),
-                metadata=entry.get("metadata") or {},
+                metadata=metadata,
                 request_body=_truncate_json(entry.get("request_body")),
                 response_body=_truncate_json(entry.get("response_body")),
                 request_headers=_sanitize_headers(entry.get("request_headers")),

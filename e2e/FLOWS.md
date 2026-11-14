@@ -2792,6 +2792,26 @@
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
 
+### PROMPT-E2E-002 — saved prompt costs retain their amount and source after reload and comparison
+
+**Goal:** Inspect saved prompt cost estimates, genuine zero usage and catalog amounts without losing their source on reload or comparison.
+
+**Spec:** `flows/prompts/saved-cost-provenance.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed three synthetic saved provider results through the test-image-only fixture using the real calculator
+2. open the saved default result and inspect its exact estimate and source tooltip
+3. reload and inspect the same saved amount and source
+4. select both other saved versions in History and restore all three in comparison
+5. inspect exact estimate, zero and catalog amounts and source tooltips in comparison
+
+**Backend state verified:**
+
+- The actor-scoped prompt versions, detail API and comparison API retain the exact synthetic outputs, token usage, calculator amounts and pricing sources.
+
 ## sdk-ingestion
 
 ### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace

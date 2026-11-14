@@ -1,7 +1,8 @@
-from typing import Any, Optional
+import math
+from typing import Any, Optional, TypeGuard
 
-import tiktoken
 import structlog
+import tiktoken
 
 logger = structlog.get_logger(__name__)
 
@@ -180,82 +181,66 @@ DEFAULT_TTS_FALLBACK_PRICING = {"input_per_1M_characters": 15.0}
 DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
-def calculate_total_cost(
-    model_name: str, token_usage: dict, fallback_pricing: Optional[dict] = None
-) -> dict:
+def _select_fallback_pricing(
+    token_usage: dict, fallback_pricing: dict | None
+) -> tuple[dict, str]:
     """
-    Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
+    Choose a fallback pricing dict based on the token_usage fields.
 
-    Supports multiple pricing models:
-    - LLM/Chat: Token-based pricing (input/output tokens)
-    - TTS: Character-based pricing (input characters)
-    - STT: Time-based pricing (audio seconds/minutes)
-
-    Args:
-        model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
-        token_usage: Dict with keys depending on model type:
-            For LLM: {"prompt_tokens": int, "completion_tokens": int}
-            For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
-            For STT: {"audio_seconds": float}
-        fallback_pricing: Optional custom fallback pricing dict
-
-    Returns:
-        Dict with keys:
-            - total_cost (float): Total cost in USD (rounded to 6 decimals)
-            - prompt_cost (float): Input cost in USD (rounded to 6 decimals)
-            - completion_cost (float): Output cost in USD (rounded to 6 decimals)
-            - pricing_source (str): "available_models", "fallback", or "default"
+    Returns a ``(pricing, fallback_type)`` tuple. Mirrors the historical
+    fallback selection so both the "model not found" path and the
+    "unrecognized pricing" path resolve to the same conservative estimates.
     """
-    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
-    from evaluations.decision_models import is_decision_model
+    if fallback_pricing:
+        return fallback_pricing, "custom"
+    if "images_generated" in token_usage:
+        # Image generation model
+        return DEFAULT_IMAGE_FALLBACK_PRICING, "default_image"
+    if "input_characters" in token_usage:
+        # TTS model
+        return DEFAULT_TTS_FALLBACK_PRICING, "default_tts"
+    if "audio_seconds" in token_usage:
+        # STT model
+        return DEFAULT_STT_FALLBACK_PRICING, "default_stt"
+    # Default to LLM token-based pricing
+    return DEFAULT_FALLBACK_PRICING, "default"
 
-    if is_decision_model(model_name):
-        from evaluations.decision_pricing import calculate_decision_cost
 
-        return calculate_decision_cost(model_name, token_usage)
+def _is_nonnegative_number(value: Any) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
 
-    # Try to get pricing from available_models.py
-    pricing = get_model_pricing(model_name)
-    pricing_source = "available_models"
 
-    # Fallback chain
-    if pricing is None:
-        # Determine appropriate fallback based on token_usage fields
-        if fallback_pricing:
-            pricing = fallback_pricing
-            fallback_type = "custom"
-        elif "images_generated" in token_usage:
-            # Image generation model
-            pricing = DEFAULT_IMAGE_FALLBACK_PRICING
-            fallback_type = "default_image"
-        elif "input_characters" in token_usage:
-            # TTS model
-            pricing = DEFAULT_TTS_FALLBACK_PRICING
-            fallback_type = "default_tts"
-        elif "audio_seconds" in token_usage:
-            # STT model
-            pricing = DEFAULT_STT_FALLBACK_PRICING
-            fallback_type = "default_stt"
-        else:
-            # Default to LLM token-based pricing
-            pricing = DEFAULT_FALLBACK_PRICING
-            fallback_type = "default"
+def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool]:
+    """
+    Compute (prompt_cost, completion_cost, recognized) for a pricing dict.
 
-        logger.warning(
-            f"Model '{model_name}' not found in AVAILABLE_MODELS, using fallback pricing",
-            model=model_name,
-            fallback_type=fallback_type,
-        )
-        pricing_source = "fallback" if fallback_pricing else "default"
-
-    # Detect pricing type and calculate accordingly
+    ``recognized`` is False when the pricing dict does not match any known
+    pricing shape (token/character/minute/image based). Callers use this to
+    distinguish a genuine $0 from an unrecognized pricing structure.
+    """
     prompt_cost = 0.0
     completion_cost = 0.0
 
-    # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    # Embeddings have no output-token rate. Multimodal models may additionally
+    # price input images; accept either catalog spelling of that component.
+    if (
+        "input_per_1M_tokens" in pricing
+        or "output_per_1M_tokens" in pricing
+        or "input_per_image" in pricing
+        or "image_input_per_image" in pricing
+    ):
+        input_cost_per_1M = pricing.get("input_per_1M_tokens", 0)
+        output_cost_per_1M = pricing.get("output_per_1M_tokens", 0)
+        if not all(
+            _is_nonnegative_number(rate)
+            for rate in (input_cost_per_1M, output_cost_per_1M)
+        ):
+            return 0.0, 0.0, False
 
         # Provider usage includes cache reads in prompt_tokens. Price that subset at
         # the model's cache-read rate when the catalog declares one.
@@ -265,6 +250,10 @@ def calculate_total_cost(
             max(token_usage.get("cached_input_tokens") or 0, 0), prompt_tokens
         )
         cached_input_rate = pricing.get("cached_input_per_1M_tokens")
+        if cached_input_rate is not None and not _is_nonnegative_number(
+            cached_input_rate
+        ):
+            return 0.0, 0.0, False
         if cached_input_rate is None:
             prompt_cost = round((prompt_tokens / 1_000_000) * input_cost_per_1M, 6)
         else:
@@ -279,17 +268,63 @@ def calculate_total_cost(
             )
         completion_cost = round((completion_tokens / 1_000_000) * output_cost_per_1M, 6)
 
+        # Per-image input pricing for multimodal embeddings. Titan multimodal
+        # embeddings charge `input_per_image` per input image on top of any token
+        # cost, so image-only requests are non-zero and mixed (text + image)
+        # requests include both components. Text-only requests supply no image
+        # count and are unaffected. `num_images` is the canonical key; fall back to
+        # `images_generated` for callers that already report image counts that way.
+        # `image_input_per_image` is an alias some vision models use for the same
+        # per-image component.
+        if "input_per_image" in pricing or "image_input_per_image" in pricing:
+            cost_per_image = pricing.get(
+                "input_per_image", pricing.get("image_input_per_image")
+            )
+            if not _is_nonnegative_number(cost_per_image):
+                return 0.0, 0.0, False
+            num_images = token_usage.get("num_images")
+            if num_images is None:
+                num_images = token_usage.get("images_generated") or 0
+            image_cost = round(num_images * cost_per_image, 6)
+            prompt_cost = round(prompt_cost + image_cost, 6)
+
     # Character-based pricing (TTS models)
     elif "input_per_1M_characters" in pricing:
         input_cost_per_1M_chars = pricing["input_per_1M_characters"]
+        if not _is_nonnegative_number(input_cost_per_1M_chars):
+            return 0.0, 0.0, False
         input_characters = token_usage.get("input_characters") or 0
 
         prompt_cost = round((input_characters / 1_000_000) * input_cost_per_1M_chars, 6)
         completion_cost = 0.0  # TTS doesn't have completion cost
 
+    # Character rates require actual counts for every priced side. Missing
+    # counts are not zero usage, and token counts are never character counts.
+    elif "input_per_1k_characters" in pricing or "output_per_1k_characters" in pricing:
+        costs = []
+        for side in ("input", "output"):
+            rate_key = f"{side}_per_1k_characters"
+            if rate_key not in pricing:
+                costs.append(0.0)
+                continue
+            rate = pricing[rate_key]
+            count = token_usage.get(f"{side}_characters")
+            if not _is_nonnegative_number(rate) or (
+                rate != 0 and not _is_nonnegative_number(count)
+            ):
+                return 0.0, 0.0, False
+            costs.append(round((count or 0) / 1_000 * rate, 6) if rate else 0.0)
+        prompt_cost, completion_cost = costs
+
     # Minute-based pricing (STT models)
-    elif "input_per_minute" in pricing:
-        cost_per_minute = pricing["input_per_minute"]
+    # Accepts both `input_per_minute` (OpenAI whisper-1) and its
+    # `per_minute_audio` alias (azure/whisper-1) for the identical price.
+    elif "input_per_minute" in pricing or "per_minute_audio" in pricing:
+        cost_per_minute = pricing.get("input_per_minute")
+        if cost_per_minute is None:
+            cost_per_minute = pricing.get("per_minute_audio")
+        if not _is_nonnegative_number(cost_per_minute):
+            return 0.0, 0.0, False
         audio_seconds = token_usage.get("audio_seconds") or 0.0
 
         # Convert seconds to minutes
@@ -299,7 +334,9 @@ def calculate_total_cost(
 
     # Image-based pricing (Image generation models)
     elif "per_image" in pricing or "low_quality_per_image" in pricing:
-        images_generated = token_usage.get("images_generated") or 1
+        images_generated = token_usage.get("images_generated")
+        if images_generated is None:
+            images_generated = 1
         quality = token_usage.get("quality") or "standard"
 
         # Handle quality-based pricing (gpt-image models)
@@ -321,21 +358,98 @@ def calculate_total_cost(
         else:
             # Simple per-image pricing (dall-e, imagen, flux, etc.)
             cost_per_image = pricing.get("per_image", DEFAULT_IMAGE_COST_PER_IMAGE)
-            # Handle "N/A" or invalid pricing
-            if not isinstance(cost_per_image, (int, float)):
-                cost_per_image = DEFAULT_IMAGE_COST_PER_IMAGE
+        if not _is_nonnegative_number(cost_per_image):
+            return 0.0, 0.0, False
 
         total_image_cost = cost_per_image * images_generated
         prompt_cost = 0.0  # Image generation doesn't have prompt cost
         completion_cost = round(total_image_cost, 6)
 
     else:
-        # Unknown pricing structure - log warning and return zero costs
+        # Unrecognized pricing structure
+        return 0.0, 0.0, False
+
+    return prompt_cost, completion_cost, True
+
+
+def calculate_total_cost(
+    model_name: str, token_usage: dict, fallback_pricing: Optional[dict] = None
+) -> dict:
+    """
+    Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
+
+    Supports multiple pricing models:
+    - LLM/Chat: Token-based pricing (input/output tokens)
+    - TTS: Character-based pricing (input characters)
+    - Per-1k-character: explicit input/output character counts for each priced side
+    - STT: Time-based pricing (input_per_minute or per_minute_audio)
+
+    Missing character counts and unsupported/placeholder rates use a labelled
+    estimate. Token counts are never converted to character counts.
+
+    Args:
+        model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
+        token_usage: Dict with keys depending on model type:
+            For LLM: {"prompt_tokens": int, "completion_tokens": int}
+            For multimodal inputs: additionally {"num_images": int}
+            For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
+            For STT: {"audio_seconds": float}
+        fallback_pricing: Optional custom fallback pricing dict
+
+    Returns:
+        Dict with keys:
+            - total_cost (float): Total cost in USD (rounded to 6 decimals)
+            - prompt_cost (float): Input cost in USD (rounded to 6 decimals)
+            - completion_cost (float): Output cost in USD (rounded to 6 decimals)
+            - pricing_source (str): "available_models", "fallback", or "default".
+              A genuine $0 keeps "available_models"; an unrecognized pricing
+              structure now reports "fallback"/"default" so downstream can tell
+              a real $0 apart from a missed one.
+    """
+    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+    from evaluations.decision_models import is_decision_model
+
+    if is_decision_model(model_name):
+        from evaluations.decision_pricing import calculate_decision_cost
+
+        return calculate_decision_cost(model_name, token_usage)
+
+    # Try to get pricing from available_models.py
+    pricing = get_model_pricing(model_name)
+    pricing_source = "available_models"
+
+    # Fallback chain: model not found (or placeholder/non-numeric pricing).
+    if pricing is None:
+        pricing, fallback_type = _select_fallback_pricing(token_usage, fallback_pricing)
         logger.warning(
-            f"Unknown pricing structure for model '{model_name}': {pricing}",
+            f"Model '{model_name}' not found in AVAILABLE_MODELS, using fallback pricing",
+            model=model_name,
+            fallback_type=fallback_type,
+        )
+        pricing_source = "fallback" if fallback_pricing else "default"
+
+    # Detect pricing type and calculate accordingly.
+    prompt_cost, completion_cost, recognized = _compute_costs(pricing, token_usage)
+
+    # Unrecognized pricing structure from AVAILABLE_MODELS: do NOT silently bill
+    # $0 with source "available_models". Fall through to fallback pricing and
+    # stamp a detectable source so downstream can distinguish a real $0.
+    if not recognized and pricing_source == "available_models":
+        logger.warning(
+            "unrecognized_model_pricing_using_fallback",
             model=model_name,
             pricing=pricing,
         )
+        pricing, fallback_type = _select_fallback_pricing(token_usage, fallback_pricing)
+        pricing_source = "fallback" if fallback_pricing else "default"
+        prompt_cost, completion_cost, recognized = _compute_costs(pricing, token_usage)
+
+    # A custom fallback may itself be a placeholder or use unsupported units.
+    if not recognized:
+        pricing, _ = _select_fallback_pricing(token_usage, None)
+        pricing_source = "default"
+        prompt_cost, completion_cost, _ = _compute_costs(pricing, token_usage)
+
     return {
         "total_cost": round(prompt_cost + completion_cost, 6),
         "prompt_cost": prompt_cost,
