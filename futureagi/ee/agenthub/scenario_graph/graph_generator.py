@@ -241,7 +241,7 @@ class ConversationGraphGenerator:
             print("✓ Graph generated successfully!")
             print(f"  - Nodes: {len(self.nodes)}")
             print(f"  - Edges: {len(self.edges)}")
-    
+
             return final_graph
 
         except Exception as e:

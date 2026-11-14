@@ -121,10 +121,12 @@ def merge_digest_into_user_message(user_msg: dict, digest_block: str) -> dict:
                 )
                 digest_added = True
             elif isinstance(part, dict) and part.get("type") == "text":
-                new_parts.append({
-                    "type": "text",
-                    "text": strip_existing_digest(part.get("text", "")),
-                })
+                new_parts.append(
+                    {
+                        "type": "text",
+                        "text": strip_existing_digest(part.get("text", "")),
+                    }
+                )
             else:
                 # Media parts and other shapes — preserved as-is
                 new_parts.append(part)
@@ -132,7 +134,8 @@ def merge_digest_into_user_message(user_msg: dict, digest_block: str) -> dict:
             # No text part at all (multimodal-only) — insert digest as
             # leading text part
             new_parts.insert(
-                0, {"type": "text", "text": digest_block.rstrip()},
+                0,
+                {"type": "text", "text": digest_block.rstrip()},
             )
         return {**user_msg, "content": new_parts}
 

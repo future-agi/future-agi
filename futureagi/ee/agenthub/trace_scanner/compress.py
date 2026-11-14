@@ -24,9 +24,11 @@ def _get_span_kind(attrs: dict) -> str:
                 return str(value)
     return ""
 
+
 # ---------------------------------------------------------------------------
 # KEVINIFY — "Why waste time say lot word when few word do trick"
 # ---------------------------------------------------------------------------
+
 
 # nltk is imported lazily: import nltk eagerly pulls scipy + scikit-learn
 # (~80 MB RSS) into every API/worker process at startup, while only the trace
@@ -39,6 +41,7 @@ def _all_stops() -> frozenset[str]:
 
     ensure_nltk_data("stopwords")
     return frozenset(_nltk_stopwords.words("english")) | _EXTRA_STOPS
+
 
 _EXTRA_STOPS = {
     "please",
@@ -761,7 +764,8 @@ def _is_nontextual(d):
             if isinstance(head, (int, float)):
                 return True
             if isinstance(head, dict) and any(
-                isinstance(head.get(kk), list) and head.get(kk)
+                isinstance(head.get(kk), list)
+                and head.get(kk)
                 and isinstance(head[kk][0], (int, float))
                 for kk in ("embedding", "values", "vector", "scores")
             ):
@@ -797,7 +801,7 @@ def unwrap_output(raw):
             # the completion dimension fires. 11 corpus roots are function-call-only.
             fc = x.get("function_call") or x.get("functionCall")
             if isinstance(fc, dict) and str(fc.get("arguments") or "").strip():
-                return f"[function_call {fc.get('name','')}] {fc['arguments']}"
+                return f"[function_call {fc.get('name', '')}] {fc['arguments']}"
             tcs = x.get("tool_calls")
             if isinstance(tcs, list) and tcs:
                 got = []
@@ -814,7 +818,9 @@ def unwrap_output(raw):
                     if not isinstance(fn, dict):
                         continue
                     if str(fn.get("arguments") or "").strip():
-                        got.append(f"[tool_call {fn.get('name','')}] {fn['arguments']}")
+                        got.append(
+                            f"[tool_call {fn.get('name', '')}] {fn['arguments']}"
+                        )
                 if got:
                     return "\n".join(got)
             if isinstance(x.get("content"), (list, dict)):
@@ -884,7 +890,9 @@ def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
         out = _v3_plain(a.get("output.value", ""), FIELD_RUNAWAY_BUDGET)
         # A span with no content, no status and no flag adds nothing the flow
         # outline doesn't already carry.
-        if not (inp or out or span.get("status_code") not in (None, "Unset") or is_flagged):
+        if not (
+            inp or out or span.get("status_code") not in (None, "Unset") or is_flagged
+        ):
             continue
         entry = {
             "id": sid,

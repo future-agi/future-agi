@@ -28,7 +28,7 @@ BACKWARD_SYSTEM_PROMPT = (
 
 # First part of the prompt for the llm backward function
 CONVERSATION_TEMPLATE = (
-    "<LM_INPUT> {prompt} </LM_INPUT>\n\n" "<LM_OUTPUT> {llm_response} </LM_OUTPUT>\n\n"
+    "<LM_INPUT> {prompt} </LM_INPUT>\n\n<LM_OUTPUT> {llm_response} </LM_OUTPUT>\n\n"
 )
 
 FEEDBACK_PROMPT = BACKWARD_SYSTEM_PROMPT + "\n\n\n" + CONVERSATION_TEMPLATE
@@ -284,7 +284,7 @@ INSTRUCTION_TEMPLATE_SUMMARIZER_V2_PREFIX = (
 )
 
 INSTRUCTION_TEMPLATE_SUMMARIZER_V2_INPUT = (
-    " Prompt: {prompt}" "Variables: {variables}" "Improvements: {improvements}"
+    " Prompt: {prompt}Variables: {variables}Improvements: {improvements}"
 )
 
 INSTRUCTION_TEMPLATE_SUMMARIZER_V2 = (
@@ -294,9 +294,9 @@ INSTRUCTION_TEMPLATE_SUMMARIZER_V2 = (
 )
 
 
-#NEW PROMPT PATTERN
+# NEW PROMPT PATTERN
 
-CRITERIA_CORRECTOR_PROMPT_MB="""
+CRITERIA_CORRECTOR_PROMPT_MB = """
 You are an AI feedback analyzer focused on prompt improvement. Your task is to analyze evaluation criteria and judgments to suggest specific, actionable improvements for the prompt template.
 
 Input:
@@ -312,7 +312,7 @@ Output Requirements:
 Remember: Your suggestions should directly connect evaluation criteria to concrete improvements.
 """
 
-INSTRUCTION_CORRECTOR_PROMPT_MB="""
+INSTRUCTION_CORRECTOR_PROMPT_MB = """
 You are an AI prompt optimizer. Your task is to enhance the prompt template by implementing the suggested improvements while maintaining its core functionality.
 
 Input:
@@ -333,7 +333,7 @@ Requirements:
 Important: Never modify or remove existing variables/placeholders. Focus on enhancing the prompt while maintaining its technical requirements.
 """
 
-FOLLOW_UP_PROMPT="""
+FOLLOW_UP_PROMPT = """
 You are an AI prompt refinement specialist. Your task is to create an optimal version by combining the strengths of both original and suggested prompts.
 
 Input:
