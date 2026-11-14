@@ -338,6 +338,16 @@ describe('object tab alignment', () => {
     expect(scroller.clientWidth).toBe(262);
     expect(330 - scroller.scrollLeft).toBeLessThanOrEqual(scroller.clientWidth);
   });
+  it('fades exactly the label cut at an edge, and no whole tab at a boundary', () => {
+    const { root, scroller } = fakeStrip({ widths, selected: 3, scrollLeft: 190, width: 300 });
+    centreActiveTab(root);
+    const fade = scroller.style.getPropertyValue('--tab-fade');
+    // Left edge on a tab boundary: nothing faded there.
+    expect(fade).toMatch(/^linear-gradient\(to right, black 0px, /);
+    // The last tab (420 to 500) shows 70px: the whole fragment sits under the fade.
+    expect(fade).toContain('black calc(100% - 70px)');
+    expect(fade).toContain('transparent 100%');
+  });
   it('snaps tabs to their start edge', () => {
     expect(scrollTabsSx['& .MuiTabs-scroller']).toMatchObject({ scrollSnapType: 'x mandatory' });
     expect(scrollTabsSx['& .MuiTabs-scroller .MuiTab-root']).toEqual({ scrollSnapAlign: 'start' });

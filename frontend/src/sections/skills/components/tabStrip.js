@@ -7,7 +7,8 @@ import { useEffect } from 'react';
 // - Buttons stay available on phones (pass allowScrollButtonsMobile).
 // - While the strip overflows, its edges fade over 24px, so a label cut at the
 //   edge reads as "more this way" rather than as a broken word. The fade sits
-//   on the side(s) that have more tabs; useActiveTabInView sets the flags.
+//   on the side(s) that have more tabs and spans the cut label exactly;
+//   useActiveTabInView sets the flags and widths.
 // - Tabs snap to their start edge (UX iteration 3, SH1): whatever scrolls the
 //   strip (the arrows, a swipe, the selection), the first visible tab starts
 //   exactly at the strip's left edge, so a cut label can only appear on the
@@ -39,13 +40,39 @@ export const scrollTabsSx = {
 // Props every Skills tab strip uses so later tabs are reachable on a phone.
 export const scrollTabsProps = { variant: 'scrollable', scrollButtons: 'auto', allowScrollButtonsMobile: true };
 
-/** Marks which edges of an overflowing scroller have hidden tabs. */
+/**
+ * Marks which edges of an overflowing scroller have hidden tabs, and sizes
+ * each fade to the label cut at that edge: the whole fragment sits under the
+ * fade (never a crisp half word), and an edge that falls exactly on a tab
+ * boundary gets no fade over the whole tab beside it (its arrow is the cue).
+ * The stylesheet's FADE px gradient is only the fallback before this runs.
+ */
 export function markTabFade(scroller) {
   const overflow = scroller.scrollWidth - scroller.clientWidth > 1;
   const start = overflow && scroller.scrollLeft > 1;
   const end = overflow && scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1;
   scroller.setAttribute('data-fade-start', String(start));
   scroller.setAttribute('data-fade-end', String(end));
+  if (!start && !end) {
+    scroller.style.removeProperty('--tab-fade');
+    return;
+  }
+  const edge = scroller.getBoundingClientRect();
+  const right = edge.left + scroller.clientWidth;
+  let head = 0;
+  let tail = 0;
+  scroller.querySelectorAll('[role="tab"]').forEach((tab) => {
+    const r = tab.getBoundingClientRect();
+    if (r.left < edge.left - 0.5 && r.right > edge.left + 0.5) head = Math.max(head, r.right - edge.left);
+    if (r.left < right - 0.5 && r.right > right + 0.5) tail = Math.max(tail, right - r.left);
+  });
+  // Fragment widths, rounded; the inner 40% of a fragment eases out, the rest is nearly gone.
+  const stops = (width) => [Math.round(width), Math.round(width * 0.6)];
+  const [hw, hm] = stops(head);
+  const [tw, tm] = stops(tail);
+  const from = !start ? 'black 0px' : hw > 0 ? `transparent 0px, rgba(0, 0, 0, 0.35) ${hm}px, black ${hw}px` : 'black 0px';
+  const to = !end ? 'black 100%' : tw > 0 ? `black calc(100% - ${tw}px), rgba(0, 0, 0, 0.35) calc(100% - ${tm}px), transparent 100%` : 'black 100%';
+  scroller.style.setProperty('--tab-fade', `linear-gradient(to right, ${from}, ${to})`);
 }
 
 /**
@@ -121,12 +148,24 @@ export function useActiveTabInView(ref, value) {
     scroller?.addEventListener('scroll', fade, { passive: true });
     let observer;
     if (scroller && typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(run);
-      // Watch the whole strip (scroller plus arrows), not the scroller: an
-      // arrow appearing after a scroll narrows the scroller, and re-aligning
-      // then would pull the strip back to the selection, undoing the arrow.
+      // Re-align only when a width changes. Watch the whole strip (scroller
+      // plus arrows), not the scroller: an arrow appearing after a scroll
+      // narrows the scroller (and can change the strip's height), and
+      // re-aligning then would pull the strip back to the selection, undoing
+      // the arrow press (measured at 390: every press bounced back).
+      const widths = new WeakMap();
+      observer = new ResizeObserver((entries) => {
+        const changed = entries.some((entry) => {
+          const width = Math.round(entry.contentRect.width);
+          const previous = widths.get(entry.target);
+          widths.set(entry.target, width);
+          return previous === undefined || previous !== width;
+        });
+        if (changed) run();
+      });
       observer.observe(scroller.parentElement || scroller);
-      const strip = scroller.firstElementChild;
+      // The tab row itself (its width changes when the app font arrives).
+      const strip = scroller.querySelector('.MuiTabs-flexContainer') || scroller.firstElementChild;
       if (strip) observer.observe(strip);
     }
     return () => {

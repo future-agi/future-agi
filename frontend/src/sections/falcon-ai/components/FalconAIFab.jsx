@@ -126,6 +126,8 @@ function usePhoneQuiet(active) {
       return undefined;
     }
     const tops = new WeakMap();
+    // Seed the usual scrollers, so even a single jump (PageDown, an anchor) reads as a direction.
+    [document.scrollingElement, document.querySelector("main")].forEach((node) => node && tops.set(node, node.scrollTop));
     let idle = 0;
     const update = (patch) => setQuiet((current) => (Object.keys(patch).every((key) => current[key] === patch[key]) ? current : { ...current, ...patch }));
     const focus = () => update({ field: Boolean(document.activeElement?.closest?.(FIELD)) });
