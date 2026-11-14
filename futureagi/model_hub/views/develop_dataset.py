@@ -21,19 +21,6 @@ import numpy as np
 import pandas as pd
 import requests
 import structlog
-from accounts.models.user import User
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-    model_manager,
-)
-from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
-from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from analytics.utils import (
-    MixpanelEvents,
-    get_mixpanel_properties,
-    track_mixpanel_event,
-)
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.db.models import (
@@ -59,7 +46,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -67,42 +53,21 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
-# Define a Temporal activity for running the evaluation
-from tfc.ee_gates import strip_turing_from_config_options
-from tfc.middleware.workspace_context import get_current_workspace
-from tfc.routers import uses_db
-from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
-from tfc.telemetry import wrap_for_thread
-from tfc.temporal import temporal_activity
-from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
-from tfc.utils.error_codes import get_error_message
-from tfc.utils.functions import (
-    calculate_column_average,
-    get_eval_stats,
-    get_prompt_stats,
+from accounts.models.user import User
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+    model_manager,
 )
-from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.lazy_extras import extra_install_hint
-from tfc.utils.media_tools import find_media_tool_unavailable, media_tool_error_code
-from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.utils.storage import (
-    download_json_from_s3,
-    get_compare_local_dir,
-    get_compare_metadata_path,
-    get_storage_error_message,
-    is_own_storage_url,
-    upload_audio_to_s3,
-    upload_audio_to_s3_duration,
-    upload_compare_json_to_s3,
-    upload_document_to_s3,
-    upload_file_to_s3,
-    upload_image_to_s3,
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from analytics.utils import (
+    MixpanelEvents,
+    get_mixpanel_properties,
+    track_mixpanel_event,
 )
-
+from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from model_hub.constants import (
     CREATE_KB_SDK_CODE,
     MAX_KB_SIZE,
@@ -331,6 +296,41 @@ from model_hub.views.utils.utils import (
     get_recommendations,
     update_column_id,
     validate_file_url,
+)
+from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
+# Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
+from tfc.middleware.workspace_context import get_current_workspace
+from tfc.routers import uses_db
+from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
+from tfc.telemetry import wrap_for_thread
+from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
+from tfc.utils.error_codes import get_error_message
+from tfc.utils.functions import (
+    calculate_column_average,
+    get_eval_stats,
+    get_prompt_stats,
+)
+from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.lazy_extras import extra_install_hint
+from tfc.utils.media_tools import find_media_tool_unavailable, media_tool_error_code
+from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.storage import (
+    download_json_from_s3,
+    get_compare_local_dir,
+    get_compare_metadata_path,
+    get_storage_error_message,
+    is_own_storage_url,
+    upload_audio_to_s3,
+    upload_audio_to_s3_duration,
+    upload_compare_json_to_s3,
+    upload_document_to_s3,
+    upload_file_to_s3,
+    upload_image_to_s3,
 )
 
 try:
@@ -15889,6 +15889,7 @@ class CreateKnowledgeBaseView(APIView):
         self, file_bytes, file_name, kb_id, file_id, org_id=None
     ):
         from django.db import close_old_connections, connection
+
         from tfc.utils.storage import upload_file_to_s3
 
         try:
