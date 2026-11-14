@@ -204,6 +204,31 @@ func (f *LogFlusher) Run(ctx context.Context) {
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
 
+	// Run owns the only retry timer. Reschedule it after each flush, so a
+	// retry wakes at its backoff deadline even when the flush tick is later.
+	var retryTimer *time.Timer
+	var retryWake <-chan time.Time
+	defer func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+	}()
+	scheduleRetry := func() {
+		f.sendMu.Lock()
+		next := f.nextAttempt
+		f.sendMu.Unlock()
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+		retryWake = nil
+		// A deadline already passed with nothing re-sent means the buffer is
+		// empty (Close took it); the tick covers anything enqueued later.
+		if wait := time.Until(next); !next.IsZero() && wait > 0 {
+			retryTimer = time.NewTimer(wait)
+			retryWake = retryTimer.C
+		}
+	}
+
 	slog.Info("log flusher started",
 		"interval", f.interval.String(),
 		"webhook_url", f.webhookURL,
@@ -222,7 +247,10 @@ func (f *LogFlusher) Run(ctx context.Context) {
 			f.flush()
 		case <-f.kick:
 			f.flush()
+		case <-retryWake:
+			f.flush()
 		}
+		scheduleRetry()
 	}
 }
 
@@ -386,7 +414,11 @@ func (f *LogFlusher) flush() {
 			"count", len(records),
 			"retry", f.consecutiveFails,
 		)
-		f.reEnqueue(records)
+		if f.reEnqueue(records) == 0 {
+			// None of this batch survived: the next batch has not failed yet.
+			f.consecutiveFails = 0
+			f.nextAttempt = time.Time{}
+		}
 		return
 	}
 	if status >= 400 {
@@ -609,7 +641,7 @@ func (f *LogFlusher) post(ctx context.Context, body []byte) (int, error) {
 // This prevents data loss when the webhook endpoint is temporarily unavailable.
 // Once Close has begun it keeps them all for Close's last attempt: Enqueue
 // refuses records by then, so the buffer cannot grow further.
-func (f *LogFlusher) reEnqueue(records []TraceRecord) {
+func (f *LogFlusher) reEnqueue(records []TraceRecord) int {
 	f.mu.Lock()
 	capacity := 2*f.maxBuffer - len(f.buffer)
 	if f.closed {
@@ -626,6 +658,7 @@ func (f *LogFlusher) reEnqueue(records []TraceRecord) {
 		f.countLost(dropped)
 		f.recordDrop("requeue_overflow", dropped)
 	}
+	return kept
 }
 
 func FormatLogsWebhookURL(controlPlaneURL string) string {

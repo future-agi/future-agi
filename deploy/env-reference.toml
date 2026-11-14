@@ -1775,9 +1775,10 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
   heading = "Application behaviour"
   body = '''
 The gateway keeps request logs in memory until it flushes them to the backend;
-there is no disk spill. After `AGENTCC_LOG_FLUSH_MAX_RETRIES` consecutive failed
-sends (connection errors, timeouts or HTTP 5xx, with backoff between attempts),
-it discards the batch in hand from gateway memory under reason `max_retries`.
+there is no disk spill. After the initial failed send plus
+`AGENTCC_LOG_FLUSH_MAX_RETRIES` further failed sends (connection errors, timeouts
+or HTTP 5xx, with backoff between attempts), it discards the batch in hand
+from gateway memory under reason `max_retries`.
 The backend may already have stored some records if a timed-out request finished
 server-side; ingest dedupes on request id. An HTTP 4xx drops the batch at once
 under `client_error`. Every drop is logged at ERROR and counted by reason.
@@ -1879,13 +1880,13 @@ A failing webhook delays only its own events.
     keys = ["AGENTCC_LOG_FLUSH_MAX_RETRIES"]
     default = "`3`"
     setups = ["S", "D", "H"]
-    text = "Consecutive failed sends before the gateway discards and counts the batch; see the drop behaviour above. Helm: `agentccGateway.config.control_plane.log_flush.max_retries` or `agentccGateway.extraEnv`."
+    text = "Further failed sends allowed after the initial failed send; the gateway discards and counts the batch after those retries fail. Helm: `agentccGateway.config.control_plane.log_flush.max_retries` or `agentccGateway.extraEnv`."
 
     [[part.section.row]]
     keys = ["AGENTCC_LOG_FLUSH_RETRY_BACKOFF"]
     default = "`5s`"
     setups = ["S", "D", "H"]
-    text = "Initial wait after a failed send; doubles after each failure up to the maximum below. The gateway does not send while backing off. Helm: `agentccGateway.config.control_plane.log_flush.retry_backoff` or `agentccGateway.extraEnv`."
+    text = "Wait from a failed send until its next retry, independent of the periodic flush interval; doubles after each failure up to the maximum below. The gateway does not send while backing off. Helm: `agentccGateway.config.control_plane.log_flush.retry_backoff` or `agentccGateway.extraEnv`."
 
     [[part.section.row]]
     keys = ["AGENTCC_LOG_FLUSH_MAX_RETRY_BACKOFF"]
