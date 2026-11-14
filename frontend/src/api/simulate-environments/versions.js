@@ -94,6 +94,10 @@ const actorLimitsPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/actor-limits/", {
     id: envId,
   });
+const acceptUnresolvedPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-unresolved/accept/", {
+    id: envId,
+  });
 const environmentFilesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
 
@@ -240,6 +244,15 @@ export const setActorLimits = async (envId, { limits, revision }) =>
   (
     await axios.put(actorLimitsPath(envId), {
       limits,
+      expected_revision: revision,
+    })
+  ).data;
+
+// Accept the cast as written for one policy point the builder could not model; answers with the cast.
+export const acceptUnresolved = async (envId, { policy, revision }) =>
+  (
+    await axios.post(acceptUnresolvedPath(envId), {
+      policy,
       expected_revision: revision,
     })
   ).data;
@@ -873,6 +886,8 @@ export const useSetActorLimits = (envId) =>
   useCastChange(envId, setActorLimits);
 export const useUploadEnvironmentFile = (envId) =>
   useCastChange(envId, uploadEnvironmentFile);
+export const useAcceptUnresolved = (envId) =>
+  useCastChange(envId, acceptUnresolved);
 
 // Discard the given pieces' drafts, one request each. Whatever was discarded
 // before a refusal is gone, so the drafts and what they overlay are asked

@@ -23,6 +23,7 @@ from simulate.serializers.harness_environment import (
     HarnessActorDeleteQuerySerializer,
     HarnessActorLimitsWriteSerializer,
     HarnessActorListSerializer,
+    HarnessActorUnresolvedAcceptSerializer,
     HarnessActorViewQuerySerializer,
     HarnessActorViewSerializer,
     HarnessActorWriteSerializer,
@@ -512,6 +513,31 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             write_actor_limits(
                 job,
                 limits=request.validated_data.get("limits") or {},
+                user=request.user,
+                expected_revision=request.validated_data.get("expected_revision"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorUnresolvedAcceptSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_accept_unresolved",
+    )
+    @action(detail=True, methods=["post"], url_path="actor-unresolved/accept")
+    def accept_unresolved(self, request, pk=None):
+        """Accept the cast as written for one policy point the builder could not model."""
+        from simulate.services.harness_actors import accept_unresolved
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            accept_unresolved(
+                job,
+                policy=request.validated_data["policy"],
                 user=request.user,
                 expected_revision=request.validated_data.get("expected_revision"),
             )

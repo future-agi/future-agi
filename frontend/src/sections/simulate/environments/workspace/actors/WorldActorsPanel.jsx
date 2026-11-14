@@ -18,6 +18,7 @@ import {
   useActorView,
   useEditActor,
   useSetActorLimits,
+  useAcceptUnresolved,
   useUploadEnvironmentFile,
 } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -55,6 +56,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
+  const accept = useAcceptUnresolved(envId);
   // A double click lands before the pending state disables the button: one request at a time, or the second is
   // refused as an edit made elsewhere.
   const sending = useRef(false);
@@ -223,6 +225,60 @@ export default function WorldActorsPanel({ envId, locked = false }) {
           </Alert>
         )}
       </Stack>
+      {(data?.unresolved || []).length > 0 && (
+        <Box sx={{ mb: 2 }} data-testid="needs-decision">
+          <SectionCard title={C.unresolved.title} subtitle={C.unresolved.about}>
+            <Stack spacing={1.5}>
+              {data.unresolved.map((point) => {
+                const about = cast.find((one) => one.id === point.actor);
+                return (
+                  <Box key={point.policy}>
+                    <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                      {point.policy}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      {point.why}
+                      {about
+                        ? ` · ${C.unresolved.about_actor(about.name || about.id)}`
+                        : ""}
+                    </Typography>
+                    {!locked && (
+                      <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          sx={OUTLINED}
+                          disabled={accept.isPending}
+                          onClick={() =>
+                            once(accept, { policy: point.policy, revision })
+                          }
+                        >
+                          {C.unresolved.accept}
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          sx={OUTLINED}
+                          onClick={() => openForm(about || {})}
+                        >
+                          {C.unresolved.edit}
+                        </Button>
+                      </Stack>
+                    )}
+                  </Box>
+                );
+              })}
+              {accept.error && (
+                <Alert severity="error" onClose={() => accept.reset()}>
+                  {refusalText(accept.error, C.saveFailed)}
+                </Alert>
+              )}
+            </Stack>
+          </SectionCard>
+        </Box>
+      )}
       <Group
         title={C.title}
         about={C.everyoneAbout}

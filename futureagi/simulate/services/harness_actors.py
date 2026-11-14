@@ -106,6 +106,8 @@ class Cast(TypedDict):
     limits: dict[str, Any]
     # The models an actor may be played on; the first is the default.
     actor_models: list[str]
+    # Policy points the builder could not turn into an actor's permissions or knowledge, for the person to decide.
+    unresolved: list[dict[str, Any]]
 
 
 class Seen(TypedDict):
@@ -461,6 +463,7 @@ def _cast_view(
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),
         "limits": _limits(environment_files),
         "actor_models": actor_models(rules),
+        "unresolved": _unresolved(environment_files),
     }
 
 
@@ -497,6 +500,57 @@ def _limits(environment_files: dict[str, bytes]) -> dict[str, Any]:
     )
     limits = body.get("limits") if isinstance(body, dict) else None
     return dict(limits) if isinstance(limits, dict) else {}
+
+
+def _unresolved(environment_files: dict[str, bytes]) -> list[dict[str, Any]]:
+    """The policy points the builder left for the person, as `actors.json` keeps them beside the cast."""
+    body = (
+        _read_json(environment_files, ACTORS_FILE)
+        if ACTORS_FILE in environment_files
+        else {}
+    )
+    points = body.get("unresolved") if isinstance(body, dict) else None
+    return [
+        {
+            key: one.get(key)
+            for key in ("policy", "why", "actor")
+            if one.get(key) is not None
+        }
+        for one in points or []
+        if isinstance(one, dict) and isinstance(one.get("policy"), str)
+    ]
+
+
+def accept_unresolved(
+    environment: HostedHarnessJob,
+    *,
+    policy: str,
+    user: User | None,
+    expected_revision: int | None,
+) -> Cast:
+    """Accept the cast as written for one policy point the builder could not model: the point leaves the list the
+    person is asked to decide. Refuses `unresolved_not_found` (404) and `draft_changed` (409)."""
+    refs, environment_files, suite_files = _draft_read(environment, expected_revision)
+    points = _unresolved(environment_files)
+    kept = [one for one in points if one.get("policy") != policy]
+    if len(kept) == len(points):
+        raise HostedHarnessError(
+            "unresolved_not_found",
+            "that point is no longer waiting for a decision; read the actors again",
+            status_code=404,
+        )
+    return _written(
+        environment,
+        _with_cast(
+            environment_files,
+            _cast(environment_files),
+            actor_rules(environment_files),
+            unresolved=kept,
+        ),
+        suite_files,
+        refs,
+        user,
+    )
 
 
 def write_actor_limits(
@@ -1013,9 +1067,11 @@ def _with_cast(
     rules: ActorRules,
     *,
     limits: dict[str, Any] | None = None,
+    unresolved: list[dict[str, Any]] | None = None,
 ) -> dict[str, bytes]:
-    """The environment's files with this cast, keeping its limits (or these new ones)."""
+    """The environment's files with this cast, keeping its limits and unresolved points (or these new ones)."""
     kept = _limits(environment_files) if limits is None else limits
+    points = _unresolved(environment_files) if unresolved is None else unresolved
     files = dict(environment_files)
     # No actors and no limits means no file, so removing the only actor leaves nothing to review.
     files.pop(ACTORS_FILE, None)
@@ -1026,6 +1082,8 @@ def _with_cast(
         }
         if kept:
             body["limits"] = kept
+        if points:
+            body["unresolved"] = points
         files[ACTORS_FILE] = (json.dumps(body, indent=2) + "\n").encode("utf-8")
     return files
 

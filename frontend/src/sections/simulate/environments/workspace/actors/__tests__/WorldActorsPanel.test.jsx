@@ -9,6 +9,7 @@ import {
 } from "src/utils/test-utils";
 
 const mutate = vi.fn();
+const acceptMutate = vi.fn();
 const resetEdit = vi.fn();
 const refetch = vi.fn();
 let editState;
@@ -38,6 +39,10 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useSetActorLimits(...args)
         : { mutate: vi.fn(), reset: vi.fn() },
+    useAcceptUnresolved: (...args) =>
+      realHooks
+        ? real.useAcceptUnresolved(...args)
+        : { mutate: acceptMutate, reset: vi.fn(), isPending: false },
     useUploadEnvironmentFile: (...args) =>
       realHooks
         ? real.useUploadEnvironmentFile(...args)
@@ -1291,5 +1296,41 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Not set").parentElement).toHaveTextContent(
       "What they may agree to and keep to themselves: Not set",
     );
+  });
+
+  it("lists the policy points waiting for a decision above the cast, to accept as written or edit an actor for", () => {
+    acceptMutate.mockReset();
+    actorsData = cast([MANAGER], {
+      unresolved: [
+        {
+          policy: "Discounts over 25% need the VP",
+          why: "no record holds the VP's approval",
+          actor: "manager",
+        },
+      ],
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const block = screen.getByTestId("needs-decision");
+    expect(within(block).getByText("Needs your decision")).toBeInTheDocument();
+    expect(
+      within(block).getByText("Discounts over 25% need the VP"),
+    ).toBeInTheDocument();
+    expect(within(block).getByText(/About Priya Raman/)).toBeInTheDocument();
+    fireEvent.click(
+      within(block).getByRole("button", { name: "Accept as written" }),
+    );
+    expect(acceptMutate).toHaveBeenCalledWith(
+      { policy: "Discounts over 25% need the VP", revision: 3 },
+      expect.any(Object),
+    );
+    fireEvent.click(within(block).getByRole("button", { name: "Edit actor" }));
+    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+      "sales manager",
+    );
+  });
+
+  it("shows no decision block when nothing is waiting", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.queryByTestId("needs-decision")).toBeNull();
   });
 });

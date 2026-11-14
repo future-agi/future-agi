@@ -1187,6 +1187,18 @@ class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
     records = HarnessActorRecordSourceSerializer(many=True)
 
 
+class HarnessActorUnresolvedSerializer(serializers.Serializer):
+    policy = serializers.CharField()
+    why = serializers.CharField(required=False, allow_blank=True)
+    actor = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessActorUnresolvedAcceptSerializer(serializers.Serializer):
+    # The policy point accepted as written: it leaves the list waiting for a decision.
+    policy = serializers.CharField(max_length=500)
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
 class HarnessActorListSerializer(serializers.Serializer):
     actors = serializers.ListField(child=HarnessActorRecordField())
     source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]  # the API field is named source
@@ -1206,6 +1218,8 @@ class HarnessActorListSerializer(serializers.Serializer):
     limits = JsonObjectRequestField(required=False)
     # The models an actor may be played on; the first is the default.
     actor_models = serializers.ListField(child=serializers.CharField(), required=False)
+    # Policy points the builder could not turn into an actor's permissions or knowledge, waiting for the person.
+    unresolved = HarnessActorUnresolvedSerializer(many=True, required=False)
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

@@ -60,6 +60,15 @@ export const ACTORS_COPY = {
   },
 
   worldActors: {
+    // Policy points the builder could not turn into an actor's permissions or knowledge, shown above the cast.
+    unresolved: {
+      title: "Needs your decision",
+      about:
+        "Rules in the agent's material the builder could not give to an actor. Accept the cast as written, or edit an actor for the rule.",
+      about_actor: (name) => `About ${name}`,
+      accept: "Accept as written",
+      edit: "Edit actor",
+    },
     title: "Actors",
     groupTitle: (title, n) => `${title} (${n})`,
     intro:

@@ -255,6 +255,40 @@ def test_a_limits_only_edit_reads_as_a_change_to_the_actor_limits(
     assert listed["changes"]["actors"] == 1
 
 
+def test_a_policy_point_the_builder_could_not_model_waits_for_the_person_until_accepted(
+    user, workspace, storage, auth_client
+):
+    environment = record_tests._environment(user, workspace, "actors-unresolved")
+    point = {
+        "policy": "Discounts over 25% need the VP",
+        "why": "no record holds the VP's approval",
+        "actor": "manager",
+    }
+    actors = {"actors": [MANAGER], "unresolved": [point]}
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actors.json": json.dumps(actors)}),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    _rows(environment)
+
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["unresolved"] == [point]
+    # An actor edit keeps the points waiting.
+    _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
+    assert auth_client.get(f"{BASE}/{environment.id}/actors/").json()["unresolved"] == [
+        point
+    ]
+
+    url = f"{BASE}/{environment.id}/actor-unresolved/accept/"
+    accepted = auth_client.post(url, {"policy": point["policy"]}, format="json")
+    again = auth_client.post(url, {"policy": point["policy"]}, format="json")
+
+    assert accepted.status_code == 200 and accepted.json()["unresolved"] == []
+    assert (again.status_code, again.json()["error"]) == (404, "unresolved_not_found")
+
+
 def test_a_view_hides_another_actor_s_private_material(
     user, workspace, storage, auth_client
 ):
