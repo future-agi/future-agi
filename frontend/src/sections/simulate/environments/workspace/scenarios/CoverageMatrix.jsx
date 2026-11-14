@@ -10,7 +10,7 @@ import CustomTooltip from "src/components/tooltip";
 import SideDrawer from "../../components/SideDrawer";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
-import { scenarioToolbarButtonSx } from "./scenarios.constants";
+import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
 
 // The five rare-catastrophic overlays that must be present regardless of
@@ -40,7 +40,7 @@ const humanize = (s) =>
 // height: hover names the three summary numbers (Axes / Pairs / Forced), and a
 // click opens the per-axis table, the forced overlays and the pairwise heatmap
 // in a right-side drawer.
-export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false }) {
+export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false, onAddMissing }) {
   // Left undefined until the user picks, so the server default (task × overlay)
   // drives the initial grid.
   const [rowAxis, setRowAxis] = useState(undefined);
@@ -391,6 +391,17 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                   </Box>
                 </Box>
               </Box>
+              <UncoveredLevels
+                uncovered={data?.uncovered ?? []}
+                onAddMissing={
+                  onAddMissing
+                    ? (uncovered) => {
+                        close();
+                        onAddMissing(uncovered);
+                      }
+                    : undefined
+                }
+              />
             </Box>
           </Stack>
         )}
@@ -398,6 +409,40 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
     </>
   );
 }
+
+// The levels the build planned and no scenario uses, with one way to ask for them.
+export function UncoveredLevels({ uncovered, onAddMissing }) {
+  if (!uncovered.length) return null;
+  return (
+    <Stack spacing={1} sx={{ px: 3, py: 2 }} data-testid="coverage-uncovered">
+      <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
+        {SCENARIOS_COPY.uncoveredTitle}
+      </Typography>
+      <Typography component="ul" sx={{ typography: "s2", pl: 2, m: 0 }}>
+        {uncovered.map((one) => (
+          <li key={`${one.axis}:${one.level}`}>
+            {humanize(one.axis)}: {humanize(one.level)}
+          </li>
+        ))}
+      </Typography>
+      {onAddMissing && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onAddMissing(uncovered)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          {SCENARIOS_COPY.addMissingCases}
+        </Button>
+      )}
+    </Stack>
+  );
+}
+
+UncoveredLevels.propTypes = {
+  uncovered: PropTypes.arrayOf(PropTypes.shape({ axis: PropTypes.string, level: PropTypes.string })).isRequired,
+  onAddMissing: PropTypes.func,
+};
 
 CoverageMatrix.propTypes = {
   // The harness job id — coverage reads the filtered suite for this job.
@@ -407,6 +452,8 @@ CoverageMatrix.propTypes = {
   search: PropTypes.string,
   filters: PropTypes.object,
   defaultOpen: PropTypes.bool,
+  // Opens Add scenarios on "Generate more", prefilled for the uncovered levels.
+  onAddMissing: PropTypes.func,
 };
 
 const headerCellSx = {

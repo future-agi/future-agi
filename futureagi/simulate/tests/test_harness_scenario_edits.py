@@ -130,3 +130,26 @@ def test_manual_save_carries_unchanged_proofs(user, workspace, storage, auth_cli
     # Certifying is off in these tests, so an unproved case reads validation_unavailable.
     assert views[edited]["state"] == "draft"
     assert views[edited]["reason"] in ("not_validated", "validation_unavailable")
+
+
+def test_coverage_lists_unused_planned_levels(user, workspace, storage, auth_client):
+    from simulate.models import HarnessSuiteVersion
+
+    environment = _built(user, workspace, "ed-coverage")
+    suite = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        documents={
+            **(suite.documents or {}),
+            "coverage": {
+                "axes": {"task": {"levels": ["book", "cancel"], "unused": ["cancel"]}}
+            },
+        }
+    )
+
+    response = auth_client.get(
+        f"/simulate/api/harness-jobs/{environment.id}/scenarios/coverage/"
+    )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["uncovered"] == [{"axis": "task", "level": "cancel"}]
+    assert response.json()["coverage_recorded"] is True

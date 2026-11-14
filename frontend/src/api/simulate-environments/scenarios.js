@@ -134,6 +134,9 @@ export const scenarioFromApi = (row = {}) => {
     group: row.group,
     // "added" | "changed" | "unchanged" while the list shows unsaved changes.
     draftChange: row.draft_change ?? null,
+    // Draft, Validated, Active or Archived on the versions in view, with why; null when unversioned.
+    lifecycle: row.lifecycle ?? null,
+    sources: Array.isArray(row.lifecycle?.sources) ? row.lifecycle.sources : [],
     _raw: row,
   };
 };

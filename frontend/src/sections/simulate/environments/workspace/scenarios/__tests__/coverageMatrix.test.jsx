@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 import coverageSample from "src/api/simulate-environments/_fixtures/scenarioSamples/07-coverage.json";
-import CoverageMatrix from "../CoverageMatrix";
+import userEvent from "@testing-library/user-event";
+import CoverageMatrix, { UncoveredLevels } from "../CoverageMatrix";
+import { missingCasesGuidance } from "../addScenarios.constants";
 
 // The grid consumes the server coverage response through the hook; mock the hook
 // so the component renders straight from a captured sample (07 = the 20-row run).
@@ -87,5 +89,21 @@ describe("CoverageMatrix", () => {
     expect(screen.getByLabelText("Loading coverage")).toBeInTheDocument();
     expect(screen.queryByText(/0 scenarios/)).toBeNull();
     expect(screen.queryByText("0%")).toBeNull();
+  });
+});
+
+
+describe("CoverageMatrix uncovered levels", () => {
+  it("offers Add missing cases only when a planned level is uncovered", async () => {
+    const onAddMissing = vi.fn();
+    const uncovered = [{ axis: "task", level: "cancel" }];
+    const { rerender } = render(<UncoveredLevels uncovered={uncovered} onAddMissing={onAddMissing} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith(uncovered);
+    expect(missingCasesGuidance(uncovered)).toBe(
+      "Write scenarios for these planned levels that no scenario covers yet: task: cancel",
+    );
+    rerender(<UncoveredLevels uncovered={[]} onAddMissing={onAddMissing} />);
+    expect(screen.queryByRole("button", { name: "Add missing cases" })).toBeNull();
   });
 });

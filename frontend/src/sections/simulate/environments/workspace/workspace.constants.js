@@ -452,6 +452,9 @@ export const RUN_DIALOG_COPY = {
     pair_failed:
       "These versions failed their check together. Fix them and check again.",
   },
+  tryAgain: "Try again",
+  tryAgainIn: (seconds) => `Try again in ${seconds}s`,
+  validateScenarios: "Validate scenarios",
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
   rerunAgentFallback:
