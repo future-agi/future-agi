@@ -178,6 +178,8 @@ test(
       });
     });
     await test.step("UI and API: restore all three saved versions in comparison", async () => {
+      // MoreActions.jsx initially collapses History behind the Expand control.
+      await page.getByRole("button", { name: "Expand", exact: true }).click();
       await page.getByRole("button", { name: "History", exact: true }).click();
       const drawer = page.locator(".MuiDrawer-paper:visible");
       await drawer
@@ -191,18 +193,16 @@ test(
       await expect(choices).toHaveCount(2, { timeout: UI_READY });
       await choices.nth(0).check();
       await choices.nth(1).check();
-      const compared = page.waitForResponse(
-        (r) =>
-          new URL(r.url()).pathname ===
-          `${PROMPTS}${seeded.prompt_id}/compare-versions/`,
-        { timeout: UI_READY },
-      );
       await drawer
         .getByRole("button", { name: "Compare", exact: true })
         .click();
-      const response = await compared;
-      expect(response.status()).toBe(200);
-      const comparison = (await response.json()).result.data as Version[];
+      // applyCompare restores the history payload locally; it does not call this
+      // endpoint. Independently check the normal compare_versions API as well.
+      const response = await actor.api.post<{ result: { data: Version[] } }>(
+        `${PROMPTS}${seeded.prompt_id}/compare-versions/`,
+        { versions: EXPECTED.map((e) => e.version) },
+      );
+      const comparison = response.result.data;
       assertVersions(
         [...comparison].sort((a, b) =>
           a.template_version.localeCompare(b.template_version),
@@ -223,10 +223,15 @@ test(
         .locator('span[aria-label="Catalog pricing"]')
         .filter({ hasText: /^0$/ });
       await expect(zero).toHaveCount(1, { timeout: UI_READY });
+      // MUI keeps the outgoing tooltip mounted during its exit transition.
+      await page.mouse.move(0, 0);
+      await expect(source).toHaveCount(0, { timeout: UI_READY });
       await zero.hover();
       await expect(source).toHaveText("Catalog pricing", { timeout: UI_READY });
       const catalog = page.getByText("0.0125", { exact: true });
       await expect(catalog).toBeVisible({ timeout: UI_READY });
+      await page.mouse.move(0, 0);
+      await expect(source).toHaveCount(0, { timeout: UI_READY });
       await catalog.hover();
       await expect(source).toHaveText("Catalog pricing", { timeout: UI_READY });
       await expect(
