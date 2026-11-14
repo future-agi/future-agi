@@ -11,7 +11,6 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/pii"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
-	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	budgetplugin "github.com/futureagi/agentcc-gateway/internal/plugins/budget"
@@ -44,8 +43,16 @@ func decisionWithGuardrail(t *testing.T, action, needle string) (*decisionGatewa
 	c := &decisionGuardrailCapture{needle: needle}
 	reg := map[string]guardrails.Guardrail{c.Name(): c}
 	engine := guardrails.NewEngine(config.GuardrailsConfig{Rules: []config.GuardrailRuleConfig{{Name: c.Name(), Stage: "pre", Mode: "sync", Action: action}}}, reg)
-	g.srv.handlers.engine = pipeline.NewEngine(authplugin.New(g.keyStore, true), guardrails.NewPlugin(engine, reg, nil, nil, nil), g.observer)
+	useDecisionGuardrails(g, engine, pipeline.NewEngine(authplugin.New(g.keyStore, true), guardrails.NewPlugin(engine, reg, nil, nil, nil), g.observer))
 	return g, c
+}
+
+// useDecisionGuardrails runs the gateway with engine's rules, as the server
+// wires them: the same guardrail engine in the pipeline's plugin and in the
+// handlers, which read it to decide whether input guardrails apply.
+func useDecisionGuardrails(g *decisionGateway, engine *guardrails.Engine, pipe *pipeline.Engine) {
+	g.srv.handlers.engine = pipe
+	g.srv.handlers.guardrailEngine = engine
 }
 
 func TestDecisionGuardrailBlocksState(t *testing.T) {
@@ -76,7 +83,8 @@ func TestDecisionGuardrailMonitorAndQuestions(t *testing.T) {
 	if len(c.inputs) != 1 {
 		t.Fatalf("guardrail checks = %d, want 1", len(c.inputs))
 	}
-	for _, want := range []string{`"value":"state-marker"`, "instruction-marker", "criterion-marker"} {
+	// Object state is read as decoded keys and values, not compact JSON.
+	for _, want := range []string{"value\nstate-marker", "instruction-marker", "criterion-marker"} {
 		if !strings.Contains(c.inputs[0], want) {
 			t.Errorf("guardrail missed %q: %q", want, c.inputs[0])
 		}
@@ -109,7 +117,7 @@ func TestDecisionGuardrailRedactionCannotRewriteBody(t *testing.T) {
 				piiRule := pii.New(map[string]interface{}{"remediation": remediation})
 				reg := map[string]guardrails.Guardrail{piiRule.Name(): piiRule}
 				engine := guardrails.NewEngine(config.GuardrailsConfig{Rules: []config.GuardrailRuleConfig{{Name: piiRule.Name(), Stage: "pre", Mode: "sync", Action: action}}}, reg)
-				g.srv.handlers.engine = pipeline.NewEngine(authplugin.New(g.keyStore, true), guardrails.NewPlugin(engine, reg, nil, nil, nil))
+				useDecisionGuardrails(g, engine, pipeline.NewEngine(authplugin.New(g.keyStore, true), guardrails.NewPlugin(engine, reg, nil, nil, nil)))
 				body := strings.Replace(decisionSysBody, "private-state", "person@example.test", 1)
 				err := expectError(t, g.post(t, keyByok, body), http.StatusForbidden, "content_blocked")
 				if !strings.Contains(err.Message, "redaction is not applied to decisions") {
@@ -155,16 +163,21 @@ func TestDecisionOrgBudgetStopsBeforeUpstream(t *testing.T) {
 // criteria are read in key order, not Go's random map order.
 func TestDecisionGuardrailContentIsDeterministic(t *testing.T) {
 	body := `{"model":"typesafe/jev-latest","state":"s","questions":{"q3":{"type":"noul","instructions":"three"},"q1":{"type":"choice","instructions":"one","criteria":{"b":"bee","a":"ay","c":"see"}},"q2":{"type":"noul","instructions":"two"}}}`
-	req, err := models.ParseDecisionRequest([]byte(body))
-	if err != nil {
-		t.Fatal(err)
+	content := func() string {
+		t.Helper()
+		got, apiErr := decisionGuardrailContent([]byte(body))
+		if apiErr != nil {
+			t.Fatal(apiErr)
+		}
+		return string(got)
 	}
-	want := string(decisionGuardrailContent(req))
-	if want != `"s\none\na\nay\nb\nbee\nc\nsee\ntwo\nthree"` {
+	// Question fields are read in key order too: criteria before instructions.
+	want := content()
+	if want != `"s\na\nay\nb\nbee\nc\nsee\none\ntwo\nthree"` {
 		t.Fatalf("content = %s", want)
 	}
 	for i := 0; i < 50; i++ {
-		if got := string(decisionGuardrailContent(req)); got != want {
+		if got := content(); got != want {
 			t.Fatalf("run %d: %s, want %s", i, got, want)
 		}
 	}

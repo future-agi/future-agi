@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -93,12 +94,6 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 
 	rc.Model = req.Model
 	rc.DecisionRequest = req
-	// Decision bodies are forwarded byte for byte. Give input guardrails a
-	// separate chat-shaped view, never the body that goes to the provider.
-	guardrailContent := decisionGuardrailContent(req)
-	rc.GuardrailRequest = &models.ChatCompletionRequest{Messages: []models.Message{{
-		Role: "user", Content: guardrailContent,
-	}}}
 	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
@@ -127,6 +122,23 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	h.applyOrgAuditOverrides(orgCfg, rc)
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 
+	// Decision bodies are forwarded byte for byte. Input guardrails get a
+	// separate chat-shaped view, never the body that goes to the provider. It
+	// is built only when an input guardrail may apply, and never for the
+	// platform's own internal-key traffic (the Jev evaluator judging traces).
+	var guardrailContent json.RawMessage
+	if h.decisionInputGuardrailsApply(rc, orgCfg) {
+		content, apiErr := decisionGuardrailContent(req.Body)
+		if apiErr != nil {
+			models.WriteError(w, apiErr)
+			return
+		}
+		guardrailContent = content
+		rc.GuardrailRequest = &models.ChatCompletionRequest{Messages: []models.Message{{
+			Role: "user", Content: guardrailContent,
+		}}}
+	}
+
 	target, err := h.resolveDecision(r.Context(), r.Header, rc, req, providerKey, hasProviderKey, orgID, orgCfg)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
@@ -138,7 +150,7 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		// A masking/redacting guardrail may mutate its chat-shaped view, but
 		// cannot rewrite the decision body without changing its wire format.
-		if decisionGuardrailRewritten(rc, guardrailContent) {
+		if guardrailContent != nil && decisionGuardrailRewritten(rc, guardrailContent) {
 			rc.Flags.GuardrailTriggered = true
 			rc.Metadata["guardrail_action"] = "blocked"
 			return decisionRedactionError()
@@ -177,8 +189,9 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
 		// A blocking redaction guardrail stops the pipeline before providerCall;
-		// still explain why the decision body cannot be sent unchanged.
-		if decisionGuardrailRewritten(rc, guardrailContent) {
+		// still explain why the decision body cannot be sent unchanged. Any
+		// other error (a rate limit, budget, auth) is returned as it is.
+		if guardrailContent != nil && isGuardrailBlock(err) && decisionGuardrailRewritten(rc, guardrailContent) {
 			err = decisionRedactionError()
 		}
 		models.WriteErrorFromError(w, err)
@@ -204,76 +217,130 @@ func decisionRedactionError() *models.APIError {
 	return models.ErrGuardrailBlocked("content_blocked", "redaction is not applied to decisions; request blocked")
 }
 
-// decisionGuardrailContent extracts only user-supplied decision text for the
-// input guardrails: the state (or OpenAI input), then each question's text,
-// instructions and criteria, objects read in key order so the same body gives
-// the same text. It is never used to build or rewrite the upstream body.
-func decisionGuardrailContent(req *models.DecisionRequest) json.RawMessage {
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(req.Body, &fields) // ParseDecisionRequest already validated the JSON.
-	var parts []string
-	if req.Format == models.DecisionFormatSystemOne {
-		var state string
-		if json.Unmarshal(fields["state"], &state) == nil {
-			parts = append(parts, state)
-		} else {
-			var compact bytes.Buffer
-			if json.Compact(&compact, fields["state"]) == nil {
-				parts = append(parts, compact.String())
+// isGuardrailBlock reports whether err is a guardrail's content block.
+func isGuardrailBlock(err error) bool {
+	var apiErr *models.APIError
+	return errors.As(err, &apiErr) && apiErr.Type == models.ErrTypeGuardrail && apiErr.Status == http.StatusForbidden
+}
+
+// decisionInputGuardrailsApply reports whether input guardrails may check
+// this decision: a static (config.yaml) input rule, or any enabled org check.
+// Internal-key traffic is the platform's own (the Jev evaluator judges traces
+// that may hold PII or injection text on purpose), so it is not checked; org
+// keys, BYOK and managed, are.
+func (h *Handlers) decisionInputGuardrailsApply(rc *models.RequestContext, orgCfg *tenant.OrgConfig) bool {
+	if key := h.lookupRequestKey(rc); key != nil && key.KeyType == "internal" {
+		return false
+	}
+	if h.guardrailEngine != nil && h.guardrailEngine.PreCount() > 0 {
+		return true
+	}
+	if orgCfg != nil && orgCfg.Guardrails != nil {
+		for _, check := range orgCfg.Guardrails.Checks {
+			if check != nil && check.Enabled {
+				return true
 			}
 		}
-	} else {
-		appendDecisionText(&parts, fields["input"])
 	}
+	return false
+}
 
-	if req.Format == models.DecisionFormatSystemOne {
-		var questions map[string]json.RawMessage
-		_ = json.Unmarshal(fields["questions"], &questions)
+// maxDecisionTextDepth bounds how deeply a decision field is read for the
+// guardrail view. Real criteria nest a few levels; a body nested deeper is
+// refused rather than sent on with text the guardrails never saw.
+const maxDecisionTextDepth = 64
+
+// decisionGuardrailContent is the text the input guardrails check: every
+// top-level field but model and questions, and every question field but its
+// type and name (the rule models.DecisionContentField shares with the vendor
+// error filter), read in key order so the same body gives the same text.
+// Strings are decoded (\uXXXX escapes included), object keys inside a value
+// are text too ({"<criterion>": "<description>"}), and numbers are kept as
+// written. The body is decoded once and walked once, with a depth cap. It is
+// never used to build or rewrite the upstream body.
+func decisionGuardrailContent(body []byte) (json.RawMessage, *models.APIError) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var fields map[string]any
+	if err := dec.Decode(&fields); err != nil {
+		return nil, models.ErrBadRequest("invalid_json", "request body must be a single JSON object")
+	}
+	w := decisionTextWalk{}
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		if key == "questions" {
+			continue
+		}
+		if models.DecisionContentField(key, false) {
+			w.walk(fields[key])
+		}
+	}
+	appendQuestion := func(q any) {
+		question, ok := q.(map[string]any)
+		if !ok {
+			w.walk(q)
+			return
+		}
+		for _, key := range slices.Sorted(maps.Keys(question)) {
+			if models.DecisionContentField(key, true) {
+				w.walk(question[key])
+			}
+		}
+	}
+	switch questions := fields["questions"].(type) {
+	case map[string]any:
 		for _, id := range slices.Sorted(maps.Keys(questions)) {
-			appendDecisionQuestionText(&parts, questions[id])
+			appendQuestion(questions[id])
 		}
-	} else {
-		var questions []json.RawMessage
-		_ = json.Unmarshal(fields["questions"], &questions)
+	case []any:
 		for _, q := range questions {
-			appendDecisionQuestionText(&parts, q)
+			appendQuestion(q)
 		}
 	}
-	content, _ := json.Marshal(strings.Join(parts, "\n"))
-	return content
+	if w.tooDeep {
+		return nil, models.ErrBadRequest("decision_too_deep", fmt.Sprintf(
+			"A decision field is nested more than %d levels deep, too deep for the gateway's guardrails to check. Flatten it.", maxDecisionTextDepth))
+	}
+	content, _ := json.Marshal(strings.Join(w.parts, "\n"))
+	return content, nil
 }
 
-func appendDecisionQuestionText(parts *[]string, raw json.RawMessage) {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
-		return
-	}
-	for _, key := range []string{"question", "text", "instructions", "criteria"} {
-		appendDecisionText(parts, fields[key])
-	}
+// decisionTextWalk collects the text of decoded JSON values, iteratively and
+// depth-first in key order.
+type decisionTextWalk struct {
+	parts   []string
+	tooDeep bool
 }
 
-// Criteria can be a string or a nested collection of criteria. A criterion's
-// name is text too ({"<criterion>": "<description>"}), so object keys are
-// checked as well as their values.
-func appendDecisionText(parts *[]string, raw json.RawMessage) {
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		*parts = append(*parts, text)
-		return
+func (w *decisionTextWalk) walk(root any) {
+	type frame struct {
+		value any
+		depth int
 	}
-	var list []json.RawMessage
-	if json.Unmarshal(raw, &list) == nil {
-		for _, value := range list {
-			appendDecisionText(parts, value)
-		}
-		return
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) == nil {
-		for _, key := range slices.Sorted(maps.Keys(fields)) {
-			*parts = append(*parts, key)
-			appendDecisionText(parts, fields[key])
+	stack := []frame{{root, 1}}
+	for len(stack) > 0 && !w.tooDeep {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch v := f.value.(type) {
+		case string:
+			w.parts = append(w.parts, v)
+		case json.Number:
+			w.parts = append(w.parts, v.String())
+		case []any, map[string]any:
+			if f.depth >= maxDecisionTextDepth {
+				w.tooDeep = true
+				return
+			}
+			if list, ok := v.([]any); ok {
+				for i := len(list) - 1; i >= 0; i-- {
+					stack = append(stack, frame{list[i], f.depth + 1})
+				}
+				continue
+			}
+			obj := v.(map[string]any)
+			keys := slices.Sorted(maps.Keys(obj))
+			for i := len(keys) - 1; i >= 0; i-- {
+				stack = append(stack, frame{obj[keys[i]], f.depth + 1}, frame{keys[i], f.depth})
+			}
 		}
 	}
 }

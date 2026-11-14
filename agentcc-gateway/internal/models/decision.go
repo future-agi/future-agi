@@ -413,9 +413,19 @@ func (r *DecisionRequest) SafeUpstreamMessage(body []byte, apiKey, fallback stri
 	return message
 }
 
+// DecisionContentField reports whether a decision body field carries the
+// caller's content: every top-level field but model (questions are read field
+// by field), and every question field but its type and name. The vendor error
+// filter (contentPayloads) and the input guardrail view share this rule.
+func DecisionContentField(key string, inQuestion bool) bool {
+	if inQuestion {
+		return key != "type" && key != "name"
+	}
+	return key != "model" && key != "questions"
+}
+
 // contentPayloads returns the parts of the body a vendor message must not
-// echo: every top-level field but model and questions, and every question
-// field but its type and name.
+// echo: the fields DecisionContentField names.
 func (r *DecisionRequest) contentPayloads() ([]json.RawMessage, bool) {
 	members, err := objectMembers(r.Body)
 	if err != nil {
@@ -428,7 +438,7 @@ func (r *DecisionRequest) contentPayloads() ([]json.RawMessage, bool) {
 			return false
 		}
 		for _, f := range fields {
-			if f.key != "type" && f.key != "name" {
+			if DecisionContentField(f.key, true) {
 				payloads = append(payloads, f.value)
 			}
 		}
