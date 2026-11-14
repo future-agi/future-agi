@@ -508,3 +508,52 @@ def test_list_shows_validated_on_a_named_candidate_pair(user, workspace, storage
 
     assert default["views"][REFUND_KEYS[0]]["state"] == "active"
     assert candidate["views"][REFUND_KEYS[0]]["state"] == "validated"
+
+
+def test_must_pass_failures_name_only_failed_must_pass_cases():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.services import harness_scenario_lifecycle as lifecycle
+
+    members = [
+        ("refund-a", {"name": "Refund A", "must_pass": True}),
+        ("refund-b", {"name": "Refund B", "must_pass": True}),
+        ("refund-c", {"name": "Refund C"}),
+    ]
+    calls = [
+        {
+            "hosted_harness_receipt": {"scenario_key": "refund-a"},
+            "harness_outcome_status": "failed",
+        },
+        {
+            "hosted_harness_receipt": {"scenario_key": "refund-b"},
+            "harness_outcome_status": "passed",
+        },
+        {
+            "hosted_harness_receipt": {"scenario_key": "refund-c"},
+            "harness_outcome_status": "failed",
+        },
+    ]
+
+    class _Rows:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def filter(self, **kwargs):
+            return self
+
+        def values_list(self, *fields, flat=False):
+            return self.rows
+
+    execution = SimpleNamespace(
+        hosted_harness_job=SimpleNamespace(suite_version_id="s1")
+    )
+    with (
+        patch.object(
+            lifecycle.HarnessSuiteMember, "no_workspace_objects", _Rows(members)
+        ),
+        patch("simulate.models.CallExecution.objects", _Rows(calls)),
+    ):
+        assert lifecycle.must_pass_failures(execution) == ["Refund A"]
+    assert lifecycle.must_pass_failures(SimpleNamespace(hosted_harness_job=None)) == []

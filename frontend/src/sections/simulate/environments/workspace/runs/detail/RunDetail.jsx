@@ -12,6 +12,7 @@ import {
   Link,
   Tab,
 } from "@mui/material";
+import MustPassBanner from "./MustPassBanner";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -312,6 +313,8 @@ export default function RunDetail({
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
         </Box>
+
+        <MustPassBanner names={identity?.mustPassFailed} />
 
         <ReliabilityHeadline
           executionId={executionId}
