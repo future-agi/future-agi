@@ -631,36 +631,33 @@ class SimulationAnalyticsView(APIView):
 
         reserved_keys = set(metric_keys.values())
         if len(reserved_keys) < len(metric_keys):
-            used_keys = {}
-            resolved_keys = {}
-            priorities = {}
-            has_alias = False
+            used_keys: set[str] = set()
+            resolved_keys: dict[tuple[str, tuple[str, str]], str] = {}
+            # The plain key goes to scores, then numeric choices, then
+            # distributions; the metric tuple (ID first) breaks ties, so the
+            # choice does not depend on SQL row order. Any other metric on an
+            # occupied key gets __<id>, plus underscores if that is taken too.
             for metric, key in sorted(
                 metric_keys.items(),
-                key=lambda item: (item[0][3] != "avg", item[0][2] == "choices"),
+                key=lambda item: (
+                    item[0][3] != "avg",
+                    item[0][2] == "choices",
+                    item[0],
+                ),
             ):
                 owner = (metric[0], metric[3])
                 original_key = key
                 if (original_key, owner) in resolved_keys:
                     key = resolved_keys[(original_key, owner)]
-                elif key in used_keys and used_keys[key] != owner:
+                elif key in used_keys:
                     alias = f"{key}__{metric[0]}"
                     while alias in reserved_keys:
                         alias += "_"
                     key = alias
                     reserved_keys.add(key)
-                    has_alias = True
                 resolved_keys[(original_key, owner)] = key
                 metric_keys[metric] = key
-                used_keys[key] = owner
-                priority = (metric[3] != "avg", metric[2] == "choices")
-                priorities[metric[0]] = min(
-                    priorities.get(metric[0], priority), priority
-                )
-            if has_alias:
-                eval_rows = sorted(
-                    eval_rows, key=lambda row: priorities.get(row[0], (True, True))
-                )
+                used_keys.add(key)
 
         eval_averages = {}
         for (

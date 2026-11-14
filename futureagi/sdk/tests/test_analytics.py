@@ -1003,6 +1003,13 @@ class TestSimulationAnalyticsView:
             ),
             (
                 [
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
                     ("eval-score", "Tone", "score", 75.0, None, None),
                     ("eval-choice", "Sentiment", "choices", None, "positive", 4),
                 ],
@@ -1078,7 +1085,7 @@ class TestSimulationAnalyticsView:
 
         assert response.status_code == status.HTTP_200_OK
         averages = response.json()["result"]["eval_averages"]
-        assert json.dumps(averages, separators=(",", ":")) == expected_json
+        assert averages == json.loads(expected_json)
 
     @pytest.mark.parametrize(
         "eval_rows",
@@ -1112,9 +1119,83 @@ class TestSimulationAnalyticsView:
 
         assert response.status_code == status.HTTP_200_OK
         averages = response.json()["result"]["eval_averages"]
-        assert json.dumps(averages, separators=(",", ":")) == json.dumps(
-            {"avg_tone": eval_rows[-1][3]}, separators=(",", ":")
-        )
+        assert averages == {"avg_tone": eval_rows[-1][3]}
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+                ("eval-b", "TONE", "score", 40.0, None, None),
+            ],
+            [
+                ("eval-b", "TONE", "score", 40.0, None, None),
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+            ],
+        ],
+    )
+    def test_execution_id_repeated_rows_reuse_metric_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        last_b_value = next(row[3] for row in reversed(eval_rows) if row[0] == "eval-b")
+        assert response.json()["result"]["eval_averages"] == {
+            "avg_tone": 75.0,
+            "avg_tone__eval-b": last_b_value,
+        }
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-errored", "Tone", "choices", None, None, 0),
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+            ],
+            [
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+                ("eval-errored", "Tone", "choices", None, None, 0),
+            ],
+        ],
+    )
+    def test_execution_id_errored_choice_does_not_claim_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["eval_averages"] == {"tone": {"positive": 4}}
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution
