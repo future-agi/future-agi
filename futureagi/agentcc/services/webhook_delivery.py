@@ -70,6 +70,12 @@ logger = structlog.get_logger(__name__)
 
 # (connect, read) seconds for one POST.
 DELIVERY_TIMEOUT = (3, 10)
+# Wall-clock seconds one POST may take from its start until its response body
+# is read. The read timeout is per read, so a receiver that drips its body a
+# byte at a time would otherwise hold the run (and its worker thread) for as
+# long as it likes. Only a receiver's first bytes are kept.
+DELIVERY_POST_DEADLINE_SECONDS = 13
+DELIVERY_RESPONSE_MAX_BYTES = 4096
 # Events read per page of a run.
 DELIVERY_PAGE_SIZE = 100
 # How long a claimed event stays out of other runs. Longer than one POST.
@@ -194,22 +200,68 @@ def _post(http, webhook, event):
         ensure_public_http_url(webhook.url, WEBHOOK_PRIVATE_URL_ERROR)
         if http is None:
             http = build_ssrf_safe_session(WEBHOOK_PRIVATE_URL_ERROR)
+        started = time.monotonic()
         resp = http.post(
             webhook.url,
             data=body,
             headers=headers,
             timeout=DELIVERY_TIMEOUT,
+            stream=True,
+            # A redirect would start another request, each with its own
+            # timeouts, outside the POST's total deadline. A receiver must
+            # answer at its own URL.
+            allow_redirects=False,
         )
+        try:
+            text = _read_response_text(resp, started)
+        finally:
+            resp.close()
     except (
         http_requests.RequestException,
         ConnectionError,
         ValueError,
         TypeError,
+        TimeoutError,
     ) as e:
         return http, None, str(e) or type(e).__name__
     if 200 <= resp.status_code < 300:
         return http, resp.status_code, None
-    return http, resp.status_code, f"HTTP {resp.status_code}: {resp.text[:200]}"
+    return http, resp.status_code, f"HTTP {resp.status_code}: {text[:200]}"
+
+
+def _read_response_text(resp, started):
+    """Read at most DELIVERY_RESPONSE_MAX_BYTES of the body, and give up once
+    the POST has taken DELIVERY_POST_DEADLINE_SECONDS in all."""
+    sock = getattr(getattr(resp.raw, "connection", None), "sock", None)
+    data = b""
+    while len(data) < DELIVERY_RESPONSE_MAX_BYTES:
+        remaining = DELIVERY_POST_DEADLINE_SECONDS - (time.monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError("receiver did not finish its response in time")
+        if sock is not None:
+            # Each read waits at most until the deadline, not a full read
+            # timeout past it.
+            sock.settimeout(max(remaining, 0.05))
+        try:
+            # read1 returns what has arrived, so the deadline is checked
+            # between a dripping receiver's bytes; read(n) waits for all n.
+            read = getattr(resp.raw, "read1", None) or resp.raw.read
+            try:
+                chunk = read(
+                    DELIVERY_RESPONSE_MAX_BYTES - len(data), decode_content=True
+                )
+            except TypeError:
+                chunk = read(DELIVERY_RESPONSE_MAX_BYTES - len(data))
+        except Exception as e:
+            if time.monotonic() - started >= DELIVERY_POST_DEADLINE_SECONDS:
+                raise TimeoutError(
+                    "receiver did not finish its response in time"
+                ) from e
+            raise http_requests.RequestException(str(e)) from e
+        if not chunk:
+            break
+        data += chunk
+    return data.decode(resp.encoding or "utf-8", errors="replace")
 
 
 def _usable_webhook(webhook_id):
@@ -478,9 +530,22 @@ def deliver_webhook_events(event_ids=None, org_id=None):
     return totals
 
 
-def delivery_task_id(webhook_id):
-    """The fixed workflow id that makes a webhook's runs single-flight."""
-    return f"agentcc-webhook-delivery-{webhook_id}"
+def delivery_task_id(webhook_id, run_started_at=None):
+    """The workflow id of one delivery run: the webhook plus the run's token.
+
+    Single flight is the lease's job (a webhook is leased only when its lease
+    is free or expired, and a run whose token is no longer the latest leaves
+    the newer lease and pause alone). The id is unique per run, because a
+    fixed id made a dispatch in the moment between a run releasing its lease
+    and its workflow closing a no-op: the fresh lease then belonged to no run
+    and kept the webhook, and its org's slot, idle until it expired.
+    """
+    if run_started_at is None:
+        return f"agentcc-webhook-delivery-{webhook_id}"
+    return (
+        f"agentcc-webhook-delivery-{webhook_id}-"
+        f"{run_started_at.strftime('%Y%m%dT%H%M%S%f')}"
+    )
 
 
 def _run_token(value):
@@ -519,9 +584,8 @@ def deliver_webhook_activity(webhook_id, run_started_at=None):
         return deliver_webhook(webhook_id, release_lease=True, run_token=token)
     finally:
         try:
-            # Not this webhook: its workflow is still running, so the fixed
-            # workflow id would reuse it and strand a fresh lease. The next
-            # tick continues it.
+            # Not this webhook: the next tick continues it, so a run that ends
+            # on its budget hands the slot to another webhook first.
             dispatch_deliveries(exclude=webhook_id)
         except Exception:
             # The schedule's next tick dispatches instead.
@@ -561,8 +625,10 @@ def dispatch_deliveries(now=None, exclude=None):
     """Start delivery runs for the webhooks next in turn, within the caps.
 
     A webhook whose run is still going keeps it: its lease keeps it out of
-    the list, and the fixed workflow id means a run that outlived its lease
-    is reused, so the webhook is never sent to twice at once.
+    the list. Each run has its own workflow id (see ``delivery_task_id``); a
+    run's POSTs end inside its budget, well before its lease expires, and
+    each event is claimed before it is sent, so an event is never sent twice
+    at once.
     """
     from temporalio.common import WorkflowIDConflictPolicy
 
@@ -573,7 +639,7 @@ def dispatch_deliveries(now=None, exclude=None):
         try:
             deliver_webhook_activity.apply_async(
                 args=(str(webhook_id), now.isoformat()),
-                task_id=delivery_task_id(webhook_id),
+                task_id=delivery_task_id(webhook_id, now),
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             started += 1

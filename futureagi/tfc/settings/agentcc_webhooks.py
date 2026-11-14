@@ -49,9 +49,11 @@ AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES = _integer(
 AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG = _integer(
     "AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG", 1, 0
 )
-# Seconds one delivery run may keep starting POSTs before it yields its slot
-# (a POST takes at most 13 s more). At most 90, so a run always ends inside
-# its 120 s activity limit and lease.
+# Seconds one delivery run may keep starting POSTs before it yields its slot.
+# A POST in flight then ends within 13 s of its start once the receiver has
+# sent its headers: its body is read under that total deadline, not only a
+# per-read timeout. At most 90, so a run ends inside its 120 s activity limit
+# and lease.
 AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS = _integer(
     "AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS", 60, 1, 90
 )

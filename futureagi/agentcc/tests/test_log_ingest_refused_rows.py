@@ -250,3 +250,50 @@ def test_a_small_chunk_of_refused_rows_is_tried_row_by_row_not_halved(
     assert response.json()["result"]["ingested"] == 0
     # One INSERT for the chunk, then one per row: 9, not 15.
     assert insert.call_count == 9
+
+
+def _nested(depth, leaf):
+    value = leaf
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.integration
+@patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", SECRET)
+def test_a_deeply_nested_body_does_not_cost_other_orgs_their_rows(api_client, two_orgs):
+    """A caller controls how deep a logged body nests. Cleaning it must not
+    raise out of the batch: the gateway would drop the whole multi-org batch
+    as a client error, so every other org would lose its rows and metering."""
+    response = _post(
+        api_client,
+        [
+            _entry(
+                "deep-body",
+                "key-a",
+                request_body={"tools": _nested(600, "x\x00y")},
+            ),
+            _entry("other-org", "key-b"),
+        ],
+    )
+
+    assert response.status_code == 200, response.content
+    stored = _stored(["deep-body", "other-org"])
+    assert "other-org" in stored
+    assert stored["other-org"].organization_id != stored["deep-body"].organization_id
+    deep = stored["deep-body"].request_body["tools"]
+    for _ in range(600):
+        deep = deep[0]
+    assert deep == "xy"
+
+
+def test_strip_nul_is_iterative_and_keeps_order():
+    from agentcc.services.log_ingestion import _strip_nul
+
+    deep = _nested(5_000, {"k\x00": ["a\x00", "b", 1, None, {"c": "d\x00"}]})
+    cleaned = _strip_nul(deep)
+    for _ in range(5_000):
+        cleaned = cleaned[0]
+    assert cleaned == {"k": ["a", "b", 1, None, {"c": "d"}]}
+    plain = {"a": [1, "b"]}
+    assert _strip_nul(plain) is plain

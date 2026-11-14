@@ -23,9 +23,14 @@ URL_CHECK = "agentcc.services.webhook_delivery.ensure_public_http_url"
 
 
 def _response(status):
+    """A streamed response: delivery reads its body through ``raw``."""
+    import io
+
     resp = MagicMock()
     resp.status_code = status
     resp.text = "server error" if status >= 400 else "ok"
+    resp.encoding = "utf-8"
+    resp.raw = io.BytesIO(resp.text.encode())
     return resp
 
 
@@ -34,7 +39,7 @@ def _session(status_by_url, sleep_by_url=None):
     http = MagicMock()
     sleep_by_url = sleep_by_url or {}
 
-    def post(url, data=None, headers=None, timeout=None):
+    def post(url, data=None, headers=None, timeout=None, stream=False, **_kwargs):
         if url in sleep_by_url:
             time.sleep(sleep_by_url[url])
         return _response(status_by_url[url])
@@ -422,7 +427,9 @@ class TestDispatcher:
         calls = {c.kwargs["args"][0]: c.kwargs for c in start.call_args_list}
         assert set(calls) == {str(due_a.pk), str(due_b.pk)}
         for webhook_id, kwargs in calls.items():
-            assert kwargs["task_id"] == f"agentcc-webhook-delivery-{webhook_id}"
+            assert kwargs["task_id"].startswith(
+                f"agentcc-webhook-delivery-{webhook_id}-"
+            )
             assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
 
     def test_one_webhook_failing_to_start_does_not_stop_the_others(self, organization):
@@ -581,7 +588,9 @@ def _flaky_session(url, fail_every):
     http = MagicMock()
     calls = {"n": 0}
 
-    def post(posted_url, data=None, headers=None, timeout=None):
+    def post(
+        posted_url, data=None, headers=None, timeout=None, stream=False, **_kwargs
+    ):
         calls["n"] += 1
         return _response(502 if calls["n"] % fail_every == 0 else 200)
 
@@ -1212,3 +1221,168 @@ def test_nul_in_a_logged_request_still_creates_its_webhook_event_and_session(
     assert AgentccSession.no_workspace_objects.filter(
         organization=organization, session_id="session"
     ).exists()
+
+
+@pytest.mark.integration
+def test_a_dispatch_between_run_end_and_workflow_close_starts_a_real_run(
+    organization,
+):
+    """Round 4 review: a run releases its lease, then redispatches and only
+    then does its workflow close. A dispatcher that leases the webhook in that
+    window must start a new run, not hit the closing workflow's id (a no-op
+    that left the fresh lease with no run for 120 s)."""
+    from django.test import override_settings
+
+    webhook = _webhook(organization, "w", "https://a.example.com/x")
+    _events(webhook, 3, start_minutes_ago=10)
+    first = timezone.now()
+    with (
+        override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0),
+        patch.object(webhook_delivery.deliver_webhook_activity, "apply_async") as start,
+    ):
+        webhook_delivery.dispatch_deliveries(now=first)
+        # The run ends on its budget with events still due: lease released,
+        # workflow not yet closed.
+        webhook_delivery._end_run(webhook.pk, False, True, first)
+        second = first + timedelta(seconds=1)
+        webhook_delivery.dispatch_deliveries(now=second)
+
+    ids = [c.kwargs["task_id"] for c in start.call_args_list]
+    assert len(ids) == 2
+    assert ids[0] != ids[1], "the second run reused the closing run's workflow id"
+    webhook.refresh_from_db()
+    assert webhook.last_run_started_at == second
+
+
+@pytest.mark.integration
+def test_a_receiver_dripping_its_body_cannot_hold_a_post_past_its_deadline(
+    organization,
+):
+    """Round 4 review: the read timeout is per read, so a receiver that sends
+    its headers and then a byte every few seconds held a POST (and its worker
+    thread) indefinitely. A POST now ends at DELIVERY_POST_DEADLINE_SECONDS
+    in all, as a failed attempt, and the run goes on."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import requests
+
+    class Drip(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            try:
+                for _ in range(100):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    time.sleep(0.4)
+            except OSError:
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/hook"
+    webhook = _webhook(organization, "drip", url)
+    _events(webhook, 1)
+    try:
+        with (
+            patch.object(webhook_delivery, "DELIVERY_POST_DEADLINE_SECONDS", 1.5),
+            patch.object(webhook_delivery, "DELIVERY_TIMEOUT", (3, 1)),
+            patch(URL_CHECK),
+            patch(SESSION, return_value=requests.Session()),
+        ):
+            started = time.monotonic()
+            result = deliver_webhook(webhook.pk)
+            elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+    # Each read returns within the per-read timeout, so without a total
+    # deadline the 100 bytes take 40 s.
+    assert elapsed < 5, elapsed
+    assert result["failed"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.status == "pending" and event.attempts == 1
+    assert "in time" in event.last_error
+
+
+def _serve(handler):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+@pytest.mark.integration
+def test_a_redirecting_receiver_is_not_followed_outside_the_deadline(organization):
+    """Round 4 review: requests followed redirects inside ``http.post``, each
+    hop with its own timeouts, so a chain of slow redirects outlived the
+    POST's total deadline. A redirect is now an answer: one request, failed."""
+    from http.server import BaseHTTPRequestHandler
+
+    import requests
+
+    hits = []
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(307)
+            self.send_header("Location", "/next")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server, base = _serve(Redirect)
+    webhook = _webhook(organization, "redirect", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
+            result = deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+    assert hits == ["/hook"]
+    assert result["failed"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.last_response_code == 307
+
+
+@pytest.mark.integration
+def test_a_compressed_error_body_is_stored_as_text(organization):
+    import gzip
+    from http.server import BaseHTTPRequestHandler
+
+    import requests
+
+    class Gzip503(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = gzip.compress(b"upstream unavailable")
+            self.send_response(503)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server, base = _serve(Gzip503)
+    webhook = _webhook(organization, "gzip", f"{base}/hook")
+    _events(webhook, 1)
+    try:
+        with patch(URL_CHECK), patch(SESSION, return_value=requests.Session()):
+            deliver_webhook(webhook.pk)
+    finally:
+        server.shutdown()
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.last_error == "HTTP 503: upstream unavailable"
