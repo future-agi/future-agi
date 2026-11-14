@@ -16,10 +16,10 @@ interface WorkersResponse {
   steps: { kind: string; relationship: string; turn: number; order: number; worker_id: string | null }[];
 }
 
-test('SIM-E2E-003: a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action', {
+test('SIM-E2E-009: a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-003', area: 'simulate',
+    id: 'SIM-E2E-009', area: 'simulate',
     userGoal: 'A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker',
     steps: [
       'seed one completed chat call with a stored Participants record and trial world changes',

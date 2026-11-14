@@ -2636,7 +2636,7 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-003 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
+### SIM-E2E-009 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
 
 **Goal:** A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker
 
@@ -2649,7 +2649,7 @@
 1. seed one completed chat call with a stored Participants record and trial world changes
 2. open the call from its run
 3. open the Participants tab
-4. open the first hand-off row and Open in Traces
+4. open the first hand-off row and Open in Traces, then close the trace
 5. open the World changes tab
 
 **Backend state verified:**
@@ -2660,5 +2660,5 @@
 
 - one table section per turn, each with its own request and only its own hand-off
 - the unplaced hand-off carries the parent unknown chip, and only that one
-- a step read from a trace opens the Traces tab
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
 - World changes lists the worker's refused attempt with its reason
