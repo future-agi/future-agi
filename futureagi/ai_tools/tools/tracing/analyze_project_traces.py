@@ -55,7 +55,7 @@ class AnalyzeProjectTracesTool(BaseTool):
     ) -> ToolResult:
         import structlog
 
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing.access import get_analysis_projects
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
         from tracer.queries import deep_analysis_state
         from tracer.services.clickhouse.v2 import get_reader
@@ -63,12 +63,8 @@ class AnalyzeProjectTracesTool(BaseTool):
         logger = structlog.get_logger(__name__)
 
         # Verify project access
-        try:
-            project = Project.objects.get(
-                id=params.project_id,
-                organization=context.organization,
-            )
-        except Project.DoesNotExist:
+        project = get_analysis_projects(context).filter(id=params.project_id).first()
+        if project is None:
             return ToolResult.not_found("Project", str(params.project_id))
 
         # Determine which traces to analyze. Traces live only in CH post-cutover,
@@ -121,7 +117,7 @@ class AnalyzeProjectTracesTool(BaseTool):
 
         # Mark traces as running so the feed reflects in-flight analysis.
         for tid in trace_ids:
-            deep_analysis_state.set_running(str(tid))
+            deep_analysis_state.set_running(str(tid), project_id=str(project.id))
 
         # Dispatch via Temporal in batches of 10 (same as old beat task)
         try:

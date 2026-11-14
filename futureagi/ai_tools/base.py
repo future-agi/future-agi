@@ -27,6 +27,8 @@ class ToolContext:
     user: Any  # accounts.models.User
     organization: Any  # accounts.models.Organization
     workspace: Any  # accounts.models.Workspace
+    # Trusted background-job scope, never a model-supplied tool argument.
+    project: Any = None  # tracer.models.Project
 
     @property
     def user_id(self):
