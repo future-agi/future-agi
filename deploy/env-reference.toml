@@ -1844,13 +1844,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["AGENTCC_HTTP_ENABLED"]
     default = "`true`; Helm: `agentccGateway.tls.httpEnabled`"
     setups = ["D", "H"]
-    text = "Keep the gateway HTTP listener on; set false only after enabling TLS and migrating all callers. The gateway refuses startup if neither listener is enabled."
+    text = "Keep the gateway HTTP listener on; set false only after enabling TLS and migrating all callers. The gateway refuses startup if neither listener is enabled, or if the value is not `true` or `false`."
 
     [[part.section.row]]
     keys = ["AGENTCC_TLS_ENABLED"]
     default = "`false`; Helm: `agentccGateway.tls.enabled`"
     setups = ["D", "H"]
-    text = "Enable the native HTTPS listener. A missing or invalid certificate or private key fails startup rather than falling back to HTTP."
+    text = "Enable the native HTTPS listener. A missing, invalid or expired certificate or private key, or a value other than `true` or `false`, fails startup rather than falling back to HTTP."
 
     [[part.section.row]]
     keys = ["AGENTCC_TLS_PORT"]

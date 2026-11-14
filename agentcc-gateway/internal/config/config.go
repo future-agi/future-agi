@@ -355,6 +355,10 @@ type ServerConfig struct {
 	// TLS serves HTTPS on its own port, from a certificate and key file
 	// that are reloaded when they change.
 	TLS ServerTLSConfig `yaml:"tls" json:"tls"`
+
+	// envErrors are listener switches in the environment that are not true
+	// or false; Validate refuses them.
+	envErrors []string
 }
 
 // ServerTLSConfig is the gateway's own HTTPS listener.
@@ -1302,6 +1306,21 @@ func envBool(name string, dst *bool) {
 	*dst = b
 }
 
+// envListenerSwitch is envBool for a listener switch: a value that is not
+// true or false is kept for Validate to refuse, never ignored.
+func (s *ServerConfig) envListenerSwitch(name string, dst *bool) {
+	v := os.Getenv(name)
+	if v == "" {
+		return
+	}
+	b, err := strconv.ParseBool(strings.TrimSpace(v))
+	if err != nil {
+		s.envErrors = append(s.envErrors, fmt.Sprintf("%s must be true or false, got %q", name, v))
+		return
+	}
+	*dst = b
+}
+
 // envInt is envDuration for a plain integer.
 func envInt(name string, dst *int) {
 	v := os.Getenv(name)
@@ -1340,12 +1359,14 @@ func loadFromEnv(cfg *Config) {
 	envDuration("AGENTCC_SHUTDOWN_TIMEOUT", &cfg.Server.ShutdownTimeout)
 
 	// Listeners: plain HTTP on AGENTCC_PORT, HTTPS on AGENTCC_TLS_PORT.
+	// A typo in either switch fails startup rather than being ignored: an
+	// ignored AGENTCC_TLS_ENABLED=yes would serve plain HTTP only.
 	if os.Getenv("AGENTCC_HTTP_ENABLED") != "" {
 		httpOn := cfg.Server.HTTPOn()
-		envBool("AGENTCC_HTTP_ENABLED", &httpOn)
+		cfg.Server.envListenerSwitch("AGENTCC_HTTP_ENABLED", &httpOn)
 		cfg.Server.HTTPEnabled = &httpOn
 	}
-	envBool("AGENTCC_TLS_ENABLED", &cfg.Server.TLS.Enabled)
+	cfg.Server.envListenerSwitch("AGENTCC_TLS_ENABLED", &cfg.Server.TLS.Enabled)
 	envInt("AGENTCC_TLS_PORT", &cfg.Server.TLS.Port)
 	if v := os.Getenv("AGENTCC_TLS_CERT_FILE"); v != "" {
 		cfg.Server.TLS.CertFile = v
@@ -1592,6 +1613,9 @@ func validateLicenseRSAPublicKey(raw string) error {
 // validateListeners refuses a server with no listener, or a TLS listener it
 // could not start. The certificate itself is checked when it is loaded.
 func (s ServerConfig) validateListeners() error {
+	if len(s.envErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(s.envErrors, "; "))
+	}
 	t := s.TLS
 	if !s.HTTPOn() && !t.Enabled {
 		return fmt.Errorf("server.http_enabled is false and server.tls.enabled is false: turn on at least one listener")

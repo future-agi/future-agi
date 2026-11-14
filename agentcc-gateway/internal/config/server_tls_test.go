@@ -58,8 +58,6 @@ func TestServerTLSFromEnv(t *testing.T) {
 // A value that does not parse keeps the configured one and says so, as the
 // other AGENTCC_* settings do.
 func TestServerTLSFromEnvKeepsConfiguredValueOnGarbage(t *testing.T) {
-	t.Setenv("AGENTCC_HTTP_ENABLED", "nope")
-	t.Setenv("AGENTCC_TLS_ENABLED", "maybe")
 	t.Setenv("AGENTCC_TLS_PORT", "eighty")
 	t.Setenv("AGENTCC_TLS_RELOAD_INTERVAL", "30")
 
@@ -67,6 +65,46 @@ func TestServerTLSFromEnvKeepsConfiguredValueOnGarbage(t *testing.T) {
 	loadFromEnv(cfg)
 	if !cfg.Server.HTTPOn() || cfg.Server.TLS.Enabled || cfg.Server.TLS.Port != 8443 || cfg.Server.TLS.ReloadInterval != 30*time.Second {
 		t.Errorf("garbage env changed the server config: http=%v tls=%+v", cfg.Server.HTTPOn(), cfg.Server.TLS)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a garbage port or interval is ignored, not refused: %v", err)
+	}
+}
+
+// A listener switch that is not true or false fails startup, as the
+// frontend's does: ignoring AGENTCC_TLS_ENABLED=yes would serve plain HTTP
+// only, and ignoring AGENTCC_HTTP_ENABLED=off would keep HTTP on.
+func TestServerListenerSwitchFromEnvRefusesGarbage(t *testing.T) {
+	for _, tt := range []struct{ name, value string }{
+		{"AGENTCC_TLS_ENABLED", "yes"},
+		{"AGENTCC_TLS_ENABLED", "on"},
+		{"AGENTCC_HTTP_ENABLED", "off"},
+		{"AGENTCC_HTTP_ENABLED", "nope"},
+	} {
+		t.Run(tt.name+"="+tt.value, func(t *testing.T) {
+			t.Setenv(tt.name, tt.value)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			body := "server:\n  tls:\n    cert_file: /c\n    key_file: /k\n"
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), tt.name+" must be true or false") {
+				t.Fatalf("Load = %v, want a refusal naming %s", err, tt.name)
+			}
+		})
+	}
+	// Valid spellings still work, with surrounding space.
+	t.Setenv("AGENTCC_TLS_ENABLED", " TRUE ")
+	t.Setenv("AGENTCC_TLS_CERT_FILE", "/c")
+	t.Setenv("AGENTCC_TLS_KEY_FILE", "/k")
+	t.Setenv("AGENTCC_HTTP_ENABLED", "0")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Server.TLS.Enabled || cfg.Server.HTTPOn() {
+		t.Errorf("valid switches not applied: tls=%v http=%v", cfg.Server.TLS.Enabled, cfg.Server.HTTPOn())
 	}
 }
 
