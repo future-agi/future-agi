@@ -406,11 +406,15 @@ def test_signature_check_treats_non_ascii_text_as_a_mismatch():
 )
 def test_relay_refuses_a_signature_outside_its_time_window(signed_offset, timestamp):
     raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
-    now = int(time.time())
+    # A fixed clock, so the offset is exact however long signing takes.
+    now = 1_800_000_000
     headers = relay_headers(ORG, raw, now=now + signed_offset)
     if timestamp is not None:
         headers[RELAY_TIMESTAMP_HEADER] = timestamp
-    with patch("tfc.views.socket.get_channel_layer") as layer:
+    with (
+        patch("tfc.utils.websocket_relay_auth.time.time", return_value=now),
+        patch("tfc.views.socket.get_channel_layer") as layer,
+    ):
         response = post_relay(None, raw=raw, headers=headers)
     assert response.status_code == 403
     layer.assert_not_called()
