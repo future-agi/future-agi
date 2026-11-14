@@ -24,7 +24,7 @@ from simulate.services.hosted_harness import grades_nothing
 
 logger = structlog.get_logger(__name__)
 
-NEEDS_VERSION = "2"
+NEEDS_VERSION = "3"
 TOOL_ROWS = ("tool_discovery", "tool_routing")
 # ALK's default when a scenario does not say.
 _DEFAULT_MAX_TURNS = 10
@@ -57,6 +57,39 @@ class CaseNeeds:
     recorded: bool
     grading_gap: GradingGap | None
     ungradable: bool = False
+    # What the case needs the world's door for: each world action a fault is set on, and `ACTING` when an actor acts
+    # in the world (scheduled actions, or brought in by one of the agent's calls).
+    door: frozenset[str] = frozenset()
+
+
+# A case's actor acts in the world: it needs the world's door in front of the agent's tools.
+ACTING = "*acting_actor*"
+
+
+def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
+    """The world actions a scenario's faults are set on, and `ACTING` when one of its actors acts in the world."""
+    if not isinstance(document, Mapping):
+        return frozenset()
+    needs = {
+        str(fault["action"])
+        for fault in document.get("faults") or []
+        if isinstance(fault, Mapping) and fault.get("action")
+    }
+    if any(
+        isinstance(actor, Mapping)
+        and (
+            actor.get("actions")
+            or (
+                actor.get("trigger")
+                if isinstance(actor.get("trigger"), Mapping)
+                else {}
+            ).get("kind")
+            == "on_tool"
+        )
+        for actor in document.get("actors") or []
+    ):
+        needs.add(ACTING)
+    return frozenset(needs)
 
 
 def affected_by_tool(case: CaseNeeds, tool: str) -> bool:
@@ -203,6 +236,7 @@ def _needs(
     elif not readings:
         gap = "no_checks"
     return CaseNeeds(
+        door=door_needs(document),
         key=key,
         number=number,
         name=str(document.get("name") or shown.get("name") or key),
