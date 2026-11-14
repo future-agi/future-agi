@@ -93,9 +93,9 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}
     {done.length > 0 && <OperationFeedback success={`Draft updated for ${done.length} ${done.length === 1 ? 'context' : 'contexts'}. Production unchanged.`}>
-      {done.map((item) => <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+      {done.map((item, index) => <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
         <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{item.target.name}: draft updated{skillName && item.lock?.links?.find((link) => link.skillId === skillId)?.version != null ? ` to use ${skillName} v${item.lock.links.find((link) => link.skillId === skillId).version}` : ''}.</Typography>
-        <Button color="primary" variant={ready.length ? "outlined" : "contained"} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Review {item.target.name} draft</Button>
+        <Button color="primary" variant={ready.length || index > 0 ? "outlined" : "contained"} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Review {item.target.name} draft</Button>
       </Stack>)}
     </OperationFeedback>}
     {phase === 'applied' && outcomes.map((item) => <Alert severity="warning" key={item.target.contextId}>{nameOf(item.target)}: {explain(item)}</Alert>)}
