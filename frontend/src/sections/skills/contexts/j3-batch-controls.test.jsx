@@ -26,13 +26,25 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   mount();
   expect(screen.getByRole('checkbox', { name: 'Select a v1 for update' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Select b v1 for update' })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: 'Select c v1 for update' })).toBeDisabled();
+  const pin = screen.getByRole('checkbox', { name: 'Select c v1 for update' });
+  expect(pin).toBeDisabled();
+  expect(pin.closest('[title]')).toHaveAttribute('title', 'Pinned to v7 on purpose. Change the pin in the context to update.');
+  expect(screen.getByText(/Prepare starts a draft for each selected context/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  expect(await screen.findByText('policy v7 → v8 in a · 0 skills unchanged · production stays as is')).toBeVisible();
-  expect(screen.getByText('policy v7 → v8 in b · 0 skills unchanged · production stays as is')).toBeVisible();
+  expect(await screen.findByText('a · 0 skills unchanged')).toBeVisible();
+  expect(screen.getByText('b · 0 skills unchanged')).toBeVisible();
+  expect(screen.getAllByText('Draft origin not reported. Accept below to apply policy v7 → v8. Production stays unchanged.')).toHaveLength(2);
   expect(state.prepare).toHaveBeenCalledWith([{ contextId: 'a', name: 'a', version: 1 }, { contextId: 'b', name: 'b', version: 1 }]);
 });
 
+it('distinguishes a started draft from the accepted skill changes without implying a release', async () => {
+  state.prepare.mockResolvedValue([{ ...plan('support-agent'), reusedDraft: false, target: { contextId: 'support-agent', name: 'support-agent', version: 1, productionVersion: 1 } }]);
+  render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={[{ contextId: 'support-agent', name: 'support-agent', version: 1, productionVersion: 1 }]} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
+  expect(await screen.findByText('Draft started for support-agent. Accept below to apply policy v7 → v8. Production stays v1.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Apply selected updates to 1 context draft' })).toBeDisabled();
+  expect(state.apply).not.toHaveBeenCalled();
+});
 it('requires one explicit acknowledgement, applies only previewed plans, and renews only the rejected context', async () => {
   state.prepare.mockResolvedValueOnce([plan('a'), plan('b')]).mockResolvedValueOnce([plan('b', 'plan-b-2')]);
   state.apply.mockResolvedValueOnce([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2, digest: 'd' }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'error', code: 'stale_plan', httpStatus: 409 }]);

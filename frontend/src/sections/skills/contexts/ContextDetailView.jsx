@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink, useSearchParams } from 'react-router-dom';
-import { Box, Button, Link, MenuItem, Stack, Tab, TextField, Typography } from '@mui/material';
+import { Box, Button, Link, MenuItem, Skeleton, Stack, Tab, TextField, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import EmptyState from 'src/components/empty-state';
@@ -34,7 +34,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   if (!scoped || (!query.data && query.isLoading)) return <ContentSkeleton variant="page" />;
   if (state === 'denied' || [401, 403].includes(query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus)) return <EmptyState icon="solar:lock-keyhole-linear" title="You can't open this context" description="It may belong to another workspace, or your access changed." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to agent contexts</Button>} />;
   const missing = (query.error?.response?.status ?? query.error?.statusCode ?? query.error?.status ?? query.error?.httpStatus) === 404 || (!query.error && !query.data?.context);
-  if (missing) return <Stack spacing={1.5}><ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: 'Not found' }]} title="Agent context not found" /><EmptyState title="Agent context not found. It may have been archived or belong to another workspace." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to agent contexts</Button>} /></Stack>;
+  if (missing) return <EmptyState title="Agent context not found" description="It may have been archived or belong to another workspace." action={<Button component={RouterLink} to={paths.dashboard.skills.contexts} variant="outlined">Back to Agent contexts</Button>} />;
   if (query.error) return <ErrorState title="Couldn't load this context" detail="Check your connection and try again." onRetry={query.refetch} />;
   const context = query.data?.context;
   if (!context) return <ErrorState title="Context not found" detail="Choose an authorized context in this workspace." />;
@@ -51,21 +51,24 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const production = context.labels?.find((label) => label.name === 'production')?.version;
   const latest = query.data.latest || versions.find((row) => row.number === context.latestVersion);
   const newerPublished = production != null && latest?.number > production && latest?.id && latest?.digest;
+  const headerRelease = newerPublished && !['versions', 'tests'].includes(tab);
+  const releaseError = Boolean(versionQuery.error) || state === 'error';
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack spacing={0.5}>
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
-          {query.data.ownDraft && <Button color="primary" variant={editPrimary ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+          {query.data.ownDraft && <Button color="primary" variant={editPrimary && !newerPublished ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
           {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
           {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}
-          {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={cannotEdit || !viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
+          {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary && !newerPublished ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={cannotEdit || !viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
+          {headerRelease && <Button component={RouterLink} color="primary" variant="contained" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
         </Stack>
         <ActionReason id="context-edit-reason" reason={editReason} />
         {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">Editing {viewed ? `v${viewed.number}` : 'a release'} first saves and suspends your current draft.</Typography>}
       </Stack>}
       identity={<ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === 'production')?.version} draft={query.data.ownDraft}
-        releaseControl={noRelease ? <Typography variant="s3">No releases yet</Typography> : <TextField select size="small" value={viewed?.number || ''} disabled={!onSelectVersion || versionQuery.isLoading || Boolean(versionQuery.error)} SelectProps={{ displayEmpty: true, inputProps: { 'aria-label': 'Viewed release' } }} onChange={(event) => onSelectVersion(Number(event.target.value))} sx={{ minWidth: 88 }}>
-          {!viewed && <MenuItem value="">{versionQuery.error ? 'Release unavailable' : 'Loading release…'}</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
+        releaseControl={noRelease ? <Typography variant="s3">No releases yet</Typography> : <TextField select size="small" value={viewed?.number || ''} disabled={!onSelectVersion || versionQuery.isLoading || releaseError} SelectProps={{ displayEmpty: true, inputProps: { 'aria-label': 'Viewed release' } }} onChange={(event) => onSelectVersion(Number(event.target.value))} sx={{ minWidth: 88 }}>
+          {!viewed && <MenuItem value="">{releaseError ? 'Release unavailable' : <Skeleton width={48} aria-label="Loading release" />}</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
         </TextField>}
         extra={<>
           {sections.consumers && <Link component={RouterLink} to={`?${new URLSearchParams({ ...Object.fromEntries(params), tab: 'consumers' })}`} variant="s3" underline="always">Delivery: see Consumers</Link>}
@@ -74,7 +77,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
       tabs={<CustomTabs value={tab} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile onChange={(_, value) => selectTab(value)} aria-label="Context detail sections">
         {tabs.map(([value, label]) => <Tab key={value} value={value} label={label} id={`context-tab-${value}`} aria-controls={`context-panel-${value}`} />)}
       </CustomTabs>} />
-    {newerPublished && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }}><Typography variant="s3">v{latest.number} published · Production is still v{production}.</Typography><Button component={RouterLink} variant="outlined" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button></Stack>}
+    {newerPublished && <Typography variant="s3" color="text.secondary">v{latest.number} published · Production is still v{production}.</Typography>}
     {!available && <Typography variant="s3" color="text.secondary">That section isn&apos;t available here. Showing Instructions.</Typography>}
     <Box role="tabpanel" id={`context-panel-${tab}`} aria-labelledby={`context-tab-${tab}`} sx={{ minWidth: 0 }}>
       {versionQuery.isLoading || state === 'loading' ? <ContentSkeleton variant="panel" /> : versionQuery.error || state === 'error' ? <ErrorState title={`Couldn't load ${params.get('version') ? `v${params.get('version')}` : 'this release'}`} detail="The release request failed. Check your connection and try again." onRetry={versionQuery.refetch} /> : noRelease || state === 'empty' ? <EmptyState title="No published files" description="Open your draft to review and publish it." action={onReviewDraft && query.data.ownDraft ? <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button> : undefined} /> : <>

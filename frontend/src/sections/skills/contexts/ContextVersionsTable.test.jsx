@@ -10,7 +10,11 @@ it('shows version metadata and requests review only above production', () => {
   expect(screen.getByRole('table', { name: 'Context versions' })).toBeVisible();
   expect(screen.getAllByRole('button', { name: 'Request release review' })).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Request release review' })).toHaveAttribute('data-version', '2');
-  expect(screen.getByText('v1 is in production.')).toBeVisible();
+  expect(screen.getByText('Production')).toBeVisible();
+  expect(screen.queryByText('v1 is in production.')).not.toBeInTheDocument();
+  expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Version', 'Note', 'Author', 'Published', 'Labels', 'Actions']);
+  const requestCell = screen.getByRole('button', { name: 'Request release review' }).closest('td');
+  expect(requestCell.cellIndex).toBe(5);
 });
 it('offers exactly one latest candidate before first production, not every historical version', () => {
   render(<ContextVersionsTable {...props} />);
@@ -20,7 +24,7 @@ it('offers exactly one latest candidate before first production, not every histo
 it('does not offer a forward release from production to itself or an older version', () => {
   render(<ContextVersionsTable {...props} productionVersion={2} />);
   expect(screen.queryByRole('button', { name: 'Request release review' })).not.toBeInTheDocument();
-  expect(screen.getByText('v2 is in production.')).toBeVisible();
+  expect(screen.queryByText('v2 is in production.')).not.toBeInTheDocument();
 });
 
 it('keeps review scoped to the viewed candidate when several publications are above production', () => {

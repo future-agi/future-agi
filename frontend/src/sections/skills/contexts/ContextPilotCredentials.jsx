@@ -20,6 +20,7 @@ import {
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import IdentityChip from "../components/IdentityChip";
+import When from "../components/When";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import {
@@ -84,7 +85,7 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
       </TableCell>
       <TableCell>
         <Typography variant="s1">
-          {new Date(credential.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+          <When value={credential.expiresAt} kind="expiry" />
         </Typography>
       </TableCell>
       <TableCell>
@@ -158,18 +159,7 @@ export default function ContextPilotCredentials({
   };
   if (!canIssue)
     return (
-      <Stack spacing={1} alignItems="flex-start">
-        <Typography variant="s3">A workspace admin can create a read-only key for this version.</Typography>
-        <Button variant="outlined" onClick={async () => {
-          try {
-            if (!navigator.clipboard?.writeText) throw new Error('Unavailable');
-            await navigator.clipboard.writeText(`Please issue a read-only key for ${snapshot.name || 'this agent context'} v${snapshot.version}. Send the secret through our approved secret manager, not chat. Context: ${window.location.href}`);
-            setCopyState('request-copied');
-          } catch { setCopyState('request-failed'); }
-        }}>Ask a workspace admin</Button>
-        {copyState === 'request-copied' && <Typography variant="s3" role="status">Request copied. Send it to your workspace admin.</Typography>}
-        {copyState === 'request-failed' && <Typography variant="s3" role="status">Copy this request: Please issue a read-only key for {snapshot.name || 'this context'} v{snapshot.version}, and share it through our approved secret manager.</Typography>}
-      </Stack>
+      <Typography variant="s3" color="text.secondary">Ask a workspace admin for access.</Typography>
     );
   return (
     <>
