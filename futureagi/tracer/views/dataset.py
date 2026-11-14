@@ -39,7 +39,7 @@ try:
     )
 except ImportError:
     check_if_dataset_creation_is_allowed = None
-    send_dataset_limit_alert = None
+    send_dataset_limit_alert = None  # type: ignore[assignment]
 
 
 class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):

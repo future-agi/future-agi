@@ -35,11 +35,12 @@ class DatasetLimitReached(Exception):
 def dataset_limit_check_failed_response() -> Response:
     # 503: the refusal is transient, like the other retryable read failures.
     # The typed code lets the frontend show this message despite the 5xx.
-    return _gm.custom_error_response(
+    response: Response = _gm.custom_error_response(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         get_error_message("DATASET_LIMIT_CHECK_FAILED"),
         code=ApiErrorCode.DATASET_LIMIT_CHECK_FAILED,
     )
+    return response
 
 
 def dataset_add_refusal(
@@ -64,4 +65,7 @@ def dataset_add_refusal(
 def dataset_limit_reached_response() -> Response:
     # 429: the frontend shows it through the upgrade alert the caller sends
     # (the usage entry, or send_dataset_limit_alert), not as a toast.
-    return _gm.too_many_requests(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
+    response: Response = _gm.too_many_requests(
+        get_error_message("DATASET_CREATE_LIMIT_REACHED")
+    )
+    return response
