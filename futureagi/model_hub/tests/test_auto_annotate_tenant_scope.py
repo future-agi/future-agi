@@ -145,6 +145,23 @@ def _payload(tenant):
     }
 
 
+def _annotation_workflow_input(start_workflow):
+    """Return the input of the one generate_annotations_task workflow started.
+
+    The same mocked Temporal client also serves other workflow starts, such as
+    the usage consumer that the usage emitter starts on its first event in a
+    process, so pick the annotation workflow by its id instead of relying on
+    call order or a total call count.
+    """
+    calls = [
+        call
+        for call in start_workflow.await_args_list
+        if str(call.kwargs.get("id", "")).startswith("task-generate_annotations_task-")
+    ]
+    assert len(calls) == 1, start_workflow.await_args_list
+    return calls[0].args[1]
+
+
 @pytest.fixture
 def model_boundaries():
     agent = Mock()
@@ -181,8 +198,7 @@ def test_real_api_key_dispatch_serializes_organization_id_and_runs_worker(
             "/model-hub/annotations/", _payload(own), format="json"
         )
     assert response.status_code == 200, response.content
-    temporal_client.start_workflow.assert_awaited_once()
-    wire_input = temporal_client.start_workflow.call_args.args[1]
+    wire_input = _annotation_workflow_input(temporal_client.start_workflow)
     clear_workspace_context()  # Workers have no authenticated request context.
     auto_annotate.generate_annotations_task._original_func(
         *wire_input.args, **wire_input.kwargs
@@ -519,7 +535,7 @@ def test_feedback_dispatch_supplies_org_id_and_row_id_separately(tenants):
             format="json",
         )
     assert response.status_code == 200, response.content
-    wire_input = temporal_client.start_workflow.call_args.args[1]
+    wire_input = _annotation_workflow_input(temporal_client.start_workflow)
     assert wire_input.args[:3] == [
         str(own.label.id),
         str(annotation.id),
