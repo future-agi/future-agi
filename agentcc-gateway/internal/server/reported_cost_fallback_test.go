@@ -97,11 +97,11 @@ func TestChatModelFallbackRecordsTheInstanceThatAnswered(t *testing.T) {
 		usage := `{"prompt_tokens":1000,"completion_tokens":100,"total_tokens":1100,"cost":0.00042}`
 		if strings.Contains(string(body), `"stream":true`) {
 			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"openai/gpt-4o-mini\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"openai/gpt-4o-mini\",\"choices\":[],\"usage\":%s}\n\ndata: [DONE]\n\n", usage)
+			_, _ = fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"openai/gpt-4o-mini\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"openai/gpt-4o-mini\",\"choices\":[],\"usage\":%s}\n\ndata: [DONE]\n\n", usage)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"id":"c1","object":"chat.completion","created":1,"model":"openai/gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":%s}`, usage)
+		_, _ = fmt.Fprintf(w, `{"id":"c1","object":"chat.completion","created":1,"model":"openai/gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":%s}`, usage)
 	}))
 	t.Cleanup(openrouter.Close)
 
@@ -164,7 +164,7 @@ func TestReportedCostOnAnIncompleteResponsesStream(t *testing.T) {
 	const usage = `{"input_tokens":12088,"output_tokens":2743,"total_tokens":14831,"cost":{"currency":"USD","input_cost":0.00919,"output_cost":0.02743,"tool_calls_cost":0.0055,"cache_read_cost":0.00059,"total_cost":0.04271}}`
 	fake := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"sonar\"}}\n\n"+
+		_, _ = fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"sonar\"}}\n\n"+
 			"event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"model\":\"sonar\",\"output\":[],\"usage\":%s}}\n\n", usage)
 	}))
 	t.Cleanup(fake.Close)

@@ -67,7 +67,7 @@ func reportedServer(t *testing.T, f reportedFixture, typ, id, host string, ignor
 	fake := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"data":[]}`)
+			_, _ = io.WriteString(w, `{"data":[]}`)
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
@@ -82,14 +82,14 @@ func reportedServer(t *testing.T, f reportedFixture, typ, id, host string, ignor
 			completed := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed","model":%q,"output":[],"usage":{%s}}}`, f.model, usage)
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":%q}}\n\nevent: response.completed\ndata: %s\n\n", f.model, completed)
+				_, _ = fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":%q}}\n\nevent: response.completed\ndata: %s\n\n", f.model, completed)
 				return
 			}
-			fmt.Fprintf(w, `{"id":"resp_1","object":"response","status":"completed","model":%q,"output":[],"usage":{%s}}`, f.model, usage)
+			_, _ = fmt.Fprintf(w, `{"id":"resp_1","object":"response","status":"completed","model":%q,"output":[],"usage":{%s}}`, f.model, usage)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/completions") && !strings.HasSuffix(r.URL.Path, "/chat/completions") {
-			fmt.Fprintf(w, `{"id":"cmpl_1","object":"text_completion","created":1,"model":%q,"choices":[{"text":"hi","index":0,"finish_reason":"stop"}],"usage":{%s}}`, f.model, usage)
+			_, _ = fmt.Fprintf(w, `{"id":"cmpl_1","object":"text_completion","created":1,"model":%q,"choices":[{"text":"hi","index":0,"finish_reason":"stop"}],"usage":{%s}}`, f.model, usage)
 			return
 		}
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
@@ -98,10 +98,10 @@ func reportedServer(t *testing.T, f reportedFixture, typ, id, host string, ignor
 		}
 		if stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":%q,\"choices\":[],\"usage\":{%s}}\n\ndata: [DONE]\n\n", f.model, f.model, usage)
+			_, _ = fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":%q,\"choices\":[],\"usage\":{%s}}\n\ndata: [DONE]\n\n", f.model, f.model, usage)
 			return
 		}
-		fmt.Fprintf(w, `{"id":"c1","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{%s}}`, f.model, usage)
+		_, _ = fmt.Fprintf(w, `{"id":"c1","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{%s}}`, f.model, usage)
 	}))
 	t.Cleanup(fake.Close)
 	cfg := config.DefaultConfig()

@@ -15,7 +15,7 @@ import (
 
 // reportedBudgetCall exercises the same pre-check -> provider -> cost -> budget
 // ordering used by the gateway. Parse usage as JSON so vendor fields enter Extra.
-func reportedBudgetCall(t *testing.T, engine *pipeline.Engine, promptTokens int, reported float64) (error, map[string]string) {
+func reportedBudgetCall(t *testing.T, engine *pipeline.Engine, promptTokens int, reported float64) (map[string]string, error) {
 	t.Helper()
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
@@ -37,7 +37,7 @@ func reportedBudgetCall(t *testing.T, engine *pipeline.Engine, promptTokens int,
 	for k, v := range rc.Metadata {
 		metadata[k] = v
 	}
-	return err, metadata
+	return metadata, err
 }
 
 func testBudgetReportedCost(t *testing.T, tokens int, reported, limit float64, catalogueAboveLimit, wantRefused bool) {
@@ -56,7 +56,7 @@ func testBudgetReportedCost(t *testing.T, tokens int, reported, limit float64, c
 	cost.SetReportedCostVendors(func(*models.RequestContext) string { return "perplexity" })
 	engine := pipeline.NewEngine(budget, cost)
 
-	if err, metadata := reportedBudgetCall(t, engine, tokens, reported); err != nil {
+	if metadata, err := reportedBudgetCall(t, engine, tokens, reported); err != nil {
 		t.Fatalf("first request refused: %v", err)
 	} else {
 		if got, want := metadata["cost"], fmt.Sprintf("%.6f", reported); got != want {
@@ -70,7 +70,7 @@ func testBudgetReportedCost(t *testing.T, tokens int, reported, limit float64, c
 		}
 	}
 
-	err, _ := reportedBudgetCall(t, engine, tokens, reported)
+	_, err := reportedBudgetCall(t, engine, tokens, reported)
 	if wantRefused {
 		apiErr, ok := err.(*models.APIError)
 		if !ok || apiErr.Code != "org_budget_exceeded" {

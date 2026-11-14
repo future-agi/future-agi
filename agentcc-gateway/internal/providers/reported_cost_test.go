@@ -53,7 +53,7 @@ func TestReportedCostVendor_ConfigYAMLProviders(t *testing.T) {
 			if err != nil {
 				t.Fatalf("creating provider: %v", err)
 			}
-			defer p.Close()
+			defer func() { _ = p.Close() }()
 			if got := ReportedCostVendor(p, tc.id); got != tc.want {
 				t.Fatalf("ReportedCostVendor = %q, want %q", got, tc.want)
 			}
