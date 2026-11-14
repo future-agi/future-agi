@@ -5570,7 +5570,7 @@ class AddDataRowsView(APIView):
                     cells_to_create = []
 
                     for column in columns:
-                        cell_value = ""
+                        cell_value: str | None = ""
                         cell_value_infos = None
                         cell_status = CellStatus.PASS.value
                         column_metadata = {}

@@ -910,9 +910,10 @@ class LivekitService(VoiceServiceBlueprint):
         if result.recording_url:
             recording_dict["combined"] = result.recording_url
         lk_data["recording"] = recording_dict
-        if failures:
-            result.error = _recording_error(failures)
-            lk_data["recording_error"] = result.error
+        recording_error = _recording_error(failures) if failures else None
+        if recording_error:
+            result.error = recording_error
+            lk_data["recording_error"] = recording_error
         else:
             lk_data.pop("recording_error", None)
 
@@ -927,13 +928,13 @@ class LivekitService(VoiceServiceBlueprint):
         # 7. Cleanup: delete the raw egress file from S3, unless a track
         # failed: then it is the only full recording left to cut the
         # missing tracks from once the cause is fixed.
-        if failures:
+        if recording_error:
             logger.warning(
                 "livekit_egress_kept",
                 call_id=call_id_str,
                 object_key=object_key,
-                failed_tracks=sorted(failures),
-                code=result.error["code"],
+                failed_tracks=recording_error["tracks"],
+                code=recording_error["code"],
             )
         else:
             try:
