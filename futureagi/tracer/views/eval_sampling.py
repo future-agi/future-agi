@@ -3,7 +3,6 @@ from uuid import UUID
 
 from django.db.models import Manager, QuerySet
 from rest_framework.decorators import action
-from rest_framework.mixins import UpdateModelMixin
 
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
@@ -85,7 +84,7 @@ def _error(message: str, status_code: int, **headers):
     )
 
 
-class SamplingPreviewMixin(UpdateModelMixin):
+class SamplingPreviewMixin:
     _gm: GeneralMethods
 
     if TYPE_CHECKING:
@@ -126,7 +125,8 @@ class SamplingPreviewMixin(UpdateModelMixin):
         ):
             serializer.save(continuous_cursor=None)
             return
-        # The registered view supplies the queryset required by this mixin.
+        # The concrete view supplies UpdateModelMixin later in its MRO;
+        # mypy cannot resolve super() from this standalone mixin.
         super().perform_update(serializer)  # type: ignore[misc]
 
     @action(detail=False, methods=["post"], url_path="sampling_preview")

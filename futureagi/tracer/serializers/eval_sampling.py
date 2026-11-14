@@ -7,7 +7,7 @@ from tracer.serializers.filters import StrictInputSerializer, eval_task_filters_
 
 
 class SamplingAttributeSerializer(StrictInputSerializer):
-    source = serializers.ChoiceField(
+    source = serializers.ChoiceField(  # type: ignore[assignment]
         choices=("span", "resource", "metadata"), default="span"
     )
     key = serializers.CharField(max_length=200)
@@ -220,7 +220,7 @@ class SamplingBalanceCategorySerializer(serializers.Serializer):
 
 class SamplingBalanceSerializer(serializers.Serializer):
     attribute = serializers.CharField()
-    source = serializers.CharField(allow_null=True)
+    source = serializers.CharField(allow_null=True)  # type: ignore[assignment]
     categories = SamplingBalanceCategorySerializer(many=True)
     chi_square = serializers.FloatField(allow_null=True)
     degrees_of_freedom = serializers.IntegerField(allow_null=True)
