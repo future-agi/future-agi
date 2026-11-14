@@ -181,6 +181,12 @@ async function stubEpochApi(page: Page, executionId: string, fixId: string) {
   await page.route(endsWith(`/simulate/v3/test-executions/${executionId}/calls/`), (route) =>
     route.fulfill({ json: runCalls(executionId) }),
   );
+  // The run header's reliability read: no numbers yet, so ReliabilityHeadline
+  // (runs/detail/ReliabilityHeadline.jsx) renders nothing. Unstubbed, it 404s for
+  // a run the stack does not hold, and its error toast can cover the form's button.
+  await page.route(endsWith(`/simulate/v3/test-executions/${executionId}/reliability/`), (route) =>
+    route.fulfill({ json: { pass_hat_1: null, rows: [] } }),
+  );
   await page.route(endsWith(`/simulate/test-executions/${executionId}/debug-analysis/`), (route) => {
     if (route.request().method() === 'POST') {
       seen.diagnosisPosts += 1;
