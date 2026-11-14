@@ -2543,3 +2543,38 @@ def test_failed_change_blocks_only_its_key(user, workspace, storage, auth_client
     assert said["failed"] == [{"scenario_key": "refund-a", "reason": "bad check"}]
     environment.refresh_from_db()
     assert conversation_service.failed_changes(environment) == {"refund-a": "bad check"}
+
+
+def test_failed_scenarios_must_name_a_key_and_a_text_reason():
+    from simulate.serializers.hosted_harness_conversation import (
+        HarnessConversationPublishSerializer,
+    )
+
+    def valid(failed):
+        return HarnessConversationPublishSerializer(
+            data={"digest": "sha256:abc", "failed_scenarios": failed}
+        ).is_valid()
+
+    assert valid([{"scenario_key": "refund-a", "reason": "bad check"}])
+    assert valid([{"scenario_key": "refund-a"}])
+    assert not valid([{"reason": "no key"}])
+    assert not valid([{"scenario_key": "refund-a", "reason": {"nested": 1}}])
+    assert not valid(["refund-a"])
+    assert not valid([{"scenario_key": "k"}] * 201)
+
+
+def test_failed_change_reason_is_its_first_written_line(user, workspace, storage):
+    from simulate.services.hosted_harness_conversation import record_failed_changes
+
+    environment = _built(user, workspace, "d-failed-reason")
+
+    kept = record_failed_changes(
+        environment,
+        [
+            {"scenario_key": " refund-a ", "reason": "\n\n  bad check  \nTraceback"},
+            {"scenario_key": "refund-b", "reason": "   "},
+            {"scenario_key": "  ", "reason": "no key"},
+        ],
+    )
+
+    assert kept == {"refund-a": "bad check", "refund-b": "it could not be loaded"}

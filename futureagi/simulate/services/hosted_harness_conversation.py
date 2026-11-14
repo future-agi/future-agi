@@ -1552,11 +1552,10 @@ def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[st
     """Keep which scenarios the builder's last save could not apply, by key with the first line of
     why; each save replaces the set, so a fixed case leaves it."""
     kept = {
-        str(one.get("scenario_key"))[:255]: str(one.get("reason") or "").splitlines()[
-            0
-        ][:300]
-        if str(one.get("reason") or "").strip()
-        else "it could not be loaded"
+        str(one.get("scenario_key")).strip()[:255]: next(
+            (line.strip() for line in str(one.get("reason") or "").splitlines() if line.strip()),
+            "it could not be loaded",
+        )[:300]
         for one in failed or []
         if isinstance(one, dict) and str(one.get("scenario_key") or "").strip()
     }
