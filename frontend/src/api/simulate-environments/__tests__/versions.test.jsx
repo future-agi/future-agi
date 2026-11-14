@@ -143,6 +143,7 @@ describe("versionFromApi / toVersions", () => {
       requestedHere: false,
       pickable: false,
       discardable: false,
+      savedWithoutCheck: false,
     });
   });
 
