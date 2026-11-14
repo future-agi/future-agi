@@ -7,6 +7,7 @@ provider credential or source metadata is stored in plain text anywhere here.
 """
 
 from django.db import models
+from django.db.models.functions import Coalesce
 
 # The recording timeline row is shared with streamed recordings and lives in
 # tracer.models.attachment; imports set its state to ``importing`` explicitly.
@@ -67,6 +68,10 @@ class AttachmentRecordingSegment(ScopedAttachmentRecord):
     # Set when a derivative attempt fails; the derivative queue goes oldest
     # stamp first, so segments that keep failing cannot starve newer ones.
     derivative_checked_at = models.DateTimeField(null=True)
+    # Set once the segment can never need derivative work again (its peaks are
+    # published, or its occurrence is deleted or expired): it leaves the
+    # derivative queue's partial index for good (``derivatives.purge``).
+    derivatives_done_at = models.DateTimeField(null=True)
 
     class Meta:
         constraints = [
@@ -77,6 +82,16 @@ class AttachmentRecordingSegment(ScopedAttachmentRecord):
                 fields=["scope", "occurrence_client_id"],
                 name="attachment_segment_occurrence_unique",
             ),
+        ]
+        indexes = [
+            # ``derivatives.pending``: open published segments only, in queue
+            # order, so the queue never walks segments that are done.
+            models.Index(
+                Coalesce("derivative_checked_at", "created_at"),
+                models.F("id"),
+                condition=models.Q(state="published", derivatives_done_at__isnull=True),
+                name="attachment_derivative_due_idx",
+            )
         ]
 
 

@@ -59,6 +59,7 @@ from tracer.services.attachments.contract import (
     span_id,
     trace_uuid,
 )
+from tracer.services.attachments.uploads import BUDGETS as UPLOAD_BUDGETS
 from tracer.services.attachments.uploads import _lock_budgets
 
 logger = structlog.get_logger(__name__)
@@ -81,12 +82,17 @@ IMPORT_MIME_TYPES = {
 }
 # Only canonical PCM WAV has a qualified sandboxed segmenter today.
 SEGMENTABLE_MIME_TYPES = {"audio/wav"}
-# Finite in-flight bounds per (global, organization, project); not editions.
+# Finite in-flight bounds per (deployment, organization, project); not
+# editions. The deployment column is the reference the ``global:imports`` row
+# takes its configured share of (``import_budgets``): the upload deployment
+# caps where uploads have the same resource (bytes, transfers, validation
+# jobs), and an import-only bound for recordings, objects and links.
+_UPLOAD_TRANSFERS, _UPLOAD_BYTES, _UPLOAD_VALIDATION_JOBS, _ = UPLOAD_BUDGETS[0]
 IMPORT_BUDGETS = {
-    "bytes": (8 * 1024**3, 2 * 1024**3, 1024**3),
-    "transfers": (128, 32, 16),
+    "bytes": (_UPLOAD_BYTES, 2 * 1024**3, 1024**3),
+    "transfers": (_UPLOAD_TRANSFERS, 32, 16),
     "recordings": (64, 8, 4),
-    "validation_jobs": (8192, 2048, 1024),
+    "validation_jobs": (_UPLOAD_VALIDATION_JOBS, 2048, 1024),
     "objects": (65536, 16384, 8192),
     "links": (65536, 16384, 8192),
 }
@@ -156,6 +162,52 @@ IMPORT_SHARD = "imports"
 
 def public_reason(code):
     return PUBLIC_REASONS.get(code, "validation_failed")
+
+
+def import_budgets():
+    """Caps per resource for (``global:imports``, organization, project).
+
+    Read at call time. The organization and project caps are the per-scope
+    caps. The ``global:imports`` row is kept apart from the upload shards, so
+    a long import never throttles the uploads hashed to a shard, and it holds
+    only ``FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT`` (default 50) of the
+    deployment column. A value outside 1-100 fails closed: every import is
+    throttled and nothing is reserved.
+    """
+    percent = getattr(settings, "FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT", 50)
+    if type(percent) is not int or not 1 <= percent <= 100:
+        raise AttachmentError("throttled", 429)
+    return {
+        resource: (max(1, deployment * percent // 100), organization, project)
+        for resource, (deployment, organization, project) in IMPORT_BUDGETS.items()
+    }
+
+
+def lifetime_need(*, declared_bytes, window, segment_bytes, segments):
+    """What one import holds at its peak, right before publication.
+
+    The source and one window from admission, plus the bytes, one object and
+    one link of every staged segment (``JOB_UNITS`` + ``SEGMENT_UNITS``).
+    """
+    return {
+        "bytes": declared_bytes + window + segment_bytes,
+        "objects": JOB_UNITS["objects"] + segments * SEGMENT_UNITS["objects"],
+        "links": JOB_UNITS["links"] + segments * SEGMENT_UNITS["links"],
+    }
+
+
+def check_import_share(need):
+    """Refuse ``too_large`` an import that could never finish, whatever the load.
+
+    The share is the smallest cap of the three rows it is charged to. An
+    import whose peak exceeds it would otherwise be admitted, then throttled
+    at a staged segment on every attempt and refetch the whole source each
+    time. A shortfall of HEADROOM (other jobs in flight) stays ``throttled``.
+    """
+    caps = import_budgets()
+    for resource, amount in need.items():
+        if amount > min(caps[resource]):
+            raise AttachmentError("too_large", 413)
 
 
 def server_limits():
@@ -407,8 +459,9 @@ def _lock_import_budgets(scope):
     1/16 of the deployment caps (512 MiB), less than one valid import (up to
     1 GiB + one window, then its staged segments), and an import parked on a
     shard for hours would also starve every upload hashed to it. Imports are
-    rare, so one ``global:imports`` row with the full deployment caps does not
-    contend. Lock order is unchanged: a ``global:*`` row, organization,
+    rare, so one ``global:imports`` row does not contend; it holds a
+    configurable share of the deployment caps (``import_budgets``, default
+    half). Lock order is unchanged: a ``global:*`` row, organization,
     project, scope; retention takes ``global:0..15`` and never this row.
     """
     return _lock_budgets(scope, IMPORT_SHARD)
@@ -416,12 +469,13 @@ def _lock_import_budgets(scope):
 
 def _headroom(rows):
     """Headroom of (deployment import row, organization, project), in order."""
+    caps = import_budgets()
     result = {}
     for index, (name, row) in enumerate(
         zip(("global", "organization", "project"), rows, strict=True)
     ):
         result[name] = {
-            resource: IMPORT_BUDGETS[resource][index] - getattr(row, field)
+            resource: caps[resource][index] - getattr(row, field)
             for resource, field in _ROW_FIELDS.items()
         }
     return result
@@ -498,6 +552,18 @@ def submit(importer, *, scope_id, body):
         raise AttachmentError("conflict", 409)
     if recording["mime_type"] not in SEGMENTABLE_MIME_TYPES:
         raise AttachmentError("validation_failed", 422)
+    # Canonical WAV only (44-byte header): its segments carry all of the
+    # source's samples plus a 44-byte header each, so they total at least the
+    # declared size. Refuse before any reservation or fetch an import whose
+    # peak cannot fit; the worker repeats this exactly once it has the plan.
+    check_import_share(
+        lifetime_need(
+            declared_bytes=recording["declared_bytes"],
+            window=limits.window,
+            segment_bytes=recording["declared_bytes"],
+            segments=1,
+        )
+    )
     with transaction.atomic():
         rows = _lock_import_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
@@ -833,6 +899,16 @@ def _segments(job, recording, snapshot_path, facts, limits, storage, token=None)
         rate=facts["sample_rate"],
         channels=facts["channels"],
         limits=limits,
+    )
+    # The exact peak, before the first segment is reserved: a plan that can
+    # never fit is rejected ``too_large`` now, not throttled on every attempt.
+    check_import_share(
+        lifetime_need(
+            declared_bytes=job.declared_bytes,
+            window=job.window_bytes,
+            segment_bytes=sum(plan.byte_length for plan in plans),
+            segments=len(plans),
+        )
     )
     staged = {
         row.index: row
@@ -1262,7 +1338,10 @@ __all__ = [
     "Importer",
     "PUBLIC_REASONS",
     "admission_check",
+    "check_import_share",
     "completion_check",
+    "import_budgets",
+    "lifetime_need",
     "parse_request",
     "pending",
     "public_reason",

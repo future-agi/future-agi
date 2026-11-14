@@ -86,6 +86,14 @@ class CapturePolicy:
 UPLOAD_SOURCES = ("Bytes", "Blob", "OwnedRecordingFile")
 # Server-internal kinds written by trusted server paths, never by a client body.
 INTERNAL_SOURCES = ("imported_recording",)
+# Import source kinds that a DEPLOYED route can actually create: "RemoteUrl"
+# needs a mounted trusted resolver that seals envelopes (``envelopes.seal``);
+# "ProviderFile" needs a mounted provider registration and webhook intake
+# (``provider_recordings.register``/``verify_livekit_webhook``) and, in
+# addition, a qualified output reader. The route that mounts such a path adds
+# its kind here. Empty today: nothing deployed calls either, so advertising a
+# kind would promise an import that no client can start.
+IMPORT_SOURCE_PRODUCERS: set[str] = set()
 # Only types whose bytes the validation worker can settle are accepted, and only
 # their modalities are advertised. Accepting a type nothing can validate would
 # strand uploads in validating. ``probe.py`` sniffs each of these; any other
@@ -124,19 +132,20 @@ def server_policy(scope):
 
 
 def allowed_sources(scope):
-    """F01 SourceKinds this scope accepts: uploads, plus imports when opted in.
+    """F01 SourceKinds this scope accepts: uploads, plus serviceable imports.
 
-    ``RemoteUrl`` (a sealed URL envelope) is advertised while ``allow_import``
-    is on. ``ProviderFile`` is advertised only once a provider output reader is
-    qualified, because without one every such import fails
-    ``source_unavailable``.
+    An import kind is advertised only while ``allow_import`` is on AND a
+    deployed route can create that source (``IMPORT_SOURCE_PRODUCERS``).
+    ``ProviderFile`` also needs a qualified provider output reader, because
+    without one every such import fails ``source_unavailable``.
     """
     sources = list(UPLOAD_SOURCES)
     if scope.allow_import:
         from tracer.services.attachments.provider_recordings import READERS
 
-        sources.append("RemoteUrl")
-        if READERS:
+        if "RemoteUrl" in IMPORT_SOURCE_PRODUCERS:
+            sources.append("RemoteUrl")
+        if "ProviderFile" in IMPORT_SOURCE_PRODUCERS and READERS:
             sources.append("ProviderFile")
     return sources
 

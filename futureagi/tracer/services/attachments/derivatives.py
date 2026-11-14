@@ -124,12 +124,19 @@ def generate(segment_id, *, scope_id, storage):
         ).values_list("representation", flat=True)
     )
     published = []
-    with tempfile.NamedTemporaryFile(dir=_work_dir()) as source:
-        _copy_segment(segment, storage, source)
-        for representation in wanted:
-            if representation in done:
-                continue
-            published.append(_produce(segment, representation, source.name, storage))
+    if not set(wanted) <= done:
+        with tempfile.NamedTemporaryFile(dir=_work_dir()) as source:
+            _copy_segment(segment, storage, source)
+            for representation in wanted:
+                if representation in done:
+                    continue
+                published.append(
+                    _produce(segment, representation, source.name, storage)
+                )
+    # Every wanted representation is published: the segment leaves the queue.
+    AttachmentRecordingSegment.objects.filter(
+        pk=segment.pk, derivatives_done_at__isnull=True
+    ).update(derivatives_done_at=timezone.now())
     return published
 
 
@@ -267,32 +274,69 @@ def erase_for_attachment(*, scope_id, attachment_client_id, storage):
     return True
 
 
-def pending(*, limit, now=None):
-    """``[(segment id, scope id)]`` still missing derivatives, fairest first.
-
-    Only published segments of enabled scopes whose occurrence is live (not
-    deleted, not expired) qualify, so deleted or expired recordings never
-    occupy the queue; segments whose last attempt failed go to the back.
-    """
-    now = now or timezone.now()
-    live = AttachmentOccurrence.objects.filter(
+def _live_occurrence(now):
+    return AttachmentOccurrence.objects.filter(
         scope_id=OuterRef("scope_id"),
         client_id=OuterRef("occurrence_client_id"),
         deleted_at__isnull=True,
         expires_at__gt=now,
     ).filter(Q(source_expires_at__isnull=True) | Q(source_expires_at__gt=now))
-    done = AttachmentRecordingDerivative.objects.filter(
-        published_at__isnull=False, representation="peaks"
-    ).values("segment_id")
+
+
+def _peaks_published():
+    # ``generate`` publishes peaks last, so published peaks mean every wanted
+    # representation of that segment is published.
+    return AttachmentRecordingDerivative.objects.filter(
+        segment_id=OuterRef("pk"), published_at__isnull=False, representation="peaks"
+    )
+
+
+def _open():
+    """Open segments, in queue order: ``attachment_derivative_due_idx`` exactly."""
+    return AttachmentRecordingSegment.objects.filter(
+        state=RecordingSegmentState.PUBLISHED, derivatives_done_at__isnull=True
+    ).order_by(Coalesce("derivative_checked_at", "created_at"), "pk")
+
+
+def pending(*, limit, now=None):
+    """``[(segment id, scope id)]`` still missing derivatives, fairest first.
+
+    Only open published segments of enabled scopes whose occurrence is live
+    (not deleted, not expired) qualify, so deleted or expired recordings never
+    occupy the queue; segments whose last attempt failed go to the back. The
+    scan reads the partial index, which holds open segments only: finished
+    ones are stamped ``derivatives_done_at`` by ``generate`` or ``purge``.
+    """
+    now = now or timezone.now()
     return list(
-        AttachmentRecordingSegment.objects.filter(
-            state=RecordingSegmentState.PUBLISHED, scope__enabled=True
-        )
-        .filter(Exists(live))
-        .exclude(pk__in=done)
-        .order_by(Coalesce("derivative_checked_at", "created_at"), "pk")
+        _open()
+        .filter(scope__enabled=True)
+        .filter(Exists(_live_occurrence(now)))
+        .exclude(Exists(_peaks_published()))
         .values_list("pk", "scope_id")[:limit]
     )
+
+
+def purge(*, limit, now=None):
+    """Take terminal segments out of the derivative queue; returns the count.
+
+    Terminal means no derivative work can ever be needed again: the peaks are
+    already published (a ``generate`` that died before its stamp), or the
+    segment's occurrence is deleted or expired, which the erase path ends in
+    ``erased``. Each is stamped ``derivatives_done_at`` and so leaves the
+    partial index. Rows are never deleted: ``recording_manifest`` fails closed
+    only because it still finds a segment that is not live. A disabled scope
+    is not terminal (it may be enabled again); its segments stay queued.
+    """
+    now = now or timezone.now()
+    terminal = list(
+        _open()
+        .filter(~Exists(_live_occurrence(now)) | Exists(_peaks_published()))
+        .values_list("pk", flat=True)[:limit]
+    )
+    return AttachmentRecordingSegment.objects.filter(
+        pk__in=terminal, derivatives_done_at__isnull=True
+    ).update(derivatives_done_at=now)
 
 
 def defer(segment_id):

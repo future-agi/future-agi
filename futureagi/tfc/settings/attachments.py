@@ -39,3 +39,8 @@ FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND = int(
 )
 # Private worker scratch for one source snapshot plus one output window.
 FI_ATTACHMENTS_WORK_DIR = os.getenv("FI_ATTACHMENTS_WORK_DIR", "")
+# Caps of the deployment import budget row ``global:imports``, in percent
+# (1-100) of the deployment caps (``imports.import_budgets``). Default: half.
+FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = int(
+    os.getenv("FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT", "50")
+)

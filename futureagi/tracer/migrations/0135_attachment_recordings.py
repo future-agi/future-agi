@@ -2,7 +2,11 @@
 """Recording imports, provider observation, segments and derivatives.
 
 Depends on 0134_attachment_binding_claims. New tables plus defaulted or
-nullable columns on small attachment tables; no RunSQL. The 0133 fences do
+nullable columns on small attachment tables; no RunSQL. The derivative queue
+index is partial (open published segments only) and is created on an empty
+table. The provider connection's nullable ``created_by`` is a foreign key to
+``accounts_user``: adding it takes SHARE ROW EXCLUSIVE on ``accounts_user``
+for the rest of the transaction, so run ``migrate`` with a ``lock_timeout``. The 0133 fences do
 not cover these tables, and ``AttachmentScope.allow_import`` is created by
 0132 (it is in 0133's policy tuple), not here.
 """
@@ -10,6 +14,7 @@ not cover these tables, and ``AttachmentScope.allow_import`` is created by
 import uuid
 
 import django.db.models.deletion
+import django.db.models.functions.comparison
 from django.conf import settings
 from django.db import migrations, models
 
@@ -308,6 +313,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("derivative_checked_at", models.DateTimeField(null=True)),
+                ("derivatives_done_at", models.DateTimeField(null=True)),
                 (
                     "recording",
                     models.ForeignKey(
@@ -480,6 +486,19 @@ class Migration(migrations.Migration):
             constraint=models.UniqueConstraint(
                 fields=("segment", "representation"),
                 name="attachment_derivative_unique",
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="attachmentrecordingsegment",
+            index=models.Index(
+                django.db.models.functions.comparison.Coalesce(
+                    "derivative_checked_at", "created_at"
+                ),
+                models.F("id"),
+                condition=models.Q(
+                    ("derivatives_done_at__isnull", True), ("state", "published")
+                ),
+                name="attachment_derivative_due_idx",
             ),
         ),
     ]

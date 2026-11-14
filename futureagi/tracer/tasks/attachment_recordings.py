@@ -15,6 +15,8 @@ logger = structlog.get_logger(__name__)
 
 JOBS_PER_TICK = 2
 DERIVATIVES_PER_TICK = 20
+# Terminal segments taken out of the derivative queue per sweep (300 s).
+DERIVATIVE_PURGE_PER_SWEEP = 1000
 
 
 def _ready():
@@ -65,9 +67,11 @@ def run_attachment_recording_jobs():
 def sweep_attachment_recordings():
     if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
         return
-    from tracer.services.attachments import envelopes, imports
+    from tracer.services.attachments import derivatives, envelopes, imports
 
     envelopes.sweep()
+    # Bookkeeping only (no storage): finished or dead segments leave the queue.
+    derivatives.purge(limit=DERIVATIVE_PURGE_PER_SWEEP)
     storage = _ready()
     if storage is not None:
         imports.sweep(storage=storage)

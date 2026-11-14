@@ -396,6 +396,10 @@ def test_staged_segments_reserve_an_object_and_a_link_each(rec, monkeypatch):
 
 
 def test_policy_advertises_import_sources_only_while_imports_are_on(rec, monkeypatch):
+    # A deployment that mounts the producing routes registers their kinds.
+    monkeypatch.setattr(
+        contract, "IMPORT_SOURCE_PRODUCERS", {"RemoteUrl", "ProviderFile"}
+    )
     scope = rec.scope
     scope.refresh_from_db()
     off = contract.policy_document(scope)
