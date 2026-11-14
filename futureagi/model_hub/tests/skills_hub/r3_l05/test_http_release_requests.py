@@ -30,6 +30,42 @@ def post(client, path, body, status=200, key=None):
     )
 
 
+@pytest.mark.parametrize("has_decision", [True, False])
+def test_release_options_text_outcome_requires_recorded_decision(
+    admin, actors, candidate, hub_skill, has_decision
+):
+    old, new = candidate
+    run = fixtures.text_run(actors[0], hub_skill, new, baseline=old)
+    run.counts = {"graded": 3, "planned": 4, "incomplete": 1}
+    run.summary = (
+        {"decision": {"state": "works_on_examples", "regressed_cases": 0}}
+        if has_decision
+        else {}
+    )
+    run.save(update_fields=["counts", "summary"])
+
+    options = result(
+        admin.get(
+            BASE + "release-requests/options/",
+            {
+                "resource_id": str(hub_skill.pk),
+                "kind": "skill",
+                "candidate_version_id": str(new.pk),
+            },
+        )
+    )
+    assert len(options["evidence"]) == 1
+    evidence = options["evidence"][0]
+    assert evidence["source"] == "skills_text"
+    assert evidence["source_id"] == str(run.pk)
+    assert evidence["outcome"] == ("works_on_examples" if has_decision else None)
+    assert evidence["counts"] == (
+        {"graded": 3, "planned": 4, "regressed": 0, "disagreements": 0}
+        if has_decision
+        else None
+    )
+
+
 def test_independent_review_execute_and_receipt_over_http(
     admin, actors, candidate, hub_skill, organization, workspace
 ):
