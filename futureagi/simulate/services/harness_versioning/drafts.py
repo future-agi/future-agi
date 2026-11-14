@@ -1604,6 +1604,8 @@ def draft_rows(environment: HostedHarnessJob):
                 **scenario_fields(document, pair["key"]),
             )
         one.draft_change = pair.get("change")
+        # What the unsaved case cites, so the list can show its sources before it is saved.
+        one.draft_sources = list(document.get("sources") or [])
         shown.append(one)
     shown.draft = {"id": str(draft.id), "revision": draft.revision}
     return shown

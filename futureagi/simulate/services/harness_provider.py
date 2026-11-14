@@ -2169,6 +2169,7 @@ class HostedHarnessProvider:
                         else scenario_row(one)
                     ),
                     lifecycle,
+                    draft_sources=getattr(one, "draft_sources", None),
                 )
                 for one in page or []
             ],
@@ -3267,8 +3268,11 @@ def _lifecycle_for_list(
         )
         archived.append(view)
     archived_keys = {row.scenario_key for row in archived_rows}
+    from simulate.services.harness_scenario_sources import resolve
+
     return {
         "wanted": wanted,
+        "resolve_sources": lambda by_key: resolve(job, environment_version, by_key),
         "views": {key: view for key, view in views.items() if key not in archived_keys},
         "archived": archived,
         "archived_rows": archived_rows,
@@ -3335,7 +3339,10 @@ def _narrow_by_lifecycle(job, queryset, drafted, lifecycle, params):
 
 
 def _with_lifecycle(
-    row: dict[str, Any], lifecycle: dict[str, Any] | None
+    row: dict[str, Any],
+    lifecycle: dict[str, Any] | None,
+    *,
+    draft_sources: list[Any] | None = None,
 ) -> dict[str, Any]:
     from simulate.services.harness_scenario_lifecycle import (
         DRAFT_CHANGES,
@@ -3349,6 +3356,13 @@ def _with_lifecycle(
         view = lifecycle["archived_views"][key]
     elif row.get("draft_change") in DRAFT_CHANGES:
         view = in_draft_view()
+        if draft_sources:
+            # An unsaved case still shows what it cites, read against the version in view.
+            view["sources"] = [
+                dict(one)
+                for one in lifecycle["resolve_sources"]({key: draft_sources}).get(key)
+                or []
+            ]
     else:
         view = lifecycle["views"].get(key) or in_draft_view()
     return {**row, "lifecycle": view}
