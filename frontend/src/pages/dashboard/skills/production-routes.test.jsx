@@ -111,19 +111,19 @@ it('captures an authorized trace from the span into its delivered context and sh
     throw new Error(`Unexpected write ${url}`);
   });
   mountTraceCapture();
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   // No identity fields to transcribe: the span's identity is loaded into the authorized review.
   expect(screen.queryByRole('textbox', { name: 'Source trace ID' })).not.toBeInTheDocument();
   // Every supported segment starts selected; the reviewer deselects anything irrelevant.
   expect(await screen.findByRole('checkbox', { name: 'Customer request' })).toBeChecked();
   fireEvent.click(screen.getByRole('button', { name: 'Preview selected text' }));
   fireEvent.change(await screen.findByRole('textbox', { name: 'Redacted request' }), { target: { value: 'Redacted request' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Example title' }), { target: { value: 'Regression' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Case name' }), { target: { value: 'Regression' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Expected answer must contain' }), { target: { value: 'Reviewed answer' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /confirmed the expected behavior independently/ }));
   fireEvent.click(screen.getByRole('checkbox', { name: /Share this redacted request/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save reviewed example' }));
-  await screen.findByText(/Reviewed example saved/);
+  fireEvent.click(screen.getByRole('button', { name: 'Save test case' }));
+  await screen.findByText(/Test case saved/);
   const saved = axios.post.mock.calls.find(([url]) => url.endsWith('/accept/'));
   expect(saved[1]).toMatchObject({ suite_revision: 2, source_fingerprint: digest, acknowledge_workspace_sharing: true, case: { prompt: 'Redacted request', expected_trigger: null, reviewed: true, checks: [{ config: { text: 'Reviewed answer', case_sensitive: true } }] } });
   expect(saved[2].headers['Idempotency-Key']).toMatch(/^[a-f0-9-]{36}$/);
@@ -139,7 +139,7 @@ it('does not offer context capture when the authoritative write permission is ab
     return value;
   });
   mountTraceCapture();
-  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as test case' }));
   expect(await screen.findByText('Only a workspace author can capture cases into this context.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
   expect(axios.post).not.toHaveBeenCalled();

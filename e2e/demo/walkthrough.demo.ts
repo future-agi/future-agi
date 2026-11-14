@@ -451,14 +451,14 @@ test('skills walkthrough', async ({ browser, request }) => {
       await settle();
       const dialog = page.getByRole('dialog');
       await quick(async () => {
-        await click(page.getByRole('button', { name: 'Create context regression case', exact: true }), 700);
+        await click(page.getByRole('button', { name: 'Save as test case', exact: true }), 700);
         await click(dialog.getByRole('button', { name: 'Preview selected text', exact: true }), 600);
         await noPlaceholders();
       });
       await caption('The request and the order state come straight from the trace; nothing is retyped.');
       await settle();
       await hide(async () => {
-        await dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill('Blender refund included shipping');
+        await dialog.getByRole('textbox', { name: 'Case name', exact: true }).fill('Blender refund included shipping');
         await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('$24');
         await dialog.getByLabel('Required skill', { exact: true }).click();
         await page.getByRole('option', { name: /refund-policy$/ }).click();
@@ -476,7 +476,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       });
       await settle();
       await quick(async () => {
-        await click(dialog.getByRole('button', { name: 'Save reviewed example', exact: true }), 700);
+        await click(dialog.getByRole('button', { name: 'Save test case', exact: true }), 700);
         await glide(dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }));
         await dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }).click();
         await page.getByRole('group', { name: 'Examples to run' }).waitFor({ timeout: 90_000 });
@@ -521,7 +521,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       });
       await scrollTo(packet, 300);
       await chapter(7, 'Review and release', 'Moving production on a context needs a second person. Maya requests it.');
-      await click(page.getByRole('button', { name: 'Share evidence and prepare packet', exact: true }), 1000);
+      await click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 1000);
       const proceed = page.getByRole('link', { name: 'Continue to release review', exact: true }).or(page.getByRole('button', { name: 'Continue to release review', exact: true })).first();
       await expect(proceed).toBeVisible();
       await glide(proceed);
