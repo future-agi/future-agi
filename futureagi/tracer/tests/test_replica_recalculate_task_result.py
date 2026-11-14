@@ -19,7 +19,7 @@ import pytest
 from model_hub.models.choices import FeedbackSourceChoices
 from model_hub.models.evals_metric import Feedback
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
-from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -1682,6 +1682,615 @@ def test_reconcile_dropping_a_replacement_of_a_deleted_config_keeps_it_retired(
     assert not _recalculation_rows().exists()
 
 
+def test_sampling_revalidation_dropping_a_requeued_replacement_puts_the_previous_back(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The cohort sampling reconcile drops a pending entry whose row left the
+    sampled cohort. When that entry is a requeued Recalculate replacement,
+    the previous result comes back, as on the delta reconcile's drop path."""
+    from django.utils import timezone
+
+    from tracer.models.eval_task import EvalTask
+    from tracer.services.eval_tasks.sampling import pending, witnesses
+
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    EvalLogger.objects.using("default").filter(pk=replacement_id).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
+
+    class NoWitnesses:
+        def __init__(self, task):
+            pass
+
+        def read(self, ids):
+            return {}
+
+    # The row's current-state proof finds it in no selected unit any more.
+    monkeypatch.setattr(pending, "read_current_rows", lambda *a, **k: {})
+    monkeypatch.setattr(witnesses, "TraceWitnessReader", NoWitnesses)
+
+    task = EvalTask.objects.get(pk=eval_task.pk)
+    dropped = pending.revalidate_pending(task, {}, "v1", None, timezone.now())
+
+    assert dropped == 1
+    assert _stored(replacement_id).deleted is True
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+
+
+def _delete_commits_mid_put_back(monkeypatch, span):
+    """Marks ``span`` deleted inside the put-back's own transaction, right
+    after the restoring update read it (``_still_there``).
+
+    It stands in for a delete that commits between that read and the
+    put-back's commit, and proves the after-commit re-read runs and retires
+    the result. It does not model a delete that commits after that re-read:
+    ``_delete_held_open`` does, for the sweep's later re-reads."""
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.services.eval_tasks import recalculate
+
+    original = recalculate.restore_retired
+
+    def restore_then_delete(results):
+        restored = original(results)
+        ObservationSpan._base_manager.using("default").filter(pk=span.pk).update(
+            deleted=True
+        )
+        return restored
+
+    monkeypatch.setattr(recalculate, "restore_retired", restore_then_delete)
+
+
+def test_put_back_by_the_sweep_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _sweep()
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _stored(replacement_id).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_put_back_by_the_request_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    """The request's own close: the recompute fails, the previous result is
+    put back, and a delete of its span lands before that commits."""
+    _engine_down(monkeypatch)
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    issue, member = _issue_with(previous)
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+def test_put_back_without_a_delete_keeps_the_result_after_the_recheck(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The tombstone check retires nothing when every parent still exists."""
+    from tracer.services.eval_tasks.recalculate import _retire_if_parents_deleted
+
+    previous, _replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    assert _sweep()["restored"] == 1
+
+    assert _retire_if_parents_deleted(previous.pk) is False
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+
+
+def _delete_held_open(span):
+    """A delete of ``span`` on a second connection, left uncommitted until the
+    returned ``commit()`` is called: what a session delete looks like while
+    it is still cascading, after the put-back read the span and after the
+    put-back's after-commit check."""
+    import threading
+
+    from django.db import connections, transaction
+
+    started, release = threading.Event(), threading.Event()
+    errors = []
+
+    def run():
+        try:
+            with transaction.atomic(using="default"):
+                ObservationSpan._base_manager.using("default").filter(
+                    pk=span.pk
+                ).update(deleted=True)
+                started.set()
+                assert release.wait(60), "the test never released the delete"
+        except BaseException as exc:  # surfaced by commit()
+            errors.append(exc)
+            started.set()
+        finally:
+            connections.close_all()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert started.wait(60)
+
+    def commit():
+        release.set()
+        thread.join(60)
+        assert not errors, errors
+        assert ObservationSpan._base_manager.using("default").get(pk=span.pk).deleted
+
+    return commit
+
+
+def _put_back_watches():
+    from tracer.models.observation_span import EvalPutBack
+
+    return EvalPutBack.objects.using("default")
+
+
+def test_sweep_retires_a_put_back_whose_parent_delete_commits_after_the_recheck(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The span's delete is still uncommitted when the sweep puts the
+    previous result back and when the put-back's after-commit check runs, so
+    neither sees it. The delete then commits; the next sweep tick re-reads
+    the parents and retires the result with its Feed membership."""
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    commit_delete = _delete_held_open(observation_span)
+    try:
+        assert _sweep()["restored"] == 1
+        # Both checks ran while the delete was open: the result is live.
+        assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+            previous.pk
+        ]
+    finally:
+        commit_delete()
+    assert _stored(previous.pk).deleted is False
+
+    counts = _sweep()
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _stored(replacement_id).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+    assert counts["put_back_recheck"]["retired"] == 1
+    assert not _put_back_watches().exists()
+
+
+def test_untasked_request_put_back_is_retired_by_the_sweep_after_a_late_delete(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    """A result with no task: the request's recompute writes nothing and the
+    previous result is put back while a delete of its span is still open.
+    The delete commits after the request; the next sweep tick retires it."""
+    previous, feedback = _write_inline_result(
+        replica, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+    _per_span_eval(monkeypatch, lambda *_args: False)
+
+    commit_delete = _delete_held_open(observation_span)
+    try:
+        _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+        assert _stored(previous.pk).deleted is False
+    finally:
+        commit_delete()
+    assert _stored(previous.pk).deleted is False
+    assert _membership(member).deleted is False
+
+    _sweep()
+
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+    assert not _put_back_watches().exists()
+
+
+def test_put_back_is_rechecked_for_an_hour_then_released(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """With no delete, the sweep keeps re-reading a put-back's parents, and
+    keeps the result live, until the watch is older than the window."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.services.eval_tasks.recalculate import PUT_BACK_RECHECK_SECONDS
+
+    previous, _replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    assert _sweep()["restored"] == 1
+    (watch,) = _put_back_watches()
+    assert watch.result_id == previous.pk
+
+    counts = _sweep()["put_back_recheck"]
+    assert (counts["rechecked"], counts["retired"], counts["released"]) == (1, 0, 0)
+    assert _put_back_watches().count() == 1
+
+    _put_back_watches().update(
+        restored_at=timezone.now() - timedelta(seconds=PUT_BACK_RECHECK_SECONDS + 1)
+    )
+    counts = _sweep()["put_back_recheck"]
+
+    assert (counts["rechecked"], counts["retired"], counts["released"]) == (1, 0, 1)
+    assert not _put_back_watches().exists()
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+
+
+def test_put_back_watch_is_released_once_the_result_is_retired_again(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """A result retired after its put-back (a later Recalculate kept its
+    replacement, or a delete cascaded over it) needs no more re-reads."""
+    from tracer.services.eval_tasks.recalculate import recheck_put_backs
+
+    previous, _replacement_id, _issue, _member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    assert _sweep()["restored"] == 1
+    EvalLogger.objects.using("default").filter(pk=previous.pk).update(deleted=True)
+
+    counts = recheck_put_backs()
+
+    assert (counts["rechecked"], counts["retired"], counts["released"]) == (1, 0, 1)
+    assert not _put_back_watches().exists()
+
+
+def test_recheck_batch_rotates_through_more_put_backs_than_it_holds(
+    observation_span, custom_eval_config, eval_task
+):
+    """More put-backs are watched than one tick's batch holds: the next tick
+    reads the ones the last tick did not, rather than the same oldest ones
+    again, so a late delete under the newest put-back is caught a tick
+    later, not once the older watches expire an hour on."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.observation_span import EvalPutBack
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import recheck_put_backs
+
+    now = timezone.now()
+    results = []
+    for i in range(3):
+        span = Span.objects.using("default").create(
+            id=f"{observation_span.id}-w{i}",
+            project=observation_span.project,
+            trace=observation_span.trace,
+            name=f"watched span {i}",
+            observation_type="llm",
+        )
+        result = _task_result(eval_task, span, custom_eval_config)
+        EvalPutBack.objects.using("default").create(
+            result=result, restored_at=now - timedelta(minutes=30 - i)
+        )
+        results.append((span, result))
+
+    first = recheck_put_backs(limit=2)
+    assert (first["rechecked"], first["retired"]) == (2, 0)
+    # The newest put-back's span is deleted after the first tick read the
+    # two older ones.
+    newest_span, newest = results[-1]
+    Span._base_manager.using("default").filter(pk=newest_span.pk).update(deleted=True)
+
+    second = recheck_put_backs(limit=2)
+
+    assert _stored(newest.pk).deleted is True
+    assert second["retired"] == 1
+    assert all(_stored(result.pk).deleted is False for _span, result in results[:2])
+
+
+@pytest.mark.parametrize("status", [EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING])
+def test_task_result_on_a_span_with_a_project_version_is_still_a_task_result(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    project_version,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    status,
+):
+    """A task's entry is classed by its task link, not by the span's
+    project_version: the engine is still evaluating it, so Recalculate is
+    refused instead of retiring it as a result with no task."""
+    ObservationSpan.objects.using("default").filter(pk=observation_span.pk).update(
+        project_version=project_version
+    )
+    observation_span.refresh_from_db()
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    EvalLogger.objects.using("default").filter(pk=previous.pk).update(status=status)
+    before = _snapshot(observation_span, custom_eval_config)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "still being evaluated" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert not _recalculation_rows().exists()
+    assert stub_run_eval.requests == []
+
+
+def test_composite_task_result_whose_write_fails_keeps_the_previous_result(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    """A composite eval returns its result for the caller to write. When that
+    write fails, the replacement must not count as completed: it ends errored
+    and the previous scored result is put back, not retired."""
+    import tracer.utils.eval as eval_utils
+
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+
+    def composite_result(**_kwargs):
+        return {"trace": observation_span.trace, "output_float": 0.9}
+
+    def write_fails(_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(eval_utils, "_execute_evaluation", composite_result)
+    monkeypatch.setattr(eval_utils, "_persist_eval_logger", write_fails)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "previous result is kept" in str(response.data)
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _stored(previous.pk).eval_explanation == "the previous answer"
+    assert not _recalculation_rows().exists()
+
+
+def test_reconcile_drop_leaves_entries_the_drain_claimed_meanwhile(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The reconciler chose these entries while they were PENDING; the drain
+    claimed them before the drop. A claimed entry runs on: neither it nor a
+    Recalculate replacement is retired, and the replacement's previous result
+    is not put back under it."""
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    previous, replacement_id, _issue, _member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    other_span = Span.objects.using("default").create(
+        id=f"{observation_span.id}-b",
+        project=observation_span.project,
+        trace=observation_span.trace,
+        name="second span",
+        observation_type="llm",
+    )
+    claimed = _task_result(
+        eval_task, other_span, custom_eval_config, status=EvalEntryStatus.RUNNING
+    )
+    assert _stored(replacement_id).status == EvalEntryStatus.RUNNING
+
+    from django.db import transaction
+
+    with transaction.atomic():  # the reconciler's transaction
+        dropped = drop_pending_entries(
+            EvalLogger.objects.filter(id__in=[replacement_id, claimed.pk])
+        )
+
+    assert dropped == 0
+    assert _stored(replacement_id).deleted is False
+    assert _stored(claimed.pk).deleted is False
+    assert _stored(previous.pk).deleted is True
+    assert _recalculation_rows().count() == 1
+
+
+def test_task_wide_drop_is_one_filtered_delete_not_id_lists(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """A task-wide drop (the sampling reconcile's policy-version drop) of
+    many pending entries, one of them a requeued Recalculate replacement:
+    the replacement's previous result comes back and every other entry is
+    retired, without any statement listing the dropped entries' ids."""
+    from django.db import connections, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    EvalLogger.objects.using("default").filter(pk=replacement_id).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
+    pending = [
+        _task_result(
+            eval_task,
+            Span.objects.using("default").create(
+                id=f"{observation_span.id}-p{i}",
+                project=observation_span.project,
+                trace=observation_span.trace,
+                name=f"pending span {i}",
+                observation_type="llm",
+            ),
+            custom_eval_config,
+            status=EvalEntryStatus.PENDING,
+        )
+        for i in range(12)
+    ]
+
+    with (
+        CaptureQueriesContext(connections["default"]) as queries,
+        transaction.atomic(),
+    ):
+        dropped = drop_pending_entries(
+            EvalLogger.objects.filter(
+                eval_task_id=str(eval_task.id), status=EvalEntryStatus.PENDING
+            )
+        )
+
+    assert dropped == len(pending) + 1
+    assert all(_stored(entry.pk).deleted for entry in pending)
+    assert _stored(replacement_id).deleted is True
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+    listed = [
+        entry.pk
+        for entry in pending
+        if any(
+            str(entry.pk) in q["sql"] or entry.pk.hex in q["sql"]
+            for q in queries.captured_queries
+        )
+    ]
+    assert listed == []
+
+
 # -- round 9: Recalculate on a result with no eval task -------------------------
 
 
@@ -1981,6 +2590,36 @@ def test_sweep_restores_an_untasked_result_whose_recalculate_was_killed(
     assert not _recalculation_rows().exists()
     # The next Recalculate finds a result again.
     assert _sweep()["restored"] == 0
+
+
+def test_untasked_put_back_rechecks_a_parent_deleted_before_it_commits(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    monkeypatch,
+):
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    previous, _new, _issue, member = _crashed_untasked(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        observation_span,
+        custom_eval_config,
+        wrote=False,
+    )
+    _age_untasked(RECOVER_AFTER_SECONDS + 60)
+    _delete_commits_mid_put_back(monkeypatch, observation_span)
+
+    _sweep()
+
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
 
 
 def test_sweep_keeps_an_untasked_result_written_before_the_crash(
@@ -2417,6 +3056,10 @@ def test_reconcile_dropping_a_replacement_of_a_deleted_trace_keeps_it_retired(
         replica, eval_task, observation_span, custom_eval_config, user
     )
     entry = begin_recalculation(previous)
+    # The reconciler drops pending work: the replacement was requeued.
+    EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
     Trace._base_manager.filter(pk=observation_span.trace_id).update(
         deleted=True, deleted_at=timezone.now()
     )
@@ -2530,3 +3173,25 @@ def test_untasked_put_back_is_decided_by_the_update_itself(
         landed["other"].pk
     ]
     assert _stored(previous.pk).deleted is True
+
+
+def test_a_failed_recovery_does_not_cost_the_put_back_recheck_its_tick():
+    from unittest import mock
+
+    from tracer.tasks import eval_task_sweeper
+
+    with (
+        mock.patch.object(
+            eval_task_sweeper,
+            "recover_stale_recalculations",
+            side_effect=RuntimeError("synthetic recovery failure"),
+        ),
+        mock.patch.object(
+            eval_task_sweeper, "recheck_put_backs", return_value={"rechecked": 2}
+        ) as recheck,
+    ):
+        result = eval_task_sweeper.sweep_stale_recalculations._original_func()
+
+    recheck.assert_called_once()
+    assert result["recovery_failed"] is True
+    assert result["put_back_recheck"] == {"rechecked": 2}
