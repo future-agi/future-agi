@@ -151,7 +151,7 @@ try {
       await captureShot(`use-${theme}-${width}`);
     }
     await visit("capture", theme, 390);
-    await page.getByRole("textbox", { name: "Example title" }).waitFor();
+    await page.getByRole("textbox", { name: "Case name" }).waitFor();
     await captureShot(`capture-${theme}-390`);
     await page
       .getByRole("button", { name: "Close", exact: true })
