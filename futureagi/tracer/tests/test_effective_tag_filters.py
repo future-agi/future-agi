@@ -1,5 +1,6 @@
 """Real disposable CH25 + PostgreSQL proofs for discovery and pre-page matching."""
 
+import re
 from datetime import timedelta
 from unittest.mock import Mock
 
@@ -851,3 +852,100 @@ def test_classifier_curated_replay_is_bounded_by_window_live_roots():
         builder = ClickHouseFilterBuilderV2(project_id=PROJECT)
         sql, _ = builder.translate([leaf(column, "curated")])
         assert sql.count("AND (project_id, id) IN (\n") == 2
+
+
+_RELATION_REF = re.compile(r"%\(([A-Za-z0-9_]*effective_tag_rows_\d+)_projects\)s")
+
+
+@pytest.mark.parametrize(
+    "leaves",
+    [
+        pytest.param([leaf("tag", "wanted")], id="tag-only"),
+        pytest.param(
+            [leaf("status", "OK"), leaf("tag", "wanted")], id="span-filter-then-tag"
+        ),
+        pytest.param([leaf("tag", "wanted"), leaf("tag", "other")], id="two-tags"),
+    ],
+)
+def test_user_selector_binds_each_tag_leaf_under_its_own_name(leaves):
+    """The Users selector (Users graph, user-context eval and annotation graphs)
+    compiles each leaf with its own builder and namespaces its parameters. A
+    Tag leaf's relation is read through derived names (``<name>_projects`` …),
+    so it must be renamed and bound with them: otherwise a Tag leaf after any
+    other span filter reads an unbound relation, and a second Tag leaf reads
+    the first one's UI assignments. The discarded raw-span clause must not
+    bind a relation of its own, which would be read and budgeted for nothing.
+    """
+    from tracer.services.clickhouse import exact_graph_reads
+    from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+    sql, params, _ = exact_graph_reads._user_aggregate_source_sql(
+        project_id=PROJECT,
+        filters=leaves,
+        start_date=BEGIN,
+        end_date=END,
+        include_trace_ids=False,
+        all_snapshot_users=True,
+    )
+    relations = {
+        name: value
+        for name, value in params.items()
+        if isinstance(value, EffectiveTagRelation)
+    }
+    referenced = set(_RELATION_REF.findall(sql))
+    assert referenced <= set(relations), referenced - set(relations)
+    assert set(relations) <= referenced, set(relations) - referenced
+    tag_values = sorted(
+        (item["filter_config"]["filter_value"],)
+        for item in leaves
+        if item["column_id"] == "tag"
+    )
+    assert sorted(relations[name].values for name in referenced) == tag_values
+
+
+@pytest.mark.parametrize(
+    "leaves",
+    [
+        pytest.param(
+            [leaf("status", "OK"), leaf("tag", "wanted")], id="span-filter-then-tag"
+        ),
+        pytest.param([leaf("tag", "wanted"), leaf("tag", "other")], id="two-tags"),
+    ],
+)
+def test_user_selector_has_no_unbound_tag_placeholder_after_binding(
+    monkeypatch, leaves
+):
+    """After the binder runs, every placeholder of the Users selector has a
+    value, and each Tag leaf's overlay is read for its own tag names."""
+    from tracer.services.clickhouse import exact_graph_reads
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2 import effective_tags
+
+    read = []
+
+    def overlay(**kwargs):
+        read.append(kwargs["values"])
+        return effective_tags.TagOverlay()
+
+    monkeypatch.setattr(effective_tags, "read_tag_overlay", overlay)
+    sql, params, _ = exact_graph_reads._user_aggregate_source_sql(
+        project_id=PROJECT,
+        filters=leaves,
+        start_date=BEGIN,
+        end_date=END,
+        include_trace_ids=False,
+        all_snapshot_users=True,
+    )
+    bound = effective_tags.prepare_effective_tag_params(
+        lambda *args, **kwargs: None,
+        {**params, "start_date": BEGIN, "end_date": END},
+        deadline=ReadDeadline.start(10_000),
+        allow_window_scan=True,
+    )
+    placeholders = set(re.findall(r"%\(([A-Za-z0-9_]+)\)s", sql))
+    assert placeholders - set(bound) == set()
+    assert sorted(read) == sorted(
+        (item["filter_config"]["filter_value"],)
+        for item in leaves
+        if item["column_id"] == "tag"
+    )

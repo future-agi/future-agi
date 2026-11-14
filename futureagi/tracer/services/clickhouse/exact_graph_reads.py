@@ -16,6 +16,7 @@ required read fails. Only a complete result may replace the prior snapshot in
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -4042,14 +4043,31 @@ def _user_membership_parts(
     }
 
     def compile_leaf(item: dict[str, Any], prefix: str) -> str:
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
         predicate, _, leaf_params, _ = _user_filter_clauses(
             [item], project_id=project_id
         )
         for name, value in leaf_params.items():
+            new_name = f"{prefix}_{name}"
+            if isinstance(value, EffectiveTagRelation):
+                # A Tag leaf's relation is read through derived names
+                # (``<name>_projects``, ``<name>_trace_keys`` ...) that the
+                # binder adds. Each leaf's builder numbers from 1, so the
+                # relation must be renamed with them, or one leaf would read
+                # another's UI assignments or an unbound relation.
+                derived = re.compile(r"%\(" + re.escape(name) + r"_([a-z_]+)\)s")
+                if not derived.search(predicate):
+                    continue
+                predicate = derived.sub(
+                    lambda match, new=new_name: f"%({new}_{match.group(1)})s",
+                    predicate,
+                )
+                params[new_name] = value
+                continue
             placeholder = f"%({name})s"
             if placeholder not in predicate:
                 continue
-            new_name = f"{prefix}_{name}"
             predicate = predicate.replace(placeholder, f"%({new_name})s")
             params[new_name] = value
         return predicate
@@ -4203,9 +4221,20 @@ def _user_aggregate_source_sql(
     if reuse_outer_snapshot and (not all_snapshot_users or include_trace_ids):
         raise ValueError("outer user snapshot reuse requires full system-graph scope")
 
+    from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
     _, user_predicate, filter_params, needs_eval = _user_filter_clauses(
         filters, project_id=project_id
     )
+    # The raw-span clause is not used here: Tag leaves reach this selector
+    # through the membership terms below, under their own names. A relation
+    # left over from that clause would be bound, read and counted against the
+    # overlay budget for nothing.
+    filter_params = {
+        name: value
+        for name, value in filter_params.items()
+        if not isinstance(value, EffectiveTagRelation)
+    }
     user_membership_rows, user_membership, membership_params = _user_membership_having(
         filters, project_id=project_id
     )
