@@ -302,9 +302,13 @@ def _compute_cost(entry):
         token_usage = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "input_characters": input_characters,
-            "audio_seconds": audio_seconds,
         }
+        # Optional usage fields also select fallback units. Do not fabricate
+        # character/audio usage for token-only requests.
+        if "input_characters" in metadata:
+            token_usage["input_characters"] = input_characters
+        if "audio_seconds" in metadata:
+            token_usage["audio_seconds"] = audio_seconds
 
         if "num_images" in metadata:
             token_usage["num_images"] = num_images
