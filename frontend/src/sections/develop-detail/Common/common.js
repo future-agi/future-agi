@@ -1,7 +1,10 @@
-export function generateNMarks(min, max, n = 10) {
-  const step = (max - min) / n;
-  return Array.from({ length: 11 }, (_, i) => ({
-    value: parseFloat((min + i * step).toFixed(6)), // prevent float errors
+// Pass the slider's real `step` so every mark sits on a value the handle can
+// stop on. Without a step it keeps the old 11 evenly spaced marks.
+export function generateNMarks(min, max, step) {
+  const interval = step ?? (max - min) / 10;
+  const count = step ? Math.floor((max - min) / step + 1e-9) + 1 : 11;
+  return Array.from({ length: count }, (_, i) => ({
+    value: parseFloat((min + i * interval).toFixed(6)), // prevent float errors
     label: "", // optional: add `${value}` if you want visible labels
   }));
 }
