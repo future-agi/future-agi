@@ -107,6 +107,48 @@ def test_the_cutoff_keeps_the_current_month_under_a_monthly_budget():
     )
 
 
+@pytest.mark.parametrize(
+    "budgets",
+    [
+        # camelCase org keys beside a flat hard_limit budget: config push runs
+        # _transform_budgets on the raw dict first (org_limit/org_period come
+        # from hard_limit), then the contract's snake_case keys win over the
+        # aliases, so the gateway counts 100 weekly, not 500 daily.
+        {
+            "orgLimit": 500,
+            "orgPeriod": "daily",
+            "hard_limit": {"limit": 100, "period": "weekly", "action": "block"},
+        },
+        {"orgLimit": 500, "organization": {"limit": 50, "period": "weekly"}},
+        {"enabled": True, "orgLimit": 500, "orgPeriod": "monthly"},
+        {"orgLimit": 10, "defaultPeriod": "weekly"},
+    ],
+)
+def test_budget_periods_are_the_ones_config_push_sends(budgets):
+    """Round 3: retention reads the budgets exactly as config push sends them
+    to the gateway (transform first, then the contract's alias rules)."""
+    from agentcc.contracts.gateway_admin import BudgetsConfig
+    from agentcc.services.config_push import _transform_budgets
+
+    pushed = BudgetsConfig.model_validate(_transform_budgets(budgets)).model_dump(
+        exclude_none=True
+    )
+
+    assert retention.budget_periods(budgets) == retention.budget_periods(pushed)
+
+
+def test_budgets_the_contract_refuses_still_resolve_in_push_order():
+    """A dict push would refuse (a hard_limit budget with no action) was
+    never sent; its periods still resolve in push's order, not alias-first."""
+    budgets = {
+        "orgLimit": 500,
+        "orgPeriod": "daily",
+        "hard_limit": {"limit": 100, "period": "weekly"},
+    }
+
+    assert retention.budget_periods(budgets) == {"weekly"}
+
+
 def test_a_camel_case_budget_keeps_its_period():
     budgets = {"enabled": True, "orgLimit": 500, "orgPeriod": "monthly"}
 

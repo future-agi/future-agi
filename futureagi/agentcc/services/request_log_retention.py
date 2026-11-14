@@ -123,9 +123,22 @@ def _snake_case(entry):
 
 
 def _gateway_budgets(budgets):
-    """The budgets as config push sends them to the gateway."""
+    """The budgets as config push sends them to the gateway.
+
+    In push's order: ``_transform_budgets`` on the stored dict first, then the
+    gateway contract's alias rules (a snake_case key wins over its camelCase
+    alias). A dict the contract refuses was never pushed; its keys are still
+    resolved the same way, so its budgets keep a floor."""
+    from pydantic import ValidationError
+
+    from agentcc.contracts.gateway_admin import BudgetsConfig
     from agentcc.services.config_push import _transform_budgets
 
+    budgets = _transform_budgets(dict(budgets))
+    try:
+        return BudgetsConfig.model_validate(budgets).model_dump(exclude_none=True)
+    except ValidationError:
+        pass
     budgets = _snake_case(budgets)
     for level in ("organization", "org", "teams", "users", "keys", "tags"):
         entries = budgets.get(level)
@@ -133,7 +146,7 @@ def _gateway_budgets(budgets):
             budgets[level] = _snake_case(entries)
         elif isinstance(entries, dict):
             budgets[level] = {name: _snake_case(e) for name, e in entries.items()}
-    return _transform_budgets(budgets)
+    return budgets
 
 
 def budget_periods(budgets):
