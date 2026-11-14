@@ -2,257 +2,254 @@
 
 # New centralized error taxonomy for reference
 ERROR_TAXONOMY = {
-  "Thinking & Response Issues": {
-    "description": "Mistakes in understanding, reasoning, factual grounding, or output formatting.",
-    "subcategories": {
-      "Hallucination Errors": {
-        "description": "Output is not grounded in any provided tool, prompt, or context.",
+    "Thinking & Response Issues": {
+        "description": "Mistakes in understanding, reasoning, factual grounding, or output formatting.",
+        "subcategories": {
+            "Hallucination Errors": {
+                "description": "Output is not grounded in any provided tool, prompt, or context.",
+                "errors": [
+                    {
+                        "name": "Hallucinated Content",
+                        "description": "Output includes information that is invented or not supported by input data.",
+                    },
+                    {
+                        "name": "Ungrounded Summary",
+                        "description": "Summary includes claims not found in the retrieved chunks or original context.",
+                    },
+                ],
+            },
+            "Information Processing": {
+                "description": "Errors in understanding or integrating retrieved or tool-generated information.",
+                "errors": [
+                    {
+                        "name": "Poor Chunk Match",
+                        "description": "Retrieved irrelevant or unrelated context.",
+                    },
+                    {
+                        "name": "Wrong Chunk Used",
+                        "description": "Response based on wrong part of retrieved content.",
+                    },
+                    {
+                        "name": "Tool Output Misinterpretation",
+                        "description": "Misread or misunderstood the output returned by a tool or API.",
+                    },
+                ],
+            },
+            "Decision Errors": {
+                "description": "Flawed choices or problem-solving steps.",
+                "errors": [
+                    {
+                        "name": "Wrong Intent",
+                        "description": "Misunderstood the core user goal or instruction.",
+                    },
+                    {
+                        "name": "Tool Misuse",
+                        "description": "Used a tool incorrectly or in the wrong context.",
+                    },
+                    {
+                        "name": "Wrong Tool Chosen",
+                        "description": "Selected an inappropriate tool for the task.",
+                    },
+                    {
+                        "name": "Invalid Tool Params",
+                        "description": "Passed malformed, missing, or incorrect parameters to a tool.",
+                    },
+                    {
+                        "name": "Missed Detail",
+                        "description": "Skipped a key part of the user prompt or prior context.",
+                    },
+                ],
+            },
+            "Format & Instruction": {
+                "description": "Violations of formatting or prompt requirements.",
+                "errors": [
+                    {
+                        "name": "Bad Format",
+                        "description": "Output is not valid JSON, CSV, or code.",
+                    },
+                    {
+                        "name": "Instruction Adherence",
+                        "description": "Didn't follow instruction or style.",
+                    },
+                ],
+            },
+        },
+    },
+    "Safety & Security Risks": {
+        "description": "Any output or behavior that may cause harm, leak personal data, or violate security best practices.",
+        "subcategories": {
+            "Ethical Violations": {
+                "description": "Biases, unsafe guidance, or privacy breaches.",
+                "errors": [
+                    {
+                        "name": "Unsafe Advice",
+                        "description": "Could lead to harm if followed.",
+                    },
+                    {
+                        "name": "PII Leak",
+                        "description": "Sensitive personal info exposed in output.",
+                    },
+                    {
+                        "name": "Biased Output",
+                        "description": "Stereotyped, unfair, or discriminatory content.",
+                    },
+                ],
+            },
+            "Security Failures": {
+                "description": "Improper handling of sensitive access, credentials, or attack vectors.",
+                "errors": [
+                    {
+                        "name": "Token Exposure",
+                        "description": "Secrets, API keys, or auth tokens were exposed in output or logs.",
+                    },
+                    {
+                        "name": "Insecure API Usage",
+                        "description": "Used HTTP instead of HTTPS, skipped auth headers, or lacked rate limits.",
+                    },
+                ],
+            },
+        },
+    },
+    "Tool & System Failures": {
+        "description": "Errors due to tool, API, environment, or runtime failures.",
+        "subcategories": {
+            "Setup Errors": {
+                "description": "Misconfiguration or missing setup components.",
+                "errors": [
+                    {
+                        "name": "Tool Missing",
+                        "description": "Tool not registered or available.",
+                    },
+                    {
+                        "name": "Tool Misconfigured",
+                        "description": "Tool or API setup is incorrect (e.g., bad schema, invalid registration).",
+                    },
+                    {
+                        "name": "Env Incomplete",
+                        "description": "Missing tokens, secrets, or setup environment variables.",
+                    },
+                ],
+            },
+            "Tool/API Failures": {
+                "description": "Execution failures in API or tool calls.",
+                "errors": [
+                    {
+                        "name": "Rate Limit",
+                        "description": "Too many requests hit the limit.",
+                    },
+                    {
+                        "name": "Auth Fail",
+                        "description": "Authentication to tool or service failed.",
+                    },
+                    {
+                        "name": "Server Crash",
+                        "description": "Tool/API returned internal error.",
+                    },
+                    {
+                        "name": "Resource Not Found",
+                        "description": "Requested endpoint or resource does not exist or is not reachable.",
+                    },
+                ],
+            },
+            "Runtime Limits": {
+                "description": "Exceeded compute or time limits.",
+                "errors": [
+                    {
+                        "name": "Out of Memory",
+                        "description": "RAM or resource limit breached.",
+                    },
+                    {
+                        "name": "Timeout",
+                        "description": "Execution took too long and was halted.",
+                    },
+                ],
+            },
+        },
+    },
+    "Workflow & Task Gaps": {
+        "description": "Breakdowns in multi-step task execution, orchestration, or memory.",
+        "subcategories": {
+            "Context Loss": {
+                "description": "Agent misuses or forgets prior context.",
+                "errors": [
+                    {
+                        "name": "Dropped Context",
+                        "description": "Missed relevant past messages or data.",
+                    },
+                    {
+                        "name": "Overuse",
+                        "description": "Unnecessary context/tools invoked.",
+                    },
+                ],
+            },
+            "Retrieval Errors": {
+                "description": "Problems related to fetching or using context in RAG systems.",
+                "errors": [
+                    {
+                        "name": "Poor Chunk Match",
+                        "description": "Retrieved irrelevant or unrelated context.",
+                    },
+                    {
+                        "name": "Wrong Chunk Used",
+                        "description": "Response based on wrong part of retrieved content.",
+                    },
+                    {
+                        "name": "No Retrieval",
+                        "description": "Failed to run retrieval when needed.",
+                    },
+                ],
+            },
+            "Task Flow Issues": {
+                "description": "Sequence, structure, or orchestration problems.",
+                "errors": [
+                    {
+                        "name": "Goal Drift",
+                        "description": "Strayed from intended objective.",
+                    },
+                    {
+                        "name": "Step Disorder",
+                        "description": "Steps executed out of logical order.",
+                    },
+                    {
+                        "name": "Redundant Steps",
+                        "description": "Repeated same tool or action unnecessarily.",
+                    },
+                    {
+                        "name": "Task Orchestration Failure",
+                        "description": "Agent failed to plan or interleave actions properly across tools or steps.",
+                    },
+                ],
+            },
+            "Trace Completion": {
+                "description": "Evaluation of how the full trace ends.",
+                "errors": [
+                    {
+                        "name": "Incomplete Task",
+                        "description": "No final result or closure.",
+                    }
+                ],
+            },
+        },
+    },
+    "Reflection Gaps": {
+        "description": "Agent failed to engage in introspective reasoning or revise steps appropriately.",
         "errors": [
-          {
-            "name": "Hallucinated Content",
-            "description": "Output includes information that is invented or not supported by input data."
-          },
-          {
-            "name": "Ungrounded Summary",
-            "description": "Summary includes claims not found in the retrieved chunks or original context."
-          }
-        ]
-      },
-      "Information Processing": {
-        "description": "Errors in understanding or integrating retrieved or tool-generated information.",
-        "errors": [
-          {
-            "name": "Poor Chunk Match",
-            "description": "Retrieved irrelevant or unrelated context."
-          },
-          {
-            "name": "Wrong Chunk Used",
-            "description": "Response based on wrong part of retrieved content."
-          },
-          {
-            "name": "Tool Output Misinterpretation",
-            "description": "Misread or misunderstood the output returned by a tool or API."
-          }
-        ]
-      },
-      "Decision Errors": {
-        "description": "Flawed choices or problem-solving steps.",
-        "errors": [
-          {
-            "name": "Wrong Intent",
-            "description": "Misunderstood the core user goal or instruction."
-          },
-          {
-            "name": "Tool Misuse",
-            "description": "Used a tool incorrectly or in the wrong context."
-          },
-          {
-            "name": "Wrong Tool Chosen",
-            "description": "Selected an inappropriate tool for the task."
-          },
-          {
-            "name": "Invalid Tool Params",
-            "description": "Passed malformed, missing, or incorrect parameters to a tool."
-          },
-          {
-            "name": "Missed Detail",
-            "description": "Skipped a key part of the user prompt or prior context."
-          }
-        ]
-      },
-      "Format & Instruction": {
-        "description": "Violations of formatting or prompt requirements.",
-        "errors": [
-          {
-            "name": "Bad Format",
-            "description": "Output is not valid JSON, CSV, or code."
-          },
-          {
-            "name": "Instruction Adherence",
-            "description": "Didn't follow instruction or style."
-          }
-        ]
-      }
-    }
-  },
-
-  "Safety & Security Risks": {
-    "description": "Any output or behavior that may cause harm, leak personal data, or violate security best practices.",
-    "subcategories": {
-      "Ethical Violations": {
-        "description": "Biases, unsafe guidance, or privacy breaches.",
-        "errors": [
-          {
-            "name": "Unsafe Advice",
-            "description": "Could lead to harm if followed."
-          },
-          {
-            "name": "PII Leak",
-            "description": "Sensitive personal info exposed in output."
-          },
-          {
-            "name": "Biased Output",
-            "description": "Stereotyped, unfair, or discriminatory content."
-          }
-        ]
-      },
-      "Security Failures": {
-        "description": "Improper handling of sensitive access, credentials, or attack vectors.",
-        "errors": [
-          {
-            "name": "Token Exposure",
-            "description": "Secrets, API keys, or auth tokens were exposed in output or logs."
-          },
-          {
-            "name": "Insecure API Usage",
-            "description": "Used HTTP instead of HTTPS, skipped auth headers, or lacked rate limits."
-          }
-        ]
-      }
-    }
-  },
-
-  "Tool & System Failures": {
-    "description": "Errors due to tool, API, environment, or runtime failures.",
-    "subcategories": {
-      "Setup Errors": {
-        "description": "Misconfiguration or missing setup components.",
-        "errors": [
-          {
-            "name": "Tool Missing",
-            "description": "Tool not registered or available."
-          },
-          {
-            "name": "Tool Misconfigured",
-            "description": "Tool or API setup is incorrect (e.g., bad schema, invalid registration)."
-          },
-          {
-            "name": "Env Incomplete",
-            "description": "Missing tokens, secrets, or setup environment variables."
-          }
-        ]
-      },
-      "Tool/API Failures": {
-        "description": "Execution failures in API or tool calls.",
-        "errors": [
-          {
-            "name": "Rate Limit",
-            "description": "Too many requests hit the limit."
-          },
-          {
-            "name": "Auth Fail",
-            "description": "Authentication to tool or service failed."
-          },
-          {
-            "name": "Server Crash",
-            "description": "Tool/API returned internal error."
-          },
-          {
-            "name": "Resource Not Found",
-            "description": "Requested endpoint or resource does not exist or is not reachable."
-          }
-        ]
-      },
-      "Runtime Limits": {
-        "description": "Exceeded compute or time limits.",
-        "errors": [
-          {
-            "name": "Out of Memory",
-            "description": "RAM or resource limit breached."
-          },
-          {
-            "name": "Timeout",
-            "description": "Execution took too long and was halted."
-          }
-        ]
-      }
-    }
-  },
-
-  "Workflow & Task Gaps": {
-    "description": "Breakdowns in multi-step task execution, orchestration, or memory.",
-    "subcategories": {
-      "Context Loss": {
-        "description": "Agent misuses or forgets prior context.",
-        "errors": [
-          {
-            "name": "Dropped Context",
-            "description": "Missed relevant past messages or data."
-          },
-          {
-            "name": "Overuse",
-            "description": "Unnecessary context/tools invoked."
-          }
-        ]
-      },
-      "Retrieval Errors": {
-        "description": "Problems related to fetching or using context in RAG systems.",
-        "errors": [
-          {
-            "name": "Poor Chunk Match",
-            "description": "Retrieved irrelevant or unrelated context."
-          },
-          {
-            "name": "Wrong Chunk Used",
-            "description": "Response based on wrong part of retrieved content."
-          },
-          {
-            "name": "No Retrieval",
-            "description": "Failed to run retrieval when needed."
-          }
-        ]
-      },
-      "Task Flow Issues": {
-        "description": "Sequence, structure, or orchestration problems.",
-        "errors": [
-          {
-            "name": "Goal Drift",
-            "description": "Strayed from intended objective."
-          },
-          {
-            "name": "Step Disorder",
-            "description": "Steps executed out of logical order."
-          },
-          {
-            "name": "Redundant Steps",
-            "description": "Repeated same tool or action unnecessarily."
-          },
-          {
-            "name": "Task Orchestration Failure",
-            "description": "Agent failed to plan or interleave actions properly across tools or steps."
-          }
-        ]
-      },
-      "Trace Completion": {
-        "description": "Evaluation of how the full trace ends.",
-        "errors": [
-          {
-            "name": "Incomplete Task",
-            "description": "No final result or closure."
-          }
-        ]
-      }
-    }
-  },
-
-  "Reflection Gaps": {
-    "description": "Agent failed to engage in introspective reasoning or revise steps appropriately.",
-    "errors": [
-      {
-        "name": "Missing CoT",
-        "description": "No intermediate thinking steps (Chain of Thought) were used to justify actions."
-      },
-      {
-        "name": "Missing ReAct Planning",
-        "description": "Agent failed to interleave reasoning with action; took action without planning."
-      },
-      {
-        "name": "Lack of Self-Correction",
-        "description": "Agent didn't revise response or plan after detecting error or contradiction."
-      }
-    ]
-  }
+            {
+                "name": "Missing CoT",
+                "description": "No intermediate thinking steps (Chain of Thought) were used to justify actions.",
+            },
+            {
+                "name": "Missing ReAct Planning",
+                "description": "Agent failed to interleave reasoning with action; took action without planning.",
+            },
+            {
+                "name": "Lack of Self-Correction",
+                "description": "Agent didn't revise response or plan after detecting error or contradiction.",
+            },
+        ],
+    },
 }
+
 
 # Function to format a specific category for the prompt
 def format_category_taxonomy(category_name):
@@ -266,7 +263,9 @@ def format_category_taxonomy(category_name):
 
     if "subcategories" in category_data:
         formatted += "Subcategories:\n"
-        for subcategory_name, subcategory_data in category_data["subcategories"].items():
+        for subcategory_name, subcategory_data in category_data[
+            "subcategories"
+        ].items():
             formatted += f"  - {subcategory_name}: {subcategory_data['description']}\n"
             for error in subcategory_data["errors"]:
                 formatted += f"    * {error['name']}: {error['description']}\n"
@@ -276,6 +275,7 @@ def format_category_taxonomy(category_name):
             formatted += f"  - {error['name']}: {error['description']}\n"
 
     return formatted
+
 
 # ============================================================================
 # STEP 1: ERRORS ANALYSIS PROMPTS (Planning + Execution)
@@ -373,19 +373,25 @@ Respond with a structured plan:
     }}
 }}"""
 
-def get_errors_planning_prompt(category_name, trace_id, trace_execution, user_query="", memory_context="", **kwargs):
+
+def get_errors_planning_prompt(
+    category_name, trace_id, trace_execution, user_query="", memory_context="", **kwargs
+):
     """Get planning prompt for errors analysis"""
     defaults = {
-        'trace_id': trace_id,
-        'total_spans': len(trace_execution.split('Span ID:')) - 1 if 'Span ID:' in trace_execution else 0,
-        'user_query': user_query,
-        'trace_execution': trace_execution,
-        'category_name': category_name,
-        'category_taxonomy': format_category_taxonomy(category_name),
-        'memory_context': memory_context
+        "trace_id": trace_id,
+        "total_spans": len(trace_execution.split("Span ID:")) - 1
+        if "Span ID:" in trace_execution
+        else 0,
+        "user_query": user_query,
+        "trace_execution": trace_execution,
+        "category_name": category_name,
+        "category_taxonomy": format_category_taxonomy(category_name),
+        "memory_context": memory_context,
     }
     defaults.update(kwargs)
     return ERRORS_PLANNING_PROMPT.format(**defaults)
+
 
 # Step 1.2: Execution Phase - Detailed error analysis
 ERRORS_EXECUTION_PROMPT = """Based on the analysis plan, perform detailed error analysis for the specified category.
@@ -518,17 +524,21 @@ If no errors are detected OR rules cannot be satisfied, return:
     "trace_assessment": "No errors found in this category - trace execution is correct"
 }}"""
 
-def get_errors_execution_prompt(category_name, analysis_plan, trace_execution, memory_context="", **kwargs):
+
+def get_errors_execution_prompt(
+    category_name, analysis_plan, trace_execution, memory_context="", **kwargs
+):
     """Get execution prompt for detailed errors analysis"""
     defaults = {
-        'analysis_plan': analysis_plan,
-        'trace_execution': trace_execution,
-        'category_name': category_name,
-        'category_taxonomy': format_category_taxonomy(category_name),
-        'memory_context': memory_context
+        "analysis_plan": analysis_plan,
+        "trace_execution": trace_execution,
+        "category_name": category_name,
+        "category_taxonomy": format_category_taxonomy(category_name),
+        "memory_context": memory_context,
     }
     defaults.update(kwargs)
     return ERRORS_EXECUTION_PROMPT.format(**defaults)
+
 
 # ============================================================================
 # STEP 2: GROUPED ERRORS PROMPTS (Planning + Execution)
@@ -565,9 +575,11 @@ Respond with a grouping plan:
     }}
 }}"""
 
+
 def get_grouped_errors_planning_prompt(errors_json):
     """Get planning prompt for grouped errors"""
     return GROUPED_ERRORS_PLANNING_PROMPT.format(errors_json=errors_json)
+
 
 # Step 2.2: Execution Phase - Generate grouped error information
 GROUPED_ERRORS_EXECUTION_PROMPT = """Based on the grouping plan, generate comprehensive grouped error information.
@@ -601,12 +613,13 @@ Respond in JSON format:
     ]
 }}"""
 
+
 def get_grouped_errors_execution_prompt(grouping_plan, errors_json):
     """Get execution prompt for grouped errors generation"""
     return GROUPED_ERRORS_EXECUTION_PROMPT.format(
-        grouping_plan=grouping_plan,
-        errors_json=errors_json
+        grouping_plan=grouping_plan, errors_json=errors_json
     )
+
 
 # ============================================================================
 # STEP 3: SCORES ANALYSIS PROMPTS (Planning + Execution)
@@ -645,13 +658,15 @@ Respond with a scoring plan:
     }}
 }}"""
 
+
 def get_scores_planning_prompt(errors_json, grouped_errors_json, memory_context=""):
     """Get planning prompt for scores analysis"""
     return SCORES_PLANNING_PROMPT.format(
         errors_json=errors_json,
         grouped_errors_json=grouped_errors_json,
-        memory_context=memory_context
+        memory_context=memory_context,
     )
+
 
 # Step 3.2: Execution Phase - Generate detailed scores
 SCORES_EXECUTION_PROMPT = """Based on the scoring plan, generate detailed scores for each dimension.
@@ -695,14 +710,18 @@ Respond in JSON format:
     }}
 }}"""
 
-def get_scores_execution_prompt(scoring_plan, errors_json, grouped_errors_json, memory_context=""):
+
+def get_scores_execution_prompt(
+    scoring_plan, errors_json, grouped_errors_json, memory_context=""
+):
     """Get execution prompt for scores generation"""
     return SCORES_EXECUTION_PROMPT.format(
         scoring_plan=scoring_plan,
         errors_json=errors_json,
         grouped_errors_json=grouped_errors_json,
-        memory_context=memory_context
+        memory_context=memory_context,
     )
+
 
 # ============================================================================
 # STEP 4: SUMMARY GENERATION PROMPTS (Planning + Execution)
@@ -740,7 +759,15 @@ Respond with a summary plan:
     }}
 }}"""
 
-def get_summary_planning_prompt(errors_json, grouped_errors_json, scores_json, trace_id, total_spans, memory_context=""):
+
+def get_summary_planning_prompt(
+    errors_json,
+    grouped_errors_json,
+    scores_json,
+    trace_id,
+    total_spans,
+    memory_context="",
+):
     """Get planning prompt for summary generation"""
     return SUMMARY_PLANNING_PROMPT.format(
         errors_json=errors_json,
@@ -748,8 +775,9 @@ def get_summary_planning_prompt(errors_json, grouped_errors_json, scores_json, t
         scores_json=scores_json,
         trace_id=trace_id,
         total_spans=total_spans,
-        memory_context=memory_context
+        memory_context=memory_context,
     )
+
 
 # Step 4.2: Execution Phase - Generate final summary
 SUMMARY_EXECUTION_PROMPT = """Based on the summary plan, generate the final summary with insights and priority.
@@ -784,7 +812,16 @@ Respond in JSON format:
     "recommended_priority": "HIGH/MEDIUM/LOW"
 }}"""
 
-def get_summary_execution_prompt(summary_plan, errors_json, grouped_errors_json, scores_json, trace_id, total_spans, memory_context=""):
+
+def get_summary_execution_prompt(
+    summary_plan,
+    errors_json,
+    grouped_errors_json,
+    scores_json,
+    trace_id,
+    total_spans,
+    memory_context="",
+):
     """Get execution prompt for summary generation"""
     return SUMMARY_EXECUTION_PROMPT.format(
         summary_plan=summary_plan,
@@ -793,12 +830,14 @@ def get_summary_execution_prompt(summary_plan, errors_json, grouped_errors_json,
         scores_json=scores_json,
         trace_id=trace_id,
         total_spans=total_spans,
-        memory_context=memory_context
+        memory_context=memory_context,
     )
+
 
 # ============================================================================
 # LEGACY PROMPTS (for backward compatibility)
 # ============================================================================
+
 
 # Function to format the error taxonomy for the prompt (kept for backward compatibility)
 def format_error_taxonomy():
@@ -810,8 +849,12 @@ def format_error_taxonomy():
 
         if "subcategories" in category_data:
             formatted += "Subcategories:\n"
-            for subcategory_name, subcategory_data in category_data["subcategories"].items():
-                formatted += f"  - {subcategory_name}: {subcategory_data['description']}\n"
+            for subcategory_name, subcategory_data in category_data[
+                "subcategories"
+            ].items():
+                formatted += (
+                    f"  - {subcategory_name}: {subcategory_data['description']}\n"
+                )
                 for error in subcategory_data["errors"]:
                     formatted += f"    * {error['name']}: {error['description']}\n"
         elif "errors" in category_data:
@@ -820,6 +863,7 @@ def format_error_taxonomy():
                 formatted += f"  - {error['name']}: {error['description']}\n"
 
     return formatted
+
 
 # Legacy prompt template (kept for backward compatibility)
 TRACE_ERROR_ANALYSIS_PROMPT = """Analyze the following span for potential errors using the ERROR_TAXONOMY:
@@ -888,30 +932,31 @@ If no errors are detected, return:
     "highest_urgency": "NONE"
 }}"""
 
+
 # Function to get the formatted prompt with parameters (kept for backward compatibility)
 def get_trace_error_prompt(**kwargs):
     """Get the formatted trace error analysis prompt with provided parameters"""
     # Set default values for missing parameters
     defaults = {
-        'input': '',
-        'output': '',
-        'context': '',
-        'tool_result': '',
-        'tool_used': '',
-        'expected_tool': '',
-        'tool_call': '',
-        'expected_format': '',
-        'goal': '',
-        'subtasks': '',
-        'prompt': '',
-        'expected_tone': '',
-        'expected_length': '',
-        'compliance_rules': '',
-        'environment': '',
-        'tool_calls': '',
-        'tool': '',
-        'chunks': '',
-        'error_taxonomy': format_error_taxonomy()
+        "input": "",
+        "output": "",
+        "context": "",
+        "tool_result": "",
+        "tool_used": "",
+        "expected_tool": "",
+        "tool_call": "",
+        "expected_format": "",
+        "goal": "",
+        "subtasks": "",
+        "prompt": "",
+        "expected_tone": "",
+        "expected_length": "",
+        "compliance_rules": "",
+        "environment": "",
+        "tool_calls": "",
+        "tool": "",
+        "chunks": "",
+        "error_taxonomy": format_error_taxonomy(),
     }
 
     # Update defaults with provided kwargs
@@ -919,24 +964,21 @@ def get_trace_error_prompt(**kwargs):
 
     return TRACE_ERROR_ANALYSIS_PROMPT.format(**defaults)
 
+
 # Updated TRACE_ERROR_PROMPTS with step-by-step approach
 TRACE_ERROR_PROMPTS = {
     # Step 1: Errors Analysis
     "errors_planning": get_errors_planning_prompt,
     "errors_execution": get_errors_execution_prompt,
-
     # Step 2: Grouped Errors
     "grouped_errors_planning": get_grouped_errors_planning_prompt,
     "grouped_errors_execution": get_grouped_errors_execution_prompt,
-
     # Step 3: Scores Analysis
     "scores_planning": get_scores_planning_prompt,
     "scores_execution": get_scores_execution_prompt,
-
     # Step 4: Summary Generation
     "summary_planning": get_summary_planning_prompt,
     "summary_execution": get_summary_execution_prompt,
-
     # Legacy prompts (for backward compatibility)
-    "main_analysis": get_trace_error_prompt
+    "main_analysis": get_trace_error_prompt,
 }

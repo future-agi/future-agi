@@ -120,7 +120,9 @@ class TestFinalWindowOnlyForLiveEntitlements:
         # Cancelled straight from ACTIVATION_REQUESTED: no usage, and the
         # consumer project never had the service enabled (SERVICE_DISABLED).
         org = Organization.objects.create(name="never-live")
-        _entitlement(org, "abandoned", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        _entitlement(
+            org, "abandoned", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         with (
             patch.object(events, "sync_entitlement", side_effect=_sync_to_cancelled),
@@ -171,8 +173,18 @@ class TestNewestEntitlementWins:
 
     def test_active_applies_newest_and_flags_the_overlap(self):
         org = Organization.objects.create(name="overlap")
-        self._dated(_entitlement(org, "older", GCPMarketplaceEntitlementState.ACTIVE, plan_id="payg"), 1)
-        newer = self._dated(_entitlement(org, "newer", GCPMarketplaceEntitlementState.ACTIVE, plan_id="scale"), 0)
+        self._dated(
+            _entitlement(
+                org, "older", GCPMarketplaceEntitlementState.ACTIVE, plan_id="payg"
+            ),
+            1,
+        )
+        newer = self._dated(
+            _entitlement(
+                org, "newer", GCPMarketplaceEntitlementState.ACTIVE, plan_id="scale"
+            ),
+            0,
+        )
 
         with (
             patch.object(events, "sync_entitlement", return_value=newer),
@@ -182,13 +194,20 @@ class TestNewestEntitlementWins:
             events.handle_entitlement_active({"entitlement": {"id": "newer"}})
 
         assert apply_plan.call_args.args[0].pk == newer.pk
-        assert log_error.call_args.args[0] == "gcp_marketplace_multiple_in_service_entitlements"
+        assert (
+            log_error.call_args.args[0]
+            == "gcp_marketplace_multiple_in_service_entitlements"
+        )
         assert log_error.call_args.kwargs["superseded_entitlement_id"] == "older"
 
     def test_billing_follows_the_newest_entitlement(self):
         org = Organization.objects.create(name="billing-newest")
-        self._dated(_entitlement(org, "older", GCPMarketplaceEntitlementState.ACTIVE), 1)
-        newer = self._dated(_entitlement(org, "newer", GCPMarketplaceEntitlementState.ACTIVE), 0)
+        self._dated(
+            _entitlement(org, "older", GCPMarketplaceEntitlementState.ACTIVE), 1
+        )
+        newer = self._dated(
+            _entitlement(org, "newer", GCPMarketplaceEntitlementState.ACTIVE), 0
+        )
 
         assert [e.pk for e in usage.billable_entitlements()] == [newer.pk]
 
@@ -196,7 +215,9 @@ class TestNewestEntitlementWins:
         org = Organization.objects.create(name="survivor-newest")
         _entitlement(org, "old", GCPMarketplaceEntitlementState.ACTIVE)
         self._dated(_entitlement(org, "a", GCPMarketplaceEntitlementState.ACTIVE), 1)
-        b = self._dated(_entitlement(org, "b", GCPMarketplaceEntitlementState.ACTIVE), 0)
+        b = self._dated(
+            _entitlement(org, "b", GCPMarketplaceEntitlementState.ACTIVE), 0
+        )
 
         with (
             patch.object(events, "sync_entitlement", side_effect=_sync_to_cancelled),
@@ -275,13 +296,18 @@ class TestSecondPurchaseRejectedAtOfferAccepted:
         return {
             "eventId": f"CREATE_ENTITLEMENT-{entitlement_id}",
             "eventType": "ENTITLEMENT_OFFER_ACCEPTED",
-            "entitlement": {"id": entitlement_id, "newOfferStartTime": "2026-09-11T07:00:00Z"},
+            "entitlement": {
+                "id": entitlement_id,
+                "newOfferStartTime": "2026-09-11T07:00:00Z",
+            },
         }
 
     def test_second_purchase_while_one_is_live_is_rejected(self):
         org = Organization.objects.create(name="already-subscribed")
         _entitlement(org, "live", GCPMarketplaceEntitlementState.ACTIVE)
-        second = _entitlement(org, "second", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        second = _entitlement(
+            org, "second", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         with (
             patch.object(events, "sync_entitlement", return_value=second),
@@ -296,7 +322,9 @@ class TestSecondPurchaseRejectedAtOfferAccepted:
 
     def test_first_purchase_is_left_to_activate(self):
         org = Organization.objects.create(name="first-purchase")
-        first = _entitlement(org, "first", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        first = _entitlement(
+            org, "first", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         with (
             patch.object(events, "sync_entitlement", return_value=first),
@@ -311,7 +339,9 @@ class TestSecondPurchaseRejectedAtOfferAccepted:
     def test_repurchase_after_cancel_is_not_a_duplicate(self):
         org = Organization.objects.create(name="resubscribe")
         _entitlement(org, "old", GCPMarketplaceEntitlementState.CANCELLED)
-        new = _entitlement(org, "new", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        new = _entitlement(
+            org, "new", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         with (
             patch.object(events, "sync_entitlement", return_value=new),
@@ -335,8 +365,13 @@ class TestReconcileCatchesWhatEventsMissed:
             row.save(update_fields=["status", "updated_at"])
             return row
 
-        counts = {"left_service": 0, "consumer_id_recovered": 0, "consumer_id_missing": 0,
-                  "unmapped": 0, "repaired": 0}
+        counts = {
+            "left_service": 0,
+            "consumer_id_recovered": 0,
+            "consumer_id_missing": 0,
+            "unmapped": 0,
+            "repaired": 0,
+        }
         with (
             patch.object(events, "sync_entitlement", side_effect=google_says_cancelled),
             patch.object(events, "_downgrade_to_free") as downgrade,
@@ -359,8 +394,13 @@ class TestReconcileCatchesWhatEventsMissed:
             row.save(update_fields=["status", "updated_at"])
             return row
 
-        counts = {"left_service": 0, "consumer_id_recovered": 0, "consumer_id_missing": 0,
-                  "unmapped": 0, "repaired": 0}
+        counts = {
+            "left_service": 0,
+            "consumer_id_recovered": 0,
+            "consumer_id_missing": 0,
+            "unmapped": 0,
+            "repaired": 0,
+        }
         with (
             patch.object(events, "sync_entitlement", side_effect=google_says_pending),
             patch.object(events, "_downgrade_to_free") as downgrade,
@@ -412,7 +452,9 @@ class TestReconcileCatchesWhatEventsMissed:
             plan="free",
             billing_method=BillingMethodChoices.GCP_MARKETPLACE,
         )
-        _entitlement(org, "pending", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        _entitlement(
+            org, "pending", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
         counts = {"paid_without_entitlement": 0}
 
         with patch.object(events, "_downgrade_org_to_free") as downgrade:
@@ -490,7 +532,9 @@ class TestPlanFollowsGoogleState:
 
     def test_active_event_but_google_still_pending_applies_nothing(self):
         org = Organization.objects.create(name="early-active-event")
-        row = _entitlement(org, "early", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        row = _entitlement(
+            org, "early", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         with (
             patch.object(events, "sync_entitlement", return_value=row),
@@ -502,14 +546,21 @@ class TestPlanFollowsGoogleState:
 
     def test_pending_pass_activates_when_google_did_without_an_event(self):
         org = Organization.objects.create(name="lost-active-event")
-        row = _entitlement(org, "silent", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        row = _entitlement(
+            org, "silent", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         def google_says_active(entitlement_id):
             row.status = GCPMarketplaceEntitlementState.ACTIVE
             row.save(update_fields=["status", "updated_at"])
             return row
 
-        counts = {"pending_checked": 0, "pending_resolved": 0, "pending_approved": 0, "failed": 0}
+        counts = {
+            "pending_checked": 0,
+            "pending_resolved": 0,
+            "pending_approved": 0,
+            "failed": 0,
+        }
         with (
             patch.object(events, "sync_entitlement", side_effect=google_says_active),
             patch.object(events, "_apply_plan") as apply_plan,
@@ -522,14 +573,21 @@ class TestPlanFollowsGoogleState:
 
     def test_pending_pass_does_not_touch_a_cancelled_one(self):
         org = Organization.objects.create(name="cancelled-before-active")
-        row = _entitlement(org, "dead", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
+        row = _entitlement(
+            org, "dead", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+        )
 
         def google_says_cancelled(entitlement_id):
             row.status = GCPMarketplaceEntitlementState.CANCELLED
             row.save(update_fields=["status", "updated_at"])
             return row
 
-        counts = {"pending_checked": 0, "pending_resolved": 0, "pending_approved": 0, "failed": 0}
+        counts = {
+            "pending_checked": 0,
+            "pending_resolved": 0,
+            "pending_approved": 0,
+            "failed": 0,
+        }
         with (
             patch.object(events, "sync_entitlement", side_effect=google_says_cancelled),
             patch.object(events, "_apply_plan") as apply_plan,

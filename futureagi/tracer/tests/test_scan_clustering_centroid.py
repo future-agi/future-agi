@@ -42,9 +42,10 @@ class TestFindNearestCentroidCollapsesVersions:
         a separate candidate row and the nearest *stale* version can win.
         """
         db = _vector_db([])
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+        ):
             find_nearest_centroid([0.1, 0.2], "proj-1", "Language-only")
 
         sql = _norm(db.execute_read.call_args.args[0])
@@ -63,9 +64,10 @@ class TestFindNearestCentroidCollapsesVersions:
         strictly increasing per cluster.
         """
         db = _vector_db([])
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+        ):
             find_nearest_centroid([0.1, 0.2], "proj-1", "Language-only")
 
         sql = _norm(db.execute_read.call_args.args[0])
@@ -74,9 +76,10 @@ class TestFindNearestCentroidCollapsesVersions:
     def test_still_applies_the_threshold(self):
         """Guard against the rewrite quietly dropping the distance cutoff."""
         db = _vector_db([("S-AAA", 0.9)])
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+        ):
             assert find_nearest_centroid([0.1], "proj-1", "cat") is None
 
             db.execute_read.return_value = [("S-AAA", 0.01)]
@@ -85,8 +88,12 @@ class TestFindNearestCentroidCollapsesVersions:
 
 def _issue():
     return ClusterableIssue(
-        issue_id="issue-1", trace_id="trace-1", project_id="proj-1",
-        category="Language-only", group="Language-only", fix_layer="tools",
+        issue_id="issue-1",
+        trace_id="trace-1",
+        project_id="proj-1",
+        category="Language-only",
+        group="Language-only",
+        fix_layer="tools",
         brief="Stated portfolio values without calling data tools",
         confidence="H",
     )
@@ -102,12 +109,16 @@ class TestOrphanedCentroidHandling:
         """
         from tracer.utils import trace_scanner as ts
 
-        with patch.object(ts, "get_unclustered_issues", return_value=[_issue()]), \
-             patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]), \
-             patch.object(ts, "find_nearest_centroid", return_value=("S-GHOST", 0.01)), \
-             patch.object(ts, "assign_to_cluster", side_effect=TraceErrorGroup.DoesNotExist), \
-             patch.object(ts, "delete_centroid") as delete_centroid, \
-             patch.object(ts, "create_cluster", return_value="S-NEW") as create:
+        with (
+            patch.object(ts, "get_unclustered_issues", return_value=[_issue()]),
+            patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]),
+            patch.object(ts, "find_nearest_centroid", return_value=("S-GHOST", 0.01)),
+            patch.object(
+                ts, "assign_to_cluster", side_effect=TraceErrorGroup.DoesNotExist
+            ),
+            patch.object(ts, "delete_centroid") as delete_centroid,
+            patch.object(ts, "create_cluster", return_value="S-NEW") as create,
+        ):
             summary = ts.cluster_issues("proj-1")
 
         delete_centroid.assert_called_once_with("S-GHOST", "proj-1")
@@ -118,11 +129,13 @@ class TestOrphanedCentroidHandling:
     def test_healthy_match_does_not_delete_anything(self):
         from tracer.utils import trace_scanner as ts
 
-        with patch.object(ts, "get_unclustered_issues", return_value=[_issue()]), \
-             patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]), \
-             patch.object(ts, "find_nearest_centroid", return_value=("S-REAL", 0.01)), \
-             patch.object(ts, "assign_to_cluster") as assign, \
-             patch.object(ts, "delete_centroid") as delete_centroid:
+        with (
+            patch.object(ts, "get_unclustered_issues", return_value=[_issue()]),
+            patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]),
+            patch.object(ts, "find_nearest_centroid", return_value=("S-REAL", 0.01)),
+            patch.object(ts, "assign_to_cluster") as assign,
+            patch.object(ts, "delete_centroid") as delete_centroid,
+        ):
             summary = ts.cluster_issues("proj-1")
 
         assign.assert_called_once()
@@ -142,10 +155,12 @@ class TestJoinIsCountedAsAssigned:
                 on_join()
             return "S-EXISTING"
 
-        with patch.object(ts, "get_unclustered_issues", return_value=[_issue()]), \
-             patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]), \
-             patch.object(ts, "find_nearest_centroid", return_value=None), \
-             patch.object(ts, "create_cluster", side_effect=fake_create):
+        with (
+            patch.object(ts, "get_unclustered_issues", return_value=[_issue()]),
+            patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]),
+            patch.object(ts, "find_nearest_centroid", return_value=None),
+            patch.object(ts, "create_cluster", side_effect=fake_create),
+        ):
             summary = ts.cluster_issues("proj-1")
 
         assert summary.assigned == 1, "a join is an assignment, not a creation"
@@ -155,10 +170,12 @@ class TestJoinIsCountedAsAssigned:
     def test_genuine_create_still_counts_as_new_cluster(self):
         from tracer.utils import trace_scanner as ts
 
-        with patch.object(ts, "get_unclustered_issues", return_value=[_issue()]), \
-             patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]), \
-             patch.object(ts, "find_nearest_centroid", return_value=None), \
-             patch.object(ts, "create_cluster", return_value="S-NEW"):
+        with (
+            patch.object(ts, "get_unclustered_issues", return_value=[_issue()]),
+            patch.object(ts, "embed_texts", return_value=[[0.1, 0.2]]),
+            patch.object(ts, "find_nearest_centroid", return_value=None),
+            patch.object(ts, "create_cluster", return_value="S-NEW"),
+        ):
             summary = ts.cluster_issues("proj-1")
 
         assert summary.new_clusters == 1

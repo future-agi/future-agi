@@ -158,12 +158,12 @@ class TestCrossOrgDataIsolation:
         resp_a = client_a.get("/model-hub/prompt-templates/")
         assert resp_a.status_code == status.HTTP_200_OK
         names_a = [p["name"] for p in resp_a.data.get("results", resp_a.data)]
-        assert (
-            "Alpha Prompt" in names_a
-        ), f"Expected Alpha Prompt in Org A, got: {names_a}"
-        assert (
-            "Beta Prompt" not in names_a
-        ), f"Beta Prompt leaked into Org A! Got: {names_a}"
+        assert "Alpha Prompt" in names_a, (
+            f"Expected Alpha Prompt in Org A, got: {names_a}"
+        )
+        assert "Beta Prompt" not in names_a, (
+            f"Beta Prompt leaked into Org A! Got: {names_a}"
+        )
         client_a.stop_workspace_injection()
 
         # Client for Org B
@@ -171,12 +171,12 @@ class TestCrossOrgDataIsolation:
         resp_b = client_b.get("/model-hub/prompt-templates/")
         assert resp_b.status_code == status.HTTP_200_OK
         names_b = [p["name"] for p in resp_b.data.get("results", resp_b.data)]
-        assert (
-            "Beta Prompt" in names_b
-        ), f"Expected Beta Prompt in Org B, got: {names_b}"
-        assert (
-            "Alpha Prompt" not in names_b
-        ), f"Alpha Prompt leaked into Org B! Got: {names_b}"
+        assert "Beta Prompt" in names_b, (
+            f"Expected Beta Prompt in Org B, got: {names_b}"
+        )
+        assert "Alpha Prompt" not in names_b, (
+            f"Alpha Prompt leaked into Org B! Got: {names_b}"
+        )
         client_b.stop_workspace_injection()
 
     def test_datasets_isolated(self, multi_org_user, seed_data):
@@ -200,9 +200,9 @@ class TestCrossOrgDataIsolation:
         names_a = (
             [d.get("name", "") for d in items_a] if isinstance(items_a, list) else []
         )
-        assert (
-            "Beta Dataset" not in names_a
-        ), f"Beta Dataset leaked into Org A! Got: {names_a}"
+        assert "Beta Dataset" not in names_a, (
+            f"Beta Dataset leaked into Org A! Got: {names_a}"
+        )
         client_a.stop_workspace_injection()
 
         client_b = _make_client_for_org(user, ws_b)
@@ -221,9 +221,9 @@ class TestCrossOrgDataIsolation:
         names_b = (
             [d.get("name", "") for d in items_b] if isinstance(items_b, list) else []
         )
-        assert (
-            "Alpha Dataset" not in names_b
-        ), f"Alpha Dataset leaked into Org B! Got: {names_b}"
+        assert "Alpha Dataset" not in names_b, (
+            f"Alpha Dataset leaked into Org B! Got: {names_b}"
+        )
         client_b.stop_workspace_injection()
 
     def test_agent_definitions_isolated(self, multi_org_user, seed_data):
@@ -278,9 +278,9 @@ class TestCrossOrgDataIsolation:
             if isinstance(items_a, list)
             else []
         )
-        assert (
-            "Beta Agent" not in names_a
-        ), f"Beta Agent leaked into Org A! Got: {names_a}"
+        assert "Beta Agent" not in names_a, (
+            f"Beta Agent leaked into Org A! Got: {names_a}"
+        )
         client_a.stop_workspace_injection()
 
         # Test Org B
@@ -301,9 +301,9 @@ class TestCrossOrgDataIsolation:
             if isinstance(items_b, list)
             else []
         )
-        assert (
-            "Alpha Agent" not in names_b
-        ), f"Alpha Agent leaked into Org B! Got: {names_b}"
+        assert "Alpha Agent" not in names_b, (
+            f"Alpha Agent leaked into Org B! Got: {names_b}"
+        )
         client_b.stop_workspace_injection()
 
     def test_org_switch_via_header(self, multi_org_user, seed_data):
@@ -325,10 +325,10 @@ class TestCrossOrgDataIsolation:
         resp = client.get("/model-hub/prompt-templates/")
         assert resp.status_code == status.HTTP_200_OK
         names = [p["name"] for p in resp.data.get("results", resp.data)]
-        assert (
-            "Beta Prompt" in names
-        ), f"Expected Beta Prompt via header switch, got: {names}"
-        assert (
-            "Alpha Prompt" not in names
-        ), f"Alpha Prompt leaked despite header switch! Got: {names}"
+        assert "Beta Prompt" in names, (
+            f"Expected Beta Prompt via header switch, got: {names}"
+        )
+        assert "Alpha Prompt" not in names, (
+            f"Alpha Prompt leaked despite header switch! Got: {names}"
+        )
         client.stop_workspace_injection()
