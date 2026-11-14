@@ -450,6 +450,79 @@ def test_a_paused_project_still_retires_expired_units(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_reads_mask_a_unit_that_expired_inside_the_cutoffs_second(live_writer):
+    """A datetime parameter binds to whole seconds, so a read kept a unit that
+    started within the cutoff's second but before the exact cutoff, then
+    refused the whole read (retention_expired) on its own final check. Reads
+    bind the exact cutoff: that unit is masked and the read succeeds."""
+    writer = live_writer
+    metric = uuid4()
+    definition = numeric_definition(metric)
+    now = timezone.now().replace(microsecond=750_000)
+    inside = (now - timedelta(days=1)).replace(microsecond=250_000)
+    unit_old, unit_live = str(uuid4()), str(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [(unit_old, inside, 4, ""), (unit_live, now - timedelta(hours=1), 6, "")],
+    )
+    pin = capture_pin(
+        writer.lease.project_id,
+        consumer_kind="snapshot",
+        ttl=timedelta(minutes=5),
+        now=now,
+    )
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    cells = read_field_cells(
+        writer.store,
+        scope,
+        pin,
+        metric,
+        1,
+        [unit_old, unit_live],
+        retention_days=lambda: 1,
+        now=now,
+    )
+    by_unit = {c["unit_id"]: c for c in cells}
+    assert by_unit[unit_old]["no_value_reason"] == "retention_expired"
+    assert by_unit[unit_old]["value_number"] is None
+    assert by_unit[unit_live]["value_number"] == 6
+
+
+@pytest.mark.django_db(transaction=True)
+def test_expiry_publishes_when_a_unit_starts_inside_the_cutoffs_second(
+    live_writer,
+):
+    """clickhouse-driver binds a datetime parameter to whole seconds. With a
+    sub-second cutoff, ClickHouse kept a unit that started earlier in the
+    cutoff's second while publication counted it as expired, so the expiry
+    failed (MetricRetentionChanged) on every busy project. Writers use a
+    whole-second cutoff: the unit is kept (at most a second younger than the
+    policy) and the expiry publishes; reads still mask it at the exact cutoff.
+    """
+    writer = live_writer
+    definition = numeric_definition(uuid4())
+    now = timezone.now().replace(microsecond=750_000)
+    boundary = (now - timedelta(days=1)).replace(microsecond=250_000)
+    old, kept = str(uuid4()), str(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [
+            (old, now - timedelta(days=2), 4, ""),
+            (kept, boundary, 6, ""),
+        ],
+    )
+    writer.compact()
+    result = expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+    assert result["purged"]
+    head = MetricProjectRefresh.objects.get(
+        project_id=writer.lease.project_id
+    ).head_manifest
+    assert [r[0] for r in current_fields(writer, head) if not r[2]] == [kept]
+
+
+@pytest.mark.django_db(transaction=True)
 def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
     live_writer, workspace, observe_project
 ):

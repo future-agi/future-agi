@@ -50,6 +50,7 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
     pinned_read,
 )
+from tracer.services.derived_metrics.queries import utc_timestamp
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
     FIELD_VALUES,
@@ -108,6 +109,11 @@ def physical_cutoff(writer, *, now, head=_CURRENT_HEAD, ceilings=None):
     exact = retention_cutoff(days, now=now)
     if exact is None:
         return None
+    # Whole seconds: clickhouse-driver binds a datetime parameter to seconds,
+    # so a sub-second cutoff retained a unit that this process then counted as
+    # expired (MetricRetentionChanged on every busy project's expiry). The
+    # writers' cutoff is at most a second earlier; reads stay exact.
+    exact = exact.replace(microsecond=0)
     if ceilings is None:
         if head is _CURRENT_HEAD:
             head = MetricProjectRefresh.for_project(
@@ -138,7 +144,7 @@ def retained_rows_select(sql, cutoff):
         return sql, {}
     return (
         f"SELECT * FROM ({sql}) WHERE unit_start >= toDateTime64(%(retention_cutoff)s, 6, 'UTC')",
-        {"retention_cutoff": cutoff},
+        {"retention_cutoff": utc_timestamp(cutoff)},
     )
 
 
@@ -198,7 +204,11 @@ def read_field_cells(
         ]
         rows, columns = store.execute(
             f"SELECT * REPLACE({', '.join(replacements)}) FROM ({sql}) WHERE is_deleted = 0",
-            {**params, "retention_cutoff": cutoff},
+            {
+                **params,
+                # Microseconds kept: a datetime binds to whole seconds.
+                "retention_cutoff": None if cutoff is None else utc_timestamp(cutoff),
+            },
             with_column_types=True,
         )
         cells = [dict(zip((c[0] for c in columns), row, strict=True)) for row in rows]

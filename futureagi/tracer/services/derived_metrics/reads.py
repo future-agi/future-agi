@@ -38,7 +38,11 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
     pinned_read,
 )
-from tracer.services.derived_metrics.queries import QUERY_SETTINGS, UNCERTAINTY_COLUMNS
+from tracer.services.derived_metrics.queries import (
+    QUERY_SETTINGS,
+    UNCERTAINTY_COLUMNS,
+    utc_timestamp,
+)
 from tracer.services.derived_metrics.retention import retention_cutoff
 from tracer.services.derived_metrics.service import MetricUnavailableError, shape_result
 from tracer.services.derived_metrics.spec import require_computable
@@ -935,11 +939,14 @@ def _fields_select(metric, definition, manifest, window, *, ids=None, cutoff=Non
         AND unit_start >= %(evidence_start)s AND unit_start < %(evidence_end)s"""
     projection = "*"
     if cutoff is not None:
-        params["evidence_cutoff"] = cutoff
+        # A canonical DateTime64 string: a datetime parameter binds to whole
+        # seconds, which kept a unit up to a second past the cutoff.
+        params["evidence_cutoff"] = utc_timestamp(cutoff)
+        bound = "toDateTime64(%(evidence_cutoff)s, 6, 'UTC')"
         if ids is None:
-            where += " AND unit_start >= %(evidence_cutoff)s"
+            where += f" AND unit_start >= {bound}"
         else:
-            expired = "unit_start < %(evidence_cutoff)s"
+            expired = f"unit_start < {bound}"
             replacements = [
                 f"if({expired}, NULL, {name}) AS {name}"
                 for name in (
