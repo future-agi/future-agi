@@ -19,6 +19,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.utils.transcript_parse import (
     MAX_TRANSCRIPT_CHARS,
+    Format,
     ParsedTranscript,
     TranscriptError,
     parse_transcript,
@@ -177,7 +178,7 @@ def _conversation(row_id: str, cell: tuple[str, int] | None) -> SourceEvidence:
     text, size = cell
     if size > MAX_TRANSCRIPT_CHARS:
         return replace(empty, transcript_unreadable=True)
-    form = "json" if text.lstrip()[:1] in ("[", "{") else "text"
+    form: Format = "json" if text.lstrip()[:1] in ("[", "{") else "text"
     try:
         return text_evidence(row_id, parse_transcript(text, form))
     except TranscriptError:

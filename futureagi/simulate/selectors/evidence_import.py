@@ -26,6 +26,8 @@ from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import FixEvidence
 from simulate.pydantic_schemas.evidence_import import (
     DatasetColumns,
+    ImportKind,
+    RedactionMethod,
     StoredRedaction,
     StoredTranscript,
     StoredTurn,
@@ -291,16 +293,17 @@ def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEv
     )
     origins: dict[str, FixEvidence] = {}
     for case in cases:
+        original = case.duplicate_of
         scenario_key = (
-            case.duplicate_of.scenario_key
-            if case.status == EvidenceImportCase.Status.DUPLICATE
+            original.scenario_key
+            if case.status == EvidenceImportCase.Status.DUPLICATE and original
             else case.scenario_key
         )
         origin = origins.setdefault(
             str(case.evidence_import_id),
             FixEvidence(
                 import_id=str(case.evidence_import_id),
-                source_kind=case.evidence_import.source_kind,
+                source_kind=_import_kind(case.evidence_import),
                 source_ids=[],
                 scenario_keys=[],
             ),
@@ -631,7 +634,7 @@ def _provenance(cases: list[EvidenceImportCase]):
     }
 
     def of(case: EvidenceImportCase) -> dict:
-        original = repeated.get(case.duplicate_of_id)
+        original = repeated.get(case.duplicate_of_id) if case.duplicate_of_id else None
         return {
             "also_from": also.get(case.id, 0),
             "duplicate_of": (
@@ -799,8 +802,9 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
 
 def _row_name(evidence_import: EvidenceImport, case: EvidenceImportCase) -> str:
     """What a dataset row is called in the review: its dataset, since a row id
-    says nothing to a person."""
-    return f"Row from {evidence_import.dataset.name}"
+    says nothing to a person. Deleting the dataset deletes its imports."""
+    dataset = evidence_import.dataset
+    return f"Row from {dataset.name}" if dataset else ""
 
 
 def _case(
@@ -1016,6 +1020,11 @@ def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
     return cast(SourceKind, evidence_import.source_kind)
 
 
+def _import_kind(evidence_import: EvidenceImport) -> ImportKind:
+    # The model stores the kind as text; its choices are exactly these.
+    return cast(ImportKind, evidence_import.source_kind)
+
+
 def _texts(
     cases: list[EvidenceImportCase], evidence: Mapping[str, SourceEvidence | None]
 ) -> list[tuple[EvidenceImportCase, str, int, str, str]]:
@@ -1046,7 +1055,9 @@ def _texts(
     return values
 
 
-def _analysed(texts: list[str]) -> tuple[list[list[PiiFinding]], str, str]:
+def _analysed(
+    texts: list[str],
+) -> tuple[list[list[PiiFinding]], RedactionMethod, str]:
     """Each text's findings, analysed in one batch, with the method and its
     reason. Without Presidio, a fixed-shape match stands in."""
     found = find_pii(texts)
