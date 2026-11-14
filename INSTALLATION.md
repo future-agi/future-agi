@@ -634,11 +634,13 @@ E2B answer `501 sandbox_sdk_missing`. Standalone's slim backend has neither
 `gcp` nor `sandbox`. Standalone's slim backend has no `pii` either.
 
 **PII redaction and where it applies:** a project's PII redaction runs on the
-spans the backend ingests itself, through its OTLP HTTP and gRPC endpoints.
-For a project with redaction enabled, that ingestion fails closed: without the
-`pii` extra, and when a value cannot be analysed or anonymized, the batch is
-rejected and nothing of it is stored. Spans sent to `fi-collector` are not
-redacted; the collector does not apply a project's PII setting.
+spans the backend ingests itself, through its gRPC trace service. For a
+project with redaction enabled, that ingestion never stores a raw value:
+without the `pii` extra, or when the engines fail, the batch is rejected and
+retried; a value that can never be scanned (too long, undecodable) is stored as
+`[REDACTED: could not be scanned]`. Spans sent to `fi-collector`, the default
+OTLP ingestion path, are not redacted: the collector does not apply a
+project's PII setting.
 
 **To enable extras**, rebuild the backend image with the `EXTRAS` build
 argument (comma-separated). `EXTRAS` replaces the variant's own list of
