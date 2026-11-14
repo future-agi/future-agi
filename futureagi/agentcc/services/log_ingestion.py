@@ -267,6 +267,13 @@ def _compute_cost(entry):
     except (TypeError, ValueError):
         images_generated = 0
 
+    # Input images are separate from generated images. Keep an explicit zero
+    # rather than treating it as an absent count.
+    try:
+        num_images = max(int(metadata.get("num_images") or 0), 0)
+    except (TypeError, ValueError, OverflowError):
+        num_images = 0
+
     quality = metadata.get("quality") or "standard"
 
     from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
@@ -287,6 +294,7 @@ def _compute_cost(entry):
             and not input_characters
             and not audio_seconds
             and not (images_generated or 0)
+            and not num_images
             and not is_image_model
         ):
             continue
@@ -297,6 +305,9 @@ def _compute_cost(entry):
             "input_characters": input_characters,
             "audio_seconds": audio_seconds,
         }
+
+        if "num_images" in metadata:
+            token_usage["num_images"] = num_images
 
         if images_generated is not None or is_image_model:
             token_usage["images_generated"] = (

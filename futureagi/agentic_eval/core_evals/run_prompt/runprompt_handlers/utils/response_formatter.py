@@ -35,8 +35,8 @@ class UsageInfo:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    input_characters: Optional[int] = None
-    output_characters: Optional[int] = None
+    input_characters: int | None = None
+    output_characters: int | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""

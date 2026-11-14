@@ -182,7 +182,7 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
 def _select_fallback_pricing(
-    token_usage: dict, fallback_pricing: Optional[dict]
+    token_usage: dict, fallback_pricing: dict | None
 ) -> tuple[dict, str]:
     """
     Choose a fallback pricing dict based on the token_usage fields.
@@ -226,10 +226,16 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
     prompt_cost = 0.0
     completion_cost = 0.0
 
-    # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    # Embeddings have no output-token rate. Multimodal models may additionally
+    # price input images; accept either catalog spelling of that component.
+    if (
+        "input_per_1M_tokens" in pricing
+        or "output_per_1M_tokens" in pricing
+        or "input_per_image" in pricing
+        or "image_input_per_image" in pricing
+    ):
+        input_cost_per_1M = pricing.get("input_per_1M_tokens", 0)
+        output_cost_per_1M = pricing.get("output_per_1M_tokens", 0)
         if not all(
             _is_nonnegative_number(rate)
             for rate in (input_cost_per_1M, output_cost_per_1M)
@@ -261,6 +267,26 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
                 6,
             )
         completion_cost = round((completion_tokens / 1_000_000) * output_cost_per_1M, 6)
+
+        # Per-image input pricing for multimodal embeddings. Titan multimodal
+        # embeddings charge `input_per_image` per input image on top of any token
+        # cost, so image-only requests are non-zero and mixed (text + image)
+        # requests include both components. Text-only requests supply no image
+        # count and are unaffected. `num_images` is the canonical key; fall back to
+        # `images_generated` for callers that already report image counts that way.
+        # `image_input_per_image` is an alias some vision models use for the same
+        # per-image component.
+        if "input_per_image" in pricing or "image_input_per_image" in pricing:
+            cost_per_image = pricing.get(
+                "input_per_image", pricing.get("image_input_per_image")
+            )
+            if not _is_nonnegative_number(cost_per_image):
+                return 0.0, 0.0, False
+            num_images = token_usage.get("num_images")
+            if num_images is None:
+                num_images = token_usage.get("images_generated") or 0
+            image_cost = round(num_images * cost_per_image, 6)
+            prompt_cost = round(prompt_cost + image_cost, 6)
 
     # Character-based pricing (TTS models)
     elif "input_per_1M_characters" in pricing:
@@ -359,6 +385,7 @@ def calculate_total_cost(
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
         token_usage: Dict with keys depending on model type:
             For LLM: {"prompt_tokens": int, "completion_tokens": int}
+            For multimodal inputs: additionally {"num_images": int}
             For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
             For STT: {"audio_seconds": float}
         fallback_pricing: Optional custom fallback pricing dict
@@ -403,8 +430,7 @@ def calculate_total_cost(
     # stamp a detectable source so downstream can distinguish a real $0.
     if not recognized and pricing_source == "available_models":
         logger.warning(
-            f"Unrecognized pricing structure for model '{model_name}', "
-            f"using fallback pricing instead of $0: {pricing}",
+            "unrecognized_model_pricing_using_fallback",
             model=model_name,
             pricing=pricing,
         )
