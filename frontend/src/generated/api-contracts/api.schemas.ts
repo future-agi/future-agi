@@ -15850,6 +15850,11 @@ export interface UploadedFileResultApi {
   url?: string;
   file_name?: string;
   error?: string;
+  /**
+   * Set with "error" when a missing ffmpeg caused it: "ffmpeg_unavailable".
+   * @minLength 1
+   */
+  code?: string;
 }
 
 export interface UploadFileResponseApi {
