@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
 import SavedEvalsList from "../SavedEvalsList";
@@ -49,6 +49,8 @@ SavedListSession.propTypes = { evals: PropTypes.array.isRequired };
 
 // The first checkbox is select-all; row checkboxes follow in evals order.
 const rowCheckboxes = () => screen.getAllByRole("checkbox").slice(1);
+const checkboxFor = (evalItem) =>
+  screen.getByRole("checkbox", { name: `Select ${evalItem.name}` });
 const save = (user, name) => user.click(screen.getByRole("button", { name }));
 
 describe("SavedEvalsList — auto-select of saved evals", () => {
@@ -133,5 +135,60 @@ describe("SavedEvalsList — auto-select of saved evals", () => {
     expect(rowCheckboxes()[0]).toBeChecked();
     expect(rowCheckboxes()[1]).not.toBeChecked();
     expect(screen.getByLabelText("Pending saves")).toHaveTextContent("0");
+  });
+});
+
+// Simulation has its own Run Evaluation button, so it asks for checkboxes
+// without the list's run actions and reads the selection back.
+describe("SavedEvalsList — selectable without run actions", () => {
+  it("shows checkboxes but no run buttons, and reports the checked ids", async () => {
+    const user = userEvent.setup();
+    const onSelectionChange = vi.fn();
+    render(
+      <SavedEvalsList
+        evals={[A, B]}
+        showRun={false}
+        selectable
+        onSelectionChange={onSelectionChange}
+        allColumns={[]}
+      />,
+    );
+
+    expect(checkboxFor(A)).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: /Run All/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+
+    await user.click(checkboxFor(B));
+    expect(checkboxFor(B)).toBeChecked();
+    expect(onSelectionChange).toHaveBeenLastCalledWith([B.id]);
+    expect(screen.queryByRole("button", { name: /Run Selected/ })).toBeNull();
+
+    await user.click(checkboxFor(B));
+    expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it("names each checkbox after what it selects", async () => {
+    const user = userEvent.setup();
+    render(
+      <SavedEvalsList
+        evals={[A, B]}
+        showRun={false}
+        selectable
+        allColumns={[]}
+      />,
+    );
+
+    expect(checkboxFor(A)).not.toBeChecked();
+    expect(checkboxFor(B)).not.toBeChecked();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all evaluations" }),
+    );
+    expect(checkboxFor(A)).toBeChecked();
+    expect(checkboxFor(B)).toBeChecked();
+  });
+
+  it("keeps checkboxes hidden when run actions are off and selectable is not set", () => {
+    render(<SavedEvalsList evals={[A, B]} showRun={false} allColumns={[]} />);
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 });
