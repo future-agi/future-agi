@@ -140,6 +140,9 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
 
         bucket_name = UPLOAD_BUCKET_NAME
         minio_client = get_storage_client()
+        # Build the URL first: a misconfigured MINIO_URL then fails the upload
+        # before an object is written that nothing would reference.
+        url = get_object_url(bucket_name, object_key)
         ensure_bucket(minio_client, bucket_name)
 
         # Reset file pointer to beginning
@@ -186,7 +189,6 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
             except (ImportError, TypeError):
                 pass
 
-        url = get_object_url(bucket_name, object_key)
         return url
     except Exception as e:
         logger.error(f"Error uploading file to Minio: {str(e)}")

@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import Chip from "@mui/material/Chip";
 import PropTypes from "prop-types";
+import { enqueueSnackbar } from "notistack";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
@@ -26,6 +27,16 @@ import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
 import { paths } from "src/routes/paths";
+
+function notifyUploadError(error) {
+  enqueueSnackbar(
+    typeof error?.detail === "string" && error.detail
+      ? error.detail
+      : "File upload failed. Please try again.",
+    { variant: "error" },
+  );
+}
+
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -125,9 +136,11 @@ export default function ChatInput({ onSend, onStop }) {
         const resp = await uploadFile(file);
         if (resp.status && resp.result) {
           addAttachedFile(resp.result);
+        } else {
+          notifyUploadError(resp);
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
@@ -211,10 +224,14 @@ export default function ChatInput({ onSend, onStop }) {
             result.value.result
           ) {
             addAttachedFile(result.value.result);
+          } else {
+            notifyUploadError(
+              result.status === "rejected" ? result.reason : result.value,
+            );
           }
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
