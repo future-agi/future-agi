@@ -214,6 +214,26 @@ def test_remap_failure_denies_without_erasing(collector_recording):
     assert r.row.deleted_at is None and r.objects.objects
 
 
+def test_orphan_scan_checks_session_marker_before_advancing_shared_cursor(
+    collector_recording,
+):
+    r = collector_recording
+    TraceSessionOverlay._base_manager.create(
+        project_id=r.scope.project_id, trace_session_id=r.session_id, deleted=True
+    )
+    # A live CH span must not let the orphan scanner continually advance this
+    # row past the separate session sweep's bounded cursor without cleanup.
+    counts = lifecycle.sweep_orphans(
+        now=timezone.now() + timedelta(hours=25),
+        span_reader=lambda project_id, ids: {r.row.span_id: str(r.row.trace_id)},
+    )
+    assert counts["session_occurrences_deleted"] == 1
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is not None
+    assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
+    assert not r.objects.objects
+
+
 def test_cleanup_checks_trace_identity_not_only_span_id(collector_recording, auth_client):
     r = collector_recording
     r.reader.list_by_ids.return_value[0]["trace_id"] = str(uuid.uuid4())

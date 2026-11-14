@@ -320,7 +320,22 @@ def sweep_orphans(
     for row in rows:
         by_project[(row["scope_id"], row["scope__project_id"])].append(row)
     counts: defaultdict[str, int] = defaultdict(int)
+    from tracer.services.attachments import session_deletion
+
     for (scope_id, project_id), group in by_project.items():
+        # Both scanners advance source_checked_at. Check durable session markers
+        # for these rows too, so repeated orphan scans cannot hide a deletion
+        # forever behind live rows in the separate bounded session sweep.
+        for start in range(0, len(group), session_deletion.BATCH):
+            _isolated(
+                counts,
+                "session_occurrences_deleted",
+                session_deletion.sweep_deleted_sessions,
+                project_id=project_id,
+                occurrence_ids=[
+                    row["pk"] for row in group[start : start + session_deletion.BATCH]
+                ],
+            )
         try:
             live = span_reader(project_id, {row["span_id"] for row in group})
         except Exception:  # noqa: BLE001 - ClickHouse boundary; never tombstone on a failed read

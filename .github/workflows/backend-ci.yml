@@ -358,6 +358,15 @@ jobs:
           fi
           exit $code
 
+      - name: Lint focused attachment deletion changes
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
+        run: |
+          uvx --from ruff==0.17.3 ruff check \
+            tracer/services/attachments/authority.py \
+            tracer/services/attachments/lifecycle.py \
+            tracer/services/attachments/session_deletion.py \
+            tracer/tests/test_attachment_session_deletion.py
+
       - name: Upload JUnit results
         # Skip when the shard never ran: a missing-file error here would bury
         # the real failure (EE checkout, service health, dependency install).

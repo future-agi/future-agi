@@ -61,7 +61,7 @@ def session_deleted(project_id, session_id):
     return bool(deleted_session_ids(project_id, [key], get_reader()))
 
 
-def sweep_deleted_sessions(*, project_id):
+def sweep_deleted_sessions(*, project_id, occurrence_ids=None):
     """One fair, bounded pass, also called immediately after a session delete.
 
     The session marker survives a CH outage, and LiveAuthority denies reads
@@ -79,9 +79,15 @@ def sweep_deleted_sessions(*, project_id):
     scope = AttachmentScope.objects.filter(project_id=project_id).first()
     if scope is None:
         return 0
+    candidates = AttachmentOccurrence.objects.filter(
+        scope=scope, deleted_at__isnull=True
+    )
+    if occurrence_ids is not None:
+        # The orphan scanner shares this cursor: its selected rows must also
+        # check session markers, or its cursor advances can starve this sweep.
+        candidates = candidates.filter(pk__in=occurrence_ids)
     rows = list(
-        AttachmentOccurrence.objects.filter(scope=scope, deleted_at__isnull=True)
-        .order_by(F("source_checked_at").asc(nulls_first=True), "id")[:BATCH]
+        candidates.order_by(F("source_checked_at").asc(nulls_first=True), "id")[:BATCH]
     )
     if not rows:
         return 0
