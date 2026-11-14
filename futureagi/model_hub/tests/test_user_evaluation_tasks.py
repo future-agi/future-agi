@@ -941,8 +941,8 @@ class TestErrorLocalizerGateE2E:
         )
         task = self._make_task(organization, workspace, template, eval_result="Failed")
         mock_cost.return_value.status = APICallStatusChoices.PROCESSING.value
-        mock_localizer.return_value.localize_errors.side_effect = (
-            MediaToolUnavailable("splitting call audio for error localization")
+        mock_localizer.return_value.localize_errors.side_effect = MediaToolUnavailable(
+            "splitting call audio for error localization"
         )
         process_single_error_localization._original_func(str(task.id))
 
