@@ -766,3 +766,33 @@ func TestViaResponsesFailsOnACallItemItCannotCarry(t *testing.T) {
 		t.Errorf("stream: err %v; want an error naming custom_tool_call", err)
 	}
 }
+
+// The first chunk carries the model's first output along with the assistant
+// role, so first-chunk latency measures the model, not response.created.
+func TestStreamViaResponsesFirstChunkCarriesOutput(t *testing.T) {
+	ts := fakeOpenAI(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w, toolStreamEvents...)
+	})
+	defer ts.Close()
+	p := newTestProvider(t, ts.URL)
+
+	chunks, err := collect(p.StreamChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra")))
+	if err != nil || len(chunks) == 0 {
+		t.Fatalf("chunks %d, err %v", len(chunks), err)
+	}
+	first := chunks[0].Choices[0].Delta
+	if first.Role != "assistant" || (first.Content == nil && len(first.ToolCalls) == 0) {
+		t.Errorf("first delta = %+v, want the assistant role with output", first)
+	}
+	roles := 0
+	for _, c := range chunks {
+		for _, ch := range c.Choices {
+			if ch.Delta.Role != "" {
+				roles++
+			}
+		}
+	}
+	if roles != 1 {
+		t.Errorf("role sent on %d chunks, want 1", roles)
+	}
+}
