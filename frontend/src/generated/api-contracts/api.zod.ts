@@ -55837,6 +55837,7 @@ export const TracerDashboardQueryQueryParams = zod.object({
 export const tracerDashboardQueryBodyWorkflowDefault = `observability`;
 export const tracerDashboardQueryBodyProjectIdsDefault = [];
 export const tracerDashboardQueryBodyGranularityDefault = `day`;
+export const tracerDashboardQueryBodyQueryModeDefault = `time_series`;
 
 export const tracerDashboardQueryBodyMetricsItemSourceDefault = `traces`;
 export const tracerDashboardQueryBodyMetricsItemAggregationDefault = `avg`;
@@ -55868,6 +55869,9 @@ export const TracerDashboardQueryBody = zod.object({
   granularity: zod
     .enum(["minute", "hour", "day", "week", "month"])
     .default(tracerDashboardQueryBodyGranularityDefault),
+  query_mode: zod
+    .enum(["time_series", "distribution"])
+    .default(tracerDashboardQueryBodyQueryModeDefault),
   metrics: zod.array(
     zod.object({
       id: zod.string().optional(),
@@ -56165,7 +56169,9 @@ export const TracerDashboardQueryResponse = zod.object({
             name: zod.string(),
             data: zod.array(
               zod.object({
-                timestamp: zod.string().min(1),
+                timestamp: zod.string().min(1).optional(),
+                bucket_start: zod.number().optional(),
+                bucket_end: zod.number().optional(),
                 value: zod.number(),
               }),
             ),
@@ -56619,6 +56625,7 @@ export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigWorkflowDefault = 
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigProjectIdsDefault =
   [];
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigGranularityDefault = `day`;
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigQueryModeDefault = `time_series`;
 
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemSourceDefault = `traces`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemAggregationDefault = `avg`;
@@ -56671,6 +56678,11 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
       .enum(["minute", "hour", "day", "week", "month"])
       .default(
         tracerDashboardWidgetsPreviewQueryBodyQueryConfigGranularityDefault,
+      ),
+    query_mode: zod
+      .enum(["time_series", "distribution"])
+      .default(
+        tracerDashboardWidgetsPreviewQueryBodyQueryConfigQueryModeDefault,
       ),
     metrics: zod.array(
       zod.object({
@@ -56998,7 +57010,9 @@ export const TracerDashboardWidgetsPreviewQueryResponse = zod.object({
             name: zod.string(),
             data: zod.array(
               zod.object({
-                timestamp: zod.string().min(1),
+                timestamp: zod.string().min(1).optional(),
+                bucket_start: zod.number().optional(),
+                bucket_end: zod.number().optional(),
                 value: zod.number(),
               }),
             ),
@@ -57567,7 +57581,9 @@ export const TracerDashboardWidgetsExecuteQueryResponse = zod.object({
             name: zod.string(),
             data: zod.array(
               zod.object({
-                timestamp: zod.string().min(1),
+                timestamp: zod.string().min(1).optional(),
+                bucket_start: zod.number().optional(),
+                bucket_end: zod.number().optional(),
                 value: zod.number(),
               }),
             ),

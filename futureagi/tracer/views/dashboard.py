@@ -96,6 +96,7 @@ from tracer.services.clickhouse.list_cursor import (
 from tracer.services.clickhouse.query_builders.dashboard import (
     GRANULARITY_TO_CH,
     METRIC_UNITS,
+    DashboardQueryBuilder,
     InvalidMetricCombinationError,
     _generate_time_buckets,
 )
@@ -6599,7 +6600,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         formatter_config = {**query_config, "workspace_id": str(workspace.id)}
         formatter = DatasetQueryBuilder(formatter_config)
 
-        if trace_metrics and not dataset_metrics and not simulation_metrics:
+        if query_config.get("query_mode") == "distribution":
+            formatted = DashboardQueryBuilder(query_config).format_distribution_results(
+                metric_results
+            )
+        elif trace_metrics and not dataset_metrics and not simulation_metrics:
             project_ids = query_config.get("project_ids", [])
             project_name_map = dict(
                 Project.objects.filter(

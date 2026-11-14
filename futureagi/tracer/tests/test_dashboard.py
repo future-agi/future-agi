@@ -5691,6 +5691,40 @@ class TestDashboardQueryBuilder:
         assert "usage_apicalllog" in sql
         assert "eval_score" in sql
 
+    def test_eval_metric_distribution_query_returns_fixed_buckets(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "query_mode": "distribution",
+            "time_range": {
+                "custom_start": "2025-01-01T00:00:00Z",
+                "custom_end": "2025-01-02T00:00:00Z",
+            },
+            "metrics": [
+                {
+                    "id": "e1",
+                    "name": "accuracy",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "SCORE",
+                    "aggregation": "count",
+                }
+            ],
+        }
+
+        sql, params, metric_info = DashboardQueryBuilder(config).build_all_queries()[0]
+
+        assert "filtered_scores AS" in sql
+        assert "score_bounds AS" in sql
+        assert "bucket_counts AS" in sql
+        assert "ARRAY JOIN range(10) AS bucket_index" in sql
+        assert "ifNull(bucket_counts.value, 0) AS value" in sql
+        assert "time_bucket" not in sql
+        assert params["start_date"] == datetime(2025, 1, 1, tzinfo=UTC)
+        assert params["end_date"] == datetime(2025, 1, 2, tzinfo=UTC)
+        assert metric_info["aggregation"] == "count"
+
     def test_eval_metric_pass_fail(self):
         config = {
             "project_ids": ["proj1"],
@@ -6972,6 +7006,29 @@ class TestDashboardQueryBuilderFormatResults:
         assert len(non_null) == 2
         assert metrics[0]["unit"] == "ms"
 
+    def test_format_distribution_results_keeps_bucket_bounds(self):
+        config = {
+            "query_mode": "distribution",
+            "time_range": {
+                "custom_start": "2025-01-01T00:00:00Z",
+                "custom_end": "2025-01-02T00:00:00Z",
+            },
+            "metrics": [{"id": "accuracy", "type": "eval_metric"}],
+        }
+        rows = [
+            {"bucket_start": 0.5, "bucket_end": 1.0, "value": 2},
+            {"bucket_start": 0.0, "bucket_end": 0.5, "value": 3},
+        ]
+
+        result = DashboardQueryBuilder(config).format_distribution_results(
+            [({"id": "accuracy", "name": "Accuracy"}, rows)]
+        )
+
+        assert result["metrics"][0]["series"][0]["data"] == [
+            {"bucket_start": 0.0, "bucket_end": 0.5, "value": 3},
+            {"bucket_start": 0.5, "bucket_end": 1.0, "value": 2},
+        ]
+
     def test_format_with_breakdown(self):
         config = {
             "project_ids": ["p1"],
@@ -7305,10 +7362,21 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.integration
     @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("query_mode", "scores"),
+        [
+            ("time_series", []),
+            ("distribution", []),
+            ("distribution", [0.1, 0.9]),
+            ("distribution", [0.5, 0.5]),
+        ],
+    )
     def test_query_action_eval_metric_runs_against_real_ch(
         self,
         observe_project,
         isolated_eval_usage_analytics,
+        query_mode,
+        scores,
     ):
         """Eval metrics read usage_apicalllog (a non-migrated legacy table).
 
@@ -7317,6 +7385,7 @@ class TestDashboardQueryExecution:
         resolved". Hits real ClickHouse (no mock) so the SQL is actually parsed.
         """
         query_config = {
+            "query_mode": query_mode,
             "project_ids": [str(observe_project.id)],
             "granularity": "month",
             "time_range": {"preset": "6M"},
@@ -7332,6 +7401,25 @@ class TestDashboardQueryExecution:
                 }
             ],
         }
+        workspace = observe_project.workspace
+        template_id = query_config["metrics"][0]["config_id"]
+        for row_id, score in enumerate(scores, start=1):
+            config = json.dumps({"output": {"output": score}})
+            isolated_eval_usage_analytics.ch_client.execute(
+                f"INSERT INTO {isolated_eval_usage_analytics.usage_table} "
+                "(id, log_id, organization_id, workspace_id, status, config, source, source_id, "
+                "created_at, updated_at, _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version) "
+                "SELECT %(id)s, generateUUIDv4(), toUUID(%(org)s), toUUID(%(workspace)s), "
+                "'success', toJSONString(%(config)s), 'tracer', %(template)s, "
+                "now64(6) - INTERVAL 1 MINUTE, now64(6), now64(6), 0, 1",
+                {
+                    "id": row_id,
+                    "org": str(workspace.organization_id),
+                    "workspace": str(workspace.id),
+                    "config": config,
+                    "template": template_id,
+                },
+            )
         with (
             patch(
                 "tracer.views.dashboard.V2AnalyticsQueryService",
@@ -7356,6 +7444,16 @@ class TestDashboardQueryExecution:
         assert len(metrics) == 1
         # Query parsed + executed cleanly; no per-widget error attached.
         assert "error" not in metrics[0]
+        if query_mode == "distribution":
+            points = metrics[0]["series"][0]["data"]
+            if not scores:
+                assert points == []
+            else:
+                assert len(points) == 10
+                assert sum(point["value"] for point in points) == len(scores)
+                assert points[0]["bucket_start"] == min(scores)
+                assert points[-1]["bucket_end"] == max(scores)
+                assert sum(point["value"] == 0 for point in points) >= 8
 
     @pytest.mark.integration
     @pytest.mark.django_db
@@ -9076,6 +9174,31 @@ class TestDashboardQuerySerializer:
         opted_in = DashboardQuerySerializer(data={**data, "allow_sampled": True})
         assert opted_in.is_valid(), opted_in.errors
         assert opted_in.validated_data["allow_sampled"] is True
+
+    def test_distribution_query_requires_one_numeric_eval_metric(self):
+        metric = {
+            "name": "accuracy",
+            "type": "eval_metric",
+            "source": "traces",
+            "output_type": "SCORE",
+            "aggregation": "count",
+        }
+        valid = {
+            "query_mode": "distribution",
+            "time_range": {"preset": "7D"},
+            "metrics": [metric],
+        }
+        serializer = DashboardQuerySerializer(data=valid)
+        assert serializer.is_valid(), serializer.errors
+
+        for invalid in (
+            {**valid, "metrics": [metric, {**metric, "name": "relevance"}]},
+            {**valid, "metrics": [{**metric, "aggregation": "avg"}]},
+            {**valid, "metrics": [{**metric, "output_type": "CHOICE"}]},
+            {**valid, "breakdowns": [{"name": "model", "type": "system_metric"}]},
+        ):
+            invalid_serializer = DashboardQuerySerializer(data=invalid)
+            assert not invalid_serializer.is_valid(), invalid_serializer.errors
 
     def test_numeric_custom_metric_infers_number_when_frontend_omits_type(self):
         data = {
