@@ -831,8 +831,18 @@ def stream_query(
     from tracer.services.clickhouse.application_read_policy import (
         application_read_context,
     )
-    from tracer.services.clickhouse.v2.query_service import get_v2_query_client
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2.effective_tags import (
+        EffectiveTagRelation,
+        prepare_effective_tag_params,
+    )
+    from tracer.services.clickhouse.v2.query_service import (
+        V2AnalyticsQueryService,
+        get_v2_query_client,
+    )
+    from tracer.services.entity_tags import TagReadUnavailable
     from tracer.services.eval_tasks.sampling.errors import (
+        SamplingReadPressure,
         SamplingStatementTooLarge,
         classify_read_error,
     )
@@ -865,14 +875,35 @@ def stream_query(
     # abort caps, so opt out rather than silently losing the selection budget.
     try:
         with application_read_context(enabled=False):
-            with get_v2_query_client().execute_read_block_stream(
+            client = get_v2_query_client()
+            timeout_ms = 30_000
+            if any(
+                isinstance(value, EffectiveTagRelation) for value in params.values()
+            ):
+                analytics = V2AnalyticsQueryService()
+                if not analytics.supports_per_query_read_settings:
+                    raise TagReadUnavailable("tag_source_unavailable")
+                deadline = ReadDeadline.start(timeout_ms, enforce_on_server=True)
+                params = prepare_effective_tag_params(
+                    analytics.execute_ch_query,
+                    params,
+                    deadline=deadline,
+                    allow_window_scan=True,
+                )
+                timeout_ms = deadline.remaining_ms()
+            with client.execute_read_block_stream(
                 sql,
                 native_parameters(params),
-                timeout_ms=30_000,
+                timeout_ms=timeout_ms,
                 block_size=BATCH_SIZE,
                 settings=read_settings,
             ) as blocks:
                 yield from blocks
+    except TagReadUnavailable as exc:
+        raise SamplingReadPressure(
+            "Sampling tag filters are unavailable or exceeded their read budget. "
+            "Narrow the window and retry."
+        ) from exc
     except Exception as exc:
         typed = classify_read_error(exc, policy=policy, proof=proof)
         if typed is None:
