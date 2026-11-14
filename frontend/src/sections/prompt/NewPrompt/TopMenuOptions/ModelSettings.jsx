@@ -9,6 +9,32 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 
 import DrawerHeaderbar from "./DrawerHeaderbar";
 
+// Fields sent with the model settings saved event: the model, its numeric
+// options and the ids of the selected tools (each tool row holds the selected
+// option, whose value is the tool id). Tool definitions are not part of the
+// event.
+const textOrUndefined = (value) =>
+  typeof value === "string" ? value : undefined;
+
+const modelSettingsEventFields = (data) => {
+  const config = data?.config ?? {};
+  return {
+    config: {
+      model: textOrUndefined(config.model),
+      temperature: config.temperature,
+      topP: config.topP,
+      maxTokens: config.maxTokens,
+      presencePenalty: config.presencePenalty,
+      frequencyPenalty: config.frequencyPenalty,
+      responseFormat: textOrUndefined(config.responseFormat),
+      toolChoice: textOrUndefined(config.toolChoice),
+      tool_ids: Array.isArray(config.tools)
+        ? config.tools.map((row) => row?.tool?.value).filter(Boolean)
+        : [],
+    },
+  };
+};
+
 const ModelSettings = (props) => {
   const [isApiConfigurationOpen, setApiConfigurationOpen] = useState(false);
   const { onClose, handleModelSettingData, initialConfig, handleLabelsAdd } =
@@ -33,7 +59,7 @@ const ModelSettings = (props) => {
   const onSubmit = (data) => {
     handleModelSettingData(data);
     trackEvent(Events.modelSettingsApplied, {
-      [PropertyName.formFields]: data,
+      [PropertyName.formFields]: modelSettingsEventFields(data),
     });
     handleLabelsAdd(null);
     onClose();

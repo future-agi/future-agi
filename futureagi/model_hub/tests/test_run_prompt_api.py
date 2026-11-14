@@ -23,6 +23,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
@@ -377,9 +378,7 @@ class TestAddRunPromptColumnView:
             "config": config,
         }
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -1437,6 +1436,64 @@ class TestRetrieveRunPromptOptionsView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_retrieve_run_prompt_options_keeps_model_status_per_request(
+        self, auth_client, organization
+    ):
+        """Test that each options response has its own model availability."""
+        catalog_before = [model.copy() for model in AVAILABLE_MODELS]
+        model_name = next(
+            model["model_name"]
+            for model in AVAILABLE_MODELS
+            if model.get("providers") == "openai" and model.get("mode") == "chat"
+        )
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="test-api-key"
+        )
+        other_organization = Organization.objects.create(
+            name="Other Model Organization"
+        )
+        other_user = User.objects.create_user(
+            email="othermodel@example.com",
+            password="testpassword123",
+            name="Other Model User",
+            organization=other_organization,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Model Workspace",
+            organization=other_organization,
+            is_default=True,
+            created_by=other_user,
+        )
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_user)
+
+        first_response = auth_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+        set_workspace_context(
+            workspace=other_workspace, organization=other_organization
+        )
+        second_response = other_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+
+        assert first_response.status_code == status.HTTP_200_OK
+        assert second_response.status_code == status.HTTP_200_OK
+        first_model = next(
+            model
+            for model in first_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        second_model = next(
+            model
+            for model in second_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        assert first_model["is_available"] is True
+        assert second_model["is_available"] is False
+        assert AVAILABLE_MODELS == catalog_before
+        assert all("is_available" not in model for model in AVAILABLE_MODELS)
+
     def test_retrieve_run_prompt_options_unauthenticated(self):
         """Test that unauthenticated users cannot retrieve options."""
         client = APIClient()
@@ -1645,7 +1702,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "List items"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "List items"}],
+                    }
                 ],
                 "output_format": "array",
             },
@@ -1657,11 +1717,16 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Calculate total"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Calculate total"}],
+                    }
                 ],
                 "output_format": "number",
             },
-            lambda self, ds: self._assert_column_data_type(ds, "Number Output", "integer"),
+            lambda self, ds: self._assert_column_data_type(
+                ds, "Number Output", "integer"
+            ),
         ),
         (
             "output_format_object",
@@ -1669,7 +1734,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Return JSON"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Return JSON"}],
+                    }
                 ],
                 "output_format": "object",
             },
@@ -1692,7 +1760,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Generate text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Generate text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {"temperature": 0.2, "max_tokens": 500},
@@ -1712,7 +1783,9 @@ class TestAddRunPromptColumnConfigVariations:
                 "output_format": "string",
                 "concurrency": 10,
             },
-            lambda self, ds: self._assert_run_prompter_attrs("Concurrent Run", concurrency=10),
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Concurrent Run", concurrency=10
+            ),
         ),
         (
             "response_format",
@@ -1720,7 +1793,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Analyze this"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Analyze this"}],
+                    }
                 ],
                 "output_format": "object",
                 "response_format": _RESPONSE_FORMAT_SCHEMA,
@@ -1751,7 +1827,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Creative text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Creative text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {
@@ -1793,10 +1872,22 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "system", "content": [{"type": "text", "text": "Assistant"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "First question"}]},
-                    {"role": "assistant", "content": [{"type": "text", "text": "First answer"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "Assistant"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "First question"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "First answer"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Follow up"}],
+                    },
                 ],
                 "output_format": "string",
             },
@@ -1819,9 +1910,7 @@ class TestAddRunPromptColumnConfigVariations:
             "name": column_name,
             "config": config,
         }
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -2287,7 +2376,10 @@ class TestRunPromptSerializerValidation:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "invalid_role", "content": [{"type": "text", "text": "Test"}]}
+                    {
+                        "role": "invalid_role",
+                        "content": [{"type": "text", "text": "Test"}],
+                    }
                 ],
                 "output_format": "string",
             },

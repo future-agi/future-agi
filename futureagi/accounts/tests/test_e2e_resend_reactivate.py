@@ -1039,9 +1039,9 @@ class TestInviteAcceptanceActivatesMemberships:
 
         # Org membership must now be active
         org_mem.refresh_from_db()
-        assert (
-            org_mem.is_active is True
-        ), "accept_invitation_mail must activate org membership"
+        assert org_mem.is_active is True, (
+            "accept_invitation_mail must activate org membership"
+        )
 
     def test_accept_invite_activates_workspace_membership(
         self, owner_client, org, default_ws, owner
@@ -1080,9 +1080,9 @@ class TestInviteAcceptanceActivatesMemberships:
         assert resp.status_code == status.HTTP_200_OK
 
         ws_mem.refresh_from_db()
-        assert (
-            ws_mem.is_active is True
-        ), "accept_invitation_mail must activate workspace membership"
+        assert ws_mem.is_active is True, (
+            "accept_invitation_mail must activate workspace membership"
+        )
 
     def test_accepted_user_has_active_membership_for_login(
         self, owner_client, org, default_ws, owner
@@ -1119,6 +1119,6 @@ class TestInviteAcceptanceActivatesMemberships:
         active_mem = OrganizationMembership.no_workspace_objects.filter(
             user=user, is_active=True
         ).first()
-        assert (
-            active_mem is not None
-        ), "Login must find an active org membership after invite acceptance"
+        assert active_mem is not None, (
+            "Login must find an active org membership after invite acceptance"
+        )
