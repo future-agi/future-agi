@@ -824,18 +824,9 @@ type responsesStreamConverter struct {
 	// tool_calls deltas are numbered; keyed by output item ID.
 	toolIndex map[string]int
 	done      bool
-	// roleSent is set once a chunk has carried the assistant role. The role
-	// rides on the first chunk with output, not on response.created, so the
-	// first chunk a caller (and the gateway's first-chunk latency) sees is
-	// the model's first output.
-	roleSent bool
 }
 
 func (c *responsesStreamConverter) chunk(delta models.Delta, finish *string) models.StreamChunk {
-	if !c.roleSent {
-		delta.Role = "assistant"
-		c.roleSent = true
-	}
 	return models.StreamChunk{
 		ID:      c.id,
 		Object:  "chat.completion.chunk",
@@ -856,7 +847,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 				c.model = ev.Response.Model
 			}
 		}
-		return nil, nil
+		return []models.StreamChunk{c.chunk(models.Delta{Role: "assistant"}, nil)}, nil
 
 	case "response.output_text.delta", "response.refusal.delta":
 		delta := ev.Delta
