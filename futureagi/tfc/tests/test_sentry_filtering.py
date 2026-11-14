@@ -5,11 +5,15 @@ import without the Sentry SDK or Django settings. They lock in the two things
 that keep the issue stream clean and safe:
 
 - Infrastructure / expected events are dropped (logger prefix, ignored
-  exception types, expected 4xx, expected log messages).
+  explicitly classified log-only outcomes).
 - Real errors survive, with their secrets/PII redacted before send.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
+
+from sentry_sdk.scope import global_event_processors
 
 from tfc.logging.sentry import (
     _REDACTED,
@@ -36,6 +40,13 @@ def _hint(exc):
     return {"exc_info": (type(exc), exc, None)}
 
 
+def _log_hint(logger_name, exc=None):
+    """The hint Sentry's logging integration passes for a log record."""
+    hint = _hint(exc) if exc is not None else {}
+    hint["log_record"] = SimpleNamespace(name=logger_name)
+    return hint
+
+
 # Noise: dropped
 
 
@@ -57,24 +68,74 @@ def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
         assert before_send({"logger": name, "message": "boom"}, {}) is not None
 
 
-def test_drops_ignored_exception_types():
-    assert before_send({}, _hint(ConnectionResetError(104, "reset"))) is None
-    assert before_send({}, _hint(BrokenPipeError())) is None
+def test_keeps_disconnects_and_security_failures():
+    from django.core.exceptions import (
+        DisallowedHost,
+        SuspiciousFileOperation,
+        SuspiciousOperation,
+    )
+
+    for error in (
+        ConnectionResetError(104, "reset"),
+        BrokenPipeError(),
+        SuspiciousOperation(),
+        DisallowedHost("Invalid HTTP_HOST header"),
+    ):
+        assert before_send({}, _hint(error)) is not None
+
+    # Django logs each security failure on django.security.<ClassName>. Only
+    # the invalid Host header (scanner traffic answered with 400) is expected.
+    for error in (SuspiciousOperation("tampered"), SuspiciousFileOperation("path")):
+        name = f"django.security.{type(error).__name__}"
+        event = {"logger": name, "message": str(error)}
+        assert before_send(event, _log_hint(name, error)) is not None
+    name = "django.security.DisallowedHost"
+    error = DisallowedHost("Invalid HTTP_HOST header: 'scanner.example.invalid'.")
+    event = {"logger": name, "message": str(error)}
+    assert before_send(event, _log_hint(name, error)) is None
+    # A child or similarly named logger is not the expected one.
+    for other in ("django.security.DisallowedHost.extra", "django.security"):
+        assert before_send({"logger": other}, _log_hint(other, error)) is not None
 
 
-def test_drops_expected_4xx_but_keeps_auth_failures():
-    assert before_send({}, _hint(_Exc(404))) is None
-    assert before_send({}, _hint(_Exc(429))) is None
-    # 401/403 are kept for security monitoring.
-    assert before_send({}, _hint(_Exc(401))) is not None
-    assert before_send({}, _hint(_Exc(403))) is not None
-    # 5xx is always kept.
-    assert before_send({}, _hint(_Exc(500))) is not None
+def test_keeps_http_errors_without_explicit_outcome_classification():
+    for code in (400, 401, 403, 404, 422, 429, 500, 503):
+        assert before_send({}, _hint(_Exc(code))) is not None
 
 
-def test_drops_known_expected_messages():
-    event = {"message": "trace_payload_not_found_in_redis"}
-    assert before_send(event, {}) is None
+def test_keeps_messages_that_only_resemble_expected_outcomes():
+    for message in (
+        "trace_payload_not_found_in_redis",
+        "Failed to load vertex credentials",
+    ):
+        assert before_send({"message": message}, {}) is not None
+
+
+def test_drops_litellm_own_logger_events_but_keeps_ours():
+    """LiteLLM logs a credential failure at ERROR before raising it to our code,
+    which owns the outcome. Its logger is filtered by name, not by message."""
+    error = ValueError("Could not deserialize key data.")
+    message = f"Failed to load vertex credentials. Error: {error}"
+    event = {"logger": "LiteLLM", "message": message}
+    assert before_send(event, _log_hint("LiteLLM", error)) is None
+    # The same failure logged or captured by our own code is still an issue.
+    for name in ("model_hub.utils.utils", "LiteLLM Router", "litellm"):
+        event = {"logger": name, "message": message}
+        assert before_send(event, _log_hint(name, error)) is not None
+    # Only records LiteLLM itself logged qualify, not a direct capture.
+    assert before_send({"logger": "LiteLLM"}, _hint(error)) is not None
+
+
+def test_expected_outcome_loggers_are_dropped_by_before_send_alone():
+    """Every client init_sentry creates gets the drop through before_send; no
+    import-time global processor applies it to unrelated (test) clients."""
+    assert not [
+        processor
+        for processor in global_event_processors
+        if getattr(processor, "__module__", "").startswith("tfc.")
+    ]
+    for name in ("django.security.DisallowedHost", "LiteLLM"):
+        assert before_send({"logger": name}, _log_hint(name)) is None
 
 
 # Real errors: kept

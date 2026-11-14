@@ -1,7 +1,9 @@
 import requests as http_requests
 import structlog
+from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -90,8 +92,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return self._gm.success_response(
                 AgentccProviderCredentialSerializer(instance).data
             )
-        except Exception as e:
-            logger.exception("provider_credential_retrieve_error", error=str(e))
+        except (Http404, NotFound):
             return self._gm.not_found("Provider credential not found")
 
     def create(self, request, *args, **kwargs):
@@ -151,10 +152,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         return self.partial_update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        # Let DRF retain the 404 for missing or out-of-organization objects.
-        # The mutation error handler below must not turn it into a 400.
-        instance = self.get_object()
         try:
+            # Resolve the object before any write or gateway push. A missing or
+            # out-of-organization credential answers 404 below, with no writes.
+            instance = self.get_object()
             serializer = AgentccProviderCredentialUpdateSerializer(
                 instance, data=request.data
             )
@@ -193,9 +194,8 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_update_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     def destroy(self, request, *args, **kwargs):
         try:
@@ -208,15 +208,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_delete_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     @action(detail=True, methods=["post"])
     def rotate(self, request, pk=None):
         """Rotate credentials — accepts new credentials, encrypts, and updates."""
         try:
             instance = self.get_object()
+            if not isinstance(request.data, dict):
+                return self._gm.bad_request("Request body must be a JSON object")
             credentials = request.data.get("credentials")
             if not credentials or not isinstance(credentials, dict):
                 return self._gm.bad_request(
@@ -242,9 +243,8 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_rotate_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     @action(detail=False, methods=["post"])
     def fetch_models(self, request):

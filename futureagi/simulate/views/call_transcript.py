@@ -69,13 +69,15 @@ class CallTranscriptView(APIView):
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            rows = SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(transcripts, many=True).data,
-                provider=SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
-                ),
-                is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
-            )
+            rows = CallTranscriptSerializer(transcripts, many=True).data
+            if rows:
+                rows = SpeakerRoleResolver.align_transcript_rows(
+                    rows,
+                    provider=SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    ),
+                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+                )
 
             return Response(
                 {
@@ -141,13 +143,17 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
-                rows = SpeakerRoleResolver.align_transcript_rows(
-                    CallTranscriptSerializer(transcripts, many=True).data,
-                    provider=SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    ),
-                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
-                )
+                rows = CallTranscriptSerializer(transcripts, many=True).data
+                if rows:
+                    rows = SpeakerRoleResolver.align_transcript_rows(
+                        rows,
+                        provider=SpeakerRoleResolver.detect_provider(
+                            call_execution.provider_call_data
+                        ),
+                        is_outbound=SpeakerRoleResolver.detect_is_outbound(
+                            call_execution
+                        ),
+                    )
 
                 call_data = {
                     "call_execution_id": str(call_execution.id),

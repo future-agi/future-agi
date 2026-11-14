@@ -395,20 +395,13 @@ class ExplanationAgent:
         embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         use_chain_analysis=True,
     ):
-        # check if explanation list is empty
-        if not explanation:
-            logger.error(
-                "Explanation list is empty. Cannot run critical issues evaluation."
-            )
-            return []
-
         # Normalize explanations into parallel lists of texts and IDs.
         # Supports both legacy `list[str]` and new `list[dict]` shapes that
         # carry a call/explanation identifier.
         texts: list[str] = []
         explanation_ids: list[str] = []
 
-        for idx, item in enumerate(explanation):
+        for idx, item in enumerate(explanation or []):
             text_val = None
             item_id = None
 
@@ -438,10 +431,34 @@ class ExplanationAgent:
             explanation_ids.append(str(item_id) if item_id is not None else str(idx))
 
         if len(texts) < 5:
-            logger.error(
-                "Explanation list is too short after normalization. "
-                "Cannot run critical issues evaluation."
+            # Dataset collection filters blank reasons, but keeps every evaluation
+            # cell. Count only graded values so missing reasons do not look like a
+            # genuinely small run, while the blank/None placeholders of a still
+            # running evaluation do not count as samples that lost their reasons.
+            # Other callers may only supply explanations.
+            graded_count = sum(
+                1
+                for value in eval_values or []
+                if value is not None and str(value).strip()
             )
+            input_count = max(len(explanation or []), graded_count)
+            if input_count >= 5:
+                # A sufficiently sized run losing its reasons is not a small run.
+                logger.error(
+                    "explanation_summary_missing_reasons",
+                    input_count=input_count,
+                    usable_count=len(texts),
+                    minimum_required=5,
+                )
+            else:
+                logger.info(
+                    "explanation_summary_skipped",
+                    reason="insufficient_samples",
+                    outcome="handled",
+                    input_count=input_count,
+                    usable_count=len(texts),
+                    minimum_required=5,
+                )
             return []
 
         print(f"[1/5] Embedding {len(texts)} explanations...")

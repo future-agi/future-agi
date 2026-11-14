@@ -1,5 +1,5 @@
 {
-  "_comment": "Grafana alert rules backing up the in-app 'continuous eval task FAILED' Slack alert (tracer/services/eval_tasks/failure_alert.py). Apply each rule with POST /api/v1/provisioning/alert-rules (folderUID filled in at apply time). Rows are one alert per task (per reason for the stalled rule); string columns become labels. Routed by alert_group=eval-tasks to #critical with a 6h repeat (see notification_policy_route).",
+  "_comment": "Grafana alert rules backing up the in-app 'continuous eval task FAILED' Slack alert (tracer/services/eval_tasks/failure_alert.py). Apply each rule with POST /api/v1/provisioning/alert-rules (folderUID filled in at apply time). Rows are one alert per task (per reason for the stalled rule); string columns become labels. Routed by alert_group=eval-tasks to #critical with daily stalled-task reminders and 6h failed-task reminders (see notification_policy_route).",
   "rules": [
     {
       "uid": "eval-task-stalled",
@@ -17,7 +17,7 @@
       },
       "annotations": {
         "summary": "Continuous eval task stalled — {{ $labels.org }}: {{ $labels.task }}",
-        "description": "{{ $labels.reason }} for {{ $values.B.Value }} min. The task still shows as running so the in-app FAILED alert never fires. 'reconcile stopped' = its workflow has not completed a reconcile pass (continuous_cursor not advanced; healthy is ~5 min) — check Temporal workflow eval-task-{{ $labels.task_id }}. 'backlog not draining' = entries pending/running for over 60 min with nothing finishing. Org {{ $labels.org_id }}, project {{ $labels.project }}.",
+        "description": "{{ $labels.reason }} for {{ $values.B.Value }} min. The task still shows as running so the in-app FAILED alert never fires. 'coverage lag' = the scan watermark is over 60 min behind; this can coexist with healthy catch-up or batch drainage and does not prove a stopped workflow. Check Temporal workflow eval-task-{{ $labels.task_id }} and recent results before escalating. 'backlog not draining' = entries pending/running for over 60 min with nothing finishing. Org {{ $labels.org_id }}, project {{ $labels.project }}.",
         "task_url": "https://app.futureagi.com/dashboard/tasks/{{ $labels.task_id }}"
       },
       "data": [
@@ -33,7 +33,7 @@
             "format": "table",
             "rawQuery": true,
             "editorMode": "code",
-            "rawSql": "SELECT t.id::text AS task_id, coalesce(t.name, '(unnamed)') AS task, p.name AS project, coalesce(nullif(o.name, ''), '(no name)') AS org, o.id::text AS org_id, s.reason, s.minutes::float AS minutes FROM tracer_eval_task t JOIN tracer_project p ON p.id = t.project_id JOIN accounts_organization o ON o.id = p.organization_id CROSS JOIN LATERAL (SELECT 'reconcile stopped' AS reason, round(extract(epoch FROM now() - coalesce(t.continuous_cursor, t.start_time, t.created_at)) / 60) AS minutes WHERE coalesce(t.continuous_cursor, t.start_time, t.created_at) < now() - interval '60 minutes' UNION ALL SELECT 'backlog not draining', round(extract(epoch FROM now() - min(e.created_at)) / 60) FROM tracer_eval_logger e WHERE e.eval_task_id = t.id::text AND e.deleted = false AND e.status IN ('pending', 'running') HAVING min(e.created_at) < now() - interval '60 minutes' AND NOT EXISTS (SELECT 1 FROM tracer_eval_logger c WHERE c.eval_task_id = t.id::text AND c.deleted = false AND c.status IN ('completed', 'errored', 'skipped') AND c.updated_at > now() - interval '60 minutes')) s WHERE t.run_type = 'continuous' AND t.status IN ('pending', 'running') AND t.deleted = false"
+            "rawSql": "SELECT t.id::text AS task_id, coalesce(t.name, '(unnamed)') AS task, p.name AS project, coalesce(nullif(o.name, ''), '(no name)') AS org, o.id::text AS org_id, s.reason, s.minutes::float AS minutes FROM tracer_eval_task t JOIN tracer_project p ON p.id = t.project_id JOIN accounts_organization o ON o.id = p.organization_id CROSS JOIN LATERAL (SELECT 'coverage lag' AS reason, round(extract(epoch FROM now() - coalesce(t.continuous_cursor, t.start_time, t.created_at)) / 60) AS minutes WHERE coalesce(t.continuous_cursor, t.start_time, t.created_at) < now() - interval '60 minutes' UNION ALL SELECT 'backlog not draining', round(extract(epoch FROM now() - min(e.created_at)) / 60) FROM tracer_eval_logger e WHERE e.eval_task_id = t.id::text AND e.deleted = false AND e.status IN ('pending', 'running') HAVING min(e.created_at) < now() - interval '60 minutes' AND NOT EXISTS (SELECT 1 FROM tracer_eval_logger c WHERE c.eval_task_id = t.id::text AND c.deleted = false AND c.status IN ('completed', 'errored', 'skipped') AND c.updated_at > now() - interval '60 minutes')) s WHERE t.run_type = 'continuous' AND t.status IN ('pending', 'running') AND t.deleted = false"
           }
         },
         {
@@ -138,6 +138,16 @@
     "group_by": ["alertname", "task_id"],
     "group_wait": "30s",
     "group_interval": "5m",
-    "repeat_interval": "6h"
+    "repeat_interval": "6h",
+    "routes": [
+      {
+        "receiver": "__CRITICAL_CONTACT_POINT__",
+        "object_matchers": [["kind", "=", "stalled"]],
+        "group_by": ["alertname", "task_id"],
+        "group_wait": "30s",
+        "group_interval": "5m",
+        "repeat_interval": "24h"
+      }
+    ]
   }
 }

@@ -17,6 +17,7 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import json
 import os
 from collections.abc import Callable
 from typing import Any
@@ -44,12 +45,36 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 #
 # NOTE: Sentry's LoggingIntegration patches logging.Logger.callHandlers, so a
 # logger's `propagate=False`/`level` in Django's LOGGING dict does NOT stop it
-# from becoming an event. ignore_logger() (below) and the before_send prefix
-# check are the only reliable levers.
+# from becoming an event. ignore_logger() (below) and the before_send logger
+# checks are the only reliable levers. ignore_logger() also discards the
+# record's breadcrumb, so loggers whose records are still useful context
+# (EXPECTED_OUTCOME_LOGGERS) are dropped in before_send only.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
     "saml2",
     "xmlschema",
+)
+
+# Exact names of third-party loggers that report an outcome our code handles at
+# ERROR. before_send drops every event built from a record of one of these
+# loggers, whatever its message; child and similarly named loggers, and
+# exceptions captured directly, are kept. The record stays a breadcrumb, so it
+# is still context on any genuine event captured later in the same scope.
+EXPECTED_OUTCOME_LOGGERS = frozenset(
+    {
+        # Django answers a request with an invalid Host header with 400 and logs
+        # it here at ERROR. That is scanner/bot traffic, not a fault. The other
+        # django.security.* loggers (SuspiciousOperation, SuspiciousFileOperation,
+        # RequestDataTooBig, csrf, ...) stay captured.
+        "django.security.DisallowedHost",
+        # LiteLLM's own verbose_logger logs a provider or credential failure at
+        # ERROR (for example an undecodable Vertex AI service-account key) and
+        # then raises it to the caller. Our code owns that outcome: model
+        # validation answers 400 and logs a WARNING, and genuine faults are
+        # logged or captured from our own loggers. We register no LiteLLM
+        # callbacks, so none of our code runs under this logger.
+        "LiteLLM",
+    }
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -68,26 +93,17 @@ IGNORED_LOGGERS = (
     "xmlschema.*",
 )
 
-# Exception class names that are expected/handled and not actionable as issues.
-IGNORED_EXCEPTIONS = frozenset(
+# Suppress only log-only outcomes explicitly classified by their owning code.
+# Exception events (including downstream 4xx and disconnects) are never classified
+# from a generic exception name, status code, or message substring.
+EXPECTED_LOG_OUTCOMES = frozenset(
     {
-        "DisallowedHost",  # Django - invalid host header (scanner/bot traffic)
-        "SuspiciousOperation",  # Django - security-related, handled
-        "ConnectionResetError",  # Client/peer disconnected mid-request
-        "BrokenPipeError",  # Client disconnected mid-response
+        (
+            "ee.agenthub.explanation_agent.exp_agent",
+            "explanation_summary_skipped",
+            "insufficient_samples",
+        ),
     }
-)
-
-# Substrings of structlog/event messages that represent expected, non-actionable
-# conditions. Kept deliberately specific so real bugs are never hidden.
-IGNORED_MESSAGE_SUBSTRINGS = (
-    "trace_payload_not_found_in_redis",  # expected ingestion race (payload TTL)
-    "Failed to export traces",  # OTel exporter (backstop for logger check)
-    "Exception while exporting metrics",  # OTel exporter (backstop)
-    # litellm's internal 'LiteLLM' logger emits this at ERROR when a user
-    # supplies an invalid/partial Vertex AI service-account key during model
-    # validation. Expected user-input error, not actionable. CORE-BACKEND-119Y.
-    "Failed to load vertex credentials",
 )
 
 # Keys whose values must be redacted before leaving the process. Matched
@@ -222,15 +238,35 @@ def _event_scrubber() -> Any:
     return EventScrubber(denylist=denylist, recursive=True)
 
 
-def _event_message(event: dict) -> str:
-    """Best-effort extraction of an event's human-readable message."""
-    msg = event.get("message")
-    if isinstance(msg, dict):
-        msg = msg.get("formatted") or msg.get("message") or ""
+def _expected_log_outcome(event: dict, hint: dict) -> bool:
+    """Normalize structlog dicts and Temporal JSON without interpreting text.
+
+    Malformed/unknown payloads and any exception capture fail open. Source-level
+    INFO/WARNING logging is the primary control; this is a log-only backstop.
+    """
+    if hint.get("exc_info") or event.get("exception"):
+        return False
+    record = hint.get("log_record")
     logentry = event.get("logentry")
-    logentry_msg = logentry.get("message", "") if isinstance(logentry, dict) else ""
-    parts = [str(msg or ""), str(logentry_msg or "")]
-    return " ".join(p for p in parts if p)
+    candidates = [getattr(record, "msg", None), event.get("message")]
+    if isinstance(logentry, dict):
+        candidates.extend([logentry.get("formatted"), logentry.get("message")])
+    for payload in candidates:
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, RecursionError):
+                continue
+        if not isinstance(payload, dict):
+            continue
+        identity = (event.get("logger"), payload.get("event"), payload.get("reason"))
+        if (
+            all(isinstance(value, str) for value in identity)
+            and identity in EXPECTED_LOG_OUTCOMES
+            and payload.get("outcome") == "handled"
+        ):
+            return True
+    return False
 
 
 def _is_telemetry_url(url: object) -> bool:
@@ -279,7 +315,7 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
             breadcrumb["data"] = data
 
     request = event.get("request") or {}
-    if not _is_telemetry_url(request.get("url")):
+    if not isinstance(request, dict) or not _is_telemetry_url(request.get("url")):
         return event
 
     request.pop("data", None)
@@ -294,10 +330,10 @@ def _get_before_send() -> Callable:
     Create the before_send hook that runs on every error event.
 
     Responsibilities, in order:
-    1. Drop pure-infrastructure logger noise (OTel exporter, etc.).
-    2. Drop expected/handled exceptions and expected 4xx responses.
-    3. Drop known expected log conditions matched by message substring.
-    4. Scrub secrets/PII from whatever remains.
+    1. Drop pure-infrastructure logger noise (OTel exporter, etc.) and records
+       of the third-party loggers in EXPECTED_OUTCOME_LOGGERS.
+    2. Drop explicitly classified, expected log-only outcomes.
+    3. Scrub secrets/PII from whatever remains.
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
@@ -311,30 +347,21 @@ def _get_before_send() -> Callable:
             for p in NOISY_LOGGER_PREFIXES
         ):
             return None
-
-        # 2. Expected/handled exceptions and expected client (4xx) errors.
-        if "exc_info" in hint:
-            exc_type, exc_value, _tb = hint["exc_info"]
-            exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in IGNORED_EXCEPTIONS:
-                return None
-
-            status_code = getattr(exc_value, "status_code", None)
-            if (
-                isinstance(status_code, int)
-                and 400 <= status_code < 500
-                and status_code not in (401, 403)
-            ):
-                # Drop 400/404/405/429/etc. (client behaviour); keep 401/403
-                # for security monitoring.
-                return None
-
-        # 3. Known expected conditions identified by message text.
-        message = _event_message(event)
-        if message and any(s in message for s in IGNORED_MESSAGE_SUBSTRINGS):
+        # A third-party logger's record of an outcome our code handles, matched
+        # by the record's exact logger name. Dedupe has already remembered the
+        # record's exception; the SDK forgets it again when before_send drops
+        # an exception event, so our own report of that same exception object
+        # (LiteLLM raises it to our code) is still sent.
+        record = hint.get("log_record")
+        if getattr(record, "name", None) in EXPECTED_OUTCOME_LOGGERS:
             return None
 
-        # 4. Scrub secrets/PII from the surviving event.
+        # 2. A handled exception is not necessarily harmless. Do not suppress
+        # generic HTTP errors, disconnects, or text that merely resembles a skip.
+        if _expected_log_outcome(event, hint):
+            return None
+
+        # 3. Scrub secrets/PII from the surviving event.
         try:
             _scrub_event(event)
         except Exception:
